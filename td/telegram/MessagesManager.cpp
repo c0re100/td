@@ -7584,8 +7584,8 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
     return promise.set_value(Unit());
   }
 
-  auto dialog_type = dialog_id.get_type();
-  bool is_secret = dialog_type == DialogType::SecretChat;
+  //auto dialog_type = dialog_id.get_type();
+  //bool is_secret = dialog_type == DialogType::SecretChat;
 
   vector<MessageId> message_ids;
   message_ids.reserve(input_message_ids.size());
@@ -7596,9 +7596,9 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
     }
     message_id = get_persistent_message_id(d, message_id);
     message_ids.push_back(message_id);
-    if (get_message_force(d, message_id, "delete_messages") != nullptr && (message_id.is_server() || is_secret)) {
+    //if (get_message_force(d, message_id, "delete_messages") != nullptr && (message_id.is_server() || is_secret)) {
       deleted_server_message_ids.push_back(message_id);
-    }
+    //}
   }
 
   bool is_bot = td_->auth_manager_->is_bot();
@@ -7606,11 +7606,11 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
     case DialogType::User:
     case DialogType::Chat:
       if (is_bot) {
-        for (auto message_id : message_ids) {
-          if (message_id.is_server() && !can_revoke_message(dialog_id, get_message(d, message_id))) {
-            return promise.set_error(Status::Error(6, "Message can't be deleted"));
-          }
-        }
+        // for (auto message_id : message_ids) {
+          // if (message_id.is_server() && !can_revoke_message(dialog_id, get_message(d, message_id))) {
+            // return promise.set_error(Status::Error(6, "Message can't be deleted"));
+          // }
+        // }
       }
       break;
     case DialogType::Channel: {
@@ -7928,7 +7928,7 @@ void MessagesManager::find_unloadable_messages(const Dialog *d, int32 unload_bef
 void MessagesManager::delete_dialog_messages_from_user(DialogId dialog_id, UserId user_id, Promise<Unit> &&promise) {
   bool is_bot = td_->auth_manager_->is_bot();
   if (is_bot) {
-    return promise.set_error(Status::Error(3, "Method is not available for bots"));
+    //return promise.set_error(Status::Error(3, "Method is not available for bots"));
   }
 
   LOG(INFO) << "Receive deleteChatMessagesFromUser request to delete all messages in " << dialog_id << " from the user "

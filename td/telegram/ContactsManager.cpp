@@ -10494,7 +10494,7 @@ int32 ContactsManager::get_user_id_object(UserId user_id, const char *source) co
     unknown_users_.insert(user_id);
     send_closure(G()->td(), &Td::send_update,
                  td_api::make_object<td_api::updateUser>(td_api::make_object<td_api::user>(
-                     user_id.get(), "", "", "", "", td_api::make_object<td_api::userStatusEmpty>(),
+                     user_id.get(), -1, "", "", "", "", td_api::make_object<td_api::userStatusEmpty>(),
                      get_profile_photo_object(td_->file_manager_.get(), nullptr),
                      get_link_state_object(LinkState::Unknown), get_link_state_object(LinkState::Unknown), false, false,
                      "", false, false, td_api::make_object<td_api::userTypeUnknown>(), "")));
@@ -10521,7 +10521,7 @@ tl_object_ptr<td_api::user> ContactsManager::get_user_object(UserId user_id, con
   }
 
   return make_tl_object<td_api::user>(
-      user_id.get(), u->first_name, u->last_name, u->username, u->phone_number, get_user_status_object(user_id, u),
+      user_id.get(), u->access_hash, u->first_name, u->last_name, u->username, u->phone_number, get_user_status_object(user_id, u),
       get_profile_photo_object(td_->file_manager_.get(), &u->photo), get_link_state_object(u->outbound),
       get_link_state_object(u->inbound), u->is_verified, u->is_support, u->restriction_reason, u->is_scam,
       u->is_received, std::move(type), u->language_code);
@@ -10559,7 +10559,7 @@ int32 ContactsManager::get_basic_group_id_object(ChatId chat_id, const char *sou
     unknown_chats_.insert(chat_id);
     send_closure(G()->td(), &Td::send_update,
                  td_api::make_object<td_api::updateBasicGroup>(td_api::make_object<td_api::basicGroup>(
-                     chat_id.get(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0)));
+                     chat_id.get(), -1, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0)));
   }
   return chat_id.get();
 }
@@ -10581,7 +10581,7 @@ tl_object_ptr<td_api::basicGroup> ContactsManager::get_basic_group_object(ChatId
 tl_object_ptr<td_api::basicGroup> ContactsManager::get_basic_group_object_const(ChatId chat_id,
                                                                                 const Chat *chat) const {
   return make_tl_object<td_api::basicGroup>(
-      chat_id.get(), chat->participant_count, get_chat_status(chat).get_chat_member_status_object(), chat->is_active,
+      chat_id.get(), -1, chat->participant_count, get_chat_status(chat).get_chat_member_status_object(), chat->is_active,
       get_supergroup_id_object(chat->migrated_to_channel_id, "get_basic_group_object"));
 }
 
@@ -10605,7 +10605,7 @@ int32 ContactsManager::get_supergroup_id_object(ChannelId channel_id, const char
     unknown_channels_.insert(channel_id);
     send_closure(G()->td(), &Td::send_update,
                  td_api::make_object<td_api::updateSupergroup>(td_api::make_object<td_api::supergroup>(
-                     channel_id.get(), string(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(),
+                     channel_id.get(), -1, string(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(),
                      0, false, true, false, "", false)));
   }
   return channel_id.get();
@@ -10620,7 +10620,7 @@ tl_object_ptr<td_api::supergroup> ContactsManager::get_supergroup_object(Channel
   if (channel == nullptr) {
     return nullptr;
   }
-  return make_tl_object<td_api::supergroup>(channel_id.get(), channel->username, channel->date,
+  return make_tl_object<td_api::supergroup>(channel_id.get(), channel->access_hash, channel->username, channel->date,
                                             get_channel_status(channel).get_chat_member_status_object(),
                                             channel->participant_count, channel->sign_messages, !channel->is_megagroup,
                                             channel->is_verified, channel->restriction_reason, channel->is_scam);

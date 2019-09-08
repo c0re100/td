@@ -297,7 +297,7 @@ botCommand command:string description:string = BotCommand;
 botInfo description:string commands:vector<botCommand> = BotInfo;
 
 
-//@description Represents a user @id User identifier @first_name First name of the user @last_name Last name of the user @username Username of the user
+//@description Represents a user @id User identifier @access_hash User access hash @first_name First name of the user @last_name Last name of the user @username Username of the user
 //@phone_number Phone number of the user @status Current online status of the user @profile_photo Profile photo of the user; may be null
 //@outgoing_link Relationship from the current user to the other user @incoming_link Relationship from the other user to the current user
 //@is_verified True, if the user is verified @is_support True, if the user is Telegram support account
@@ -305,7 +305,7 @@ botInfo description:string commands:vector<botCommand> = BotInfo;
 //-{type} contains the type of the restriction and at least one of the suffixes "-all", "-ios", "-android", or "-wp", which describe the platforms on which access should be restricted. (For example, "terms-ios-android". {description} contains a human-readable description of the restriction, which can be shown to the user)
 //@is_scam True, if many users reported this user as a scam
 //@have_access If false, the user is inaccessible, and the only information known about the user is inside this class. It can't be passed to any method except GetUser @type Type of the user @language_code IETF language tag of the user's language; only available to bots
-user id:int32 first_name:string last_name:string username:string phone_number:string status:UserStatus profile_photo:profilePhoto outgoing_link:LinkState incoming_link:LinkState is_verified:Bool is_support:Bool restriction_reason:string is_scam:Bool have_access:Bool type:UserType language_code:string = User;
+user id:int32 access_hash:int64 first_name:string last_name:string username:string phone_number:string status:UserStatus profile_photo:profilePhoto outgoing_link:LinkState incoming_link:LinkState is_verified:Bool is_support:Bool restriction_reason:string is_scam:Bool have_access:Bool type:UserType language_code:string = User;
 
 //@description Contains full information about a user (except the full list of profile photos) @is_blocked True, if the user is blacklisted by the current user @can_be_called True, if the user can be called @has_private_calls True, if the user can't be called due to their privacy settings
 //@bio A short user bio @share_text For bots, the text that is included with the link when users share the bot @group_in_common_count Number of group chats where both the other user and the current user are a member; 0 for the current user @bot_info If the user is a bot, information about the bot; may be null
@@ -422,11 +422,12 @@ supergroupMembersFilterBots = SupergroupMembersFilter;
 
 //@description Represents a basic group of 0-200 users (must be upgraded to a supergroup to accommodate more than 200 users)
 //@id Group identifier
+//@access_hash Group access hash
 //@member_count Number of members in the group
 //@status Status of the current user in the group
 //@is_active True, if the group is active
 //@upgraded_to_supergroup_id Identifier of the supergroup to which this group was upgraded; 0 if none
-basicGroup id:int32 member_count:int32 status:ChatMemberStatus is_active:Bool upgraded_to_supergroup_id:int32 = BasicGroup;
+basicGroup id:int32 access_hash:int64 member_count:int32 status:ChatMemberStatus is_active:Bool upgraded_to_supergroup_id:int32 = BasicGroup;
 
 //@description Contains full information about a basic group @param_description Group description @creator_user_id User identifier of the creator of the group; 0 if unknown @members Group members @invite_link Invite link for this group; available only for the group creator and only after it has been generated at least once
 basicGroupFullInfo description:string creator_user_id:int32 members:vector<chatMember> invite_link:string = BasicGroupFullInfo;
@@ -434,6 +435,7 @@ basicGroupFullInfo description:string creator_user_id:int32 members:vector<chatM
 
 //@description Represents a supergroup or channel with zero or more members (subscribers in the case of channels). From the point of view of the system, a channel is a special kind of a supergroup: only administrators can post and see the list of members, and posts from all administrators use the name and photo of the channel instead of individual names and profile photos. Unlike supergroups, channels can have an unlimited number of subscribers
 //@id Supergroup or channel identifier
+//@access_hash Supergroup or channel access hash
 //@username Username of the supergroup or channel; empty for private supergroups or channels
 //@date Point in time (Unix timestamp) when the current user joined, or the point in time when the supergroup or channel was created, in case the user is not a member
 //@status Status of the current user in the supergroup or channel
@@ -444,7 +446,7 @@ basicGroupFullInfo description:string creator_user_id:int32 members:vector<chatM
 //@restriction_reason If non-empty, contains the reason why access to this supergroup or channel must be restricted. Format of the string is "{type}: {description}".
 //-{type} Contains the type of the restriction and at least one of the suffixes "-all", "-ios", "-android", or "-wp", which describe the platforms on which access should be restricted. (For example, "terms-ios-android". {description} contains a human-readable description of the restriction, which can be shown to the user)
 //@is_scam True, if many users reported this supergroup as a scam
-supergroup id:int32 username:string date:int32 status:ChatMemberStatus member_count:int32 sign_messages:Bool is_channel:Bool is_verified:Bool restriction_reason:string is_scam:Bool = Supergroup;
+supergroup id:int32 access_hash:int64 username:string date:int32 status:ChatMemberStatus member_count:int32 sign_messages:Bool is_channel:Bool is_verified:Bool restriction_reason:string is_scam:Bool = Supergroup;
 
 //@description Contains full information about a supergroup or channel
 //@param_description Supergroup or channel description
