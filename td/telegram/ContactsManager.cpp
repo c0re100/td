@@ -8964,6 +8964,13 @@ bool ContactsManager::get_user(UserId user_id, int left_tries, Promise<Unit> &&p
 
   // TODO support loading user from database and merging it with min-user in memory
   if (!have_min_user(user_id)) {
+	// TODO UserLoader
+	//if (left_tries > 2 && G()->parameters().use_chat_info_db) {
+	//	send_closure_later(actor_id(this), &ContactsManager::load_user_from_database, nullptr, user_id,
+	//		std::move(promise));
+	//	return false;
+	//}
+
     auto input_user = get_input_user(user_id);
     if (left_tries == 1 || input_user == nullptr) {
       promise.set_error(Status::Error(6, "User not found"));
@@ -9213,11 +9220,11 @@ bool ContactsManager::get_chat(ChatId chat_id, int left_tries, Promise<Unit> &&p
   }
 
   if (!have_chat(chat_id)) {
-    if (left_tries > 2 && G()->parameters().use_chat_info_db) {
-      send_closure_later(actor_id(this), &ContactsManager::load_chat_from_database, nullptr, chat_id,
-                         std::move(promise));
-      return false;
-    }
+    //if (left_tries > 2 && G()->parameters().use_chat_info_db) {
+    //  send_closure_later(actor_id(this), &ContactsManager::load_chat_from_database, nullptr, chat_id,
+    //                     std::move(promise));
+    //  return false;
+    //}
 
     if (left_tries > 1) {
       td_->create_handler<GetChatsQuery>(std::move(promise))->send(vector<int32>{chat_id.get()});
@@ -9514,13 +9521,13 @@ bool ContactsManager::get_channel(ChannelId channel_id, int left_tries, Promise<
   }
 
   if (!have_channel(channel_id)) {
-    if (left_tries > 2 && G()->parameters().use_chat_info_db) {
-      send_closure_later(actor_id(this), &ContactsManager::load_channel_from_database, nullptr, channel_id,
-                         std::move(promise));
-      return false;
-    }
+    //if (left_tries > 2 && G()->parameters().use_chat_info_db) {
+    //  send_closure_later(actor_id(this), &ContactsManager::load_channel_from_database, nullptr, channel_id,
+    //                     std::move(promise));
+    //  return false;
+    //}
 
-    if (left_tries > 1 && td_->auth_manager_->is_bot()) {
+    if (left_tries > 1) {
       td_->create_handler<GetChannelsQuery>(std::move(promise))->send(get_input_channel(channel_id));
       return false;
     }
