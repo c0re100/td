@@ -7606,18 +7606,22 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
     case DialogType::User:
     case DialogType::Chat:
       if (is_bot) {
-        // for (auto message_id : message_ids) {
-          // if (message_id.is_server() && !can_revoke_message(dialog_id, get_message(d, message_id))) {
-            // return promise.set_error(Status::Error(6, "Message can't be deleted"));
-          // }
-        // }
+        for (auto message_id : message_ids) {
+          if (message_id.is_server() && !can_revoke_message(dialog_id, get_message(d, message_id))) {
+            deleted_server_message_ids.erase(remove(deleted_server_message_ids.begin(), deleted_server_message_ids.end(), message_id));
+            //return promise.set_error(Status::Error(6, "Message can't be deleted"));
+          }
+        }
       }
       break;
     case DialogType::Channel: {
-      auto dialog_status = td_->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id());
-      for (auto message_id : message_ids) {
-        if (!can_delete_channel_message(dialog_status, get_message(d, message_id), is_bot)) {
-          return promise.set_error(Status::Error(6, "Message can't be deleted"));
+	  if (is_bot) {
+		auto dialog_status = td_->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id());
+		for (auto message_id : message_ids) {
+          if (!can_delete_channel_message(dialog_status, get_message(d, message_id), is_bot)) {
+             deleted_server_message_ids.erase(remove(deleted_server_message_ids.begin(), deleted_server_message_ids.end(), message_id));
+             //return promise.set_error(Status::Error(6, "Message can't be deleted"));
+          }
         }
       }
       break;
@@ -7629,6 +7633,9 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
       UNREACHABLE();
   }
 
+  if (is_bot) {
+    message_ids = deleted_server_message_ids;
+  }
   delete_messages_from_server(dialog_id, std::move(deleted_server_message_ids), revoke, 0, std::move(promise));
 
   bool need_update_dialog_pos = false;
