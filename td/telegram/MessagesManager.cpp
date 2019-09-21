@@ -7935,7 +7935,7 @@ void MessagesManager::find_unloadable_messages(const Dialog *d, int32 unload_bef
 void MessagesManager::delete_dialog_messages_from_user(DialogId dialog_id, UserId user_id, Promise<Unit> &&promise) {
   bool is_bot = td_->auth_manager_->is_bot();
   if (is_bot) {
-    //return promise.set_error(Status::Error(3, "Method is not available for bots"));
+    return promise.set_error(Status::Error(3, "Method is not available for bots"));
   }
 
   LOG(INFO) << "Receive deleteChatMessagesFromUser request to delete all messages in " << dialog_id << " from the user "
