@@ -16162,15 +16162,15 @@ void MessagesManager::cancel_send_message_query(DialogId dialog_id, unique_ptr<M
     m->send_message_logevent_id = 0;
   }
 
-  if (m->reply_to_message_id.is_valid() && !m->reply_to_message_id.is_yet_unsent()) {
-    auto it = replied_by_yet_unsent_messages_.find({dialog_id, m->reply_to_message_id});
-    CHECK(it != replied_by_yet_unsent_messages_.end());
-    it->second--;
-    CHECK(it->second >= 0);
-    if (it->second == 0) {
-      replied_by_yet_unsent_messages_.erase(it);
-    }
-  }
+  //if (m->reply_to_message_id.is_valid() && !m->reply_to_message_id.is_yet_unsent()) {
+  //  auto it = replied_by_yet_unsent_messages_.find({dialog_id, m->reply_to_message_id});
+  //  CHECK(it != replied_by_yet_unsent_messages_.end());
+  //  it->second--;
+  //  CHECK(it->second >= 0);
+  //  if (it->second == 0) {
+  //    replied_by_yet_unsent_messages_.erase(it);
+  //  }
+  //}
 
   if (m->media_album_id != 0) {
     send_closure_later(actor_id(this), &MessagesManager::on_upload_message_media_finished, m->media_album_id, dialog_id,
