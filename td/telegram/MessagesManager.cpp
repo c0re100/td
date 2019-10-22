@@ -2852,11 +2852,19 @@ class DeleteChannelMessagesQuery : public Td::ResultHandler {
 
     query_count_ = 0;
     auto server_message_ids = MessagesManager::get_server_message_ids(message_ids);
+	td::vector<int32> to_be_delete_ids;
+
+	for (auto message_id : server_message_ids) {
+		if (message_id == (int32)message_id) {
+			to_be_delete_ids.push_back(message_id);
+		}
+	}
+
     const size_t MAX_SLICE_SIZE = 100;
-    for (size_t i = 0; i < server_message_ids.size(); i += MAX_SLICE_SIZE) {
+    for (size_t i = 0; i < to_be_delete_ids.size(); i += MAX_SLICE_SIZE) {
       auto end_i = i + MAX_SLICE_SIZE;
-      auto end = end_i < server_message_ids.size() ? server_message_ids.begin() + end_i : server_message_ids.end();
-      vector<int32> slice(server_message_ids.begin() + i, end);
+      auto end = end_i < to_be_delete_ids.size() ? to_be_delete_ids.begin() + end_i : to_be_delete_ids.end();
+      vector<int32> slice(to_be_delete_ids.begin() + i, end);
 
       query_count_++;
       auto input_channel = td->contacts_manager_->get_input_channel(channel_id);
@@ -16154,15 +16162,15 @@ void MessagesManager::cancel_send_message_query(DialogId dialog_id, unique_ptr<M
     m->send_message_logevent_id = 0;
   }
 
-  //if (m->reply_to_message_id.is_valid() && !m->reply_to_message_id.is_yet_unsent()) {
-  //  auto it = replied_by_yet_unsent_messages_.find({dialog_id, m->reply_to_message_id});
-  //  CHECK(it != replied_by_yet_unsent_messages_.end());
-  //  it->second--;
-  //  CHECK(it->second >= 0);
-  //  if (it->second == 0) {
-  //    replied_by_yet_unsent_messages_.erase(it);
-  //  }
-  //}
+  if (m->reply_to_message_id.is_valid() && !m->reply_to_message_id.is_yet_unsent()) {
+    auto it = replied_by_yet_unsent_messages_.find({dialog_id, m->reply_to_message_id});
+    CHECK(it != replied_by_yet_unsent_messages_.end());
+    it->second--;
+    CHECK(it->second >= 0);
+    if (it->second == 0) {
+      replied_by_yet_unsent_messages_.erase(it);
+    }
+  }
 
   if (m->media_album_id != 0) {
     send_closure_later(actor_id(this), &MessagesManager::on_upload_message_media_finished, m->media_album_id, dialog_id,
