@@ -153,7 +153,8 @@ TEST(Misc, get_last_argument) {
 }
 
 TEST(Misc, call_n_arguments) {
-  auto f = [](int, int) {};
+  auto f = [](int, int) {
+  };
   call_n_arguments<2>(f, 1, 3, 4);
 }
 
@@ -206,6 +207,65 @@ TEST(Misc, base64) {
   ASSERT_TRUE(base64_encode("      /'.;.';≤.];,].',[.;/,.;/]/..;!@#!*(%?::;!%\";") ==
               "ICAgICAgLycuOy4nO+KJpC5dOyxdLicsWy47LywuOy9dLy4uOyFAIyEqKCU/"
               "Ojo7ISUiOw==");
+}
+
+template <class T>
+static void test_remove_if(vector<int> v, const T &func, vector<int> expected) {
+  remove_if(v, func);
+  if (expected != v) {
+    LOG(FATAL) << "Receive " << v << ", expected " << expected << " in remove_if";
+  }
+}
+
+TEST(Misc, remove_if) {
+  auto odd = [](int x) {
+    return x % 2 == 1;
+  };
+  auto even = [](int x) {
+    return x % 2 == 0;
+  };
+  auto all = [](int x) {
+    return true;
+  };
+  auto none = [](int x) {
+    return false;
+  };
+
+  vector<int> v{1, 2, 3, 4, 5, 6};
+  test_remove_if(v, odd, {2, 4, 6});
+  test_remove_if(v, even, {1, 3, 5});
+  test_remove_if(v, all, {});
+  test_remove_if(v, none, v);
+
+  v = vector<int>{1, 3, 5, 2, 4, 6};
+  test_remove_if(v, odd, {2, 4, 6});
+  test_remove_if(v, even, {1, 3, 5});
+  test_remove_if(v, all, {});
+  test_remove_if(v, none, v);
+
+  v.clear();
+  test_remove_if(v, odd, v);
+  test_remove_if(v, even, v);
+  test_remove_if(v, all, v);
+  test_remove_if(v, none, v);
+
+  v.push_back(-1);
+  test_remove_if(v, odd, v);
+  test_remove_if(v, even, v);
+  test_remove_if(v, all, {});
+  test_remove_if(v, none, v);
+
+  v[0] = 1;
+  test_remove_if(v, odd, {});
+  test_remove_if(v, even, v);
+  test_remove_if(v, all, {});
+  test_remove_if(v, none, v);
+
+  v[0] = 2;
+  test_remove_if(v, odd, v);
+  test_remove_if(v, even, {});
+  test_remove_if(v, all, {});
+  test_remove_if(v, none, v);
 }
 
 TEST(Misc, to_integer) {
@@ -757,8 +817,12 @@ TEST(Misc, uint128) {
                                      static_cast<int64>(std::numeric_limits<int32>::min()) - 1};
 
 #if TD_HAVE_INT128
-  auto to_intrinsic = [](uint128_emulated num) { return uint128_intrinsic(num.hi(), num.lo()); };
-  auto eq = [](uint128_emulated a, uint128_intrinsic b) { return a.hi() == b.hi() && a.lo() == b.lo(); };
+  auto to_intrinsic = [](uint128_emulated num) {
+    return uint128_intrinsic(num.hi(), num.lo());
+  };
+  auto eq = [](uint128_emulated a, uint128_intrinsic b) {
+    return a.hi() == b.hi() && a.lo() == b.lo();
+  };
   auto ensure_eq = [&](uint128_emulated a, uint128_intrinsic b) {
     if (!eq(a, b)) {
       LOG(FATAL) << "[" << a.hi() << ";" << a.lo() << "] vs [" << b.hi() << ";" << b.lo() << "]";

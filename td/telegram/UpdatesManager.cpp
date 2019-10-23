@@ -677,7 +677,7 @@ void UpdatesManager::on_get_updates(tl_object_ptr<telegram_api::Updates> &&updat
       auto update = move_tl_object_as<telegram_api::updateShort>(updates_ptr);
       LOG(DEBUG) << "Receive " << oneline(to_string(update));
       if (!is_acceptable_update(update->update_.get())) {
-        LOG(ERROR) << "Receive unacceptable short update: " << td::oneline(to_string(update));
+        LOG(ERROR) << "Receive unacceptable short update: " << oneline(to_string(update));
         return get_difference("unacceptable short update");
       }
       short_update_date_ = update->date_;
@@ -1440,8 +1440,10 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannelTooLong>
   td_->messages_manager_->on_update_channel_too_long(std::move(update), force_apply);
 }
 
-void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannel> update, bool /*force_apply*/) {
-  // nothing to do
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannel> update, bool force_apply) {
+  if (!force_apply) {
+    td_->contacts_manager_->invalidate_channel_full(ChannelId(update->channel_id_), false);
+  }
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateEditChannelMessage> update, bool /*force_apply*/) {
@@ -1549,7 +1551,9 @@ int32 UpdatesManager::get_short_update_date() const {
 
 tl_object_ptr<td_api::ChatAction> UpdatesManager::convert_send_message_action(
     tl_object_ptr<telegram_api::SendMessageAction> action) {
-  auto fix_progress = [](int32 progress) { return progress <= 0 || progress > 100 ? 0 : progress; };
+  auto fix_progress = [](int32 progress) {
+    return progress <= 0 || progress > 100 ? 0 : progress;
+  };
 
   switch (action->get_id()) {
     case telegram_api::sendMessageCancelAction::ID:

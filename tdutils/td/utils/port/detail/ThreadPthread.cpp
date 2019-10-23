@@ -14,7 +14,9 @@ char disable_linker_warning_about_empty_file_thread_pthread_cpp TD_UNUSED;
 
 #include <pthread.h>
 #include <sched.h>
+#if TD_FREEBSD || TD_OPENBSD || TD_NETBSD
 #include <sys/sysctl.h>
+#endif
 #include <unistd.h>
 
 namespace td {
@@ -30,7 +32,7 @@ unsigned ThreadPthread::hardware_concurrency() {
   }
 #endif
 
-// *BSD
+#if TD_FREEBSD || TD_OPENBSD || TD_NETBSD
 #if defined(HW_AVAILCPU) && defined(CTL_HW)
   {
     int mib[2] = {CTL_HW, HW_AVAILCPU};
@@ -51,6 +53,7 @@ unsigned ThreadPthread::hardware_concurrency() {
       return res;
     }
   }
+#endif
 #endif
 
   // Just in case

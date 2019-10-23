@@ -13,6 +13,7 @@
 #include "td/telegram/files/FileLocation.h"
 #include "td/telegram/files/FileManager.h"
 #include "td/telegram/files/FileType.h"
+#include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/StickersManager.h"
@@ -282,8 +283,6 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       return {};
     }
 
-    fix_animated_sticker_type();
-
     if (document_type != Document::Type::VoiceNote) {
       thumbnail = get_secret_thumbnail_photo_size(td_->file_manager_.get(), std::move(document->thumb_),
                                                   owner_dialog_id, document->thumb_w_, document->thumb_h_);
@@ -331,8 +330,6 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       default:
         UNREACHABLE();
     }
-
-    fix_animated_sticker_type();
   }
 
   LOG(DEBUG) << "Receive document with id = " << id << " of type " << document_type;
@@ -340,6 +337,8 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     LOG(ERROR) << "Wrong dc_id = " << dc_id;
     return {};
   }
+
+  file_name = strip_empty_characters(file_name, 255, true);
 
   auto suggested_file_name = file_name;
   if (suggested_file_name.empty()) {

@@ -136,11 +136,11 @@ bool clean_input_string(string &str) {
   return true;
 }
 
-string strip_empty_characters(string str, size_t max_length) {
+string strip_empty_characters(string str, size_t max_length, bool strip_rtlo) {
   static const char *space_characters[] = {u8"\u1680", u8"\u180E", u8"\u2000", u8"\u2001", u8"\u2002",
                                            u8"\u2003", u8"\u2004", u8"\u2005", u8"\u2006", u8"\u2007",
-                                           u8"\u2008", u8"\u2009", u8"\u200A", u8"\u200B", u8"\u202F",
-                                           u8"\u205F", u8"\u3000", u8"\uFEFF", u8"\uFFFC"};
+                                           u8"\u2008", u8"\u2009", u8"\u200A", u8"\u200B", u8"\u202E",
+                                           u8"\u202F", u8"\u205F", u8"\u3000", u8"\uFEFF", u8"\uFFFC"};
   static bool can_be_first[std::numeric_limits<unsigned char>::max() + 1];
   static bool can_be_first_inited = [&] {
     for (auto space_ch : space_characters) {
@@ -162,7 +162,10 @@ string strip_empty_characters(string str, size_t max_length) {
       bool found = false;
       for (auto space_ch : space_characters) {
         if (space_ch[0] == str[i] && space_ch[1] == str[i + 1] && space_ch[2] == str[i + 2]) {
-          found = true;
+          if (static_cast<unsigned char>(str[i + 2]) != 0xAE || static_cast<unsigned char>(str[i + 1]) != 0x80 ||
+              static_cast<unsigned char>(str[i]) != 0xE2 || strip_rtlo) {
+            found = true;
+          }
           break;
         }
       }
@@ -277,20 +280,25 @@ string get_emoji_fingerprint(uint64 num) {
 
 Result<string> check_url(Slice url) {
   bool is_tg = false;
+  bool is_ton = false;
   if (begins_with(url, "tg://")) {
     url.remove_prefix(5);
     is_tg = true;
   } else if (begins_with(url, "tg:")) {
     url.remove_prefix(3);
     is_tg = true;
-  } else {
-    is_tg = false;
+  } else if (begins_with(url, "ton://")) {
+    url.remove_prefix(6);
+    is_ton = true;
+  } else if (begins_with(url, "ton:")) {
+    url.remove_prefix(4);
+    is_ton = true;
   }
   TRY_RESULT(http_url, parse_url(url));
-  if (is_tg) {
+  if (is_tg || is_ton) {
     if (begins_with(url, "http://") || http_url.protocol_ == HttpUrl::Protocol::HTTPS || !http_url.userinfo_.empty() ||
         http_url.specified_port_ != 0 || http_url.is_ipv6_) {
-      return Status::Error("Wrong tg URL");
+      return Status::Error(is_tg ? Slice("Wrong tg URL") : Slice("Wrong ton URL"));
     }
 
     Slice query(http_url.query_);
@@ -298,7 +306,7 @@ Result<string> check_url(Slice url) {
     if (query[1] == '?') {
       query.remove_prefix(1);
     }
-    return PSTRING() << "tg://" << http_url.host_ << query;
+    return PSTRING() << (is_tg ? "tg" : "ton") << "://" << http_url.host_ << query;
   }
 
   if (url.find('.') == string::npos) {

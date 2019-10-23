@@ -2905,11 +2905,13 @@ void StickersManager::on_load_sticker_set_from_database(int64 sticker_set_id, bo
     return;
   }
 
+  // it is possible that a server reload_sticker_set request has failed and cleared requests list with an error
   if (with_stickers) {
-    CHECK(!sticker_set->load_requests.empty());
+    // CHECK(!sticker_set->load_requests.empty());
   } else {
-    CHECK(!sticker_set->load_without_stickers_requests.empty());
+    // CHECK(!sticker_set->load_without_stickers_requests.empty());
   }
+
   if (value.empty()) {
     return do_reload_sticker_set(sticker_set_id, get_input_sticker_set(sticker_set), Auto());
   }
@@ -3093,7 +3095,7 @@ void StickersManager::on_get_archived_sticker_sets(
     LOG(ERROR) << "Receive " << total_count << " as total count of archived sticker sets";
   }
 
-  // if 0 sticker sets are received then set offset_sticker_set_id was found and there is no stickers after it
+  // if 0 sticker sets are received, then set offset_sticker_set_id was found and there is no stickers after it
   // or it wasn't found and there is no archived sets at all
   bool is_last =
       sticker_sets.empty() &&

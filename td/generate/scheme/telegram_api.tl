@@ -1011,6 +1011,10 @@ emojiURL#a575739d url:string = EmojiURL;
 
 emojiLanguage#b3fb5361 lang_code:string = EmojiLanguage;
 
+wallet.liteResponse#764386d7 response:bytes = wallet.LiteResponse;
+
+wallet.secretSalt#dd484d64 salt:bytes = wallet.KeySecretSalt;
+
 fileLocationToBeDeprecated#bc7fc6cd volume_id:long local_id:int = FileLocation;
 
 ---functions---
@@ -1319,6 +1323,9 @@ phone.receivedCall#17d54f61 peer:InputPhoneCall = Bool;
 phone.discardCall#b2cbc1c0 flags:# video:flags.0?true peer:InputPhoneCall duration:int reason:PhoneCallDiscardReason connection_id:long = Updates;
 phone.setCallRating#59ead627 flags:# user_initiative:flags.0?true peer:InputPhoneCall rating:int comment:string = Updates;
 phone.saveCallDebug#277add7e peer:InputPhoneCall debug:DataJSON = Bool;
+
+wallet.sendLiteRequest#e2c9d33e body:bytes = wallet.LiteResponse;
+wallet.getKeySecretSalt#b57f346 revoke:Bool = wallet.KeySecretSalt;
 
 langpack.getLangPack#f2f2330a lang_pack:string lang_code:string = LangPackDifference;
 langpack.getStrings#efea3803 lang_pack:string lang_code:string keys:Vector<string> = Vector<LangPackString>;

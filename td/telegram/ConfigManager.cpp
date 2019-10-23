@@ -229,9 +229,9 @@ ActorOwn<> get_simple_config_azure(Promise<SimpleConfigResult> promise, const Co
   return get_simple_config_impl(std::move(promise), scheduler_id, std::move(url), "tcdnb.azureedge.net", prefer_ipv6);
 }
 
-ActorOwn<> get_simple_config_google_dns(Promise<SimpleConfigResult> promise, const ConfigShared *shared_config,
-                                        bool is_test, int32 scheduler_id) {
-  VLOG(config_recoverer) << "Request simple config from Google DNS";
+static ActorOwn<> get_simple_config_dns(Slice address, Slice host, Promise<SimpleConfigResult> promise,
+                                        const ConfigShared *shared_config, bool is_test, int32 scheduler_id) {
+  VLOG(config_recoverer) << "Request simple config from DNS";
 #if TD_EMSCRIPTEN  // FIXME
   return ActorOwn<>();
 #else
@@ -281,10 +281,22 @@ ActorOwn<> get_simple_config_google_dns(Promise<SimpleConfigResult> promise, con
           return std::move(res);
         }());
       }),
-      PSTRING() << "https://www.google.com/resolve?name=" << url_encode(name) << "&type=16",
-      std::vector<std::pair<string, string>>({{"Host", "dns.google.com"}}), timeout, ttl, prefer_ipv6,
-      SslStream::VerifyPeer::Off));
+      PSTRING() << "https://" << address << "?name=" << url_encode(name) << "&type=16",
+      std::vector<std::pair<string, string>>({{"Host", host.str()}, {"Accept", "application/dns-json"}}), timeout, ttl,
+      prefer_ipv6, SslStream::VerifyPeer::Off));
 #endif
+}
+
+ActorOwn<> get_simple_config_google_dns(Promise<SimpleConfigResult> promise, const ConfigShared *shared_config,
+                                        bool is_test, int32 scheduler_id) {
+  return get_simple_config_dns("www.google.com/resolve", "dns.google.com", std::move(promise), shared_config, is_test,
+                               scheduler_id);
+}
+
+ActorOwn<> get_simple_config_mozilla_dns(Promise<SimpleConfigResult> promise, const ConfigShared *shared_config,
+                                         bool is_test, int32 scheduler_id) {
+  return get_simple_config_dns("mozilla.cloudflare-dns.com/dns-query", "mozilla.cloudflare-dns.com", std::move(promise),
+                               shared_config, is_test, scheduler_id);
 }
 
 ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorShared<> parent) {
@@ -708,12 +720,13 @@ class ConfigRecoverer : public Actor {
           });
       auto get_simple_config = [&]() {
         switch (simple_config_turn_ % 3) {
-          case 1:
+          case 2:
             return get_simple_config_azure;
           case 0:
-          case 2:
-          default:
             return get_simple_config_google_dns;
+          case 1:
+          default:
+            return get_simple_config_mozilla_dns;
         }
       }();
       simple_config_query_ =
@@ -987,7 +1000,9 @@ void ConfigManager::process_config(tl_object_ptr<telegram_api::config> config) {
     shared_config.set_option_string("photo_search_bot_username", config->img_search_username_);
   }
 
-  auto fix_timeout_ms = [](int32 timeout_ms) { return clamp(timeout_ms, 1000, 86400 * 1000); };
+  auto fix_timeout_ms = [](int32 timeout_ms) {
+    return clamp(timeout_ms, 1000, 86400 * 1000);
+  };
 
   shared_config.set_option_integer("online_update_period_ms", fix_timeout_ms(config->online_update_period_ms_));
 

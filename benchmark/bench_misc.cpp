@@ -78,7 +78,7 @@ BENCH(NewInt, "new int + delete") {
   do_not_optimize_away(res);
 }
 
-BENCH(NewObj, "new struct then delete") {
+BENCH(NewObj, "new struct, then delete") {
   struct A {
     int32 a = 0;
     int32 b = 0;
@@ -99,7 +99,7 @@ BENCH(NewObj, "new struct then delete") {
 }
 
 #if !TD_THREAD_UNSUPPORTED
-BENCH(ThreadNew, "new struct then delete in several threads") {
+BENCH(ThreadNew, "new struct, then delete in several threads") {
   td::NewObjBench a, b;
   thread ta([&] { a.run(n / 2); });
   thread tb([&] { b.run(n - n / 2); });
@@ -222,15 +222,13 @@ class CreateFileBench : public Benchmark {
     }
   }
   void tear_down() override {
-    td::walk_path("A/",
-                  [&](CSlice path, auto type) {
-                    if (type == td::WalkPath::Type::ExitDir) {
-                      rmdir(path).ignore();
-                    } else if (type == td::WalkPath::Type::NotDir) {
-                      unlink(path).ignore();
-                    }
-                  })
-        .ignore();
+    td::walk_path("A/", [&](CSlice path, auto type) {
+      if (type == td::WalkPath::Type::ExitDir) {
+        rmdir(path).ignore();
+      } else if (type == td::WalkPath::Type::NotDir) {
+        unlink(path).ignore();
+      }
+    }).ignore();
   }
 };
 
@@ -246,26 +244,22 @@ class WalkPathBench : public Benchmark {
   }
   void run(int n) override {
     int cnt = 0;
-    td::walk_path("A/",
-                  [&](CSlice path, auto type) {
-                    if (type == td::WalkPath::Type::EnterDir) {
-                      return;
-                    }
-                    stat(path).ok();
-                    cnt++;
-                  })
-        .ignore();
+    td::walk_path("A/", [&](CSlice path, auto type) {
+      if (type == td::WalkPath::Type::EnterDir) {
+        return;
+      }
+      stat(path).ok();
+      cnt++;
+    }).ignore();
   }
   void tear_down() override {
-    td::walk_path("A/",
-                  [&](CSlice path, auto type) {
-                    if (type == td::WalkPath::Type::ExitDir) {
-                      rmdir(path).ignore();
-                    } else if (type == td::WalkPath::Type::NotDir) {
-                      unlink(path).ignore();
-                    }
-                  })
-        .ignore();
+    td::walk_path("A/", [&](CSlice path, auto type) {
+      if (type == td::WalkPath::Type::ExitDir) {
+        rmdir(path).ignore();
+      } else if (type == td::WalkPath::Type::NotDir) {
+        unlink(path).ignore();
+      }
+    }).ignore();
   }
 };
 

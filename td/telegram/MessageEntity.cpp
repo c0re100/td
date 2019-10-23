@@ -976,7 +976,7 @@ Slice fix_url(Slice str) {
 }
 
 const std::unordered_set<Slice, SliceHash> &get_valid_short_usernames() {
-  static const std::unordered_set<Slice, SliceHash> valid_usernames{"ya",   "gif",  "wiki", "vid",  "bing", "pic",
+  static const std::unordered_set<Slice, SliceHash> valid_usernames{"gif",  "wiki", "vid",  "bing", "pic",
                                                                     "bold", "imdb", "coub", "like", "vote"};
   return valid_usernames;
 }
@@ -1181,7 +1181,7 @@ string get_first_url(Slice text, const vector<MessageEntity> &entities) {
         break;
       case MessageEntity::Type::Url: {
         Slice url = utf8_utf16_substr(text, entity.offset, entity.length);
-        if (begins_with(url, "tg:") || is_plain_domain(url)) {
+        if (begins_with(url, "ton:") || begins_with(url, "tg:") || is_plain_domain(url)) {
           continue;
         }
         return url.str();
@@ -1199,7 +1199,7 @@ string get_first_url(Slice text, const vector<MessageEntity> &entities) {
       case MessageEntity::Type::PreCode:
         break;
       case MessageEntity::Type::TextUrl:
-        if (begins_with(entity.argument, "tg:")) {
+        if (begins_with(entity.argument, "ton:") || begins_with(entity.argument, "tg:")) {
           continue;
         }
         return entity.argument;

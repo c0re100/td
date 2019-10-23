@@ -959,7 +959,7 @@ class MessagesManager : public Actor {
     MessageId first_database_message_id;  // identifier of the first message in the database, needed
                                           // until there is no gaps in the database
     MessageId last_database_message_id;   // identifier of the last local or server message, if last_database_message_id
-                                          // is known and last_message_id is known then last_database_message_id <=
+                                          // is known and last_message_id is known, then last_database_message_id <=
                                           // last_message_id
 
     std::array<MessageId, search_messages_filter_size()> first_database_message_id_by_index;
@@ -1475,7 +1475,7 @@ class MessagesManager : public Actor {
   unique_ptr<Message> do_delete_message(Dialog *d, MessageId message_id, bool is_permanently_deleted,
                                         bool only_from_memory, bool *need_update_dialog_pos, const char *source);
 
-  void on_message_deleted(Dialog *d, Message *m);
+  void on_message_deleted(Dialog *d, Message *m, const char *source);
 
   int32 get_unload_dialog_delay() const;
 
@@ -1702,10 +1702,9 @@ class MessagesManager : public Actor {
 
   void flush_pending_new_message_notifications(DialogId dialog_id, bool from_mentions, DialogId settings_dialog_id);
 
-  void remove_all_dialog_notifications(Dialog *d, NotificationGroupInfo &group_info, const char *source);
+  void remove_all_dialog_notifications(Dialog *d, bool from_mentions, const char *source);
 
-  void remove_message_dialog_notifications(Dialog *d, MessageId max_message_id, NotificationGroupInfo &group_info,
-                                           const char *source);
+  void remove_message_dialog_notifications(Dialog *d, MessageId max_message_id, bool from_mentions, const char *source);
 
   void send_update_message_send_succeeded(Dialog *d, MessageId old_message_id, const Message *m) const;
 
