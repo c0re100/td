@@ -146,11 +146,12 @@ remoteFile id:string is_uploading_active:Bool is_uploading_completed:Bool upload
 
 //@description Represents a file
 //@id Unique file identifier
+//@dc_id File data center 
 //@size File size; 0 if unknown
 //@expected_size Expected file size in case the exact file size is unknown, but an approximate size is known. Can be used to show download/upload progress
 //@local Information about the local copy of the file
 //@remote Information about the remote copy of the file
-file id:int32 size:int32 expected_size:int32 local:localFile remote:remoteFile = File;
+file id:int32 dc_id:int32 size:int32 expected_size:int32 local:localFile remote:remoteFile = File;
 
 
 //@class InputFile @description Points to a file
