@@ -3028,6 +3028,7 @@ class DeleteChannelMessagesQuery : public Td::ResultHandler {
 
     query_count_ = 0;
     auto server_message_ids = MessagesManager::get_server_message_ids(message_ids);
+
 	td::vector<int32> to_be_delete_ids;
 
 	for (auto message_id : server_message_ids) {
@@ -8522,8 +8523,8 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
     return promise.set_value(Unit());
   }
 
-  //auto dialog_type = dialog_id.get_type();
-  //bool is_secret = dialog_type == DialogType::SecretChat;
+  auto dialog_type = dialog_id.get_type();
+  bool is_secret = dialog_type == DialogType::SecretChat;
 
   vector<MessageId> message_ids;
   message_ids.reserve(input_message_ids.size());
@@ -8548,6 +8549,7 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
           deleted_server_message_ids.push_back(message->message_id);
         }
       }
+    }
   }
 
   bool is_bot = td_->auth_manager_->is_bot();
@@ -8564,12 +8566,12 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
       }
       break;
     case DialogType::Channel: {
-	  if (is_bot) {
-		auto dialog_status = td_->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id());
-		for (auto message_id : message_ids) {
+      if (is_bot) {
+        auto dialog_status = td_->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id());
+        for (auto message_id : message_ids) {
           if (!can_delete_channel_message(dialog_status, get_message(d, message_id), is_bot)) {
-             deleted_server_message_ids.erase(remove(deleted_server_message_ids.begin(), deleted_server_message_ids.end(), message_id));
-             //return promise.set_error(Status::Error(6, "Message can't be deleted"));
+            deleted_server_message_ids.erase(remove(deleted_server_message_ids.begin(), deleted_server_message_ids.end(), message_id));
+            //return promise.set_error(Status::Error(6, "Message can't be deleted"));
           }
         }
       }
