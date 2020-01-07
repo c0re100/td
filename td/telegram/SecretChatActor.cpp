@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,6 +8,7 @@
 
 #include "td/telegram/net/NetQueryCreator.h"
 #include "td/telegram/SecretChatId.h"
+#include "td/telegram/ServerMessageId.h"
 #include "td/telegram/UniqueId.h"
 
 #include "td/telegram/secret_api.hpp"
@@ -470,7 +471,7 @@ void SecretChatActor::notify_screenshot_taken(Promise<> promise) {
     promise.set_error(Status::Error(400, "Can't access the chat"));
     return;
   }
-  send_action(make_tl_object<secret_api::decryptedMessageActionScreenshotMessages>(), SendFlag::Push,
+  send_action(make_tl_object<secret_api::decryptedMessageActionScreenshotMessages>(vector<int64>()), SendFlag::Push,
               std::move(promise));
 }
 
@@ -565,10 +566,8 @@ Status SecretChatActor::run_auth() {
         return Status::OK();
       }
       // messages.requestEncryption#f64daf43 user_id:InputUser random_id:int g_a:bytes = EncryptedChat;
-      telegram_api::messages_requestEncryption tl_query;
-      tl_query.user_id_ = get_input_user();
-      tl_query.random_id_ = auth_state_.random_id;
-      tl_query.g_a_ = BufferSlice(auth_state_.handshake.get_g_b());
+      telegram_api::messages_requestEncryption tl_query(get_input_user(), auth_state_.random_id,
+                                                        BufferSlice(auth_state_.handshake.get_g_b()));
       auto query = context_->net_query_creator().create(
           UniqueId::next(UniqueId::Type::Default, static_cast<uint8>(QueryType::EncryptedChat)),
           create_storer(tl_query));
@@ -584,12 +583,9 @@ Status SecretChatActor::run_auth() {
       auto id_and_key = auth_state_.handshake.gen_key();
       pfs_state_.auth_key = mtproto::AuthKey(id_and_key.first, std::move(id_and_key.second));
       calc_key_hash();
-      // messages.acceptEncryption#3dbc0415 peer:InputEncryptedChat g_b:bytes key_fingerprint:long =
-      // EncryptedChat;
-      telegram_api::messages_acceptEncryption tl_query;
-      tl_query.peer_ = get_input_chat();
-      tl_query.g_b_ = BufferSlice(auth_state_.handshake.get_g_b());
-      tl_query.key_fingerprint_ = pfs_state_.auth_key.id();
+      // messages.acceptEncryption#3dbc0415 peer:InputEncryptedChat g_b:bytes key_fingerprint:long = EncryptedChat;
+      telegram_api::messages_acceptEncryption tl_query(get_input_chat(), BufferSlice(auth_state_.handshake.get_g_b()),
+                                                       pfs_state_.auth_key.id());
       auto query = context_->net_query_creator().create(
           UniqueId::next(UniqueId::Type::Default, static_cast<uint8>(QueryType::EncryptedChat)),
           create_storer(tl_query));
@@ -910,7 +906,7 @@ Status SecretChatActor::do_inbound_message_encrypted(unique_ptr<logevent::Inboun
         send_update_secret_chat();
       }
       if (layer >= MTPROTO_2_LAYER && mtproto_version < 2) {
-        return Status::Error(PSLICE() << "Mtproto 1.0 encryption is forbidden for this layer");
+        return Status::Error(PSLICE() << "MTProto 1.0 encryption is forbidden for this layer");
       }
       if (message_with_layer->in_seq_no_ < 0) {
         return Status::Error(PSLICE() << "Invalid seq_no: " << to_string(message_with_layer));

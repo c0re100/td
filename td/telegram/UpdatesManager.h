@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -189,9 +189,13 @@ class UpdatesManager : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateReadHistoryInbox> update, bool force_apply);
   void on_update(tl_object_ptr<telegram_api::updateReadHistoryOutbox> update, bool force_apply);
   void on_update(tl_object_ptr<telegram_api::updateNotifySettings> update, bool /*force_apply*/);
+  void on_update(tl_object_ptr<telegram_api::updatePeerSettings> update, bool /*force_apply*/);
+  void on_update(tl_object_ptr<telegram_api::updatePeerLocated> update, bool /*force_apply*/);
 
   void on_update(tl_object_ptr<telegram_api::updateWebPage> update, bool force_apply);
   void on_update(tl_object_ptr<telegram_api::updateChannelWebPage> update, bool force_apply);
+
+  void on_update(tl_object_ptr<telegram_api::updateFolderPeers> update, bool /*force_apply*/);
 
   void on_update(tl_object_ptr<telegram_api::updateUserTyping> update, bool /*force_apply*/);
   void on_update(tl_object_ptr<telegram_api::updateChatUserTyping> update, bool /*force_apply*/);
@@ -202,7 +206,6 @@ class UpdatesManager : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateUserPhone> update, bool /*force_apply*/);
   void on_update(tl_object_ptr<telegram_api::updateUserPhoto> update, bool /*force_apply*/);
   void on_update(tl_object_ptr<telegram_api::updateUserBlocked> update, bool /*force_apply*/);
-  void on_update(tl_object_ptr<telegram_api::updateContactLink> update, bool /*force_apply*/);
 
   void on_update(tl_object_ptr<telegram_api::updateChatParticipants> update, bool /*force_apply*/);
   void on_update(tl_object_ptr<telegram_api::updateChatParticipantAdd> update, bool /*force_apply*/);
@@ -275,9 +278,18 @@ class UpdatesManager : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateLangPackTooLong> update, bool /*force_apply*/);
   void on_update(tl_object_ptr<telegram_api::updateLangPack> update, bool /*force_apply*/);
 
+  void on_update(tl_object_ptr<telegram_api::updateGeoLiveViewed> update, bool /*force_apply*/);
+
   void on_update(tl_object_ptr<telegram_api::updateMessagePoll> update, bool /*force_apply*/);
 
+  void on_update(tl_object_ptr<telegram_api::updateNewScheduledMessage> update, bool /*force_apply*/);
+  void on_update(tl_object_ptr<telegram_api::updateDeleteScheduledMessages> update, bool /*force_apply*/);
+
+  void on_update(tl_object_ptr<telegram_api::updateLoginToken> update, bool /*force_apply*/);
+
   // unsupported updates
+
+  void on_update(tl_object_ptr<telegram_api::updateTheme> update, bool /*force_apply*/);
 };
 
 }  // namespace td

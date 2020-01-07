@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -29,6 +29,8 @@ class DeviceTokenManager : public NetQueryCallback {
   void register_device(tl_object_ptr<td_api::DeviceToken> device_token_ptr, vector<int32> other_user_ids,
                        Promise<td_api::object_ptr<td_api::pushReceiverId>> promise);
 
+  void reregister_device();
+
   vector<std::pair<int64, Slice>> get_encryption_keys() const;
 
  private:
@@ -49,7 +51,7 @@ class DeviceTokenManager : public NetQueryCallback {
     SIZE
   };
   struct TokenInfo {
-    enum class State : int32 { Sync, Unregister, Register };
+    enum class State : int32 { Sync, Unregister, Register, Reregister };
     State state = State::Sync;
     string token;
     uint64 net_query_id = 0;
@@ -66,6 +68,8 @@ class DeviceTokenManager : public NetQueryCallback {
     template <class ParserT>
     void parse(ParserT &parser);
   };
+
+  friend StringBuilder &operator<<(StringBuilder &string_builder, const TokenInfo::State &state);
 
   friend StringBuilder &operator<<(StringBuilder &string_builder, const TokenInfo &token_info);
 

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -86,8 +86,8 @@ td_api::object_ptr<td_api::minithumbnail> get_minithumbnail_object(const string 
             .move_as_ok();
     static const string footer = base64_decode("/9k=").move_as_ok();
     auto result = td_api::make_object<td_api::minithumbnail>();
-    result->width_ = static_cast<unsigned char>(packed[1]);
-    result->height_ = static_cast<unsigned char>(packed[2]);
+    result->height_ = static_cast<unsigned char>(packed[1]);
+    result->width_ = static_cast<unsigned char>(packed[2]);
     result->data_ = PSTRING() << header.substr(0, 164) << packed[1] << header[165] << packed[2] << header.substr(167)
                               << packed.substr(3) << footer;
     return result;
@@ -627,12 +627,13 @@ tl_object_ptr<telegram_api::InputMedia> photo_get_input_media(FileManager *file_
     if (file_view.is_encrypted()) {
       return nullptr;
     }
-    if (file_view.has_remote_location() && !file_view.remote_location().is_web() && input_file == nullptr) {
+    if (file_view.has_remote_location() && !file_view.main_remote_location().is_web() && input_file == nullptr) {
       int32 flags = 0;
       if (ttl != 0) {
         flags |= telegram_api::inputMediaPhoto::TTL_SECONDS_MASK;
       }
-      return make_tl_object<telegram_api::inputMediaPhoto>(flags, file_view.remote_location().as_input_photo(), ttl);
+      return make_tl_object<telegram_api::inputMediaPhoto>(flags, file_view.main_remote_location().as_input_photo(),
+                                                           ttl);
     }
     if (file_view.has_url()) {
       int32 flags = 0;
@@ -695,8 +696,8 @@ SecretInputMedia photo_get_secret_input_media(FileManager *file_manager, const P
     return {};
   }
   if (file_view.has_remote_location()) {
-    LOG(INFO) << "HAS REMOTE LOCATION";
-    input_file = file_view.remote_location().as_input_encrypted_file();
+    LOG(INFO) << "Photo has remote location";
+    input_file = file_view.main_remote_location().as_input_encrypted_file();
   }
   if (input_file == nullptr) {
     return {};

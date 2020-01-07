@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -154,7 +154,7 @@ class StopPollActor : public NetActorOnce {
     auto input_media = telegram_api::make_object<telegram_api::inputMediaPoll>(std::move(poll));
     auto query = G()->net_query_creator().create(create_storer(telegram_api::messages_editMessage(
         flags, false /*ignored*/, std::move(input_peer), message_id, string(), std::move(input_media),
-        std::move(input_reply_markup), vector<tl_object_ptr<telegram_api::MessageEntity>>())));
+        std::move(input_reply_markup), vector<tl_object_ptr<telegram_api::MessageEntity>>(), 0)));
     auto sequence_id = -1;
     send_closure(td->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
                  std::move(query), actor_shared(this), sequence_id);
@@ -361,7 +361,7 @@ vector<int32> PollManager::get_vote_percentage(const vector<int32> &voter_counts
     return result;
   }
 
-  // now we need to choose up to (100 - percent_sum) options with minimum total gap, such that
+  // now we need to choose up to (100 - percent_sum) options with a minimum total gap, such that
   // any two options with the same voter_count are chosen or not chosen simultaneously
   struct Option {
     int32 pos = -1;
@@ -429,8 +429,7 @@ td_api::object_ptr<td_api::poll> PollManager::get_poll_object(PollId poll_id, co
   } else {
     auto &chosen_options = it->second.options_;
     for (auto &poll_option : poll->options) {
-      auto is_being_chosen =
-          std::find(chosen_options.begin(), chosen_options.end(), poll_option.data) != chosen_options.end();
+      auto is_being_chosen = td::contains(chosen_options, poll_option.data);
       if (poll_option.is_chosen) {
         voter_count_diff = -1;
       }
@@ -503,6 +502,7 @@ PollId PollManager::create_poll(string &&question, vector<string> &&options) {
 
 void PollManager::register_poll(PollId poll_id, FullMessageId full_message_id) {
   CHECK(have_poll(poll_id));
+  CHECK(!full_message_id.get_message_id().is_scheduled());
   if (!full_message_id.get_message_id().is_server()) {
     return;
   }
@@ -516,6 +516,7 @@ void PollManager::register_poll(PollId poll_id, FullMessageId full_message_id) {
 
 void PollManager::unregister_poll(PollId poll_id, FullMessageId full_message_id) {
   CHECK(have_poll(poll_id));
+  CHECK(!full_message_id.get_message_id().is_scheduled());
   if (!full_message_id.get_message_id().is_server()) {
     return;
   }

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -13,7 +13,6 @@
 #include "td/utils/Slice.h"
 #include "td/utils/utf8.h"
 
-#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -48,8 +47,9 @@ string clean_name(string str, size_t max_length) {
 }
 
 string clean_username(string str) {
-  str.resize(std::remove(str.begin(), str.end(), '.') - str.begin());
-  return trim(to_lower(str));
+  td::remove(str, '.');
+  to_lower_inplace(str);
+  return trim(str);
 }
 
 bool clean_input_string(string &str) {

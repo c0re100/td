@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -18,7 +18,6 @@
 #include "td/utils/common.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
-#include "td/utils/misc.h"
 #include "td/utils/Slice.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/Variant.h"
@@ -93,12 +92,13 @@ struct PhotoRemoteFileLocation {
 
   struct AsKey {
     const PhotoRemoteFileLocation &key;
+    bool is_unique;
 
     template <class StorerT>
     void store(StorerT &storer) const;
   };
-  AsKey as_key() const {
-    return AsKey{*this};
+  AsKey as_key(bool is_unique) const {
+    return AsKey{*this, is_unique};
   }
 
   bool operator<(const PhotoRemoteFileLocation &other) const {
@@ -129,7 +129,7 @@ struct WebRemoteFileLocation {
     template <class StorerT>
     void store(StorerT &storer) const;
   };
-  AsKey as_key() const {
+  AsKey as_key(bool /*is_unique*/) const {
     return AsKey{*this};
   }
 
@@ -160,7 +160,7 @@ struct CommonRemoteFileLocation {
     template <class StorerT>
     void store(StorerT &storer) const;
   };
-  AsKey as_key() const {
+  AsKey as_key(bool /*is_unique*/) const {
     return AsKey{*this};
   }
 
@@ -183,7 +183,6 @@ class FullRemoteFileLocation {
  private:
   static constexpr int32 WEB_LOCATION_FLAG = 1 << 24;
   static constexpr int32 FILE_REFERENCE_FLAG = 1 << 25;
-  bool web_location_flag_{false};
   DcId dc_id_;
   string file_reference_;
   enum class LocationType : int32 { Web, Photo, Common, None };
@@ -250,16 +249,6 @@ class FullRemoteFileLocation {
     }
     return type;
   }
-  int32 full_type() const {
-    auto type = static_cast<int32>(file_type_);
-    if (is_web()) {
-      type |= WEB_LOCATION_FLAG;
-    }
-    if (!file_reference_.empty()) {
-      type |= FILE_REFERENCE_FLAG;
-    }
-    return type;
-  }
 
   void check_file_reference() {
     if (file_reference_ == FileReferenceView::invalid_file_reference()) {
@@ -282,6 +271,16 @@ class FullRemoteFileLocation {
   };
   AsKey as_key() const {
     return AsKey{*this};
+  }
+
+  struct AsUnique {
+    const FullRemoteFileLocation &key;
+
+    template <class StorerT>
+    void store(StorerT &storer) const;
+  };
+  AsUnique as_unique() const {
+    return AsUnique{*this};
   }
 
   DcId get_dc_id() const {
@@ -361,7 +360,7 @@ class FullRemoteFileLocation {
   }
 
   bool is_web() const {
-    return web_location_flag_;
+    return variant_.get_offset() == 0;
   }
   bool is_photo() const {
     return location_type() == LocationType::Photo;
@@ -396,19 +395,20 @@ class FullRemoteFileLocation {
       case LocationType::Photo:
         switch (photo().source_.get_type()) {
           case PhotoSizeSource::Type::Legacy:
-            return make_tl_object<telegram_api::inputFileLocation>(
-                photo().volume_id_, photo().local_id_, photo().source_.legacy().secret, BufferSlice(file_reference_));
+            return make_tl_object<telegram_api::inputPhotoLegacyFileLocation>(
+                photo().id_, photo().access_hash_, BufferSlice(file_reference_), photo().volume_id_, photo().local_id_,
+                photo().source_.legacy().secret);
           case PhotoSizeSource::Type::Thumbnail: {
             auto &thumbnail = photo().source_.thumbnail();
             switch (thumbnail.file_type) {
               case FileType::Photo:
                 return make_tl_object<telegram_api::inputPhotoFileLocation>(
                     photo().id_, photo().access_hash_, BufferSlice(file_reference_),
-                    std::string(1, static_cast<char>(narrow_cast<uint8>(thumbnail.thumbnail_type))));
+                    std::string(1, static_cast<char>(static_cast<uint8>(thumbnail.thumbnail_type))));
               case FileType::Thumbnail:
                 return make_tl_object<telegram_api::inputDocumentFileLocation>(
                     photo().id_, photo().access_hash_, BufferSlice(file_reference_),
-                    std::string(1, static_cast<char>(narrow_cast<uint8>(thumbnail.thumbnail_type))));
+                    std::string(1, static_cast<char>(static_cast<uint8>(thumbnail.thumbnail_type))));
               default:
                 UNREACHABLE();
                 break;
@@ -501,10 +501,7 @@ class FullRemoteFileLocation {
 
   // web document
   FullRemoteFileLocation(FileType file_type, string url, int64 access_hash)
-      : file_type_(file_type)
-      , web_location_flag_{true}
-      , dc_id_()
-      , variant_(WebRemoteFileLocation{std::move(url), access_hash}) {
+      : file_type_(file_type), dc_id_(), variant_(WebRemoteFileLocation{std::move(url), access_hash}) {
     CHECK(is_web());
     CHECK(!web().url_.empty());
   }

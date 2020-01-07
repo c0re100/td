@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -309,8 +309,8 @@ tl_object_ptr<telegram_api::InputMedia> AnimationsManager::get_input_media(
   if (file_view.is_encrypted()) {
     return nullptr;
   }
-  if (file_view.has_remote_location() && !file_view.remote_location().is_web() && input_file == nullptr) {
-    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.remote_location().as_input_document(), 0);
+  if (file_view.has_remote_location() && !file_view.main_remote_location().is_web() && input_file == nullptr) {
+    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.main_remote_location().as_input_document(), 0);
   }
   if (file_view.has_url()) {
     return make_tl_object<telegram_api::inputMediaDocumentExternal>(0, file_view.url(), 0);
@@ -362,7 +362,7 @@ SecretInputMedia AnimationsManager::get_secret_input_media(FileId animation_file
     return SecretInputMedia{};
   }
   if (file_view.has_remote_location()) {
-    input_file = file_view.remote_location().as_input_encrypted_file();
+    input_file = file_view.main_remote_location().as_input_encrypted_file();
   }
   if (!input_file) {
     return SecretInputMedia{};
@@ -629,7 +629,7 @@ void AnimationsManager::add_saved_animation(const tl_object_ptr<td_api::InputFil
     return promise.set_error(Status::Error(7, r_file_id.error().message()));  // TODO do not drop error code
   }
 
-  add_saved_animation_inner(r_file_id.ok(), std::move(promise));
+  add_saved_animation_impl(r_file_id.ok(), true, std::move(promise));
 }
 
 void AnimationsManager::send_save_gif_query(FileId animation_id, bool unsave, Promise<Unit> &&promise) {
@@ -646,38 +646,31 @@ void AnimationsManager::send_save_gif_query(FileId animation_id, bool unsave, Pr
       ->send(animation_id, file_view.remote_location().as_input_document(), unsave);
 }
 
-void AnimationsManager::add_saved_animation_inner(FileId animation_id, Promise<Unit> &&promise) {
-  if (add_saved_animation_impl(animation_id, promise)) {
-    send_save_gif_query(animation_id, false, std::move(promise));
-  }
-}
-
 void AnimationsManager::add_saved_animation_by_id(FileId animation_id) {
   // TODO log event
-  Promise<Unit> promise;
-  add_saved_animation_impl(animation_id, promise);
+  add_saved_animation_impl(animation_id, false, Auto());
 }
 
-bool AnimationsManager::add_saved_animation_impl(FileId animation_id, Promise<Unit> &promise) {
+void AnimationsManager::add_saved_animation_impl(FileId animation_id, bool add_on_server, Promise<Unit> &&promise) {
   CHECK(!td_->auth_manager_->is_bot());
 
   auto file_view = td_->file_manager_->get_file_view(animation_id);
   if (file_view.empty()) {
-    promise.set_error(Status::Error(7, "Animation file not found"));
-    return false;
+    return promise.set_error(Status::Error(7, "Animation file not found"));
   }
 
   LOG(INFO) << "Add saved animation " << animation_id << " with main file " << file_view.file_id();
   if (!are_saved_animations_loaded_) {
-    load_saved_animations(PromiseCreator::lambda([animation_id, promise = std::move(promise)](Result<> result) mutable {
-      if (result.is_ok()) {
-        send_closure(G()->animations_manager(), &AnimationsManager::add_saved_animation_inner, animation_id,
-                     std::move(promise));
-      } else {
-        promise.set_error(result.move_as_error());
-      }
-    }));
-    return false;
+    load_saved_animations(
+        PromiseCreator::lambda([animation_id, add_on_server, promise = std::move(promise)](Result<> result) mutable {
+          if (result.is_ok()) {
+            send_closure(G()->animations_manager(), &AnimationsManager::add_saved_animation_impl, animation_id,
+                         add_on_server, std::move(promise));
+          } else {
+            promise.set_error(result.move_as_error());
+          }
+        }));
+    return;
   }
 
   auto is_equal = [animation_id](FileId file_id) {
@@ -692,31 +685,25 @@ bool AnimationsManager::add_saved_animation_impl(FileId animation_id, Promise<Un
       save_saved_animations_to_database();
     }
 
-    promise.set_value(Unit());
-    return false;
+    return promise.set_value(Unit());
   }
 
   auto animation = get_animation(animation_id);
   if (animation == nullptr) {
-    promise.set_error(Status::Error(7, "Animation not found"));
-    return false;
+    return promise.set_error(Status::Error(7, "Animation not found"));
   }
   if (animation->mime_type != "video/mp4") {
-    promise.set_error(Status::Error(7, "Only MPEG4 animations can be saved"));
-    return false;
+    return promise.set_error(Status::Error(7, "Only MPEG4 animations can be saved"));
   }
 
   if (!file_view.has_remote_location()) {
-    promise.set_error(Status::Error(7, "Can save only sent animations"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can save only sent animations"));
   }
   if (file_view.remote_location().is_web()) {
-    promise.set_error(Status::Error(7, "Can't save web animations"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can't save web animations"));
   }
   if (!file_view.remote_location().is_document()) {
-    promise.set_error(Status::Error(7, "Can't save encrypted animations"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can't save encrypted animations"));
   }
 
   auto it = std::find_if(saved_animation_ids_.begin(), saved_animation_ids_.end(), is_equal);
@@ -735,7 +722,9 @@ bool AnimationsManager::add_saved_animation_impl(FileId animation_id, Promise<Un
   }
 
   send_update_saved_animations();
-  return true;
+  if (add_on_server) {
+    send_save_gif_query(animation_id, false, std::move(promise));
+  }
 }
 
 void AnimationsManager::remove_saved_animation(const tl_object_ptr<td_api::InputFile> &input_file,
@@ -754,8 +743,7 @@ void AnimationsManager::remove_saved_animation(const tl_object_ptr<td_api::Input
   }
 
   FileId file_id = r_file_id.ok();
-  auto it = std::find(saved_animation_ids_.begin(), saved_animation_ids_.end(), file_id);
-  if (it == saved_animation_ids_.end()) {
+  if (!td::remove(saved_animation_ids_, file_id)) {
     return promise.set_value(Unit());
   }
 
@@ -765,8 +753,6 @@ void AnimationsManager::remove_saved_animation(const tl_object_ptr<td_api::Input
   }
 
   send_save_gif_query(file_id, true, std::move(promise));
-
-  saved_animation_ids_.erase(it);
 
   send_update_saved_animations();
 }
@@ -822,7 +808,7 @@ string AnimationsManager::get_animation_search_text(FileId file_id) const {
 }
 
 void AnimationsManager::after_get_difference() {
-  if (td_->is_online()) {
+  if (td_->is_online() && !td_->auth_manager_->is_bot()) {
     get_saved_animations(Auto());
   }
 }

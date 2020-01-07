@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -34,6 +34,7 @@
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/Venue.h"
 #include "td/telegram/VideosManager.h"
 #include "td/telegram/VoiceNotesManager.h"
 
@@ -179,6 +180,9 @@ void InlineQueriesManager::on_drop_inline_query_result_timeout_callback(void *in
 }
 
 void InlineQueriesManager::after_get_difference() {
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
   if (recently_used_bots_loaded_ < 2) {
     Promise<Unit> promise;
     load_recently_used_bots(promise);
@@ -317,6 +321,18 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
                                                Promise<Unit> &&promise) const {
   if (!td_->auth_manager_->is_bot()) {
     return promise.set_error(Status::Error(400, "Method can be used by bots only"));
+  }
+
+  if (!switch_pm_text.empty()) {
+    if (switch_pm_parameter.empty()) {
+      return promise.set_error(Status::Error(400, "Can't use empty switch_pm_parameter"));
+    }
+    if (switch_pm_parameter.size() > 64) {
+      return promise.set_error(Status::Error(400, "Too long switch_pm_parameter specified"));
+    }
+    if (!is_base64url(switch_pm_parameter)) {
+      return promise.set_error(Status::Error(400, "Unallowed characters in switch_pm_parameter are used"));
+    }
   }
 
   vector<tl_object_ptr<telegram_api::InputBotInlineResult>> results;
@@ -650,19 +666,19 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
       if (file_view.is_encrypted()) {
         return promise.set_error(Status::Error(400, "Can't send encrypted file"));
       }
-      if (file_view.remote_location().is_web()) {
+      if (file_view.main_remote_location().is_web()) {
         return promise.set_error(Status::Error(400, "Can't send web file"));
       }
 
       if (file_type == FileType::Photo) {
         auto result = make_tl_object<telegram_api::inputBotInlineResultPhoto>(
-            id, type, file_view.remote_location().as_input_photo(), std::move(inline_message));
+            id, type, file_view.main_remote_location().as_input_photo(), std::move(inline_message));
         results.push_back(std::move(result));
         continue;
       }
 
       auto result = make_tl_object<telegram_api::inputBotInlineResultDocument>(
-          flags, id, type, title, description, file_view.remote_location().as_input_document(),
+          flags, id, type, title, description, file_view.main_remote_location().as_input_document(),
           std::move(inline_message));
       results.push_back(std::move(result));
       continue;
@@ -836,8 +852,8 @@ td_api::object_ptr<td_api::localFile> copy(const td_api::localFile &obj) {
 }
 template <>
 td_api::object_ptr<td_api::remoteFile> copy(const td_api::remoteFile &obj) {
-  return td_api::make_object<td_api::remoteFile>(obj.id_, obj.is_uploading_active_, obj.is_uploading_completed_,
-                                                 obj.uploaded_size_);
+  return td_api::make_object<td_api::remoteFile>(obj.id_, obj.unique_id_, obj.is_uploading_active_,
+                                                 obj.is_uploading_completed_, obj.uploaded_size_);
 }
 
 template <>
@@ -1712,12 +1728,10 @@ bool InlineQueriesManager::update_bot_usage(UserId bot_user_id) {
 }
 
 void InlineQueriesManager::remove_recent_inline_bot(UserId bot_user_id, Promise<Unit> &&promise) {
-  auto it = std::find(recently_used_bot_user_ids_.begin(), recently_used_bot_user_ids_.end(), bot_user_id);
-  if (it != recently_used_bot_user_ids_.end()) {
-    recently_used_bot_user_ids_.erase(it);
+  if (td::remove(recently_used_bot_user_ids_, bot_user_id)) {
     save_recently_used_bots();
   }
-  return promise.set_value(Unit());
+  promise.set_value(Unit());
 }
 
 }  // namespace td

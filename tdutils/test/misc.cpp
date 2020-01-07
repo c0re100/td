@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -211,7 +211,7 @@ TEST(Misc, base64) {
 
 template <class T>
 static void test_remove_if(vector<int> v, const T &func, vector<int> expected) {
-  remove_if(v, func);
+  td::remove_if(v, func);
   if (expected != v) {
     LOG(FATAL) << "Receive " << v << ", expected " << expected << " in remove_if";
   }
@@ -266,6 +266,50 @@ TEST(Misc, remove_if) {
   test_remove_if(v, even, {});
   test_remove_if(v, all, {});
   test_remove_if(v, none, v);
+}
+
+static void test_remove(vector<int> v, int value, vector<int> expected) {
+  bool is_found = expected != v;
+  ASSERT_EQ(is_found, td::remove(v, value));
+  if (expected != v) {
+    LOG(FATAL) << "Receive " << v << ", expected " << expected << " in remove";
+  }
+}
+
+TEST(Misc, remove) {
+  vector<int> v{1, 2, 3, 4, 5, 6};
+  test_remove(v, 0, {1, 2, 3, 4, 5, 6});
+  test_remove(v, 1, {2, 3, 4, 5, 6});
+  test_remove(v, 2, {1, 3, 4, 5, 6});
+  test_remove(v, 3, {1, 2, 4, 5, 6});
+  test_remove(v, 4, {1, 2, 3, 5, 6});
+  test_remove(v, 5, {1, 2, 3, 4, 6});
+  test_remove(v, 6, {1, 2, 3, 4, 5});
+  test_remove(v, 7, {1, 2, 3, 4, 5, 6});
+
+  v.clear();
+  test_remove(v, -1, v);
+  test_remove(v, 0, v);
+  test_remove(v, 1, v);
+}
+
+TEST(Misc, contains) {
+  td::vector<int> v{1, 3, 5, 7, 4, 2};
+  for (int i = -10; i < 20; i++) {
+    ASSERT_EQ(td::contains(v, i), (1 <= i && i <= 5) || i == 7);
+  }
+
+  v.clear();
+  ASSERT_TRUE(!td::contains(v, 0));
+  ASSERT_TRUE(!td::contains(v, 1));
+
+  td::string str = "abacaba";
+  ASSERT_TRUE(!td::contains(str, '0'));
+  ASSERT_TRUE(!td::contains(str, 0));
+  ASSERT_TRUE(!td::contains(str, 'd'));
+  ASSERT_TRUE(td::contains(str, 'a'));
+  ASSERT_TRUE(td::contains(str, 'b'));
+  ASSERT_TRUE(td::contains(str, 'c'));
 }
 
 TEST(Misc, to_integer) {

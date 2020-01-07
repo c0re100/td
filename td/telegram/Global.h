@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -12,7 +12,6 @@
 #include "td/telegram/TdParameters.h"
 
 #include "td/actor/actor.h"
-#include "td/actor/Condition.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/SchedulerLocalStorage.h"
 
@@ -124,9 +123,6 @@ class Global : public ActorContext {
     return *shared_config_;
   }
 
-  double from_server_time(double date) const {
-    return date - get_server_time_difference();
-  }
   double to_server_time(double now) const {
     return now + get_server_time_difference();
   }
@@ -137,13 +133,15 @@ class Global : public ActorContext {
     return to_server_time(Time::now_cached());
   }
   int32 unix_time() const {
-    return static_cast<int32>(server_time());
+    return to_unix_time(server_time());
   }
   int32 unix_time_cached() const {
-    return static_cast<int32>(server_time_cached());
+    return to_unix_time(server_time_cached());
   }
 
   void update_server_time_difference(double diff);
+
+  void save_server_time();
 
   double get_server_time_difference() const {
     return server_time_difference_.load(std::memory_order_relaxed);
@@ -316,10 +314,6 @@ class Global : public ActorContext {
 
   DcId get_webfile_dc_id() const;
 
-#if !TD_HAVE_ATOMIC_SHARED_PTR
-  std::mutex dh_config_mutex_;
-#endif
-
   std::shared_ptr<DhConfig> get_dh_config() {
 #if !TD_HAVE_ATOMIC_SHARED_PTR
     std::lock_guard<std::mutex> guard(dh_config_mutex_);
@@ -329,6 +323,7 @@ class Global : public ActorContext {
     return atomic_load(&dh_config_);
 #endif
   }
+
   void set_dh_config(std::shared_ptr<DhConfig> new_dh_config) {
 #if !TD_HAVE_ATOMIC_SHARED_PTR
     std::lock_guard<std::mutex> guard(dh_config_mutex_);
@@ -336,14 +331,6 @@ class Global : public ActorContext {
 #else
     atomic_store(&dh_config_, std::move(new_dh_config));
 #endif
-  }
-
-  void wait_binlog_replay_finish(Promise<> promise) {
-    binlog_replay_finish_.wait(std::move(promise));
-  }
-
-  void on_binlog_replay_finish() {
-    binlog_replay_finish_.set_true();
   }
 
   void set_close_flag() {
@@ -372,7 +359,6 @@ class Global : public ActorContext {
   std::shared_ptr<DhConfig> dh_config_;
 
   unique_ptr<TdDb> td_db_;
-  Condition binlog_replay_finish_;
 
   ActorId<Td> td_;
   ActorId<AnimationsManager> animations_manager_;
@@ -402,11 +388,17 @@ class Global : public ActorContext {
   int32 slow_net_scheduler_id_;
 
   std::atomic<bool> store_all_files_in_files_directory_{false};
+
   std::atomic<double> server_time_difference_{0.0};
   std::atomic<bool> server_time_difference_was_updated_{false};
   std::atomic<double> dns_time_difference_{0.0};
   std::atomic<bool> dns_time_difference_was_updated_{false};
   std::atomic<bool> close_flag_{false};
+  std::atomic<double> system_time_saved_at_{-1e10};
+
+#if !TD_HAVE_ATOMIC_SHARED_PTR
+  std::mutex dh_config_mutex_;
+#endif
 
   std::vector<std::shared_ptr<NetStatsCallback>> net_stats_file_callbacks_;
 
@@ -422,6 +414,10 @@ class Global : public ActorContext {
   static int64 get_location_key(double latitude, double longitude);
 
   std::unordered_map<int64, int64> location_access_hashes_;
+
+  static int32 to_unix_time(double server_time);
+
+  void do_save_server_time_difference();
 
   void do_close(Promise<> on_finish, bool destroy_flag);
 };

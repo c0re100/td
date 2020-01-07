@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -11,7 +11,6 @@
 #include "td/utils/Slice.h"
 #include "td/utils/StringBuilder.h"
 
-#include <tuple>
 #include <utility>
 
 REGISTER_TESTS(json)
@@ -48,8 +47,8 @@ TEST(JSON, object) {
   StringBuilder sb(MutableSlice{tmp, sizeof(tmp)});
   JsonBuilder jb(std::move(sb));
   auto c = jb.enter_object();
-  c << std::tie("key", "value");
-  c << std::make_pair("1", 2);
+  c("key", "value");
+  c("1", 2);
   c.leave();
   ASSERT_EQ(jb.string_builder().is_error(), false);
   auto encoded = jb.string_builder().as_cslice().str();

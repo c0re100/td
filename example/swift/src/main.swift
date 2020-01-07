@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -127,9 +127,9 @@ func updateAuthorizationState(authorizationState: Dictionary<String, Any>) {
             client.queryAsync(query: ["@type":"checkDatabaseEncryptionKey", "key":"cucumber"])
 
         case "authorizationStateWaitPhoneNumber":
-            print("Enter your phone: ")
-            let phone = myReadLine()
-            client.queryAsync(query:["@type":"setAuthenticationPhoneNumber", "phone_number":phone], f:checkAuthenticationError)
+            print("Enter your phone number: ")
+            let phone_number = myReadLine()
+            client.queryAsync(query:["@type":"setAuthenticationPhoneNumber", "phone_number":phone_number], f:checkAuthenticationError)
 
         case "authorizationStateWaitCode":
             var code: String = ""
@@ -154,8 +154,17 @@ func updateAuthorizationState(authorizationState: Dictionary<String, Any>) {
         case "authorizationStateReady":
             ()
 
+        case "authorizationStateLoggingOut":
+            print("Logging out...")
+
+        case "authorizationStateClosing":
+            print("Closing...")
+
+        case "authorizationStateLoggingOut":
+            print("Closed.")
+
         default:
-            assert(false, "TODO: Unknown authorization state");
+            assert(false, "TODO: Unexpected authorization state");
     }
 }
 

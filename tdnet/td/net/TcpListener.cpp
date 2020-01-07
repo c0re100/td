@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -30,7 +30,6 @@ void TcpListener::start_up() {
 }
 
 void TcpListener::tear_down() {
-  LOG(ERROR) << "TcpListener closed";
   if (!server_fd_.empty()) {
     Scheduler::unsubscribe_before_close(server_fd_.get_poll_info().get_pollable_fd_ref());
     server_fd_.close();
@@ -53,7 +52,6 @@ void TcpListener::loop() {
   }
 
   if (can_close(server_fd_)) {
-    LOG(ERROR) << "HELLO!";
     stop();
   }
 }

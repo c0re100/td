@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -11,8 +11,8 @@
 
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/Global.h"
-#include "td/telegram/MessageId.h"
 #include "td/telegram/misc.h"
+#include "td/telegram/net/DcId.h"
 #include "td/telegram/PasswordManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/UpdatesManager.h"
@@ -367,8 +367,8 @@ class SendPaymentFormQuery : public Td::ResultHandler {
         promise_.set_value(make_tl_object<td_api::paymentResult>(true, string()));
         return;
       }
-      case telegram_api::payments_paymentVerficationNeeded::ID: {
-        auto result = move_tl_object_as<telegram_api::payments_paymentVerficationNeeded>(payment_result);
+      case telegram_api::payments_paymentVerificationNeeded::ID: {
+        auto result = move_tl_object_as<telegram_api::payments_paymentVerificationNeeded>(payment_result);
         promise_.set_value(make_tl_object<td_api::paymentResult>(false, std::move(result->url_)));
         return;
       }
@@ -496,8 +496,8 @@ class SendLiteRequestQuery : public Td::ResultHandler {
   }
 
   void send(BufferSlice request) {
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::wallet_sendLiteRequest(std::move(request)))));
+    send_query(G()->net_query_creator().create(create_storer(telegram_api::wallet_sendLiteRequest(std::move(request))),
+                                               DcId::main(), NetQuery::Type::Common, NetQuery::AuthFlag::Off));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {

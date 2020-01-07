@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -182,7 +182,7 @@ void CallbackQueriesManager::on_new_query(int32 flags, int64 callback_query_id, 
     return;
   }
 
-  td_->messages_manager_->force_create_dialog(dialog_id, "on_new_callback_query");
+  td_->messages_manager_->force_create_dialog(dialog_id, "on_new_callback_query", true);
   send_closure(
       G()->td(), &Td::send_update,
       make_tl_object<td_api::updateNewCallbackQuery>(
@@ -237,8 +237,12 @@ int64 CallbackQueriesManager::send_callback_query(FullMessageId full_message_id,
     return 0;
   }
 
-  if (!td_->messages_manager_->have_message(full_message_id, "send_callback_query")) {
+  if (!td_->messages_manager_->have_message_force(full_message_id, "send_callback_query")) {
     promise.set_error(Status::Error(5, "Message not found"));
+    return 0;
+  }
+  if (full_message_id.get_message_id().is_valid_scheduled()) {
+    promise.set_error(Status::Error(5, "Can't send callback queries from scheduled messages"));
     return 0;
   }
   if (!full_message_id.get_message_id().is_server()) {

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -148,7 +148,7 @@ class JsonableJsonValue : public Jsonable {
         *scope << JsonNull();
         break;
       case td_api::jsonValueBoolean::ID:
-        *scope << static_cast<const td_api::jsonValueBoolean *>(json_value_)->value_;
+        *scope << JsonBool(static_cast<const td_api::jsonValueBoolean *>(json_value_)->value_);
         break;
       case td_api::jsonValueNumber::ID:
         *scope << static_cast<const td_api::jsonValueNumber *>(json_value_)->value_;
@@ -177,7 +177,7 @@ class JsonableJsonValue : public Jsonable {
             if (!check_utf8(member->key_)) {
               LOG(ERROR) << "Have incorrect UTF-8 object key " << member->key_;
             } else {
-              object << ctie(member->key_, JsonableJsonValue(member->value_.get()));
+              object(member->key_, JsonableJsonValue(member->value_.get()));
             }
           }
         }

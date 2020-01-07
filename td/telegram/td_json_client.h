@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -72,7 +72,7 @@ TDJSON_EXPORT void td_json_client_send(void *client, const char *request);
  * Returned pointer will be deallocated by TDLib during next call to td_json_client_receive or td_json_client_execute
  * in the same thread, so it can't be used after that.
  * \param[in] client The client.
- * \param[in] timeout Maximum number of seconds allowed for this function to wait for new data.
+ * \param[in] timeout The maximum number of seconds allowed for this function to wait for new data.
  * \return JSON-serialized null-terminated incoming update or request response. May be NULL if the timeout expires.
  */
 TDJSON_EXPORT const char *td_json_client_receive(void *client, double timeout);

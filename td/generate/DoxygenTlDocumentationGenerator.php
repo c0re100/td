@@ -38,6 +38,11 @@ class DoxygenTlDocumentationGenerator extends TlDocumentationGenerator
     protected function escapeDocumentation($doc)
     {
         $doc = htmlspecialchars($doc);
+        $doc = preg_replace_callback('/&quot;((http|https|tg):\/\/[^" ]*)&quot;/',
+            function ($quoted_link)
+            {
+                return "&quot;<a href=\"".$quoted_link[1]."\">".$quoted_link[1]."</a>&quot;";
+            }, $doc);
         $doc = str_replace('*/', '*&#47;', $doc);
         $doc = str_replace('#', '\#', $doc);
         return $doc;
@@ -181,8 +186,8 @@ EOT
  * \\code
  * auto get_authorization_state_request = td::td_api::make_object<td::td_api::getAuthorizationState>();
  * auto message_text = td::td_api::make_object<td::td_api::formattedText>("Hello, world!!!",
- *                     std::vector<td::td_api::object_ptr<td::td_api::textEntities>>());
- * auto send_message_request = td::td_api::make_object<td::td_api::sendMessage>(chat_id, 0, false, false, nullptr,
+ *                     std::vector<td::td_api::object_ptr<td::td_api::textEntity>>());
+ * auto send_message_request = td::td_api::make_object<td::td_api::sendMessage>(chat_id, 0, nullptr, nullptr,
  *      td::td_api::make_object<td::td_api::inputMessageText>(std::move(message_text), false, true));
  * \\endcode
  *

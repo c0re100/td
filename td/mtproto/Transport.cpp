@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -337,7 +337,7 @@ size_t Transport::write_no_crypto(const Storer &storer, PacketInfo *info, Mutabl
     return size;
   }
   // NoCryptoHeader
-  as<uint64>(dest.begin()) = uint64(0);
+  as<uint64>(dest.begin()) = 0;
   auto real_size = storer.store(dest.ubegin() + sizeof(uint64));
   CHECK(real_size == storer.size());
   return size;

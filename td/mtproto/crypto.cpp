@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -77,12 +77,10 @@ Result<RSA> RSA::from_pem(Slice pem) {
 }
 
 int64 RSA::get_fingerprint() const {
-  mtproto_api::rsa_public_key public_key;
   // string objects are necessary, because mtproto_api::rsa_public_key contains Slice inside
   string n_str = n_.to_binary();
   string e_str = e_.to_binary();
-  public_key.n_ = n_str;
-  public_key.e_ = e_str;
+  mtproto_api::rsa_public_key public_key(n_str, e_str);
   size_t size = tl_calc_length(public_key);
   std::vector<unsigned char> tmp(size);
   size = tl_store_unsafe(public_key, tmp.data());

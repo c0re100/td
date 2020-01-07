@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -68,7 +68,7 @@ vector<string> Hints::get_words(Slice name, bool is_search) {
 
 void Hints::add_word(const string &word, KeyT key, std::map<string, vector<KeyT>> &word_to_keys) {
   vector<KeyT> &keys = word_to_keys[word];
-  CHECK(std::find(keys.begin(), keys.end(), key) == keys.end());
+  CHECK(!td::contains(keys, key));
   keys.push_back(key);
 }
 

@@ -157,6 +157,7 @@ function split_file($file, $chunks, $undo) {
                            '(CREATE_REQUEST|CREATE_NO_ARGS_REQUEST)[(](?<name>[A-Z][A-Za-z]*)|'.
                            '(?<name>complete_pending_preauthentication_requests)|'.
                            '(Up|Down)load[a-zA-Z]*C(?<name>allback)|(up|down)load_[a-z_]*_c(?<name>allback)_|'.
+                           '(?<name>lazy_to_json)|'.
                            '(?<name>LogEvent)[^sA]|'.
                            '(?<name>parse)[(]|'.
                            '(?<name>store)[(]/', $f, $matches, PREG_SET_ORDER)) {
@@ -274,6 +275,7 @@ function split_file($file, $chunks, $undo) {
                 'get_erase_logevent_promise|parse_time|store_time' => 'logevent/LogEventHelper',
                 'messages_manager[_(-][^.]|MessagesManager' => 'MessagesManager',
                 'notification_manager[_(-][^.]|NotificationManager|notifications[)]' => 'NotificationManager',
+                'PublicDialogType|get_public_dialog_type' => 'PublicDialogType',
                 'SecretChatActor' => 'SecretChatActor',
                 'secret_chats_manager[_(-][^.]|SecretChatsManager' => 'SecretChatsManager',
                 'stickers_manager[_(-][^.]|StickersManager' => 'StickersManager',
@@ -314,7 +316,10 @@ function split_file($file, $chunks, $undo) {
 }
 
 if (in_array('--help', $argv) || in_array('-h', $argv)) {
-    echo "Usage: php SplitSource.php [OPTION]...\nSplits some source files to reduce maximum RAM needed for compiling a single file.\n  -u, --undo Undo all source code changes.\n  -h, --help Show this help.\n";
+    echo "Usage: php SplitSource.php [OPTION]...\n".
+         "Splits some source files to reduce a maximum amount of RAM needed for compiling a single file.\n".
+         "  -u, --undo Undo all source code changes.\n".
+         "  -h, --help Show this help.\n";
     exit(2);
 }
 

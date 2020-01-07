@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -115,6 +115,19 @@ NotificationSettingsScope get_notification_settings_scope(
   }
 }
 
+static int32 get_mute_until(int32 mute_for) {
+  if (mute_for <= 0) {
+    return 0;
+  }
+
+  const int32 MAX_PRECISE_MUTE_FOR = 7 * 86400;
+  int32 current_time = G()->unix_time();
+  if (mute_for > MAX_PRECISE_MUTE_FOR || mute_for >= std::numeric_limits<int32>::max() - current_time) {
+    return std::numeric_limits<int32>::max();
+  }
+  return mute_for + current_time;
+}
+
 Result<DialogNotificationSettings> get_dialog_notification_settings(
     td_api::object_ptr<td_api::chatNotificationSettings> &&notification_settings, bool old_silent_send_message) {
   if (notification_settings == nullptr) {
@@ -127,18 +140,8 @@ Result<DialogNotificationSettings> get_dialog_notification_settings(
     notification_settings->sound_ = "default";
   }
 
-  int32 current_time = G()->unix_time();
-  if (notification_settings->mute_for_ > std::numeric_limits<int32>::max() - current_time) {
-    notification_settings->mute_for_ = std::numeric_limits<int32>::max() - current_time;
-  }
-
-  int32 mute_until;
-  if (notification_settings->use_default_mute_for_ || notification_settings->mute_for_ <= 0) {
-    mute_until = 0;
-  } else {
-    mute_until = notification_settings->mute_for_ + current_time;
-  }
-
+  int32 mute_until =
+      notification_settings->use_default_mute_for_ ? 0 : get_mute_until(notification_settings->mute_for_);
   return DialogNotificationSettings(notification_settings->use_default_mute_for_, mute_until,
                                     notification_settings->use_default_sound_, std::move(notification_settings->sound_),
                                     notification_settings->use_default_show_preview_,
@@ -161,18 +164,7 @@ Result<ScopeNotificationSettings> get_scope_notification_settings(
     notification_settings->sound_ = "default";
   }
 
-  int32 current_time = G()->unix_time();
-  if (notification_settings->mute_for_ > std::numeric_limits<int32>::max() - current_time) {
-    notification_settings->mute_for_ = std::numeric_limits<int32>::max() - current_time;
-  }
-
-  int32 mute_until;
-  if (notification_settings->mute_for_ <= 0) {
-    mute_until = 0;
-  } else {
-    mute_until = notification_settings->mute_for_ + current_time;
-  }
-
+  auto mute_until = get_mute_until(notification_settings->mute_for_);
   return ScopeNotificationSettings(mute_until, std::move(notification_settings->sound_),
                                    notification_settings->show_preview_,
                                    notification_settings->disable_pinned_message_notifications_,

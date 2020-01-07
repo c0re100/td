@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -33,6 +33,7 @@
 #include "td/utils/optional.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
+#include "td/utils/StringBuilder.h"
 
 #include <map>
 #include <memory>
@@ -147,6 +148,8 @@ class FileNode {
 
   FileId main_file_id_;
 
+  double last_successful_force_reupload_time_ = -1e10;
+
   FileId upload_pause_;
   int8 upload_priority_ = 0;
   int8 download_priority_ = 0;
@@ -238,6 +241,7 @@ class FileView {
   bool has_active_upload_remote_location() const;
   bool has_active_download_remote_location() const;
   const FullRemoteFileLocation &remote_location() const;
+  const FullRemoteFileLocation &main_remote_location() const;
   bool has_generate_location() const;
   const FullGenerateFileLocation &generate_location() const;
 
@@ -266,6 +270,8 @@ class FileView {
   bool is_uploading() const;
   int64 remote_size() const;
   string path() const;
+
+  int64 get_allocated_local_size() const;
 
   bool can_download_from_server() const;
   bool can_generate() const;
@@ -482,22 +488,27 @@ class FileManager : public FileLoadManager::Callback {
                                bool force);
 
   static constexpr int8 FROM_BYTES_PRIORITY = 10;
+
   using FileNodeId = int32;
+
   using QueryId = FileLoadManager::QueryId;
   class Query {
    public:
     FileId file_id_;
-    enum Type : int32 {
+    enum class Type : int32 {
       UploadByHash,
       UploadWaitFileReference,
       Upload,
-      DownloadWaitFileReferece,
+      DownloadWaitFileReference,
       DownloadReloadDialog,
       Download,
       SetContent,
       Generate
     } type_;
   };
+
+  friend StringBuilder &operator<<(StringBuilder &string_builder, Query::Type type);
+
   struct FileIdInfo {
     FileNodeId node_id_{0};
     bool send_updates_flag_{false};
@@ -512,6 +523,8 @@ class FileManager : public FileLoadManager::Callback {
     std::shared_ptr<DownloadCallback> download_callback_;
     std::shared_ptr<UploadCallback> upload_callback_;
   };
+
+  class ForceUploadActor;
 
   ActorShared<> parent_;
   unique_ptr<Context> context_;
@@ -574,6 +587,9 @@ class FileManager : public FileLoadManager::Callback {
   void flush_to_pmc(FileNodePtr node, bool new_remote, bool new_local, bool new_generate, const char *source);
   void load_from_pmc(FileNodePtr node, bool new_remote, bool new_local, bool new_generate);
 
+  string get_unique_id(const FullGenerateFileLocation &location);
+  string get_unique_id(const FullRemoteFileLocation &location);
+
   string get_persistent_id(const FullGenerateFileLocation &location);
   string get_persistent_id(const FullRemoteFileLocation &location);
 
@@ -594,6 +610,8 @@ class FileManager : public FileLoadManager::Callback {
   FileNode *get_file_node_raw(FileId file_id, FileNodeId *file_node_id = nullptr);
 
   FileNodePtr get_sync_file_node(FileId file_id);
+
+  void on_force_reupload_success(FileId file_id);
 
   // void release_file_node(FileNodeId id);
   void do_cancel_download(FileNodePtr node);

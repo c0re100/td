@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,6 +7,7 @@
 #include "td/telegram/SetWithPosition.h"
 
 #include "td/utils/common.h"
+#include "td/utils/misc.h"
 #include "td/utils/Random.h"
 #include "td/utils/tests.h"
 
@@ -21,8 +22,7 @@ template <class T>
 class OldSetWithPosition {
  public:
   void add(T value) {
-    auto it = std::find(values_.begin(), values_.end(), value);
-    if (it != values_.end()) {
+    if (td::contains(values_, value)) {
       return;
     }
     values_.push_back(value);
@@ -233,7 +233,7 @@ static void test_speed() {
   std::vector<unique_ptr<Set>> sets(total_size);
   for (size_t i = 0; i < sets.size(); i++) {
     sets[i] = make_unique<Set>();
-    sets[i]->add(int(i));
+    sets[i]->add(narrow_cast<int>(i));
   }
   for (size_t d = 1; d < sets.size(); d *= 2) {
     for (size_t i = 0; i < sets.size(); i += 2 * d) {

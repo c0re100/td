@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -22,6 +22,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_set>
+#include <utility>
 
 #if TD_PORT_POSIX
 #include <fcntl.h>
@@ -206,6 +207,12 @@ Result<FileFd> FileFd::open(CSlice filepath, int32 flags, int32 mode) {
   if (handle == INVALID_HANDLE_VALUE) {
     return OS_ERROR(PSLICE() << "File \"" << filepath << "\" can't be " << PrintFlags{flags});
   }
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP | WINAPI_PARTITION_SYSTEM)
+  if (flags & Write) {
+    DWORD bytes_returned = 0;
+    DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &bytes_returned, nullptr);
+  }
+#endif
   auto native_fd = NativeFd(handle);
   if (flags & Append) {
     LARGE_INTEGER offset;
@@ -469,17 +476,57 @@ NativeFd FileFd::move_as_native_fd() {
   return res;
 }
 
-Result<int64> FileFd::get_size() const {
-  TRY_RESULT(s, stat());
-  return s.size_;
-}
-
 #if TD_PORT_WINDOWS
-static uint64 filetime_to_unix_time_nsec(LONGLONG filetime) {
+namespace {
+
+uint64 filetime_to_unix_time_nsec(LONGLONG filetime) {
   const auto FILETIME_UNIX_TIME_DIFF = 116444736000000000ll;
   return static_cast<uint64>((filetime - FILETIME_UNIX_TIME_DIFF) * 100);
 }
+
+struct FileSize {
+  int64 size_;
+  int64 real_size_;
+};
+
+Result<FileSize> get_file_size(const FileFd &file_fd) {
+  FILE_STANDARD_INFO standard_info;
+  if (!GetFileInformationByHandleEx(file_fd.get_native_fd().fd(), FileStandardInfo, &standard_info,
+                                    sizeof(standard_info))) {
+    return OS_ERROR("Get FileStandardInfo failed");
+  }
+  FileSize res;
+  res.size_ = standard_info.EndOfFile.QuadPart;
+  res.real_size_ = standard_info.AllocationSize.QuadPart;
+
+  if (res.size_ > 0 && res.real_size_ <= 0) {  // just in case
+    LOG(ERROR) << "Fix real file size from " << res.real_size_ << " to " << res.size_;
+    res.real_size_ = res.size_;
+  }
+
+  return res;
+}
+
+}  // namespace
 #endif
+
+Result<int64> FileFd::get_size() const {
+#if TD_PORT_POSIX
+  TRY_RESULT(s, stat());
+#elif TD_PORT_WINDOWS
+  TRY_RESULT(s, get_file_size(*this));
+#endif
+  return s.size_;
+}
+
+Result<int64> FileFd::get_real_size() const {
+#if TD_PORT_POSIX
+  TRY_RESULT(s, stat());
+#elif TD_PORT_WINDOWS
+  TRY_RESULT(s, get_file_size(*this));
+#endif
+  return s.real_size_;
+}
 
 Result<Stat> FileFd::stat() const {
   CHECK(!empty());
@@ -498,12 +545,9 @@ Result<Stat> FileFd::stat() const {
   res.is_dir_ = (basic_info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
   res.is_reg_ = !res.is_dir_;  // TODO this is still wrong
 
-  FILE_STANDARD_INFO standard_info;
-  status = GetFileInformationByHandleEx(get_native_fd().fd(), FileStandardInfo, &standard_info, sizeof(standard_info));
-  if (!status) {
-    return OS_ERROR("Get FileStandardInfo failed");
-  }
-  res.size_ = standard_info.EndOfFile.QuadPart;
+  TRY_RESULT(file_size, get_file_size(*this));
+  res.size_ = file_size.size_;
+  res.real_size_ = file_size.real_size_;
 
   return res;
 #endif

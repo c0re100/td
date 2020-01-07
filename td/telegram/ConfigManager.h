@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -10,11 +10,13 @@
 #include "td/telegram/net/DcOptions.h"
 #include "td/telegram/net/NetQuery.h"
 
+#include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 
 #include "td/actor/actor.h"
 #include "td/actor/PromiseFuture.h"
 
+#include "td/utils/common.h"
 #include "td/utils/logging.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/Slice.h"
@@ -44,6 +46,16 @@ ActorOwn<> get_simple_config_google_dns(Promise<SimpleConfigResult> promise, con
 ActorOwn<> get_simple_config_mozilla_dns(Promise<SimpleConfigResult> promise, const ConfigShared *shared_config,
                                          bool is_test, int32 scheduler_id);
 
+ActorOwn<> get_simple_config_firebase_remote_config(Promise<SimpleConfigResult> promise,
+                                                    const ConfigShared *shared_config, bool is_test,
+                                                    int32 scheduler_id);
+
+ActorOwn<> get_simple_config_firebase_realtime(Promise<SimpleConfigResult> promise, const ConfigShared *shared_config,
+                                               bool is_test, int32 scheduler_id);
+
+ActorOwn<> get_simple_config_firebase_firestore(Promise<SimpleConfigResult> promise, const ConfigShared *shared_config,
+                                                bool is_test, int32 scheduler_id);
+
 class HttpDate {
   static bool is_leap(int32 year) {
     return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
@@ -72,6 +84,12 @@ class ConfigManager : public NetQueryCallback {
 
   void request_config();
 
+  void get_app_config(Promise<td_api::object_ptr<td_api::JsonValue>> &&promise);
+
+  void get_content_settings(Promise<Unit> &&promise);
+
+  void set_content_settings(bool ignore_sensitive_content_restrictions, Promise<Unit> &&promise);
+
   void on_dc_options_update(DcOptions dc_options);
 
  private:
@@ -80,6 +98,12 @@ class ConfigManager : public NetQueryCallback {
   ActorOwn<ConfigRecoverer> config_recoverer_;
   int ref_cnt_{1};
   Timestamp expire_time_;
+
+  vector<Promise<td_api::object_ptr<td_api::JsonValue>>> get_app_config_queries_;
+  vector<Promise<Unit>> get_content_settings_queries_;
+  vector<Promise<Unit>> set_content_settings_queries_[2];
+  bool is_set_content_settings_request_sent_ = false;
+  bool last_set_content_settings_ = false;
 
   void start_up() override;
   void hangup_shared() override;
@@ -91,6 +115,8 @@ class ConfigManager : public NetQueryCallback {
 
   void request_config_from_dc_impl(DcId dc_id);
   void process_config(tl_object_ptr<telegram_api::config> config);
+  void process_app_config(tl_object_ptr<telegram_api::JSONValue> &config);
+  void set_ignore_sensitive_content_restrictions(bool ignore_sensitive_content_restrictions);
 
   Timestamp load_config_expire_time();
   void save_config_expire(Timestamp timestamp);

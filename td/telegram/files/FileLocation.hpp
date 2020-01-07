@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -68,7 +68,9 @@ void PhotoRemoteFileLocation::parse(ParserT &parser) {
 template <class StorerT>
 void PhotoRemoteFileLocation::AsKey::store(StorerT &storer) const {
   using td::store;
-  store(key.id_, storer);
+  if (!is_unique) {
+    store(key.id_, storer);
+  }
   store(key.volume_id_, storer);
   store(key.local_id_, storer);
 }
@@ -114,9 +116,14 @@ void CommonRemoteFileLocation::AsKey::store(StorerT &storer) const {
 template <class StorerT>
 void FullRemoteFileLocation::store(StorerT &storer) const {
   using ::td::store;
-  store(full_type(), storer);
+  bool has_file_reference = !file_reference_.empty();
+  auto type = key_type();
+  if (has_file_reference) {
+    type |= FILE_REFERENCE_FLAG;
+  }
+  store(type, storer);
   store(dc_id_.get_value(), storer);
-  if (!file_reference_.empty()) {
+  if (has_file_reference) {
     store(file_reference_, storer);
   }
   variant_.visit([&](auto &&value) {
@@ -130,7 +137,7 @@ void FullRemoteFileLocation::parse(ParserT &parser) {
   using ::td::parse;
   int32 raw_type;
   parse(raw_type, parser);
-  web_location_flag_ = (raw_type & WEB_LOCATION_FLAG) != 0;
+  bool is_web = (raw_type & WEB_LOCATION_FLAG) != 0;
   raw_type &= ~WEB_LOCATION_FLAG;
   bool has_file_reference = (raw_type & FILE_REFERENCE_FLAG) != 0;
   raw_type &= ~FILE_REFERENCE_FLAG;
@@ -144,13 +151,17 @@ void FullRemoteFileLocation::parse(ParserT &parser) {
 
   if (has_file_reference) {
     parse(file_reference_, parser);
-    file_reference_.clear();
+    // file_reference_.clear();
+  }
+  if (is_web) {
+    variant_ = WebRemoteFileLocation();
+    return web().parse(parser);
   }
 
   switch (location_type()) {
     case LocationType::Web:
-      variant_ = WebRemoteFileLocation();
-      return web().parse(parser);
+      UNREACHABLE();
+      break;
     case LocationType::Photo:
       variant_ = PhotoRemoteFileLocation();
       photo().parse(parser);
@@ -198,7 +209,52 @@ void FullRemoteFileLocation::AsKey::store(StorerT &storer) const {
   store(key.key_type(), storer);
   key.variant_.visit([&](auto &&value) {
     using td::store;
-    store(value.as_key(), storer);
+    store(value.as_key(false), storer);
+  });
+}
+
+template <class StorerT>
+void FullRemoteFileLocation::AsUnique::store(StorerT &storer) const {
+  using td::store;
+
+  int32 type = [key = &key] {
+    if (key->is_web()) {
+      return 0;
+    }
+    switch (key->file_type_) {
+      case FileType::Photo:
+      case FileType::ProfilePhoto:
+      case FileType::Thumbnail:
+      case FileType::EncryptedThumbnail:
+      case FileType::Wallpaper:
+        return 1;
+      case FileType::Video:
+      case FileType::VoiceNote:
+      case FileType::Document:
+      case FileType::Sticker:
+      case FileType::Audio:
+      case FileType::Animation:
+      case FileType::VideoNote:
+      case FileType::Background:
+        return 2;
+      case FileType::SecureRaw:
+      case FileType::Secure:
+        return 3;
+      case FileType::Encrypted:
+        return 4;
+      case FileType::Temp:
+        return 5;
+      case FileType::None:
+      case FileType::Size:
+      default:
+        UNREACHABLE();
+        return -1;
+    }
+  }();
+  store(type, storer);
+  key.variant_.visit([&](auto &&value) {
+    using td::store;
+    store(value.as_key(true), storer);
   });
 }
 

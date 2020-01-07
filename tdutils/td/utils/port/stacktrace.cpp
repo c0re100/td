@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -53,10 +53,12 @@ void print_backtrace_gdb(void) {
     name_buf[res] = 0;
 
 #if TD_LINUX
+#if defined(PR_SET_DUMPABLE)
     if (prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) < 0) {
       signal_safe_write("Can't set dumpable\n");
       return;
     }
+#endif
 #if defined(PR_SET_PTRACER)
     // We can't use event fd because we are in a signal handler
     int fds[2];
@@ -108,10 +110,18 @@ void print_backtrace_gdb(void) {
 }  // namespace
 
 void Stacktrace::print_to_stderr(const PrintOptions &options) {
+  print_backtrace();
   if (options.use_gdb) {
     print_backtrace_gdb();
   }
-  print_backtrace();
+}
+
+void Stacktrace::init() {
+#if __GLIBC__
+  // backtrace needs to be called once to ensure that next calls are async-signal-safe
+  void *buffer[1];
+  backtrace(buffer, 1);
+#endif
 }
 
 }  // namespace td

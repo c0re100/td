@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -117,6 +117,7 @@ Result<FileLoader::FileInfo> FileDownloader::init() {
   res.limit = limit_;
   return res;
 }
+
 Status FileDownloader::on_ok(int64 size) {
   auto dir = get_files_dir(remote_.file_type_);
 
@@ -135,12 +136,12 @@ Status FileDownloader::on_ok(int64 size) {
   if (only_check_) {
     path = path_;
   } else {
-    TRY_RESULT(perm_path, create_from_temp(path_, dir, name_));
-    path = std::move(perm_path);
+    TRY_RESULT_ASSIGN(path, create_from_temp(path_, dir, name_));
   }
   callback_->on_ok(FullLocalFileLocation(remote_.file_type_, std::move(path), 0), size, !only_check_);
   return Status::OK();
 }
+
 void FileDownloader::on_error(Status status) {
   fd_.close();
   callback_->on_error(std::move(status));
@@ -218,6 +219,7 @@ Result<bool> FileDownloader::should_restart_part(Part part, NetQueryPtr &net_que
 
   return false;
 }
+
 Result<std::pair<NetQueryPtr, bool>> FileDownloader::start_part(Part part, int32 part_count) {
   if (encryption_key_.is_secret()) {
     part.size = (part.size + 15) & ~15;  // fix for last part
@@ -235,13 +237,19 @@ Result<std::pair<NetQueryPtr, bool>> FileDownloader::start_part(Part part, int32
 
   NetQueryPtr net_query;
   if (!use_cdn_) {
+    int32 flags = 0;
+#if !TD_EMSCRIPTEN
+    // CDN is supported, unless we use domains instead of IPs from a browser
+    flags |= telegram_api::upload_getFile::CDN_SUPPORTED_MASK;
+#endif
     DcId dc_id = remote_.is_web() ? G()->get_webfile_dc_id() : remote_.get_dc_id();
     net_query = G()->net_query_creator().create(
         UniqueId::next(UniqueId::Type::Default, static_cast<uint8>(QueryType::Default)),
         remote_.is_web()
             ? create_storer(telegram_api::upload_getWebFile(remote_.as_input_web_file_location(),
                                                             static_cast<int32>(part.offset), static_cast<int32>(size)))
-            : create_storer(telegram_api::upload_getFile(remote_.as_input_file_location(),
+            : create_storer(telegram_api::upload_getFile(flags, false /*ignored*/, false /*ignored*/,
+                                                         remote_.as_input_file_location(),
                                                          static_cast<int32>(part.offset), static_cast<int32>(size))),
         dc_id, is_small_ ? NetQuery::Type::DownloadSmall : NetQuery::Type::Download);
   } else {
@@ -262,8 +270,7 @@ Result<std::pair<NetQueryPtr, bool>> FileDownloader::start_part(Part part, int32
       LOG(DEBUG) << part.id << " " << to_string(query);
       net_query = G()->net_query_creator().create(
           UniqueId::next(UniqueId::Type::Default, static_cast<uint8>(QueryType::ReuploadCDN)), create_storer(query),
-          remote_.get_dc_id(), is_small_ ? NetQuery::Type::DownloadSmall : NetQuery::Type::Download,
-          NetQuery::AuthFlag::On);
+          remote_.get_dc_id(), is_small_ ? NetQuery::Type::DownloadSmall : NetQuery::Type::Download);
       cdn_part_reupload_token_.erase(it);
     }
   }
@@ -356,12 +363,14 @@ Result<size_t> FileDownloader::process_part(Part part, NetQueryPtr net_query) {
   TRY_STATUS(acquire_fd());
   LOG(INFO) << "Got " << slice.size() << " bytes at offset " << part.offset << " for \"" << path_ << '"';
   TRY_RESULT(written, fd_.pwrite(slice, part.offset));
+  LOG(INFO) << "Written " << written << " bytes";
   // may write less than part.size, when size of downloadable file is unknown
   if (written != slice.size()) {
     return Status::Error("Failed to save file part to the file");
   }
   return written;
 }
+
 void FileDownloader::on_progress(Progress progress) {
   if (progress.is_ready) {
     // do not send partial location. will lead to wrong local_size
@@ -453,9 +462,9 @@ Result<FileLoader::CheckInfo> FileDownloader::check_loop(int64 checked_prefix_si
       has_hash_query_ = true;
       auto query =
           telegram_api::upload_getFileHashes(remote_.as_input_file_location(), narrow_cast<int32>(checked_prefix_size));
-      auto net_query = G()->net_query_creator().create(
-          create_storer(query), remote_.get_dc_id(),
-          is_small_ ? NetQuery::Type::DownloadSmall : NetQuery::Type::Download, NetQuery::AuthFlag::On);
+      auto net_query =
+          G()->net_query_creator().create(create_storer(query), remote_.get_dc_id(),
+                                          is_small_ ? NetQuery::Type::DownloadSmall : NetQuery::Type::Download);
       info.queries.push_back(std::move(net_query));
       break;
     }
@@ -492,11 +501,9 @@ void FileDownloader::try_release_fd() {
 Status FileDownloader::acquire_fd() {
   if (fd_.empty()) {
     if (path_.empty()) {
-      TRY_RESULT(file_path, open_temp_file(remote_.file_type_));
-      std::tie(fd_, path_) = std::move(file_path);
+      TRY_RESULT_ASSIGN(std::tie(fd_, path_), open_temp_file(remote_.file_type_));
     } else {
-      TRY_RESULT(fd, FileFd::open(path_, (only_check_ ? 0 : FileFd::Write) | FileFd::Read));
-      fd_ = std::move(fd);
+      TRY_RESULT_ASSIGN(fd_, FileFd::open(path_, (only_check_ ? 0 : FileFd::Write) | FileFd::Read));
     }
   }
   return Status::OK();

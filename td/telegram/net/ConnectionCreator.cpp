@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -39,7 +39,6 @@
 #include "td/utils/Time.h"
 #include "td/utils/tl_helpers.h"
 
-#include <algorithm>
 #include <utility>
 
 namespace td {
@@ -578,6 +577,7 @@ void ConnectionCreator::on_online(bool online_flag) {
 }
 
 void ConnectionCreator::on_pong(size_t hash) {
+  G()->save_server_time();
   if (active_proxy_id_ != 0) {
     auto now = G()->unix_time();
     int32 &last_used = proxy_last_used_date_[active_proxy_id_];
@@ -686,14 +686,13 @@ Result<SocketFd> ConnectionCreator::find_connection(const Proxy &proxy, const IP
   TRY_RESULT(info, dc_options_set_.find_connection(
                        dc_id, allow_media_only, proxy.use_proxy() && proxy.use_socks5_proxy(), prefer_ipv6, only_http));
   extra.stat = info.stat;
-  TRY_RESULT(transport_type, get_transport_type(proxy, info));
-  extra.transport_type = std::move(transport_type);
+  TRY_RESULT_ASSIGN(extra.transport_type, get_transport_type(proxy, info));
 
   extra.debug_str = PSTRING() << " to " << (info.option->is_media_only() ? "MEDIA " : "") << dc_id
                               << (info.use_http ? " over HTTP" : "");
 
   if (proxy.use_mtproto_proxy()) {
-    extra.debug_str = PSTRING() << "Mtproto " << proxy_ip_address << extra.debug_str;
+    extra.debug_str = PSTRING() << "MTProto " << proxy_ip_address << extra.debug_str;
 
     LOG(INFO) << "Create: " << extra.debug_str;
     return SocketFd::open(proxy_ip_address);
@@ -812,14 +811,12 @@ void ConnectionCreator::client_loop(ClientInfo &client) {
   VLOG(connections) << "In client_loop: " << tag("client", format::as_hex(client.hash));
 
   // Remove expired ready connections
-  client.ready_connections.erase(
-      std::remove_if(client.ready_connections.begin(), client.ready_connections.end(),
-                     [&, expires_at = Time::now_cached() - ClientInfo::READY_CONNECTIONS_TIMEOUT](auto &v) {
-                       bool drop = v.second < expires_at;
-                       VLOG_IF(connections, drop) << "Drop expired " << tag("connection", v.first.get());
-                       return drop;
-                     }),
-      client.ready_connections.end());
+  td::remove_if(client.ready_connections,
+                [&, expires_at = Time::now_cached() - ClientInfo::READY_CONNECTIONS_TIMEOUT](auto &v) {
+                  bool drop = v.second < expires_at;
+                  VLOG_IF(connections, drop) << "Drop expired " << tag("connection", v.first.get());
+                  return drop;
+                });
 
   // Send ready connections into promises
   {
@@ -1010,6 +1007,7 @@ void ConnectionCreator::client_add_connection(size_t hash, Result<unique_ptr<mtp
 
 void ConnectionCreator::client_wakeup(size_t hash) {
   LOG(INFO) << tag("hash", format::as_hex(hash)) << " wakeup";
+  G()->save_server_time();
   client_loop(clients_[hash]);
 }
 

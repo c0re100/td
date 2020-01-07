@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -46,10 +46,12 @@
 #include "td/telegram/secret_api.hpp"
 #include "td/telegram/SecureValue.h"
 #include "td/telegram/SecureValue.hpp"
+#include "td/telegram/ServerMessageId.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StickersManager.hpp"
 #include "td/telegram/Td.h"
 #include "td/telegram/UserId.h"
+#include "td/telegram/Venue.h"
 #include "td/telegram/Version.h"
 #include "td/telegram/VideoNotesManager.h"
 #include "td/telegram/VideoNotesManager.hpp"
@@ -72,7 +74,6 @@
 #include "td/utils/tl_helpers.h"
 #include "td/utils/utf8.h"
 
-#include <algorithm>
 #include <utility>
 
 namespace td {
@@ -942,7 +943,7 @@ static void store(const MessageContent *content, StorerT &storer) {
         store(m->invoice_payload, storer);
       }
       if (has_order_info) {
-        store(*m->order_info, storer);
+        store(m->order_info, storer);
       }
       if (has_telegram_payment_charge_id) {
         store(m->telegram_payment_charge_id, storer);
@@ -1274,8 +1275,7 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
         parse(m->invoice_payload, parser);
       }
       if (has_order_info) {
-        m->order_info = make_unique<OrderInfo>();
-        parse(*m->order_info, parser);
+        parse(m->order_info, parser);
       }
       if (has_telegram_payment_charge_id) {
         parse(m->telegram_payment_charge_id, parser);
@@ -1785,7 +1785,7 @@ static Result<InputMessageContent> create_input_message_content(
       if (input_poll->question_.empty()) {
         return Status::Error(400, "Poll question must be non-empty");
       }
-      if (input_poll->question_.size() > MAX_POLL_QUESTION_LENGTH) {
+      if (utf8_length(input_poll->question_) > MAX_POLL_QUESTION_LENGTH) {
         return Status::Error(400, PSLICE() << "Poll question length must not exceed " << MAX_POLL_QUESTION_LENGTH);
       }
       if (input_poll->options_.size() <= 1) {
@@ -1801,7 +1801,7 @@ static Result<InputMessageContent> create_input_message_content(
         if (option.empty()) {
           return Status::Error(400, "Poll options must be non-empty");
         }
-        if (option.size() > MAX_POLL_OPTION_LENGTH) {
+        if (utf8_length(option) > MAX_POLL_OPTION_LENGTH) {
           return Status::Error(400, PSLICE() << "Poll options length must not exceed " << MAX_POLL_OPTION_LENGTH);
         }
       }
@@ -2774,13 +2774,39 @@ static bool need_message_text_changed_warning(const MessageText *old_content, co
     // server has deleted first entity and ltrim the message
     return false;
   }
-  for (auto &entity : new_content->text.entities) {
-    if (entity.type == MessageEntity::Type::PhoneNumber) {
-      // TODO remove after find_phone_numbers is implemented
-      return false;
+  return true;
+}
+
+static bool need_message_entities_changed_warning(const vector<MessageEntity> &old_entities,
+                                                  const vector<MessageEntity> &new_entities) {
+  size_t old_pos = 0;
+  size_t new_pos = 0;
+  // compare entities, skipping some known to be different
+  while (old_pos < old_entities.size() || new_pos < new_entities.size()) {
+    // TODO remove after find_phone_numbers is implemented
+    while (new_pos < new_entities.size() && new_entities[new_pos].type == MessageEntity::Type::PhoneNumber) {
+      new_pos++;
+    }
+
+    if (old_pos < old_entities.size() && new_pos < new_entities.size() &&
+        old_entities[old_pos] == new_entities[new_pos]) {
+      old_pos++;
+      new_pos++;
+      continue;
+    }
+
+    if (old_pos < old_entities.size() && old_entities[old_pos].type == MessageEntity::Type::MentionName) {
+      // server could delete sime MentionName entities
+      old_pos++;
+      continue;
+    }
+
+    if (old_pos < old_entities.size() || new_pos < new_entities.size()) {
+      return true;
     }
   }
-  return true;
+
+  return false;
 }
 
 void merge_message_contents(Td *td, const MessageContent *old_content, MessageContent *new_content,
@@ -2804,7 +2830,8 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
       if (old_->text.entities != new_->text.entities) {
         const int32 MAX_CUSTOM_ENTITIES_COUNT = 100;  // server-side limit
         if (need_message_changed_warning && need_message_text_changed_warning(old_, new_) &&
-            old_->text.entities.size() <= MAX_CUSTOM_ENTITIES_COUNT) {
+            old_->text.entities.size() <= MAX_CUSTOM_ENTITIES_COUNT &&
+            need_message_entities_changed_warning(old_->text.entities, new_->text.entities)) {
           LOG(WARNING) << "Entities has changed from "
                        << to_string(get_message_content_object(old_content, td, -1, false)) << ". New content is "
                        << to_string(get_message_content_object(new_content, td, -1, false));
@@ -2958,18 +2985,23 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
           }
         }
 
+        LOG(DEBUG) << "Merge photos " << old_photo->photos << " and " << new_photo->photos
+                   << " with new photos size = " << new_photos_size << ", need_merge = " << need_merge
+                   << ", need_update = " << need_update;
         if (need_merge && new_photos_size != 0) {
           FileId old_file_id = get_message_content_upload_file_id(old_content);
           FileView old_file_view = td->file_manager_->get_file_view(old_file_id);
           FileId new_file_id = new_photo->photos[0].file_id;
           FileView new_file_view = td->file_manager_->get_file_view(new_file_id);
           CHECK(new_file_view.has_remote_location());
+
+          LOG(DEBUG) << "Trying to merge old file " << old_file_id << " and new file " << new_file_id;
           if (new_file_view.remote_location().is_web()) {
             LOG(ERROR) << "Have remote web photo location";
           } else if (!old_file_view.has_remote_location() ||
-                     old_file_view.remote_location().get_file_reference() !=
+                     old_file_view.main_remote_location().get_file_reference() !=
                          new_file_view.remote_location().get_file_reference() ||
-                     old_file_view.remote_location().get_access_hash() !=
+                     old_file_view.main_remote_location().get_access_hash() !=
                          new_file_view.remote_location().get_access_hash()) {
             FileId file_id = td->file_manager_->register_remote(
                 FullRemoteFileLocation({FileType::Photo, 'i'}, new_file_view.remote_location().get_id(),
@@ -3355,6 +3387,9 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
 }
 
 void register_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id) {
+  if (full_message_id.get_message_id().is_scheduled()) {
+    return;
+  }
   switch (content->get_type()) {
     case MessageContentType::Poll:
       return td->poll_manager_->register_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id);
@@ -3364,6 +3399,9 @@ void register_message_content(Td *td, const MessageContent *content, FullMessage
 }
 
 void unregister_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id) {
+  if (full_message_id.get_message_id().is_scheduled()) {
+    return;
+  }
   switch (content->get_type()) {
     case MessageContentType::Poll:
       return td->poll_manager_->unregister_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id);
@@ -4844,7 +4882,7 @@ bool need_delay_message_content_notification(const MessageContent *content, User
       return true;
     case MessageContentType::ChatAddUsers: {
       auto &added_user_ids = static_cast<const MessageChatAddUsers *>(content)->user_ids;
-      return std::find(added_user_ids.begin(), added_user_ids.end(), my_user_id) == added_user_ids.end();
+      return !td::contains(added_user_ids, my_user_id);
     }
     case MessageContentType::ChatDeleteUser:
       return static_cast<const MessageChatDeleteUser *>(content)->user_id != my_user_id;
@@ -5025,7 +5063,7 @@ void on_sent_message_content(Td *td, const MessageContent *content) {
   }
 }
 
-int64 add_sticker_set(Td *td, tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set) {
+StickerSetId add_sticker_set(Td *td, tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set) {
   return td->stickers_manager_->add_sticker_set(std::move(input_sticker_set));
 }
 

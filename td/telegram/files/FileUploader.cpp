@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -167,8 +167,7 @@ Result<FileLoader::PrefixInfo> FileUploader::on_update_local_location(const Loca
   }
   if (local_is_ready) {
     CHECK(!fd_.empty());
-    TRY_RESULT(local_file_size, fd_.get_size());
-    local_size = local_file_size;
+    TRY_RESULT_ASSIGN(local_size, fd_.get_size());
     LOG(INFO) << "Set file local_size to " << local_size;
     if (local_size == 0) {
       return Status::Error("Can't upload empty file");
@@ -338,8 +337,7 @@ void FileUploader::try_release_fd() {
 
 Status FileUploader::acquire_fd() {
   if (fd_.empty()) {
-    TRY_RESULT(fd, FileFd::open(fd_path_, FileFd::Read));
-    fd_ = std::move(fd);
+    TRY_RESULT_ASSIGN(fd_, FileFd::open(fd_path_, FileFd::Read));
   }
   return Status::OK();
 }

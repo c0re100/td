@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,8 +7,10 @@
 #pragma once
 
 #include "td/telegram/DialogId.h"
+#include "td/telegram/FullMessageId.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/NotificationId.h"
+#include "td/telegram/ServerMessageId.h"
 
 #include "td/actor/PromiseFuture.h"
 
@@ -89,6 +91,7 @@ class MessagesDbSyncInterface {
   virtual Status add_message(FullMessageId full_message_id, ServerMessageId unique_message_id, UserId sender_user_id,
                              int64 random_id, int32 ttl_expires_at, int32 index_mask, int64 search_id, string text,
                              NotificationId notification_id, BufferSlice data) = 0;
+  virtual Status add_scheduled_message(FullMessageId full_message_id, BufferSlice data) = 0;
 
   virtual Status delete_message(FullMessageId full_message_id) = 0;
   virtual Status delete_all_dialog_messages(DialogId dialog_id, MessageId from_message_id) = 0;
@@ -102,6 +105,7 @@ class MessagesDbSyncInterface {
                                                          MessageId last_message_id, int32 date) = 0;
 
   virtual Result<std::vector<BufferSlice>> get_messages(MessagesDbMessagesQuery query) = 0;
+  virtual Result<std::vector<BufferSlice>> get_scheduled_messages(DialogId dialog_id, int32 limit) = 0;
   virtual Result<vector<BufferSlice>> get_messages_from_notification_id(DialogId dialog_id,
                                                                         NotificationId from_notification_id,
                                                                         int32 limit) = 0;
@@ -135,6 +139,7 @@ class MessagesDbAsyncInterface {
   virtual void add_message(FullMessageId full_message_id, ServerMessageId unique_message_id, UserId sender_user_id,
                            int64 random_id, int32 ttl_expires_at, int32 index_mask, int64 search_id, string text,
                            NotificationId notification_id, BufferSlice data, Promise<> promise) = 0;
+  virtual void add_scheduled_message(FullMessageId full_message_id, BufferSlice data, Promise<> promise) = 0;
 
   virtual void delete_message(FullMessageId full_message_id, Promise<> promise) = 0;
   virtual void delete_all_dialog_messages(DialogId dialog_id, MessageId from_message_id, Promise<> promise) = 0;
@@ -148,6 +153,7 @@ class MessagesDbAsyncInterface {
                                           int32 date, Promise<BufferSlice> promise) = 0;
 
   virtual void get_messages(MessagesDbMessagesQuery query, Promise<std::vector<BufferSlice>> promise) = 0;
+  virtual void get_scheduled_messages(DialogId dialog_id, int32 limit, Promise<std::vector<BufferSlice>> promise) = 0;
   virtual void get_messages_from_notification_id(DialogId dialog_id, NotificationId from_notification_id, int32 limit,
                                                  Promise<vector<BufferSlice>> promise) = 0;
 

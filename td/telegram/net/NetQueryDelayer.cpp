@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -33,9 +33,10 @@ void NetQueryDelayer::delay(NetQueryPtr query) {
     }
   } else if (code == 420) {
     auto msg = query->error().message();
-    for (auto prefix : {Slice("FLOOD_WAIT_"), Slice("2FA_CONFIRM_WAIT_"), Slice("TAKEOUT_INIT_DELAY_")}) {
+    for (auto prefix :
+         {Slice("FLOOD_WAIT_"), Slice("SLOWMODE_WAIT_"), Slice("2FA_CONFIRM_WAIT_"), Slice("TAKEOUT_INIT_DELAY_")}) {
       if (begins_with(msg, prefix)) {
-        timeout = clamp(to_integer<int>(msg.substr(prefix.size())), 0, 14 * 24 * 60 * 60);
+        timeout = clamp(to_integer<int>(msg.substr(prefix.size())), 1, 14 * 24 * 60 * 60);
         break;
       }
     }

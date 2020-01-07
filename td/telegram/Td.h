@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -224,7 +224,7 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.5.1";
+  static constexpr const char *TDLIB_VERSION = "1.5.4";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
@@ -374,6 +374,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::registerUser &request);
 
+  void on_request(uint64 id, td_api::requestQrCodeAuthentication &request);
+
   void on_request(uint64 id, td_api::checkAuthenticationPassword &request);
 
   void on_request(uint64 id, const td_api::requestAuthenticationPasswordRecovery &request);
@@ -387,6 +389,8 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, const td_api::destroy &request);
 
   void on_request(uint64 id, td_api::checkAuthenticationBotToken &request);
+
+  void on_request(uint64 id, td_api::confirmQrCodeAuthentication &request);
 
   void on_request(uint64 id, const td_api::getCurrentState &request);
 
@@ -514,6 +518,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::searchChatsOnServer &request);
 
+  void on_request(uint64 id, const td_api::searchChatsNearby &request);
+
   void on_request(uint64 id, const td_api::addRecentlyFoundChat &request);
 
   void on_request(uint64 id, const td_api::removeRecentlyFoundChat &request);
@@ -525,6 +531,12 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, td_api::checkChatUsername &request);
 
   void on_request(uint64 id, const td_api::getCreatedPublicChats &request);
+
+  void on_request(uint64 id, const td_api::checkCreatedPublicChatsLimit &request);
+
+  void on_request(uint64 id, const td_api::getSuitableDiscussionChats &request);
+
+  void on_request(uint64 id, const td_api::getInactiveSupergroupChats &request);
 
   void on_request(uint64 id, const td_api::openChat &request);
 
@@ -553,6 +565,8 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, const td_api::getChatMessageByDate &request);
 
   void on_request(uint64 id, td_api::getChatMessageCount &request);
+
+  void on_request(uint64 id, const td_api::getChatScheduledMessages &request);
 
   void on_request(uint64 id, const td_api::removeNotification &request);
 
@@ -596,6 +610,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::editInlineMessageReplyMarkup &request);
 
+  void on_request(uint64 id, td_api::editMessageSchedulingState &request);
+
   void on_request(uint64 id, td_api::setGameScore &request);
 
   void on_request(uint64 id, td_api::setInlineGameScore &request);
@@ -610,7 +626,7 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::sendChatScreenshotTakenNotification &request);
 
-  void on_request(uint64 id, const td_api::forwardMessages &request);
+  void on_request(uint64 id, td_api::forwardMessages &request);
 
   void on_request(uint64 id, const td_api::resendMessages &request);
 
@@ -644,6 +660,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::upgradeBasicGroupChatToSupergroupChat &request);
 
+  void on_request(uint64 id, const td_api::setChatChatList &request);
+
   void on_request(uint64 id, td_api::setChatTitle &request);
 
   void on_request(uint64 id, const td_api::setChatPhoto &request);
@@ -664,6 +682,12 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::setChatDescription &request);
 
+  void on_request(uint64 id, const td_api::setChatDiscussionGroup &request);
+
+  void on_request(uint64 id, td_api::setChatLocation &request);
+
+  void on_request(uint64 id, const td_api::setChatSlowModeDelay &request);
+
   void on_request(uint64 id, const td_api::pinChatMessage &request);
 
   void on_request(uint64 id, const td_api::unpinChatMessage &request);
@@ -677,6 +701,10 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, const td_api::addChatMembers &request);
 
   void on_request(uint64 id, td_api::setChatMemberStatus &request);
+
+  void on_request(uint64 id, const td_api::canTransferOwnership &request);
+
+  void on_request(uint64 id, td_api::transferChatOwnership &request);
 
   void on_request(uint64 id, const td_api::getChatMember &request);
 
@@ -720,6 +748,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::getBlockedUsers &request);
 
+  void on_request(uint64 id, td_api::addContact &request);
+
   void on_request(uint64 id, td_api::importContacts &request);
 
   void on_request(uint64 id, const td_api::getContacts &request);
@@ -733,6 +763,8 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, td_api::changeImportedContacts &request);
 
   void on_request(uint64 id, const td_api::clearImportedContacts &request);
+
+  void on_request(uint64 id, const td_api::sharePhoneNumber &request);
 
   void on_request(uint64 id, const td_api::getRecentInlineBots &request);
 
@@ -836,9 +868,7 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::resetAllNotificationSettings &request);
 
-  void on_request(uint64 id, const td_api::getChatReportSpamState &request);
-
-  void on_request(uint64 id, const td_api::changeChatReportSpamState &request);
+  void on_request(uint64 id, const td_api::removeChatActionBar &request);
 
   void on_request(uint64 id, td_api::reportChat &request);
 
@@ -871,6 +901,10 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, td_api::setPollAnswer &request);
 
   void on_request(uint64 id, td_api::stopPoll &request);
+
+  void on_request(uint64 id, const td_api::getLoginUrlInfo &request);
+
+  void on_request(uint64 id, const td_api::getLoginUrl &request);
 
   void on_request(uint64 id, td_api::getInlineQueryResults &request);
 

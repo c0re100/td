@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -93,6 +93,22 @@ TEST(Port, files) {
   fd.seek(0).ensure();
   ASSERT_EQ(13u, fd.read(buf_slice.substr(0, 13)).move_as_ok());
   ASSERT_STREQ("Habcd world?!", buf_slice.substr(0, 13));
+}
+
+TEST(Port, SparseFiles) {
+  CSlice path = "sparse.txt";
+  unlink(path).ignore();
+  auto fd = FileFd::open(path, FileFd::Write | FileFd::CreateNew).move_as_ok();
+  ASSERT_EQ(0, fd.get_size().move_as_ok());
+  ASSERT_EQ(0, fd.get_real_size().move_as_ok());
+  int64 offset = 100000000;
+  fd.pwrite("a", offset).ensure();
+  ASSERT_EQ(offset + 1, fd.get_size().move_as_ok());
+  auto real_size = fd.get_real_size().move_as_ok();
+  if (real_size == offset + 1) {
+    LOG(ERROR) << "File system doesn't support sparse files, rewind during streaming can be slow";
+  }
+  unlink(path).ensure();
 }
 
 TEST(Port, Writev) {

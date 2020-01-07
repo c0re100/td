@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -22,6 +22,7 @@ class AutoDownloadSettings {
   int32 max_photo_file_size = 0;
   int32 max_video_file_size = 0;
   int32 max_other_file_size = 0;
+  int32 video_upload_bitrate = 0;
   bool is_enabled = false;
   bool preload_large_videos = false;
   bool preload_next_audio = false;

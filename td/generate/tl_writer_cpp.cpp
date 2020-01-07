@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -506,7 +506,7 @@ std::string TD_TL_writer_cpp::gen_function_result_type(const tl::tl_tree *result
 }
 
 std::string TD_TL_writer_cpp::gen_fetch_function_begin(const std::string &parser_name, const std::string &class_name,
-                                                       const std::string &parent_class_name, int arity,
+                                                       const std::string &parent_class_name, int arity, int field_count,
                                                        std::vector<tl::var_description> &vars, int parser_type) const {
   for (std::size_t i = 0; i < vars.size(); i++) {
     assert(vars[i].is_stored == false);
@@ -517,15 +517,21 @@ std::string TD_TL_writer_cpp::gen_fetch_function_begin(const std::string &parser
   assert(arity == 0);
 
   if (parser_type == 0) {
-    return "\n" + returned_type + class_name + "::fetch(" + parser_name +
-           " &p) {\n"
-           "  return make_tl_object<" +
-           class_name +
-           ">(p);\n"
-           "}\n\n" +
-           class_name + "::" + class_name + "(" + parser_name +
-           " &p)\n"
-           "#define FAIL(error) p.set_error(error)\n";
+    std::string result = "\n" + returned_type + class_name + "::fetch(" + parser_name +
+                         " &p) {\n"
+                         "  return make_tl_object<" +
+                         class_name + ">(";
+    if (field_count == 0) {
+      result += ");\n";
+    } else {
+      result +=
+          "p);\n"
+          "}\n\n" +
+          class_name + "::" + class_name + "(" + parser_name +
+          " &p)\n"
+          "#define FAIL(error) p.set_error(error)\n";
+    }
+    return result;
   }
 
   return "\n" + returned_type + class_name + "::fetch(" + parser_name +
@@ -534,7 +540,7 @@ std::string TD_TL_writer_cpp::gen_fetch_function_begin(const std::string &parser
          (parser_type == -1 ? "" : "  " + fetched_type + "res = make_tl_object<" + class_name + ">();\n");
 }
 
-std::string TD_TL_writer_cpp::gen_fetch_function_end(bool has_parent, int field_num,
+std::string TD_TL_writer_cpp::gen_fetch_function_end(bool has_parent, int field_count,
                                                      const std::vector<tl::var_description> &vars,
                                                      int parser_type) const {
   for (std::size_t i = 0; i < vars.size(); i++) {
@@ -542,9 +548,11 @@ std::string TD_TL_writer_cpp::gen_fetch_function_end(bool has_parent, int field_
   }
 
   if (parser_type == 0) {
+    if (field_count == 0) {
+      return "}\n";
+    }
     return "#undef FAIL\n"
-           "{" +
-           (field_num == 0 ? "\n  (void)p;\n" : std::string()) + "}\n";
+           "{}\n";
   }
 
   if (parser_type == -1) {
@@ -641,7 +649,7 @@ std::string TD_TL_writer_cpp::gen_fetch_switch_end() const {
          "  }\n";
 }
 
-std::string TD_TL_writer_cpp::gen_constructor_begin(int fields_num, const std::string &class_name,
+std::string TD_TL_writer_cpp::gen_constructor_begin(int field_count, const std::string &class_name,
                                                     bool is_default) const {
   return "\n" + class_name + "::" + class_name + "(";
 }
@@ -665,8 +673,8 @@ std::string TD_TL_writer_cpp::gen_constructor_field_init(int field_num, const st
          (is_default ? "" : gen_field_name(a.name)) + move_end + ")\n";
 }
 
-std::string TD_TL_writer_cpp::gen_constructor_end(const tl::tl_combinator *t, int fields_num, bool is_default) const {
-  if (fields_num == 0) {
+std::string TD_TL_writer_cpp::gen_constructor_end(const tl::tl_combinator *t, int field_count, bool is_default) const {
+  if (field_count == 0) {
     return ") {\n"
            "}\n";
   }

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -38,7 +38,6 @@ Result<telegram_api::auth_resendCode> SendCodeHelper::resend_code() {
 
 telegram_api::object_ptr<telegram_api::codeSettings> SendCodeHelper::get_input_code_settings(const Settings &settings) {
   int32 flags = 0;
-  string app_hash;
   if (settings != nullptr) {
     if (settings->allow_flash_call_) {
       flags |= telegram_api::codeSettings::ALLOW_FLASHCALL_MASK;
@@ -47,20 +46,15 @@ telegram_api::object_ptr<telegram_api::codeSettings> SendCodeHelper::get_input_c
       flags |= telegram_api::codeSettings::CURRENT_NUMBER_MASK;
     }
     if (settings->allow_sms_retriever_api_) {
-      flags |= telegram_api::codeSettings::APP_HASH_PERSISTENT_MASK;
-      flags |= telegram_api::codeSettings::APP_HASH_MASK;
-      app_hash = "ignored1234";
+      flags |= telegram_api::codeSettings::ALLOW_APP_HASH_MASK;
     }
   }
   return telegram_api::make_object<telegram_api::codeSettings>(flags, false /*ignored*/, false /*ignored*/,
-                                                               false /*ignored*/, app_hash);
+                                                               false /*ignored*/);
 }
 
-Result<telegram_api::auth_sendCode> SendCodeHelper::send_code(Slice phone_number, const Settings &settings,
-                                                              int32 api_id, const string &api_hash) {
-  if (!phone_number_.empty()) {
-    return Status::Error(8, "Can't change phone");
-  }
+telegram_api::auth_sendCode SendCodeHelper::send_code(Slice phone_number, const Settings &settings, int32 api_id,
+                                                      const string &api_hash) {
   phone_number_ = phone_number.str();
   return telegram_api::auth_sendCode(phone_number_, api_id, api_hash, get_input_code_settings(settings));
 }

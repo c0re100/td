@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -15,19 +15,10 @@
 #include "td/utils/StringBuilder.h"
 
 #include <new>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace td {
-
-template <class... Args>
-std::tuple<const Args &...> ctie(const Args &... args) TD_WARN_UNUSED_RESULT;
-
-template <class... Args>
-std::tuple<const Args &...> ctie(const Args &... args) {
-  return std::tie(args...);
-}
 
 class JsonTrue {
  public:
@@ -298,9 +289,7 @@ class JsonScope {
     *sb_ << x;
     return *this;
   }
-  JsonScope &operator<<(bool x) {
-    return *this << JsonBool(x);
-  }
+  JsonScope &operator<<(bool x) = delete;
   JsonScope &operator<<(int32 x) {
     return *this << JsonInt(x);
   }
@@ -310,16 +299,11 @@ class JsonScope {
   JsonScope &operator<<(double x) {
     return *this << JsonFloat(x);
   }
-  template <class T>
-  JsonScope &operator<<(const T *x);  // not implemented
   template <size_t N>
   JsonScope &operator<<(const char (&x)[N]) {
     return *this << JsonString(Slice(x));
   }
   JsonScope &operator<<(const char *x) {
-    return *this << JsonString(Slice(x));
-  }
-  JsonScope &operator<<(const string &x) {
     return *this << JsonString(Slice(x));
   }
   JsonScope &operator<<(Slice x) {
@@ -410,16 +394,8 @@ class JsonObjectScope : public JsonScope {
     jb_->print_offset();
     *sb_ << "}";
   }
-  template <class S, class T>
-  JsonObjectScope &operator<<(std::tuple<S, T> key_value) {
-    return (*this)(std::get<0>(key_value), std::get<1>(key_value));
-  }
-  template <class S, class T>
-  JsonObjectScope &operator<<(std::pair<S, T> key_value) {
-    return (*this)(key_value.first, key_value.second);
-  }
-  template <class S, class T>
-  JsonObjectScope &operator()(S &&key, T &&value) {
+  template <class T>
+  JsonObjectScope &operator()(Slice key, T &&value) {
     CHECK(is_active());
     if (is_first_) {
       *sb_ << ",";
@@ -603,7 +579,7 @@ class JsonValue : public Jsonable {
       case Type::Object: {
         auto object = scope->enter_object();
         for (auto &key_value : get_object()) {
-          object << ctie(JsonString(key_value.first), key_value.second);
+          object(key_value.first, key_value.second);
         }
         break;
       }

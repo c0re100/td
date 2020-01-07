@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -70,7 +70,7 @@ void PublicRsaKeyWatchdog::loop() {
   has_query_ = true;
   G()->net_query_dispatcher().dispatch_with_callback(
       G()->net_query_creator().create(create_storer(telegram_api::help_getCdnConfig()), DcId::main(),
-                                      NetQuery::Type::Common, NetQuery::AuthFlag::Off, NetQuery::GzipFlag::On,
+                                      NetQuery::Type::Common, NetQuery::AuthFlag::On, NetQuery::GzipFlag::On,
                                       60 * 60 * 24),
       actor_shared(this));
 }
@@ -98,6 +98,7 @@ void PublicRsaKeyWatchdog::sync(BufferSlice cdn_config_serialized) {
     return;
   }
   cdn_config_ = r_keys.move_as_ok();
+  LOG(INFO) << "Receive " << to_string(cdn_config_);
   for (auto &key : keys_) {
     sync_key(key);
   }
@@ -114,6 +115,7 @@ void PublicRsaKeyWatchdog::sync_key(std::shared_ptr<PublicRsaKeyShared> &key) {
         LOG(ERROR) << r_rsa.error();
         continue;
       }
+      LOG(INFO) << "Add CDN " << key->dc_id() << " key with fingerprint " << r_rsa.ok().get_fingerprint();
       key->add_rsa(r_rsa.move_as_ok());
     }
   }

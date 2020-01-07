@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -107,6 +107,8 @@ Status init_binlog(Binlog &binlog, string path, BinlogKeyValue<Binlog> &binlog_p
       case LogEvent::HandlerType::GetChannelDifference:
       case LogEvent::HandlerType::ReadHistoryInSecretChat:
       case LogEvent::HandlerType::ToggleDialogIsMarkedAsUnreadOnServer:
+      case LogEvent::HandlerType::SetDialogFolderIdOnServer:
+      case LogEvent::HandlerType::DeleteScheduledMessagesFromServer:
         events.to_messages_manager.push_back(event.clone());
         break;
       case LogEvent::HandlerType::AddMessagePushNotification:
@@ -342,9 +344,9 @@ Status TdDb::init_sqlite(int32 scheduler_id, const TdParameters &parameters, DbK
   }
 
   if (dialog_db_was_created) {
-    binlog_pmc.erase("unread_message_count");
-    binlog_pmc.erase("unread_dialog_count");
-    binlog_pmc.erase("last_server_dialog_date");
+    binlog_pmc.erase_by_prefix("last_server_dialog_date");
+    binlog_pmc.erase_by_prefix("unread_message_count");
+    binlog_pmc.erase_by_prefix("unread_dialog_count");
     binlog_pmc.erase("promoted_dialog_id");
     binlog_pmc.erase("sponsored_dialog_id");
     binlog_pmc.erase_by_prefix("top_dialogs");

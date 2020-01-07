@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -590,6 +590,18 @@ Status HttpReader::parse_json_parameters(MutableSlice parameters) {
 
   Parser parser(parameters);
   parser.skip_whitespaces();
+  if (parser.peek_char() == '"') {
+    auto r_value = json_string_decode(parser);
+    if (r_value.is_error()) {
+      return Status::Error(400, PSLICE() << "Bad Request: can't parse string content: " << r_value.error().message());
+    }
+    if (!parser.empty()) {
+      return Status::Error(400, "Bad Request: extra data after string");
+    }
+    query_->container_.emplace_back(BufferSlice("content"));
+    query_->args_.emplace_back(query_->container_.back().as_slice(), r_value.move_as_ok());
+    return Status::OK();
+  }
   parser.skip('{');
   if (parser.status().is_error()) {
     return Status::Error(400, "Bad Request: JSON object expected");
@@ -727,12 +739,12 @@ Status HttpReader::open_temp_file(CSlice desired_file_name) {
 
   TRY_RESULT(dir, realpath(tmp_dir, true));
   CHECK(!dir.empty());
-
+  /*
   auto first_try = try_open_temp_file(dir, desired_file_name);
   if (first_try.is_ok()) {
     return Status::OK();
   }
-
+  */
   // Creation of new file with desired name has failed. Trying to create unique directory for it
   TRY_RESULT(directory, mkdtemp(dir, TEMP_DIRECTORY_PREFIX));
   auto second_try = try_open_temp_file(directory, desired_file_name);

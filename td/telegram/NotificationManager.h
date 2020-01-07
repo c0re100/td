@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,6 +9,7 @@
 #include "td/telegram/CallId.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/Document.h"
+#include "td/telegram/FullMessageId.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/Notification.h"
 #include "td/telegram/NotificationGroupId.h"
@@ -218,7 +219,8 @@ class NotificationManager : public Actor {
   void add_update_notification(NotificationGroupId notification_group_id, DialogId dialog_id,
                                const Notification &notification);
 
-  NotificationGroups::iterator add_group(NotificationGroupKey &&group_key, NotificationGroup &&group);
+  NotificationGroups::iterator add_group(NotificationGroupKey &&group_key, NotificationGroup &&group,
+                                         const char *source);
 
   NotificationGroups::iterator get_group(NotificationGroupId group_id);
 
@@ -305,9 +307,10 @@ class NotificationManager : public Actor {
   Status process_push_notification_payload(string payload, bool was_encrypted, Promise<Unit> &promise);
 
   void add_message_push_notification(DialogId dialog_id, MessageId message_id, int64 random_id, UserId sender_user_id,
-                                     string sender_name, int32 date, bool contains_mention, bool initial_is_silent,
-                                     bool is_silent, string loc_key, string arg, Photo photo, Document document,
-                                     NotificationId notification_id, uint64 logevent_id, Promise<Unit> promise);
+                                     string sender_name, int32 date, bool is_from_scheduled, bool contains_mention,
+                                     bool initial_is_silent, bool is_silent, string loc_key, string arg, Photo photo,
+                                     Document document, NotificationId notification_id, uint64 logevent_id,
+                                     Promise<Unit> promise);
 
   void edit_message_push_notification(DialogId dialog_id, MessageId message_id, int32 edit_date, string loc_key,
                                       string arg, Photo photo, Document document, uint64 logevent_id,

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -10,7 +10,6 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/net/NetQueryDispatcher.h"
-#include "td/telegram/SecureStorage.h"
 #include "td/telegram/TdDb.h"
 
 #include "td/mtproto/DhHandshake.h"
@@ -24,9 +23,6 @@
 #include "td/utils/Random.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Time.h"
-
-#include "td/telegram/td_api.h"
-#include "td/telegram/telegram_api.h"  // TODO: this file is already included. Why?
 
 namespace td {
 
@@ -144,9 +140,20 @@ tl_object_ptr<telegram_api::InputCheckPasswordSRP> PasswordManager::get_input_ch
 }
 
 tl_object_ptr<telegram_api::InputCheckPasswordSRP> PasswordManager::get_input_check_password(
-    Slice password, const PasswordState &state) const {
+    Slice password, const PasswordState &state) {
   return get_input_check_password(password, state.current_client_salt, state.current_server_salt, state.current_srp_g,
                                   state.current_srp_p, state.current_srp_B, state.current_srp_id);
+}
+
+void PasswordManager::get_input_check_password_srp(
+    string password, Promise<tl_object_ptr<telegram_api::InputCheckPasswordSRP>> &&promise) {
+  do_get_state(PromiseCreator::lambda(
+      [promise = std::move(promise), password = std::move(password)](Result<PasswordState> r_state) mutable {
+        if (r_state.is_error()) {
+          return promise.set_error(r_state.move_as_error());
+        }
+        promise.set_value(PasswordManager::get_input_check_password(password, r_state.move_as_ok()));
+      }));
 }
 
 void PasswordManager::set_password(string current_password, string new_password, string new_hint,
@@ -454,6 +461,7 @@ void PasswordManager::check_email_address_verification_code(string code, Promise
 
 void PasswordManager::request_password_recovery(
     Promise<td_api::object_ptr<td_api::emailAddressAuthenticationCodeInfo>> promise) {
+  // is called only after authoriation
   send_with_promise(
       G()->net_query_creator().create(create_storer(telegram_api::auth_requestPasswordRecovery())),
       PromiseCreator::lambda([promise = std::move(promise)](Result<NetQueryPtr> r_query) mutable {
@@ -467,6 +475,7 @@ void PasswordManager::request_password_recovery(
 }
 
 void PasswordManager::recover_password(string code, Promise<State> promise) {
+  // is called only after authoriation
   send_with_promise(G()->net_query_creator().create(create_storer(telegram_api::auth_recoverPassword(std::move(code)))),
                     PromiseCreator::lambda(
                         [actor_id = actor_id(this), promise = std::move(promise)](Result<NetQueryPtr> r_query) mutable {
@@ -733,7 +742,7 @@ void PasswordManager::get_ton_wallet_password_salt(Promise<td_api::object_ptr<td
 
   get_ton_wallet_password_salt_queries_.push_back(std::move(promise));
   if (get_ton_wallet_password_salt_queries_.size() == 1) {
-    send_with_promise(G()->net_query_creator().create(create_storer(telegram_api::wallet_getKeySecretSalt())),
+    send_with_promise(G()->net_query_creator().create(create_storer(telegram_api::wallet_getKeySecretSalt(false))),
                       PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_query) mutable {
                         auto r_result = fetch_result<telegram_api::wallet_getKeySecretSalt>(std::move(r_query));
                         send_closure(actor_id, &PasswordManager::on_get_ton_wallet_password_salt, std::move(r_result));

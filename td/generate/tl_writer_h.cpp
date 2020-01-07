@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -253,15 +253,22 @@ std::string TD_TL_writer_h::gen_function_result_type(const tl::tl_tree *result) 
 }
 
 std::string TD_TL_writer_h::gen_fetch_function_begin(const std::string &parser_name, const std::string &class_name,
-                                                     const std::string &parent_class_name, int arity,
+                                                     const std::string &parent_class_name, int arity, int field_count,
                                                      std::vector<tl::var_description> &vars, int parser_type) const {
   std::string returned_type = "object_ptr<" + parent_class_name + "> ";
 
   if (parser_type == 0) {
-    return "\n"
-           "  static " +
-           returned_type + "fetch(" + parser_name + " &p);\n\n" + "  explicit " + class_name + "(" + parser_name +
-           " &p);\n";
+    std::string result =
+        "\n"
+        "  static " +
+        returned_type + "fetch(" + parser_name + " &p);\n";
+    if (field_count != 0) {
+      result +=
+          "\n"
+          "  explicit " +
+          class_name + "(" + parser_name + " &p);\n";
+    }
+    return result;
   }
 
   assert(arity == 0);
@@ -270,7 +277,7 @@ std::string TD_TL_writer_h::gen_fetch_function_begin(const std::string &parser_n
          returned_type + "fetch(" + parser_name + " &p);\n";
 }
 
-std::string TD_TL_writer_h::gen_fetch_function_end(bool has_parent, int field_num,
+std::string TD_TL_writer_h::gen_fetch_function_end(bool has_parent, int field_count,
                                                    const std::vector<tl::var_description> &vars,
                                                    int parser_type) const {
   return "";
@@ -326,11 +333,11 @@ std::string TD_TL_writer_h::gen_fetch_switch_end() const {
   return "";
 }
 
-std::string TD_TL_writer_h::gen_constructor_begin(int fields_num, const std::string &class_name,
+std::string TD_TL_writer_h::gen_constructor_begin(int field_count, const std::string &class_name,
                                                   bool is_default) const {
   return "\n"
          "  " +
-         std::string(fields_num == 1 ? "explicit " : "") + class_name + "(";
+         std::string(field_count == 1 ? "explicit " : "") + class_name + "(";
 }
 
 std::string TD_TL_writer_h::gen_constructor_field_init(int field_num, const std::string &class_name, const tl::arg &a,
@@ -338,7 +345,7 @@ std::string TD_TL_writer_h::gen_constructor_field_init(int field_num, const std:
   return "";
 }
 
-std::string TD_TL_writer_h::gen_constructor_end(const tl::tl_combinator *t, int fields_num, bool is_default) const {
+std::string TD_TL_writer_h::gen_constructor_end(const tl::tl_combinator *t, int field_count, bool is_default) const {
   return ");\n";
 }
 

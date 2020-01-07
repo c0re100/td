@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -26,35 +26,42 @@ void gen_to_json_constructor(StringBuilder &sb, const T *constructor, bool is_he
   sb << "void to_json(JsonValueScope &jv, "
      << "const td_api::" << tl::simple::gen_cpp_name(constructor->name) << " &object)";
   if (is_header) {
-    sb << ";\n";
+    sb << ";\n\n";
     return;
   }
   sb << " {\n";
   sb << "  auto jo = jv.enter_object();\n";
-  sb << "  jo << ctie(\"@type\", \"" << tl::simple::gen_cpp_name(constructor->name) << "\");\n";
+  sb << "  jo(\"@type\", \"" << tl::simple::gen_cpp_name(constructor->name) << "\");\n";
   for (auto &arg : constructor->args) {
-    auto field = tl::simple::gen_cpp_field_name(arg.name);
-    // TODO: or as null
+    auto field_name = tl::simple::gen_cpp_field_name(arg.name);
     bool is_custom = arg.type->type == tl::simple::Type::Custom;
 
+    auto object = PSTRING() << "object." << field_name;
     if (is_custom) {
-      sb << "  if (object." << field << ") {\n  ";
+      sb << "  if (" << object << ") {\n  ";
     }
-    auto object = PSTRING() << "object." << tl::simple::gen_cpp_field_name(arg.name);
     if (arg.type->type == tl::simple::Type::Bytes) {
       object = PSTRING() << "base64_encode(" << object << ")";
+    } else if (arg.type->type == tl::simple::Type::Bool) {
+      object = PSTRING() << "JsonBool{" << object << "}";
     } else if (arg.type->type == tl::simple::Type::Int64) {
       object = PSTRING() << "JsonInt64{" << object << "}";
     } else if (arg.type->type == tl::simple::Type::Vector &&
                arg.type->vector_value_type->type == tl::simple::Type::Int64) {
       object = PSTRING() << "JsonVectorInt64{" << object << "}";
     }
-    sb << "  jo << ctie(\"" << arg.name << "\", ToJson(" << object << "));\n";
+    if (is_custom) {
+      sb << "  jo(\"" << arg.name << "\", ToJson(*" << object << "));\n";
+    } else if (arg.type->type == tl::simple::Type::Int64 || arg.type->type == tl::simple::Type::Vector) {
+      sb << "  jo(\"" << arg.name << "\", ToJson(" << object << "));\n";
+    } else {
+      sb << "  jo(\"" << arg.name << "\", " << object << ");\n";
+    }
     if (is_custom) {
       sb << "  }\n";
     }
   }
-  sb << "}\n";
+  sb << "}\n\n";
 }
 
 void gen_to_json(StringBuilder &sb, const tl::simple::Schema &schema, bool is_header, Mode mode) {
@@ -66,13 +73,13 @@ void gen_to_json(StringBuilder &sb, const tl::simple::Schema &schema, bool is_he
       auto type_name = tl::simple::gen_cpp_name(custom_type->name);
       sb << "void to_json(JsonValueScope &jv, const td_api::" << type_name << " &object)";
       if (is_header) {
-        sb << ";\n";
+        sb << ";\n\n";
       } else {
         sb << " {\n"
            << "  td_api::downcast_call(const_cast<td_api::" << type_name
            << " &>(object), [&jv](const auto &object) { "
               "to_json(jv, object); });\n"
-           << "}\n";
+           << "}\n\n";
       }
     }
     for (auto *constructor : custom_type->constructors) {
@@ -91,23 +98,16 @@ template <class T>
 void gen_from_json_constructor(StringBuilder &sb, const T *constructor, bool is_header) {
   sb << "Status from_json(td_api::" << tl::simple::gen_cpp_name(constructor->name) << " &to, JsonObject &from)";
   if (is_header) {
-    sb << ";\n";
+    sb << ";\n\n";
   } else {
     sb << " {\n";
     for (auto &arg : constructor->args) {
-      sb << "  {\n";
-      sb << "    auto value = get_json_object_field_force(from, \"" << tl::simple::gen_cpp_name(arg.name) << "\");\n";
-      sb << "    if (value.type() != td::JsonValue::Type::Null) {\n";
-      if (arg.type->type == tl::simple::Type::Bytes) {
-        sb << "      TRY_STATUS(from_json_bytes(to." << tl::simple::gen_cpp_field_name(arg.name) << ", value));\n";
-      } else {
-        sb << "      TRY_STATUS(from_json(to." << tl::simple::gen_cpp_field_name(arg.name) << ", value));\n";
-      }
-      sb << "    }\n";
-      sb << "  }\n";
+      sb << "  TRY_STATUS(from_json" << (arg.type->type == tl::simple::Type::Bytes ? "_bytes" : "") << "(to."
+         << tl::simple::gen_cpp_field_name(arg.name) << ", get_json_object_field_force(from, \""
+         << tl::simple::gen_cpp_name(arg.name) << "\")));\n";
     }
     sb << "  return Status::OK();\n";
-    sb << "}\n";
+    sb << "}\n\n";
   }
 }
 
@@ -132,7 +132,7 @@ using Vec = std::vector<std::pair<int32, std::string>>;
 void gen_tl_constructor_from_string(StringBuilder &sb, Slice name, const Vec &vec, bool is_header) {
   sb << "Result<int32> tl_constructor_from_string(td_api::" << name << " *object, const std::string &str)";
   if (is_header) {
-    sb << ";\n";
+    sb << ";\n\n";
     return;
   }
   sb << " {\n";
@@ -153,7 +153,7 @@ void gen_tl_constructor_from_string(StringBuilder &sb, Slice name, const Vec &ve
      << "    return Status::Error(PSLICE() << \"Unknown class \\\"\" << str << \"\\\"\");\n"
      << "  }\n"
      << "  return it->second;\n";
-  sb << "}\n";
+  sb << "}\n\n";
 }
 
 void gen_tl_constructor_from_string(StringBuilder &sb, const tl::simple::Schema &schema, bool is_header, Mode mode) {
@@ -218,10 +218,46 @@ void gen_json_converter_file(const tl::simple::Schema &schema, const std::string
     sb << "#include \"td/utils/common.h\"\n";
     sb << "#include \"td/utils/Slice.h\"\n\n";
 
+    sb << "#include <functional>\n";
     sb << "#include <unordered_map>\n\n";
   }
   sb << "namespace td {\n";
-  sb << "namespace td_api{\n";
+  sb << "namespace td_api {\n";
+  if (is_header) {
+    sb << "\nvoid to_json(JsonValueScope &jv, const tl_object_ptr<Object> &value);\n";
+    sb << "\nStatus from_json(tl_object_ptr<Function> &to, td::JsonValue from);\n";
+    sb << "\nvoid to_json(JsonValueScope &jv, const Object &object);\n";
+    sb << "\nvoid to_json(JsonValueScope &jv, const Function &object);\n\n";
+  } else {
+    sb << R"ABCD(
+void to_json(JsonValueScope &jv, const tl_object_ptr<Object> &value) {
+  td::to_json(jv, std::move(value));
+}
+
+Status from_json(tl_object_ptr<Function> &to, td::JsonValue from) {
+  return td::from_json(to, std::move(from));
+}
+
+template <class T>
+auto lazy_to_json(JsonValueScope &jv, const T &t) -> decltype(td_api::to_json(jv, t)) {
+  return td_api::to_json(jv, t);
+}
+
+template <class T>
+void lazy_to_json(std::reference_wrapper<JsonValueScope>, const T &t) {
+  UNREACHABLE();
+}
+
+void to_json(JsonValueScope &jv, const Object &object) {
+  downcast_call(const_cast<Object &>(object), [&jv](const auto &object) { lazy_to_json(jv, object); });
+}
+
+void to_json(JsonValueScope &jv, const Function &object) {
+  downcast_call(const_cast<Function &>(object), [&jv](const auto &object) { lazy_to_json(jv, object); });
+}
+
+)ABCD";
+  }
   gen_tl_constructor_from_string(sb, schema, is_header, mode);
   gen_from_json(sb, schema, is_header, mode);
   gen_to_json(sb, schema, is_header, mode);

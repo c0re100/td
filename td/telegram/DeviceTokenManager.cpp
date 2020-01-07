@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -37,6 +37,7 @@ void DeviceTokenManager::TokenInfo::store(StorerT &storer) const {
   bool is_sync = state == State::Sync;
   bool is_unregister = state == State::Unregister;
   bool is_register = state == State::Register;
+  CHECK(state != State::Reregister);
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_other_user_ids);
   STORE_FLAG(is_sync);
@@ -88,21 +89,24 @@ void DeviceTokenManager::TokenInfo::parse(ParserT &parser) {
   }
 }
 
-StringBuilder &operator<<(StringBuilder &string_builder, const DeviceTokenManager::TokenInfo &token_info) {
-  switch (token_info.state) {
+StringBuilder &operator<<(StringBuilder &string_builder, const DeviceTokenManager::TokenInfo::State &state) {
+  switch (state) {
     case DeviceTokenManager::TokenInfo::State::Sync:
-      string_builder << "Synchronized";
-      break;
+      return string_builder << "Synchronized";
     case DeviceTokenManager::TokenInfo::State::Unregister:
-      string_builder << "Unregister";
-      break;
+      return string_builder << "Unregister";
     case DeviceTokenManager::TokenInfo::State::Register:
-      string_builder << "Register";
-      break;
+      return string_builder << "Register";
+    case DeviceTokenManager::TokenInfo::State::Reregister:
+      return string_builder << "Reregister";
     default:
       UNREACHABLE();
+      return string_builder;
   }
-  string_builder << " token \"" << format::escaped(token_info.token) << "\"";
+}
+
+StringBuilder &operator<<(StringBuilder &string_builder, const DeviceTokenManager::TokenInfo &token_info) {
+  string_builder << token_info.state << " token \"" << format::escaped(token_info.token) << "\"";
   if (!token_info.other_user_ids.empty()) {
     string_builder << ", with other users " << token_info.other_user_ids;
   }
@@ -110,7 +114,7 @@ StringBuilder &operator<<(StringBuilder &string_builder, const DeviceTokenManage
     string_builder << ", sandboxed";
   }
   if (token_info.encrypt) {
-    string_builder << ", encrypted";
+    string_builder << ", encrypted with ID " << token_info.encryption_key_id;
   }
   return string_builder;
 }
@@ -268,6 +272,16 @@ void DeviceTokenManager::register_device(tl_object_ptr<td_api::DeviceToken> devi
   save_info(token_type);
 }
 
+void DeviceTokenManager::reregister_device() {
+  for (int32 token_type = 1; token_type < TokenType::SIZE; token_type++) {
+    auto &token = tokens_[token_type];
+    if (token.state == TokenInfo::State::Sync && !token.token.empty()) {
+      token.state = TokenInfo::State::Reregister;
+    }
+  }
+  loop();
+}
+
 vector<std::pair<int64, Slice>> DeviceTokenManager::get_encryption_keys() const {
   vector<std::pair<int64, Slice>> result;
   for (int32 token_type = 1; token_type < TokenType::SIZE; token_type++) {
@@ -317,9 +331,9 @@ void DeviceTokenManager::start_up() {
       }
       token.token = serialized.substr(1);
     }
-    LOG(INFO) << "GET device token " << token_type << "--->" << token;
-    if (token.state == TokenInfo::State::Sync) {
-      token.state = TokenInfo::State::Register;
+    LOG(INFO) << "Have device token " << token_type << "--->" << token;
+    if (token.state == TokenInfo::State::Sync && !token.token.empty()) {
+      token.state = TokenInfo::State::Reregister;
     }
   }
   loop();
@@ -343,7 +357,7 @@ void DeviceTokenManager::dec_sync_cnt() {
 }
 
 void DeviceTokenManager::loop() {
-  if (sync_cnt_ != 0) {
+  if (sync_cnt_ != 0 || G()->close_flag()) {
     return;
   }
   for (int32 token_type = 1; token_type < TokenType::SIZE; token_type++) {
@@ -361,8 +375,10 @@ void DeviceTokenManager::loop() {
       net_query = G()->net_query_creator().create(
           create_storer(telegram_api::account_unregisterDevice(token_type, info.token, std::move(other_user_ids))));
     } else {
-      net_query = G()->net_query_creator().create(create_storer(telegram_api::account_registerDevice(
-          token_type, info.token, info.is_app_sandbox, BufferSlice(info.encryption_key), std::move(other_user_ids))));
+      int32 flags = telegram_api::account_registerDevice::NO_MUTED_MASK;
+      net_query = G()->net_query_creator().create(create_storer(
+          telegram_api::account_registerDevice(flags, false /*ignored*/, token_type, info.token, info.is_app_sandbox,
+                                               BufferSlice(info.encryption_key), std::move(other_user_ids))));
     }
     info.net_query_id = net_query->id();
     G()->net_query_dispatcher().dispatch_with_callback(std::move(net_query), actor_shared(this, token_type));
@@ -378,12 +394,12 @@ void DeviceTokenManager::on_result(NetQueryPtr net_query) {
     return;
   }
   info.net_query_id = 0;
+  CHECK(info.state != TokenInfo::State::Sync);
+
   static_assert(std::is_same<telegram_api::account_registerDevice::ReturnType,
                              telegram_api::account_unregisterDevice::ReturnType>::value,
                 "");
   auto r_flag = fetch_result<telegram_api::account_registerDevice>(std::move(net_query));
-
-  info.net_query_id = 0;
   if (r_flag.is_ok() && r_flag.ok()) {
     if (info.promise) {
       int64 push_token_id = 0;
@@ -401,21 +417,23 @@ void DeviceTokenManager::on_result(NetQueryPtr net_query) {
     }
     info.state = TokenInfo::State::Sync;
   } else {
-    if (info.promise) {
-      if (r_flag.is_error()) {
-        info.promise.set_error(r_flag.error().clone());
-      } else {
-        info.promise.set_error(Status::Error(5, "Got false as result of server request"));
+    if (r_flag.is_error()) {
+      if (!G()->close_flag()) {
+        LOG(ERROR) << "Failed to " << info.state << " device: " << r_flag.error();
       }
+      info.promise.set_error(r_flag.move_as_error());
+    } else {
+      info.promise.set_error(Status::Error(5, "Got false as result of registerDevice server request"));
     }
-    if (info.state == TokenInfo::State::Register) {
+    if (info.state == TokenInfo::State::Reregister) {
+      // keep trying to reregister the token
+      return loop();
+    } else if (info.state == TokenInfo::State::Register) {
       info.state = TokenInfo::State::Unregister;
     } else {
+      CHECK(info.state == TokenInfo::State::Unregister);
       info.state = TokenInfo::State::Sync;
       info.token.clear();
-    }
-    if (r_flag.is_error() && !G()->close_flag()) {
-      LOG(ERROR) << r_flag.error();
     }
   }
   save_info(token_type);

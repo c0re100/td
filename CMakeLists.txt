@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 
-project(TDLib VERSION 1.5.1 LANGUAGES CXX C)
+project(TDLib VERSION 1.5.4 LANGUAGES CXX C)
 
 if (POLICY CMP0054)
   # do not expand quoted arguments
@@ -79,7 +79,7 @@ set(MEMPROF "" CACHE STRING "Use one of \"ON\", \"FAST\" or \"SAFE\" to enable m
 Works under macOS and Linux when compiled using glibc. \
 In FAST mode stack is unwinded only using frame pointers, which may fail. \
 In SAFE mode stack is unwinded using backtrace function from execinfo.h, which may be very slow. \
-By default both methods are used to achieve maximum speed and accuracy")
+By default both methods are used to achieve the maximum speed and accuracy")
 
 if (EMSCRIPTEN)
   # use prebuilt zlib
@@ -87,8 +87,8 @@ if (EMSCRIPTEN)
   set(ZLIB_LIBRARIES)
   set(ZLIB_INCLUDE_DIR)
 
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s ALLOW_MEMORY_GROWTH=1 -s MEMFS_APPEND_TO_TYPED_ARRAYS=1 -s USE_ZLIB=1 -s MODULARIZE=1 -s WEBSOCKET_URL=\"'wss:#'\" -s EXTRA_EXPORTED_RUNTIME_METHODS=\"['FS','cwrap']\"")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -s ALLOW_MEMORY_GROWTH=1 -s MEMFS_APPEND_TO_TYPED_ARRAYS=1 -s USE_ZLIB=1 -s MODULARIZE=1 -s WEBSOCKET_URL=\"'wss:#'\" -s EXTRA_EXPORTED_RUNTIME_METHODS=\"['FS','cwrap']\"")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s ALLOW_MEMORY_GROWTH=1 -s MEMFS_APPEND_TO_TYPED_ARRAYS=1 -s USE_ZLIB=1 -s MODULARIZE=1 -s WEBSOCKET_URL=\"'wss:#'\" -s EXTRA_EXPORTED_RUNTIME_METHODS=\"['FS','cwrap']\" -lidbfs.js -lworkerfs.js")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -s ALLOW_MEMORY_GROWTH=1 -s MEMFS_APPEND_TO_TYPED_ARRAYS=1 -s USE_ZLIB=1 -s MODULARIZE=1 -s WEBSOCKET_URL=\"'wss:#'\" -s EXTRA_EXPORTED_RUNTIME_METHODS=\"['FS','cwrap']\" -lidbfs.js -lworkerfs.js")
   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -s DEMANGLE_SUPPORT=1 -s ASSERTIONS=1")
   set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -s DEMANGLE_SUPPORT=1 -s ASSERTIONS=1")
 
@@ -301,7 +301,7 @@ endif()
 #SOURCE SETS
 
 set_source_files_properties(${TL_TD_AUTO} PROPERTIES GENERATED TRUE)
-if (TD_ENABLE_JNI)
+if (TD_ENABLE_JNI OR ANDROID)
   set(TL_JNI_OBJECT
     td/tl/tl_jni_object.cpp
     td/tl/tl_jni_object.h
@@ -373,8 +373,10 @@ set(TDLIB_SOURCE
   td/telegram/DelayDispatcher.cpp
   td/telegram/DeviceTokenManager.cpp
   td/telegram/DhCache.cpp
+  td/telegram/DialogAdministrator.cpp
   td/telegram/DialogDb.cpp
   td/telegram/DialogId.cpp
+  td/telegram/DialogLocation.cpp
   td/telegram/DialogParticipant.cpp
   td/telegram/Document.cpp
   td/telegram/DocumentsManager.cpp
@@ -409,6 +411,7 @@ set(TDLIB_SOURCE
   td/telegram/Logging.cpp
   td/telegram/MessageContent.cpp
   td/telegram/MessageEntity.cpp
+  td/telegram/MessageId.cpp
   td/telegram/MessagesDb.cpp
   td/telegram/MessagesManager.cpp
   td/telegram/misc.cpp
@@ -442,6 +445,7 @@ set(TDLIB_SOURCE
   td/telegram/PollManager.cpp
   td/telegram/QueryCombiner.cpp
   td/telegram/ReplyMarkup.cpp
+  td/telegram/RestrictionReason.cpp
   td/telegram/SecretChatActor.cpp
   td/telegram/SecretChatDb.cpp
   td/telegram/SecretChatsManager.cpp
@@ -458,6 +462,7 @@ set(TDLIB_SOURCE
   td/telegram/TermsOfService.cpp
   td/telegram/TopDialogManager.cpp
   td/telegram/UpdatesManager.cpp
+  td/telegram/Venue.cpp
   td/telegram/VideoNotesManager.cpp
   td/telegram/VideosManager.cpp
   td/telegram/VoiceNotesManager.cpp
@@ -516,9 +521,11 @@ set(TDLIB_SOURCE
   td/telegram/DeviceTokenManager.h
   td/telegram/DhCache.h
   td/telegram/DhConfig.h
+  td/telegram/DialogAdministrator.h
   td/telegram/DialogDate.h
   td/telegram/DialogDb.h
   td/telegram/DialogId.h
+  td/telegram/DialogLocation.h
   td/telegram/DialogParticipant.h
   td/telegram/Document.h
   td/telegram/DocumentsManager.h
@@ -550,6 +557,8 @@ set(TDLIB_SOURCE
   td/telegram/files/PartsManager.h
   td/telegram/files/ResourceManager.h
   td/telegram/files/ResourceState.h
+  td/telegram/FolderId.h
+  td/telegram/FullMessageId.h
   td/telegram/Game.h
   td/telegram/Global.h
   td/telegram/HashtagHints.h
@@ -607,9 +616,12 @@ set(TDLIB_SOURCE
   td/telegram/PollManager.h
   td/telegram/PrivacyManager.h
   td/telegram/PtsManager.h
+  td/telegram/PublicDialogType.h
   td/telegram/QueryCombiner.h
   td/telegram/ReplyMarkup.h
   td/telegram/RequestActor.h
+  td/telegram/RestrictionReason.h
+  td/telegram/ScheduledServerMessageId.h
   td/telegram/SecretChatActor.h
   td/telegram/SecretChatId.h
   td/telegram/SecretChatDb.h
@@ -620,8 +632,10 @@ set(TDLIB_SOURCE
   td/telegram/SecureValue.h
   td/telegram/SendCodeHelper.h
   td/telegram/SequenceDispatcher.h
+  td/telegram/ServerMessageId.h
   td/telegram/SetWithPosition.h
   td/telegram/StateManager.h
+  td/telegram/StickerSetId.h
   td/telegram/StickersManager.h
   td/telegram/StorageManager.h
   td/telegram/Td.h
@@ -633,6 +647,7 @@ set(TDLIB_SOURCE
   td/telegram/UniqueId.h
   td/telegram/UpdatesManager.h
   td/telegram/UserId.h
+  td/telegram/Venue.h
   td/telegram/Version.h
   td/telegram/VideoNotesManager.h
   td/telegram/VideosManager.h
@@ -665,6 +680,7 @@ set(TDLIB_SOURCE
   td/telegram/ReplyMarkup.hpp
   td/telegram/SecureValue.hpp
   td/telegram/SendCodeHelper.hpp
+  td/telegram/StickerSetId.hpp
   td/telegram/StickersManager.hpp
   td/telegram/VideoNotesManager.hpp
   td/telegram/VideosManager.hpp

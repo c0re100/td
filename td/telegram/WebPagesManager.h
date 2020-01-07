@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -12,7 +12,7 @@
 #include "td/telegram/DialogId.h"
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/files/FileSourceId.h"
-#include "td/telegram/MessageId.h"
+#include "td/telegram/FullMessageId.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/WebPageId.h"
 
@@ -47,7 +47,7 @@ class WebPagesManager : public Actor {
 
   void on_get_web_page_by_url(const string &url, WebPageId web_page_id, bool from_database);
 
-  void wait_for_pending_web_page(DialogId dialog_id, MessageId message_id, WebPageId web_page_id);
+  void wait_for_pending_web_page(FullMessageId full_message_id, WebPageId web_page_id);
 
   bool have_web_page(WebPageId web_page_id) const;
 
@@ -84,17 +84,18 @@ class WebPagesManager : public Actor {
   string get_web_page_search_text(WebPageId web_page_id) const;
 
  private:
-  static constexpr int32 WEBPAGE_FLAG_HAS_TYPE = 1;
-  static constexpr int32 WEBPAGE_FLAG_HAS_SITE_NAME = 2;
-  static constexpr int32 WEBPAGE_FLAG_HAS_TITLE = 4;
-  static constexpr int32 WEBPAGE_FLAG_HAS_DESCRIPTION = 8;
-  static constexpr int32 WEBPAGE_FLAG_HAS_PHOTO = 16;
-  static constexpr int32 WEBPAGE_FLAG_HAS_EMBEDDED_PREVIEW = 32;
-  static constexpr int32 WEBPAGE_FLAG_HAS_EMBEDDED_PREVIEW_SIZE = 64;
-  static constexpr int32 WEBPAGE_FLAG_HAS_DURATION = 128;
-  static constexpr int32 WEBPAGE_FLAG_HAS_AUTHOR = 256;
-  static constexpr int32 WEBPAGE_FLAG_HAS_DOCUMENT = 512;
-  static constexpr int32 WEBPAGE_FLAG_HAS_INSTANT_VIEW = 1024;
+  static constexpr int32 WEBPAGE_FLAG_HAS_TYPE = 1 << 0;
+  static constexpr int32 WEBPAGE_FLAG_HAS_SITE_NAME = 1 << 1;
+  static constexpr int32 WEBPAGE_FLAG_HAS_TITLE = 1 << 2;
+  static constexpr int32 WEBPAGE_FLAG_HAS_DESCRIPTION = 1 << 3;
+  static constexpr int32 WEBPAGE_FLAG_HAS_PHOTO = 1 << 4;
+  static constexpr int32 WEBPAGE_FLAG_HAS_EMBEDDED_PREVIEW = 1 << 5;
+  static constexpr int32 WEBPAGE_FLAG_HAS_EMBEDDED_PREVIEW_SIZE = 1 << 6;
+  static constexpr int32 WEBPAGE_FLAG_HAS_DURATION = 1 << 7;
+  static constexpr int32 WEBPAGE_FLAG_HAS_AUTHOR = 1 << 8;
+  static constexpr int32 WEBPAGE_FLAG_HAS_DOCUMENT = 1 << 9;
+  static constexpr int32 WEBPAGE_FLAG_HAS_INSTANT_VIEW = 1 << 10;
+  static constexpr int32 WEBPAGE_FLAG_HAS_DOCUMENTS = 1 << 11;
 
   class WebPage;
 

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -28,6 +28,7 @@
 #include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/net/MtprotoHeader.h"
+#include "td/telegram/StickerSetId.hpp"
 #include "td/telegram/StickersManager.hpp"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
@@ -225,14 +226,14 @@ class GetEmojiUrlQuery : public Td::ResultHandler {
 
 class GetArchivedStickerSetsQuery : public Td::ResultHandler {
   Promise<Unit> promise_;
-  int64 offset_sticker_set_id_;
+  StickerSetId offset_sticker_set_id_;
   bool is_masks_;
 
  public:
   explicit GetArchivedStickerSetsQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(bool is_masks, int64 offset_sticker_set_id, int32 limit) {
+  void send(bool is_masks, StickerSetId offset_sticker_set_id, int32 limit) {
     offset_sticker_set_id_ = offset_sticker_set_id;
     is_masks_ = is_masks;
     LOG(INFO) << "Get archived " << (is_masks ? "mask" : "sticker") << " sets from " << offset_sticker_set_id
@@ -245,7 +246,7 @@ class GetArchivedStickerSetsQuery : public Td::ResultHandler {
     is_masks_ = is_masks;
 
     send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::messages_getArchivedStickers(flags, is_masks /*ignored*/, offset_sticker_set_id, limit))));
+        telegram_api::messages_getArchivedStickers(flags, is_masks /*ignored*/, offset_sticker_set_id.get(), limit))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -583,14 +584,14 @@ class ReorderStickerSetsQuery : public Td::ResultHandler {
   bool is_masks_;
 
  public:
-  void send(bool is_masks, vector<int64> sticker_set_ids) {
+  void send(bool is_masks, vector<StickerSetId> sticker_set_ids) {
     is_masks_ = is_masks;
     int32 flags = 0;
     if (is_masks) {
       flags |= telegram_api::messages_reorderStickerSets::MASKS_MASK;
     }
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::messages_reorderStickerSets(flags, is_masks /*ignored*/, std::move(sticker_set_ids)))));
+    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_reorderStickerSets(
+        flags, is_masks /*ignored*/, StickersManager::convert_sticker_set_ids(sticker_set_ids)))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -615,20 +616,20 @@ class ReorderStickerSetsQuery : public Td::ResultHandler {
 
 class GetStickerSetQuery : public Td::ResultHandler {
   Promise<Unit> promise_;
-  int64 sticker_set_id_;
+  StickerSetId sticker_set_id_;
   string sticker_set_name_;
 
  public:
   explicit GetStickerSetQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(int64 sticker_set_id, tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set) {
+  void send(StickerSetId sticker_set_id, tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set) {
     sticker_set_id_ = sticker_set_id;
     if (input_sticker_set->get_id() == telegram_api::inputStickerSetShortName::ID) {
       sticker_set_name_ =
           static_cast<const telegram_api::inputStickerSetShortName *>(input_sticker_set.get())->short_name_;
     }
-    LOG(INFO) << "Load sticker set " << sticker_set_id << " from server: " << to_string(input_sticker_set);
+    LOG(INFO) << "Load " << sticker_set_id << " from server: " << to_string(input_sticker_set);
     send_query(G()->net_query_creator().create(
         create_storer(telegram_api::messages_getStickerSet(std::move(input_sticker_set)))));
   }
@@ -644,14 +645,14 @@ class GetStickerSetQuery : public Td::ResultHandler {
     constexpr int64 GREAT_MINDS_COLOR_SET_ID = 151353307481243663;
     if (set->set_->id_ == GREAT_MINDS_COLOR_SET_ID) {
       string great_minds_name = "TelegramGreatMinds";
-      if (sticker_set_id_ == StickersManager::GREAT_MINDS_SET_ID ||
+      if (sticker_set_id_.get() == StickersManager::GREAT_MINDS_SET_ID ||
           trim(to_lower(sticker_set_name_)) == to_lower(great_minds_name)) {
         set->set_->id_ = StickersManager::GREAT_MINDS_SET_ID;
         set->set_->short_name_ = std::move(great_minds_name);
       }
     }
 
-    td->stickers_manager_->on_get_messages_sticker_set(sticker_set_id_, std::move(set), true);
+    td->stickers_manager_->on_get_messages_sticker_set(sticker_set_id_, std::move(set), true, "GetStickerSetQuery");
 
     promise_.set_value(Unit());
   }
@@ -660,6 +661,31 @@ class GetStickerSetQuery : public Td::ResultHandler {
     LOG(INFO) << "Receive error for getStickerSet: " << status;
     td->stickers_manager_->on_load_sticker_set_fail(sticker_set_id_, status);
     promise_.set_error(std::move(status));
+  }
+};
+
+class ReloadAnimatedEmojiStickerSetQuery : public Td::ResultHandler {
+ public:
+  void send() {
+    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getStickerSet(
+        telegram_api::make_object<telegram_api::inputStickerSetAnimatedEmoji>()))));
+  }
+
+  void on_result(uint64 id, BufferSlice packet) override {
+    auto result_ptr = fetch_result<telegram_api::messages_getStickerSet>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(id, result_ptr.move_as_error());
+    }
+
+    auto sticker_set_id = td->stickers_manager_->on_get_messages_sticker_set(
+        StickerSetId(), result_ptr.move_as_ok(), true, "ReloadAnimatedEmojiStickerSetQuery");
+    if (sticker_set_id.is_valid()) {
+      td->stickers_manager_->on_get_animated_emoji_sticker_set(sticker_set_id);
+    }
+  }
+
+  void on_error(uint64 id, Status status) override {
+    LOG(WARNING) << "Receive error for ReloadAnimatedEmojiStickerSetQuery: " << status;
   }
 };
 
@@ -694,14 +720,14 @@ class SearchStickerSetsQuery : public Td::ResultHandler {
 
 class InstallStickerSetQuery : public Td::ResultHandler {
   Promise<Unit> promise_;
-  int64 set_id_;
+  StickerSetId set_id_;
   bool is_archived_;
 
  public:
   explicit InstallStickerSetQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(int64 set_id, tl_object_ptr<telegram_api::InputStickerSet> &&input_set, bool is_archived) {
+  void send(StickerSetId set_id, tl_object_ptr<telegram_api::InputStickerSet> &&input_set, bool is_archived) {
     set_id_ = set_id;
     is_archived_ = is_archived;
     send_query(G()->net_query_creator().create(
@@ -727,13 +753,13 @@ class InstallStickerSetQuery : public Td::ResultHandler {
 
 class UninstallStickerSetQuery : public Td::ResultHandler {
   Promise<Unit> promise_;
-  int64 set_id_;
+  StickerSetId set_id_;
 
  public:
   explicit UninstallStickerSetQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(int64 set_id, tl_object_ptr<telegram_api::InputStickerSet> &&input_set) {
+  void send(StickerSetId set_id, tl_object_ptr<telegram_api::InputStickerSet> &&input_set) {
     set_id_ = set_id;
     send_query(G()->net_query_creator().create(
         create_storer(telegram_api::messages_uninstallStickerSet(std::move(input_set)))));
@@ -763,10 +789,10 @@ class UninstallStickerSetQuery : public Td::ResultHandler {
 
 class ReadFeaturedStickerSetsQuery : public Td::ResultHandler {
  public:
-  void send(vector<int64> sticker_set_ids) {
+  void send(vector<StickerSetId> sticker_set_ids) {
     LOG(INFO) << "Read featured sticker sets " << format::as_array(sticker_set_ids);
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_readFeaturedStickers(std::move(sticker_set_ids)))));
+    send_query(G()->net_query_creator().create(create_storer(
+        telegram_api::messages_readFeaturedStickers(StickersManager::convert_sticker_set_ids(sticker_set_ids)))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -861,7 +887,8 @@ class CreateNewStickerSetQuery : public Td::ResultHandler {
       return on_error(id, result_ptr.move_as_error());
     }
 
-    td->stickers_manager_->on_get_messages_sticker_set(0, result_ptr.move_as_ok(), true);
+    td->stickers_manager_->on_get_messages_sticker_set(StickerSetId(), result_ptr.move_as_ok(), true,
+                                                       "CreateNewStickerSetQuery");
 
     promise_.set_value(Unit());
   }
@@ -890,7 +917,8 @@ class AddStickerToSetQuery : public Td::ResultHandler {
       return on_error(id, result_ptr.move_as_error());
     }
 
-    td->stickers_manager_->on_get_messages_sticker_set(0, result_ptr.move_as_ok(), true);
+    td->stickers_manager_->on_get_messages_sticker_set(StickerSetId(), result_ptr.move_as_ok(), true,
+                                                       "AddStickerToSetQuery");
 
     promise_.set_value(Unit());
   }
@@ -919,7 +947,8 @@ class SetStickerPositionQuery : public Td::ResultHandler {
       return on_error(id, result_ptr.move_as_error());
     }
 
-    td->stickers_manager_->on_get_messages_sticker_set(0, result_ptr.move_as_ok(), true);
+    td->stickers_manager_->on_get_messages_sticker_set(StickerSetId(), result_ptr.move_as_ok(), true,
+                                                       "SetStickerPositionQuery");
 
     promise_.set_value(Unit());
   }
@@ -948,7 +977,8 @@ class DeleteStickerFromSetQuery : public Td::ResultHandler {
       return on_error(id, result_ptr.move_as_error());
     }
 
-    td->stickers_manager_->on_get_messages_sticker_set(0, result_ptr.move_as_ok(), true);
+    td->stickers_manager_->on_get_messages_sticker_set(StickerSetId(), result_ptr.move_as_ok(), true,
+                                                       "DeleteStickerFromSetQuery");
 
     promise_.set_value(Unit());
   }
@@ -990,30 +1020,21 @@ class StickersManager::StickerListLogEvent {
 
 class StickersManager::StickerSetListLogEvent {
  public:
-  vector<int64> sticker_set_ids;
+  vector<StickerSetId> sticker_set_ids;
 
   StickerSetListLogEvent() = default;
 
-  explicit StickerSetListLogEvent(vector<int64> sticker_set_ids) : sticker_set_ids(std::move(sticker_set_ids)) {
+  explicit StickerSetListLogEvent(vector<StickerSetId> sticker_set_ids) : sticker_set_ids(std::move(sticker_set_ids)) {
   }
 
   template <class StorerT>
   void store(StorerT &storer) const {
-    StickersManager *stickers_manager = storer.context()->td().get_actor_unsafe()->stickers_manager_.get();
-    td::store(narrow_cast<int32>(sticker_set_ids.size()), storer);
-    for (auto sticker_set_id : sticker_set_ids) {
-      stickers_manager->store_sticker_set_id(sticker_set_id, storer);
-    }
+    td::store(sticker_set_ids, storer);
   }
 
   template <class ParserT>
   void parse(ParserT &parser) {
-    StickersManager *stickers_manager = parser.context()->td().get_actor_unsafe()->stickers_manager_.get();
-    int32 size = parser.fetch_int();
-    sticker_set_ids.resize(size);
-    for (auto &sticker_set_id : sticker_set_ids) {
-      stickers_manager->parse_sticker_set_id(sticker_set_id, parser);
-    }
+    td::parse(sticker_set_ids, parser);
   }
 };
 
@@ -1043,6 +1064,48 @@ StickersManager::StickersManager(Td *td, ActorShared<> parent) : td_(td), parent
 
   on_update_recent_stickers_limit(G()->shared_config().get_option_integer("recent_stickers_limit", 200));
   on_update_favorite_stickers_limit(G()->shared_config().get_option_integer("favorite_stickers_limit", 5));
+}
+
+void StickersManager::start_up() {
+  // add animated emoji sticker set
+  if (G()->is_test_dc()) {
+    int64 sticker_set_id_int = 1258816259751954;
+    animated_emoji_sticker_set_id_ = StickerSetId(sticker_set_id_int);
+    animated_emoji_sticker_set_access_hash_ = 4879754868529595811;
+    animated_emoji_sticker_set_name_ = "emojies";
+  } else {
+    int64 sticker_set_id_int = 1258816259751983;
+    animated_emoji_sticker_set_id_ = StickerSetId(sticker_set_id_int);
+    animated_emoji_sticker_set_access_hash_ = 5100237018658464041;
+    animated_emoji_sticker_set_name_ = "animatedemojies";
+  }
+  if (G()->parameters().use_file_db) {
+    string animated_emoji_sticker_set_string = G()->td_db()->get_binlog_pmc()->get("animated_emoji_sticker_set");
+    if (!animated_emoji_sticker_set_string.empty()) {
+      auto parts = full_split(animated_emoji_sticker_set_string);
+      if (parts.size() != 3) {
+        LOG(ERROR) << "Can't parse " << animated_emoji_sticker_set_string;
+      } else {
+        auto r_sticker_set_id = to_integer_safe<int64>(parts[0]);
+        auto r_sticker_set_access_hash = to_integer_safe<int64>(parts[1]);
+        auto sticker_set_name = parts[2];
+        if (r_sticker_set_id.is_error() || r_sticker_set_access_hash.is_error() ||
+            clean_username(sticker_set_name) != sticker_set_name || sticker_set_name.empty()) {
+          LOG(ERROR) << "Can't parse " << animated_emoji_sticker_set_string;
+        } else {
+          animated_emoji_sticker_set_id_ = StickerSetId(r_sticker_set_id.ok());
+          animated_emoji_sticker_set_access_hash_ = r_sticker_set_access_hash.ok();
+          animated_emoji_sticker_set_name_ = std::move(sticker_set_name);
+        }
+      }
+    }
+  } else {
+    G()->td_db()->get_binlog_pmc()->erase("animated_emoji_sticker_set");
+  }
+
+  add_sticker_set(animated_emoji_sticker_set_id_, animated_emoji_sticker_set_access_hash_);
+  short_name_to_sticker_set_id_.emplace(animated_emoji_sticker_set_name_, animated_emoji_sticker_set_id_);
+  G()->shared_config().set_option_string("animated_emoji_sticker_set_name", animated_emoji_sticker_set_name_);
 }
 
 void StickersManager::tear_down() {
@@ -1082,7 +1145,7 @@ tl_object_ptr<td_api::sticker> StickersManager::get_sticker_object(FileId file_i
                            : nullptr;
 
   const PhotoSize &thumbnail = sticker->m_thumbnail.file_id.is_valid() ? sticker->m_thumbnail : sticker->s_thumbnail;
-  return make_tl_object<td_api::sticker>(sticker->set_id, sticker->dimensions.width, sticker->dimensions.height,
+  return make_tl_object<td_api::sticker>(sticker->set_id.get(), sticker->dimensions.width, sticker->dimensions.height,
                                          sticker->alt, sticker->is_animated, sticker->is_mask, std::move(mask_position),
                                          get_photo_size_object(td_->file_manager_.get(), &thumbnail),
                                          td_->file_manager_->get_file_object(file_id));
@@ -1097,7 +1160,7 @@ tl_object_ptr<td_api::stickers> StickersManager::get_stickers_object(const vecto
   return result;
 }
 
-tl_object_ptr<td_api::stickerSet> StickersManager::get_sticker_set_object(int64 sticker_set_id) const {
+tl_object_ptr<td_api::stickerSet> StickersManager::get_sticker_set_object(StickerSetId sticker_set_id) const {
   const StickerSet *sticker_set = get_sticker_set(sticker_set_id);
   CHECK(sticker_set != nullptr);
   CHECK(sticker_set->was_loaded);
@@ -1115,14 +1178,14 @@ tl_object_ptr<td_api::stickerSet> StickersManager::get_sticker_set_object(int64 
     }
   }
   return make_tl_object<td_api::stickerSet>(
-      sticker_set->id, sticker_set->title, sticker_set->short_name,
+      sticker_set->id.get(), sticker_set->title, sticker_set->short_name,
       get_photo_size_object(td_->file_manager_.get(), &sticker_set->thumbnail),
       sticker_set->is_installed && !sticker_set->is_archived, sticker_set->is_archived, sticker_set->is_official,
       sticker_set->is_animated, sticker_set->is_masks, sticker_set->is_viewed, std::move(stickers), std::move(emojis));
 }
 
 tl_object_ptr<td_api::stickerSets> StickersManager::get_sticker_sets_object(int32 total_count,
-                                                                            const vector<int64> &sticker_set_ids,
+                                                                            const vector<StickerSetId> &sticker_set_ids,
                                                                             size_t covers_limit) const {
   vector<tl_object_ptr<td_api::stickerSetInfo>> result;
   result.reserve(sticker_set_ids.size());
@@ -1143,7 +1206,7 @@ tl_object_ptr<td_api::stickerSets> StickersManager::get_sticker_sets_object(int3
   return make_tl_object<td_api::stickerSets>(total_count, std::move(result));
 }
 
-tl_object_ptr<td_api::stickerSetInfo> StickersManager::get_sticker_set_info_object(int64 sticker_set_id,
+tl_object_ptr<td_api::stickerSetInfo> StickersManager::get_sticker_set_info_object(StickerSetId sticker_set_id,
                                                                                    size_t covers_limit) const {
   const StickerSet *sticker_set = get_sticker_set(sticker_set_id);
   CHECK(sticker_set != nullptr);
@@ -1158,7 +1221,7 @@ tl_object_ptr<td_api::stickerSetInfo> StickersManager::get_sticker_set_info_obje
   }
 
   return make_tl_object<td_api::stickerSetInfo>(
-      sticker_set->id, sticker_set->title, sticker_set->short_name,
+      sticker_set->id.get(), sticker_set->title, sticker_set->short_name,
       get_photo_size_object(td_->file_manager_.get(), &sticker_set->thumbnail),
       sticker_set->is_installed && !sticker_set->is_archived, sticker_set->is_archived, sticker_set->is_official,
       sticker_set->is_animated, sticker_set->is_masks, sticker_set->is_viewed,
@@ -1166,7 +1229,7 @@ tl_object_ptr<td_api::stickerSetInfo> StickersManager::get_sticker_set_info_obje
       std::move(stickers));
 }
 
-tl_object_ptr<telegram_api::InputStickerSet> StickersManager::get_input_sticker_set(int64 sticker_set_id) const {
+tl_object_ptr<telegram_api::InputStickerSet> StickersManager::get_input_sticker_set(StickerSetId sticker_set_id) const {
   auto sticker_set = get_sticker_set(sticker_set_id);
   if (sticker_set == nullptr) {
     return nullptr;
@@ -1189,8 +1252,8 @@ FileId StickersManager::on_get_sticker(unique_ptr<Sticker> new_sticker, bool rep
       s->dimensions = new_sticker->dimensions;
       s->is_changed = true;
     }
-    if (s->set_id != new_sticker->set_id && new_sticker->set_id != 0) {
-      LOG_IF(ERROR, s->set_id != 0) << "Sticker " << file_id << " set_id has changed";
+    if (s->set_id != new_sticker->set_id && new_sticker->set_id.is_valid()) {
+      LOG_IF(ERROR, s->set_id.is_valid()) << "Sticker " << file_id << " set_id has changed";
       s->set_id = new_sticker->set_id;
       s->is_changed = true;
     }
@@ -1318,7 +1381,7 @@ const StickersManager::Sticker *StickersManager::get_sticker(FileId file_id) con
   return sticker->second.get();
 }
 
-StickersManager::StickerSet *StickersManager::get_sticker_set(int64 sticker_set_id) {
+StickersManager::StickerSet *StickersManager::get_sticker_set(StickerSetId sticker_set_id) {
   auto sticker_set = sticker_sets_.find(sticker_set_id);
   if (sticker_set == sticker_sets_.end()) {
     return nullptr;
@@ -1327,7 +1390,7 @@ StickersManager::StickerSet *StickersManager::get_sticker_set(int64 sticker_set_
   return sticker_set->second.get();
 }
 
-const StickersManager::StickerSet *StickersManager::get_sticker_set(int64 sticker_set_id) const {
+const StickersManager::StickerSet *StickersManager::get_sticker_set(StickerSetId sticker_set_id) const {
   auto sticker_set = sticker_sets_.find(sticker_set_id);
   if (sticker_set == sticker_sets_.end()) {
     return nullptr;
@@ -1336,31 +1399,31 @@ const StickersManager::StickerSet *StickersManager::get_sticker_set(int64 sticke
   return sticker_set->second.get();
 }
 
-int64 StickersManager::get_sticker_set_id(const tl_object_ptr<telegram_api::InputStickerSet> &set_ptr) {
+StickerSetId StickersManager::get_sticker_set_id(const tl_object_ptr<telegram_api::InputStickerSet> &set_ptr) {
   CHECK(set_ptr != nullptr);
   switch (set_ptr->get_id()) {
     case telegram_api::inputStickerSetEmpty::ID:
-      return 0;
+      return StickerSetId();
     case telegram_api::inputStickerSetID::ID:
-      return static_cast<const telegram_api::inputStickerSetID *>(set_ptr.get())->id_;
+      return StickerSetId(static_cast<const telegram_api::inputStickerSetID *>(set_ptr.get())->id_);
     case telegram_api::inputStickerSetShortName::ID:
       LOG(ERROR) << "Receive sticker set by its short name";
       return search_sticker_set(static_cast<const telegram_api::inputStickerSetShortName *>(set_ptr.get())->short_name_,
                                 Auto());
     default:
       UNREACHABLE();
-      return 0;
+      return StickerSetId();
   }
 }
 
-int64 StickersManager::add_sticker_set(tl_object_ptr<telegram_api::InputStickerSet> &&set_ptr) {
+StickerSetId StickersManager::add_sticker_set(tl_object_ptr<telegram_api::InputStickerSet> &&set_ptr) {
   CHECK(set_ptr != nullptr);
   switch (set_ptr->get_id()) {
     case telegram_api::inputStickerSetEmpty::ID:
-      return 0;
+      return StickerSetId();
     case telegram_api::inputStickerSetID::ID: {
       auto set = move_tl_object_as<telegram_api::inputStickerSetID>(set_ptr);
-      int64 set_id = set->id_;
+      StickerSetId set_id{set->id_};
       add_sticker_set(set_id, set->access_hash_);
       return set_id;
     }
@@ -1371,11 +1434,11 @@ int64 StickersManager::add_sticker_set(tl_object_ptr<telegram_api::InputStickerS
     }
     default:
       UNREACHABLE();
-      return 0;
+      return StickerSetId();
   }
 }
 
-StickersManager::StickerSet *StickersManager::add_sticker_set(int64 sticker_set_id, int64 access_hash) {
+StickersManager::StickerSet *StickersManager::add_sticker_set(StickerSetId sticker_set_id, int64 access_hash) {
   auto &s = sticker_sets_[sticker_set_id];
   if (s == nullptr) {
     s = make_unique<StickerSet>();
@@ -1482,7 +1545,7 @@ bool StickersManager::merge_stickers(FileId new_id, FileId old_id, bool can_dele
 
 tl_object_ptr<telegram_api::InputStickerSet> StickersManager::get_input_sticker_set(const StickerSet *set) {
   CHECK(set != nullptr);
-  return make_tl_object<telegram_api::inputStickerSetID>(set->id, set->access_hash);
+  return make_tl_object<telegram_api::inputStickerSetID>(set->id.get(), set->access_hash);
 }
 
 void StickersManager::reload_installed_sticker_sets(bool is_masks, bool force) {
@@ -1511,18 +1574,18 @@ void StickersManager::reload_featured_sticker_sets(bool force) {
   }
 }
 
-int64 StickersManager::on_get_input_sticker_set(FileId sticker_file_id,
-                                                tl_object_ptr<telegram_api::InputStickerSet> &&set_ptr,
-                                                MultiPromiseActor *load_data_multipromise_ptr) {
+StickerSetId StickersManager::on_get_input_sticker_set(FileId sticker_file_id,
+                                                       tl_object_ptr<telegram_api::InputStickerSet> &&set_ptr,
+                                                       MultiPromiseActor *load_data_multipromise_ptr) {
   if (set_ptr == nullptr) {
-    return 0;
+    return StickerSetId();
   }
   switch (set_ptr->get_id()) {
     case telegram_api::inputStickerSetEmpty::ID:
-      return 0;
+      return StickerSetId();
     case telegram_api::inputStickerSetID::ID: {
       auto set = move_tl_object_as<telegram_api::inputStickerSetID>(set_ptr);
-      int64 set_id = set->id_;
+      StickerSetId set_id{set->id_};
       add_sticker_set(set_id, set->access_hash_);
       return set_id;
     }
@@ -1533,7 +1596,7 @@ int64 StickersManager::on_get_input_sticker_set(FileId sticker_file_id,
         return search_sticker_set(set->short_name_, Auto());
       }
       auto set_id = search_sticker_set(set->short_name_, load_data_multipromise_ptr->get_promise());
-      if (set_id == 0) {
+      if (!set_id.is_valid()) {
         load_data_multipromise_ptr->add_promise(
             PromiseCreator::lambda([td = td_, sticker_file_id, short_name = set->short_name_](Result<Unit> result) {
               if (result.is_ok()) {
@@ -1546,14 +1609,14 @@ int64 StickersManager::on_get_input_sticker_set(FileId sticker_file_id,
     }
     default:
       UNREACHABLE();
-      return 0;
+      return StickerSetId();
   }
 }
 
 void StickersManager::on_resolve_sticker_set_short_name(FileId sticker_file_id, const string &short_name) {
   LOG(INFO) << "Resolve sticker " << sticker_file_id << " set to " << short_name;
-  int64 set_id = search_sticker_set(short_name, Auto());
-  if (set_id != 0) {
+  StickerSetId set_id = search_sticker_set(short_name, Auto());
+  if (set_id.is_valid()) {
     auto &s = stickers_[sticker_file_id];
     if (s == nullptr) {
       LOG(ERROR) << "Can't find sticker " << sticker_file_id;
@@ -1623,7 +1686,7 @@ bool StickersManager::has_input_media(FileId sticker_file_id, bool is_secret) co
         return true;
       }
     } else if (!file_view.is_encrypted()) {
-      if (sticker->set_id != 0) {
+      if (sticker->set_id.is_valid()) {
         // stickers within a set can be sent by id and access_hash
         return true;
       }
@@ -1648,7 +1711,7 @@ SecretInputMedia StickersManager::get_secret_input_media(FileId sticker_file_id,
   auto file_view = td_->file_manager_->get_file_view(sticker_file_id);
   if (file_view.is_encrypted_secret()) {
     if (file_view.has_remote_location()) {
-      input_file = file_view.remote_location().as_input_encrypted_file();
+      input_file = file_view.main_remote_location().as_input_encrypted_file();
     }
     if (!input_file) {
       return {};
@@ -1657,7 +1720,7 @@ SecretInputMedia StickersManager::get_secret_input_media(FileId sticker_file_id,
       return {};
     }
   } else if (!file_view.is_encrypted()) {
-    if (sticker->set_id == 0) {
+    if (!sticker->set_id.is_valid()) {
       // stickers without set can't be sent by id and access_hash
       return {};
     }
@@ -1666,7 +1729,7 @@ SecretInputMedia StickersManager::get_secret_input_media(FileId sticker_file_id,
   }
 
   tl_object_ptr<secret_api::InputStickerSet> input_sticker_set = make_tl_object<secret_api::inputStickerSetEmpty>();
-  if (sticker->set_id) {
+  if (sticker->set_id.is_valid()) {
     const StickerSet *sticker_set = get_sticker_set(sticker->set_id);
     CHECK(sticker_set != nullptr);
     if (sticker_set->is_inited) {
@@ -1697,13 +1760,13 @@ SecretInputMedia StickersManager::get_secret_input_media(FileId sticker_file_id,
     auto &remote_location = file_view.remote_location();
     if (remote_location.is_web()) {
       // web stickers shouldn't have set_id
-      LOG(ERROR) << "Have a web sticker in set " << sticker->set_id;
+      LOG(ERROR) << "Have a web sticker in " << sticker->set_id;
       return {};
     }
     return SecretInputMedia{nullptr, make_tl_object<secret_api::decryptedMessageMediaExternalDocument>(
                                          remote_location.get_id(), remote_location.get_access_hash(), 0 /*date*/,
                                          get_sticker_mime_type(sticker), narrow_cast<int32>(file_view.size()),
-                                         make_tl_object<secret_api::photoSizeEmpty>(),
+                                         make_tl_object<secret_api::photoSizeEmpty>("t"),
                                          remote_location.get_dc_id().get_raw_id(), std::move(attributes))};
   }
 }
@@ -1715,8 +1778,8 @@ tl_object_ptr<telegram_api::InputMedia> StickersManager::get_input_media(
   if (file_view.is_encrypted()) {
     return nullptr;
   }
-  if (file_view.has_remote_location() && !file_view.remote_location().is_web() && input_file == nullptr) {
-    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.remote_location().as_input_document(), 0);
+  if (file_view.has_remote_location() && !file_view.main_remote_location().is_web() && input_file == nullptr) {
+    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.main_remote_location().as_input_document(), 0);
   }
   if (file_view.has_url()) {
     return make_tl_object<telegram_api::inputMediaDocumentExternal>(0, file_view.url(), 0);
@@ -1748,8 +1811,10 @@ tl_object_ptr<telegram_api::InputMedia> StickersManager::get_input_media(
   return nullptr;
 }
 
-int64 StickersManager::on_get_sticker_set(tl_object_ptr<telegram_api::stickerSet> &&set, bool is_changed) {
-  int64 set_id = set->id_;
+StickerSetId StickersManager::on_get_sticker_set(tl_object_ptr<telegram_api::stickerSet> &&set, bool is_changed,
+                                                 const char *source) {
+  CHECK(set != nullptr);
+  StickerSetId set_id{set->id_};
   StickerSet *s = add_sticker_set(set_id, set->access_hash_);
 
   bool is_installed = (set->flags_ & telegram_api::stickerSet::INSTALLED_DATE_MASK) != 0;
@@ -1760,12 +1825,12 @@ int64 StickersManager::on_get_sticker_set(tl_object_ptr<telegram_api::stickerSet
 
   PhotoSize thumbnail;
   if (set->thumb_ != nullptr) {
-    auto photo_size = get_photo_size(td_->file_manager_.get(), {set_id, s->access_hash}, 0, 0, "",
+    auto photo_size = get_photo_size(td_->file_manager_.get(), {set_id.get(), s->access_hash}, 0, 0, "",
                                      DcId::create(set->thumb_dc_id_), DialogId(), std::move(set->thumb_), true, false);
     if (photo_size.get_offset() == 0) {
       thumbnail = std::move(photo_size.get<0>());
     } else {
-      LOG(ERROR) << "Receive minithumbnail for a sticker set " << set_id;
+      LOG(ERROR) << "Receive minithumbnail for a " << set_id;
     }
   }
   if (!s->is_inited) {
@@ -1783,32 +1848,32 @@ int64 StickersManager::on_get_sticker_set(tl_object_ptr<telegram_api::stickerSet
   } else {
     CHECK(s->id == set_id);
     if (s->access_hash != set->access_hash_) {
-      LOG(INFO) << "Sticker set " << set_id << " access hash has changed";
+      LOG(INFO) << "Access hash of " << set_id << " has changed";
       s->access_hash = set->access_hash_;
       s->is_changed = true;
     }
     if (s->title != set->title_) {
-      LOG(INFO) << "Sticker set " << set_id << " title has changed";
+      LOG(INFO) << "Title of " << set_id << " has changed";
       s->title = std::move(set->title_);
       s->is_changed = true;
 
-      if (installed_sticker_sets_hints_[s->is_masks].has_key(set_id)) {
-        installed_sticker_sets_hints_[s->is_masks].add(set_id, PSLICE() << s->title << ' ' << s->short_name);
+      if (installed_sticker_sets_hints_[s->is_masks].has_key(set_id.get())) {
+        installed_sticker_sets_hints_[s->is_masks].add(set_id.get(), PSLICE() << s->title << ' ' << s->short_name);
       }
     }
     if (s->short_name != set->short_name_) {
-      LOG(ERROR) << "Sticker set " << set_id << " short name has changed from \"" << s->short_name << "\" to \""
-                 << set->short_name_ << "\"";
+      LOG(ERROR) << "Short name of " << set_id << " has changed from \"" << s->short_name << "\" to \""
+                 << set->short_name_ << "\" from " << source;
       short_name_to_sticker_set_id_.erase(clean_username(s->short_name));
       s->short_name = std::move(set->short_name_);
       s->is_changed = true;
 
-      if (installed_sticker_sets_hints_[s->is_masks].has_key(set_id)) {
-        installed_sticker_sets_hints_[s->is_masks].add(set_id, PSLICE() << s->title << ' ' << s->short_name);
+      if (installed_sticker_sets_hints_[s->is_masks].has_key(set_id.get())) {
+        installed_sticker_sets_hints_[s->is_masks].add(set_id.get(), PSLICE() << s->title << ' ' << s->short_name);
       }
     }
     if (s->thumbnail != thumbnail) {
-      LOG(INFO) << "Sticker set " << set_id << " thumbnail has changed from " << s->thumbnail << " to " << thumbnail;
+      LOG(INFO) << "Thumbnail of " << set_id << " has changed from " << s->thumbnail << " to " << thumbnail;
       s->thumbnail = std::move(thumbnail);
       s->is_changed = true;
     }
@@ -1829,8 +1894,14 @@ int64 StickersManager::on_get_sticker_set(tl_object_ptr<telegram_api::stickerSet
       s->is_official = is_official;
       s->is_changed = true;
     }
-    LOG_IF(ERROR, s->is_animated != is_animated) << "Animated type of the sticker set " << set_id << " has changed";
-    LOG_IF(ERROR, s->is_masks != is_masks) << "Masks type of the sticker set " << set_id << " has changed";
+    if (s->is_animated != is_animated) {
+      LOG(ERROR) << "Animated type of " << set_id << "/" << s->short_name << " has changed from " << s->is_animated
+                 << " to " << is_animated << " from " << source;
+      s->is_animated = is_animated;
+      s->is_changed = true;
+    }
+    LOG_IF(ERROR, s->is_masks != is_masks) << "Masks type of " << set_id << "/" << s->short_name << " has changed from "
+                                           << s->is_masks << " to " << is_masks << " from " << source;
   }
   short_name_to_sticker_set_id_.emplace(clean_username(s->short_name), set_id);
 
@@ -1839,14 +1910,14 @@ int64 StickersManager::on_get_sticker_set(tl_object_ptr<telegram_api::stickerSet
   return set_id;
 }
 
-int64 StickersManager::on_get_sticker_set_covered(tl_object_ptr<telegram_api::StickerSetCovered> &&set_ptr,
-                                                  bool is_changed) {
-  int64 set_id = 0;
+StickerSetId StickersManager::on_get_sticker_set_covered(tl_object_ptr<telegram_api::StickerSetCovered> &&set_ptr,
+                                                         bool is_changed, const char *source) {
+  StickerSetId set_id;
   switch (set_ptr->get_id()) {
     case telegram_api::stickerSetCovered::ID: {
       auto covered_set = move_tl_object_as<telegram_api::stickerSetCovered>(set_ptr);
-      set_id = on_get_sticker_set(std::move(covered_set->set_), is_changed);
-      if (set_id == 0) {
+      set_id = on_get_sticker_set(std::move(covered_set->set_), is_changed, source);
+      if (!set_id.is_valid()) {
         break;
       }
 
@@ -1863,7 +1934,7 @@ int64 StickersManager::on_get_sticker_set_covered(tl_object_ptr<telegram_api::St
       auto &sticker_ids = sticker_set->sticker_ids;
 
       auto sticker_id = on_get_sticker_document(std::move(covered_set->cover_)).second;
-      if (sticker_id.is_valid() && std::find(sticker_ids.begin(), sticker_ids.end(), sticker_id) == sticker_ids.end()) {
+      if (sticker_id.is_valid() && !td::contains(sticker_ids, sticker_id)) {
         sticker_ids.push_back(sticker_id);
         sticker_set->is_changed = true;
       }
@@ -1872,8 +1943,8 @@ int64 StickersManager::on_get_sticker_set_covered(tl_object_ptr<telegram_api::St
     }
     case telegram_api::stickerSetMultiCovered::ID: {
       auto multicovered_set = move_tl_object_as<telegram_api::stickerSetMultiCovered>(set_ptr);
-      set_id = on_get_sticker_set(std::move(multicovered_set->set_), is_changed);
-      if (set_id == 0) {
+      set_id = on_get_sticker_set(std::move(multicovered_set->set_), is_changed, source);
+      if (!set_id.is_valid()) {
         break;
       }
 
@@ -1887,8 +1958,7 @@ int64 StickersManager::on_get_sticker_set_covered(tl_object_ptr<telegram_api::St
 
       for (auto &cover : multicovered_set->covers_) {
         auto sticker_id = on_get_sticker_document(std::move(cover)).second;
-        if (sticker_id.is_valid() &&
-            std::find(sticker_ids.begin(), sticker_ids.end(), sticker_id) == sticker_ids.end()) {
+        if (sticker_id.is_valid() && !td::contains(sticker_ids, sticker_id)) {
           sticker_ids.push_back(sticker_id);
           sticker_set->is_changed = true;
         }
@@ -1902,19 +1972,19 @@ int64 StickersManager::on_get_sticker_set_covered(tl_object_ptr<telegram_api::St
   return set_id;
 }
 
-void StickersManager::on_get_messages_sticker_set(int64 sticker_set_id,
-                                                  tl_object_ptr<telegram_api::messages_stickerSet> &&set,
-                                                  bool is_changed) {
+StickerSetId StickersManager::on_get_messages_sticker_set(StickerSetId sticker_set_id,
+                                                          tl_object_ptr<telegram_api::messages_stickerSet> &&set,
+                                                          bool is_changed, const char *source) {
   LOG(INFO) << "Receive sticker set " << to_string(set);
 
-  auto set_id = on_get_sticker_set(std::move(set->set_), is_changed);
-  if (set_id == 0) {
-    return;
+  auto set_id = on_get_sticker_set(std::move(set->set_), is_changed, source);
+  if (!set_id.is_valid()) {
+    return set_id;
   }
-  if (sticker_set_id != 0 && sticker_set_id != set_id) {
-    LOG(ERROR) << "Expected sticker set " << sticker_set_id << ", but receive sticker set " << set_id;
+  if (sticker_set_id.is_valid() && sticker_set_id != set_id) {
+    LOG(ERROR) << "Expected " << sticker_set_id << ", but receive " << set_id << " from " << source;
     on_load_sticker_set_fail(sticker_set_id, Status::Error(500, "Internal server error"));
-    return;
+    return StickerSetId();
   }
 
   auto s = get_sticker_set(set_id);
@@ -1927,7 +1997,7 @@ void StickersManager::on_get_messages_sticker_set(int64 sticker_set_id,
   if (s->is_loaded) {
     update_sticker_set(s);
     send_update_installed_sticker_sets();
-    return;
+    return set_id;
   }
   s->was_loaded = true;
   s->is_loaded = true;
@@ -1952,7 +2022,7 @@ void StickersManager::on_get_messages_sticker_set(int64 sticker_set_id,
     }
   }
   if (static_cast<int>(s->sticker_ids.size()) != s->sticker_count) {
-    LOG(ERROR) << "Wrong sticker set size specified";
+    LOG(ERROR) << "Wrong sticker set size specified in " << set_id << " from " << source;
     s->sticker_count = static_cast<int>(s->sticker_ids.size());
   }
 
@@ -1965,7 +2035,7 @@ void StickersManager::on_get_messages_sticker_set(int64 sticker_set_id,
       for (int64 document_id : pack->documents_) {
         auto it = document_id_to_sticker_id.find(document_id);
         if (it == document_id_to_sticker_id.end()) {
-          LOG(ERROR) << "Can't find document with id " << document_id;
+          LOG(ERROR) << "Can't find document with id " << document_id << " in " << set_id << " from " << source;
           continue;
         }
 
@@ -1974,7 +2044,7 @@ void StickersManager::on_get_messages_sticker_set(int64 sticker_set_id,
       }
       auto &sticker_ids = s->emoji_stickers_map_[remove_emoji_modifiers(pack->emoticon_)];
       for (auto sticker_id : stickers) {
-        if (std::find(sticker_ids.begin(), sticker_ids.end(), sticker_id) == sticker_ids.end()) {
+        if (!td::contains(sticker_ids, sticker_id)) {
           sticker_ids.push_back(sticker_id);
         }
       }
@@ -1984,10 +2054,11 @@ void StickersManager::on_get_messages_sticker_set(int64 sticker_set_id,
   update_sticker_set(s);
   update_load_requests(s, true, Status::OK());
   send_update_installed_sticker_sets();
+  return set_id;
 }
 
-void StickersManager::on_load_sticker_set_fail(int64 sticker_set_id, const Status &error) {
-  if (sticker_set_id == 0) {
+void StickersManager::on_load_sticker_set_fail(StickerSetId sticker_set_id, const Status &error) {
+  if (!sticker_set_id.is_valid()) {
     return;
   }
   update_load_requests(get_sticker_set(sticker_set_id), true, error);
@@ -2034,6 +2105,28 @@ void StickersManager::update_load_request(uint32 load_request_id, const Status &
   }
 }
 
+void StickersManager::on_get_animated_emoji_sticker_set(StickerSetId sticker_set_id) {
+  auto s = get_sticker_set(sticker_set_id);
+  CHECK(s != nullptr);
+  CHECK(s->is_inited);
+  CHECK(s->is_loaded);
+
+  if (sticker_set_id == animated_emoji_sticker_set_id_ && s->short_name == animated_emoji_sticker_set_name_ &&
+      !s->short_name.empty()) {
+    return;
+  }
+
+  animated_emoji_sticker_set_id_ = sticker_set_id;
+  animated_emoji_sticker_set_access_hash_ = s->access_hash;
+  animated_emoji_sticker_set_name_ = clean_username(s->short_name);
+
+  G()->td_db()->get_binlog_pmc()->set("animated_emoji_sticker_set", PSTRING()
+                                                                        << animated_emoji_sticker_set_id_.get() << ' '
+                                                                        << animated_emoji_sticker_set_access_hash_
+                                                                        << ' ' << animated_emoji_sticker_set_name_);
+  G()->shared_config().set_option_string("animated_emoji_sticker_set_name", animated_emoji_sticker_set_name_);
+}
+
 void StickersManager::on_get_installed_sticker_sets(bool is_masks,
                                                     tl_object_ptr<telegram_api::messages_AllStickers> &&stickers_ptr) {
   next_installed_sticker_sets_load_time_[is_masks] = Time::now_cached() + Random::fast(30 * 60, 50 * 60);
@@ -2047,19 +2140,19 @@ void StickersManager::on_get_installed_sticker_sets(bool is_masks,
   CHECK(constructor_id == telegram_api::messages_allStickers::ID);
   auto stickers = move_tl_object_as<telegram_api::messages_allStickers>(stickers_ptr);
 
-  std::unordered_set<int64> uninstalled_sticker_sets(installed_sticker_set_ids_[is_masks].begin(),
-                                                     installed_sticker_set_ids_[is_masks].end());
+  std::unordered_set<StickerSetId, StickerSetIdHash> uninstalled_sticker_sets(
+      installed_sticker_set_ids_[is_masks].begin(), installed_sticker_set_ids_[is_masks].end());
 
-  vector<int64> sets_to_load;
-  vector<int64> installed_sticker_set_ids;
-  vector<int32> hashes;
-  vector<int64> sticker_set_ids;
+  vector<StickerSetId> sets_to_load;
+  vector<StickerSetId> installed_sticker_set_ids;
+  vector<int32> debug_hashes;
+  vector<int64> debug_sticker_set_ids;
   std::reverse(stickers->sets_.begin(), stickers->sets_.end());  // apply installed sticker sets in reverse order
   for (auto &set : stickers->sets_) {
-    hashes.push_back(set->hash_);
-    sticker_set_ids.push_back(set->id_);
-    int64 set_id = on_get_sticker_set(std::move(set), false);
-    if (set_id == 0) {
+    debug_hashes.push_back(set->hash_);
+    debug_sticker_set_ids.push_back(set->id_);
+    StickerSetId set_id = on_get_sticker_set(std::move(set), false, "on_get_installed_sticker_sets");
+    if (!set_id.is_valid()) {
       continue;
     }
 
@@ -2080,9 +2173,9 @@ void StickersManager::on_get_installed_sticker_sets(bool is_masks,
       sets_to_load.push_back(set_id);
     }
   }
-  std::reverse(hashes.begin(), hashes.end());
+  std::reverse(debug_hashes.begin(), debug_hashes.end());
   std::reverse(installed_sticker_set_ids.begin(), installed_sticker_set_ids.end());
-  std::reverse(sticker_set_ids.begin(), sticker_set_ids.end());
+  std::reverse(debug_sticker_set_ids.begin(), debug_sticker_set_ids.end());
 
   if (!sets_to_load.empty()) {
     load_sticker_sets(std::move(sets_to_load), Auto());
@@ -2099,12 +2192,12 @@ void StickersManager::on_get_installed_sticker_sets(bool is_masks,
   on_load_installed_sticker_sets_finished(is_masks, std::move(installed_sticker_set_ids));
 
   if (installed_sticker_sets_hash_[is_masks] != stickers->hash_) {
-    LOG(ERROR) << "Sticker sets hash mismatch: server hash list = " << format::as_array(hashes)
+    LOG(ERROR) << "Sticker sets hash mismatch: server hash list = " << format::as_array(debug_hashes)
                << ", client hash list = "
                << format::as_array(
                       transform(installed_sticker_set_ids_[is_masks],
-                                [this](int64 sticker_set_id) { return get_sticker_set(sticker_set_id)->hash; }))
-               << ", server sticker set list = " << format::as_array(sticker_set_ids)
+                                [this](StickerSetId sticker_set_id) { return get_sticker_set(sticker_set_id)->hash; }))
+               << ", server sticker set list = " << format::as_array(debug_sticker_set_ids)
                << ", client sticker set list = " << format::as_array(installed_sticker_set_ids_[is_masks])
                << ", server hash = " << stickers->hash_ << ", client hash = " << installed_sticker_sets_hash_[is_masks];
   }
@@ -2152,7 +2245,7 @@ vector<FileId> StickersManager::get_stickers(string emoji, int32 limit, bool for
     */
   }
 
-  vector<int64> sets_to_load;
+  vector<StickerSetId> sets_to_load;
   bool need_load = false;
   for (const auto &sticker_set_id : installed_sticker_set_ids_[0]) {
     const StickerSet *sticker_set = get_sticker_set(sticker_set_id);
@@ -2172,7 +2265,7 @@ vector<FileId> StickersManager::get_stickers(string emoji, int32 limit, bool for
     prepend_sticker_ids.reserve(favorite_sticker_ids_.size() + recent_sticker_ids_[0].size());
     append(prepend_sticker_ids, recent_sticker_ids_[0]);
     for (auto sticker_id : favorite_sticker_ids_) {
-      if (std::find(prepend_sticker_ids.begin(), prepend_sticker_ids.end(), sticker_id) == prepend_sticker_ids.end()) {
+      if (!td::contains(prepend_sticker_ids, sticker_id)) {
         prepend_sticker_ids.push_back(sticker_id);
       }
     }
@@ -2190,8 +2283,8 @@ vector<FileId> StickersManager::get_stickers(string emoji, int32 limit, bool for
     LOG(INFO) << "Have " << recent_sticker_ids_[0] << " recent and " << favorite_sticker_ids_ << " favorite stickers";
     for (const auto &sticker_id : prepend_sticker_ids) {
       const Sticker *s = get_sticker(sticker_id);
-      LOG(INFO) << "Have prepend sticker " << sticker_id << " from set " << s->set_id;
-      if (s->set_id != 0 && std::find(sets_to_load.begin(), sets_to_load.end(), s->set_id) == sets_to_load.end()) {
+      LOG(INFO) << "Have prepend sticker " << sticker_id << " from " << s->set_id;
+      if (s->set_id.is_valid() && !td::contains(sets_to_load, s->set_id)) {
         const StickerSet *sticker_set = get_sticker_set(s->set_id);
         if (sticker_set == nullptr || !sticker_set->is_loaded) {
           sets_to_load.push_back(s->set_id);
@@ -2241,8 +2334,7 @@ vector<FileId> StickersManager::get_stickers(string emoji, int32 limit, bool for
         continue;
       }
 
-      if (std::find(examined_sticker_sets.begin(), examined_sticker_sets.end(), sticker_set) ==
-          examined_sticker_sets.end()) {
+      if (!td::contains(examined_sticker_sets, sticker_set)) {
         examined_sticker_sets.push_back(sticker_set);
       }
     }
@@ -2252,7 +2344,7 @@ vector<FileId> StickersManager::get_stickers(string emoji, int32 limit, bool for
     for (auto sticker_set : examined_sticker_sets) {
       auto it = sticker_set->emoji_stickers_map_.find(emoji);
       if (it != sticker_set->emoji_stickers_map_.end()) {
-        LOG(INFO) << "Add " << it->second << " stickers from set " << sticker_set->id;
+        LOG(INFO) << "Add " << it->second << " stickers from " << sticker_set->id;
         append(result, it->second);
       }
     }
@@ -2280,12 +2372,12 @@ vector<FileId> StickersManager::get_stickers(string emoji, int32 limit, bool for
         if (remove_emoji_modifiers(s->alt) == emoji) {
           LOG(INFO) << "Found prepend sticker " << sticker_id << " main emoji matches";
           is_good = true;
-        } else if (s->set_id != 0) {
+        } else if (s->set_id.is_valid()) {
           const StickerSet *sticker_set = get_sticker_set(s->set_id);
           if (sticker_set != nullptr && sticker_set->was_loaded) {
             auto map_it = sticker_set->emoji_stickers_map_.find(emoji);
             if (map_it != sticker_set->emoji_stickers_map_.end()) {
-              if (std::find(map_it->second.begin(), map_it->second.end(), sticker_id) != map_it->second.end()) {
+              if (td::contains(map_it->second, sticker_id)) {
                 LOG(INFO) << "Found prepend sticker " << sticker_id << " has matching emoji";
                 is_good = true;
               }
@@ -2409,7 +2501,7 @@ void StickersManager::on_find_stickers_fail(const string &emoji, Status &&error)
   }
 }
 
-vector<int64> StickersManager::get_installed_sticker_sets(bool is_masks, Promise<Unit> &&promise) {
+vector<StickerSetId> StickersManager::get_installed_sticker_sets(bool is_masks, Promise<Unit> &&promise) {
   if (!are_installed_sticker_sets_loaded_[is_masks]) {
     load_installed_sticker_sets(is_masks, std::move(promise));
     return {};
@@ -2446,47 +2538,49 @@ bool StickersManager::update_sticker_set_cache(const StickerSet *sticker_set, Pr
   return false;
 }
 
-int64 StickersManager::get_sticker_set(int64 set_id, Promise<Unit> &&promise) {
+StickerSetId StickersManager::get_sticker_set(StickerSetId set_id, Promise<Unit> &&promise) {
   const StickerSet *sticker_set = get_sticker_set(set_id);
   if (sticker_set == nullptr) {
-    if (set_id == GREAT_MINDS_SET_ID) {
-      do_reload_sticker_set(set_id, make_tl_object<telegram_api::inputStickerSetID>(set_id, 0), std::move(promise));
-      return 0;
+    if (set_id.get() == GREAT_MINDS_SET_ID) {
+      do_reload_sticker_set(set_id, make_tl_object<telegram_api::inputStickerSetID>(set_id.get(), 0),
+                            std::move(promise));
+      return StickerSetId();
     }
 
     promise.set_error(Status::Error(400, "Sticker set not found"));
-    return 0;
+    return StickerSetId();
   }
 
   if (update_sticker_set_cache(sticker_set, promise)) {
-    return 0;
+    return StickerSetId();
   }
 
   promise.set_value(Unit());
   return set_id;
 }
 
-int64 StickersManager::search_sticker_set(const string &short_name_to_search, Promise<Unit> &&promise) {
+StickerSetId StickersManager::search_sticker_set(const string &short_name_to_search, Promise<Unit> &&promise) {
   string short_name = clean_username(short_name_to_search);
   auto it = short_name_to_sticker_set_id_.find(short_name);
   const StickerSet *sticker_set = it == short_name_to_sticker_set_id_.end() ? nullptr : get_sticker_set(it->second);
 
   if (sticker_set == nullptr) {
     auto set_to_load = make_tl_object<telegram_api::inputStickerSetShortName>(short_name);
-    do_reload_sticker_set(0, std::move(set_to_load), std::move(promise));
-    return 0;
+    do_reload_sticker_set(StickerSetId(), std::move(set_to_load), std::move(promise));
+    return StickerSetId();
   }
 
   if (update_sticker_set_cache(sticker_set, promise)) {
-    return 0;
+    return StickerSetId();
   }
 
   promise.set_value(Unit());
   return sticker_set->id;
 }
 
-std::pair<int32, vector<int64>> StickersManager::search_installed_sticker_sets(bool is_masks, const string &query,
-                                                                               int32 limit, Promise<Unit> &&promise) {
+std::pair<int32, vector<StickerSetId>> StickersManager::search_installed_sticker_sets(bool is_masks,
+                                                                                      const string &query, int32 limit,
+                                                                                      Promise<Unit> &&promise) {
   LOG(INFO) << "Search installed " << (is_masks ? "mask " : "") << "sticker sets with query = \"" << query
             << "\" and limit = " << limit;
 
@@ -2503,10 +2597,10 @@ std::pair<int32, vector<int64>> StickersManager::search_installed_sticker_sets(b
 
   std::pair<size_t, vector<int64>> result = installed_sticker_sets_hints_[is_masks].search(query, limit);
   promise.set_value(Unit());
-  return {narrow_cast<int32>(result.first), std::move(result.second)};
+  return {narrow_cast<int32>(result.first), convert_sticker_set_ids(result.second)};
 }
 
-vector<int64> StickersManager::search_sticker_sets(const string &query, Promise<Unit> &&promise) {
+vector<StickerSetId> StickersManager::search_sticker_sets(const string &query, Promise<Unit> &&promise) {
   auto q = clean_name(query, 1000);
   auto it = found_sticker_sets_.find(q);
   if (it != found_sticker_sets_.end()) {
@@ -2531,12 +2625,12 @@ void StickersManager::on_find_sticker_sets_success(
       return on_find_sticker_sets_fail(query, Status::Error(500, "Receive messages.foundStickerSetsNotModified"));
     case telegram_api::messages_foundStickerSets::ID: {
       auto found_stickers_sets = move_tl_object_as<telegram_api::messages_foundStickerSets>(sticker_sets);
-      vector<int64> &sticker_set_ids = found_sticker_sets_[query];
+      vector<StickerSetId> &sticker_set_ids = found_sticker_sets_[query];
       CHECK(sticker_set_ids.empty());
 
       for (auto &sticker_set : found_stickers_sets->sets_) {
-        int64 set_id = on_get_sticker_set_covered(std::move(sticker_set), true);
-        if (set_id == 0) {
+        StickerSetId set_id = on_get_sticker_set_covered(std::move(sticker_set), true, "on_find_sticker_sets_success");
+        if (!set_id.is_valid()) {
           continue;
         }
 
@@ -2576,7 +2670,8 @@ void StickersManager::on_find_sticker_sets_fail(const string &query, Status &&er
   }
 }
 
-void StickersManager::change_sticker_set(int64 set_id, bool is_installed, bool is_archived, Promise<Unit> &&promise) {
+void StickersManager::change_sticker_set(StickerSetId set_id, bool is_installed, bool is_archived,
+                                         Promise<Unit> &&promise) {
   if (is_installed && is_archived) {
     return promise.set_error(Status::Error(400, "Sticker set can't be installed and archived simultaneously"));
   }
@@ -2615,8 +2710,8 @@ void StickersManager::change_sticker_set(int64 set_id, bool is_installed, bool i
 
 void StickersManager::on_update_sticker_set(StickerSet *sticker_set, bool is_installed, bool is_archived,
                                             bool is_changed, bool from_database) {
-  LOG(INFO) << "Update sticker set " << sticker_set->id << ": installed = " << is_installed
-            << ", archived = " << is_archived << ", changed = " << is_changed;
+  LOG(INFO) << "Update " << sticker_set->id << ": installed = " << is_installed << ", archived = " << is_archived
+            << ", changed = " << is_changed;
   CHECK(sticker_set->is_inited);
   if (is_archived) {
     is_installed = true;
@@ -2635,28 +2730,27 @@ void StickersManager::on_update_sticker_set(StickerSet *sticker_set, bool is_ins
 
   bool is_added = sticker_set->is_installed && !sticker_set->is_archived;
   if (was_added != is_added) {
-    vector<int64> &sticker_set_ids = installed_sticker_set_ids_[sticker_set->is_masks];
+    vector<StickerSetId> &sticker_set_ids = installed_sticker_set_ids_[sticker_set->is_masks];
     need_update_installed_sticker_sets_[sticker_set->is_masks] = true;
 
     if (is_added) {
       installed_sticker_sets_hints_[sticker_set->is_masks].add(
-          sticker_set->id, PSLICE() << sticker_set->title << ' ' << sticker_set->short_name);
+          sticker_set->id.get(), PSLICE() << sticker_set->title << ' ' << sticker_set->short_name);
       sticker_set_ids.insert(sticker_set_ids.begin(), sticker_set->id);
     } else {
-      installed_sticker_sets_hints_[sticker_set->is_masks].remove(sticker_set->id);
-      sticker_set_ids.erase(std::remove(sticker_set_ids.begin(), sticker_set_ids.end(), sticker_set->id),
-                            sticker_set_ids.end());
+      installed_sticker_sets_hints_[sticker_set->is_masks].remove(sticker_set->id.get());
+      td::remove(sticker_set_ids, sticker_set->id);
     }
   }
   if (was_archived != is_archived && is_changed) {
     int32 &total_count = total_archived_sticker_set_count_[sticker_set->is_masks];
-    vector<int64> &sticker_set_ids = archived_sticker_set_ids_[sticker_set->is_masks];
+    vector<StickerSetId> &sticker_set_ids = archived_sticker_set_ids_[sticker_set->is_masks];
     if (total_count < 0) {
       return;
     }
 
     if (is_archived) {
-      if (std::find(sticker_set_ids.begin(), sticker_set_ids.end(), sticker_set->id) == sticker_set_ids.end()) {
+      if (!td::contains(sticker_set_ids, sticker_set->id)) {
         total_count++;
         sticker_set_ids.insert(sticker_set_ids.begin(), sticker_set->id);
       }
@@ -2666,8 +2760,7 @@ void StickersManager::on_update_sticker_set(StickerSet *sticker_set, bool is_ins
         LOG(ERROR) << "Total count of archived sticker sets became negative";
         total_count = 0;
       }
-      sticker_set_ids.erase(std::remove(sticker_set_ids.begin(), sticker_set_ids.end(), sticker_set->id),
-                            sticker_set_ids.end());
+      td::remove(sticker_set_ids, sticker_set->id);
     }
   }
 }
@@ -2714,7 +2807,7 @@ void StickersManager::on_load_installed_sticker_sets_from_database(bool is_masks
     return reload_installed_sticker_sets(is_masks, true);
   }
 
-  vector<int64> sets_to_load;
+  vector<StickerSetId> sets_to_load;
   for (auto sticker_set_id : log_event.sticker_set_ids) {
     StickerSet *sticker_set = get_sticker_set(sticker_set_id);
     CHECK(sticker_set != nullptr);
@@ -2735,16 +2828,17 @@ void StickersManager::on_load_installed_sticker_sets_from_database(bool is_masks
           }));
 }
 
-void StickersManager::on_load_installed_sticker_sets_finished(bool is_masks, vector<int64> &&installed_sticker_set_ids,
+void StickersManager::on_load_installed_sticker_sets_finished(bool is_masks,
+                                                              vector<StickerSetId> &&installed_sticker_set_ids,
                                                               bool from_database) {
   bool need_reload = false;
-  vector<int64> old_installed_sticker_set_ids;
+  vector<StickerSetId> old_installed_sticker_set_ids;
   if (!are_installed_sticker_sets_loaded_[is_masks] && !installed_sticker_set_ids_[is_masks].empty()) {
     old_installed_sticker_set_ids = std::move(installed_sticker_set_ids_[is_masks]);
   }
   installed_sticker_set_ids_[is_masks].clear();
   for (auto set_id : installed_sticker_set_ids) {
-    CHECK(set_id != 0);
+    CHECK(set_id.is_valid());
 
     auto sticker_set = get_sticker_set(set_id);
     CHECK(sticker_set != nullptr);
@@ -2779,12 +2873,12 @@ void StickersManager::on_load_installed_sticker_sets_finished(bool is_masks, vec
   }
 }
 
-string StickersManager::get_sticker_set_database_key(int64 set_id) {
-  return PSTRING() << "ss" << set_id;
+string StickersManager::get_sticker_set_database_key(StickerSetId set_id) {
+  return PSTRING() << "ss" << set_id.get();
 }
 
-string StickersManager::get_full_sticker_set_database_key(int64 set_id) {
-  return PSTRING() << "ssf" << set_id;
+string StickersManager::get_full_sticker_set_database_key(StickerSetId set_id) {
+  return PSTRING() << "ssf" << set_id.get();
 }
 
 string StickersManager::get_sticker_set_database_value(const StickerSet *s, bool with_stickers) {
@@ -2794,7 +2888,7 @@ string StickersManager::get_sticker_set_database_value(const StickerSet *s, bool
   BufferSlice value_buffer{storer_calc_length.get_length()};
   auto value = value_buffer.as_slice();
 
-  LOG(DEBUG) << "Sticker set " << s->id << " serialized size is " << value.size();
+  LOG(DEBUG) << "Serialized size of " << s->id << " is " << value.size();
 
   LogEventStorerUnsafe storer_unsafe(value.ubegin());
   store_sticker_set(s, with_stickers, storer_unsafe);
@@ -2807,7 +2901,7 @@ void StickersManager::update_sticker_set(StickerSet *sticker_set) {
   if (sticker_set->is_changed) {
     sticker_set->is_changed = false;
     if (G()->parameters().use_file_db) {
-      LOG(INFO) << "Save sticker set " << sticker_set->id << " to database";
+      LOG(INFO) << "Save " << sticker_set->id << " to database";
       if (sticker_set->is_inited) {
         G()->td_db()->get_sqlite_pmc()->set(get_sticker_set_database_key(sticker_set->id),
                                             get_sticker_set_database_value(sticker_set, false), Auto());
@@ -2823,7 +2917,7 @@ void StickersManager::update_sticker_set(StickerSet *sticker_set) {
   }
 }
 
-void StickersManager::load_sticker_sets(vector<int64> &&sticker_set_ids, Promise<Unit> &&promise) {
+void StickersManager::load_sticker_sets(vector<StickerSetId> &&sticker_set_ids, Promise<Unit> &&promise) {
   if (sticker_set_ids.empty()) {
     promise.set_value(Unit());
     return;
@@ -2842,21 +2936,22 @@ void StickersManager::load_sticker_sets(vector<int64> &&sticker_set_ids, Promise
     sticker_set->load_requests.push_back(load_request_id);
     if (sticker_set->load_requests.size() == 1u) {
       if (G()->parameters().use_file_db && !sticker_set->was_loaded) {
-        LOG(INFO) << "Trying to load sticker set " << sticker_set_id << " with stickers from database";
+        LOG(INFO) << "Trying to load " << sticker_set_id << " with stickers from database";
         G()->td_db()->get_sqlite_pmc()->get(
             get_full_sticker_set_database_key(sticker_set_id), PromiseCreator::lambda([sticker_set_id](string value) {
               send_closure(G()->stickers_manager(), &StickersManager::on_load_sticker_set_from_database, sticker_set_id,
                            true, std::move(value));
             }));
       } else {
-        LOG(INFO) << "Trying to load sticker set " << sticker_set_id << " with stickers from server";
+        LOG(INFO) << "Trying to load " << sticker_set_id << " with stickers from server";
         do_reload_sticker_set(sticker_set_id, get_input_sticker_set(sticker_set), Auto());
       }
     }
   }
 }
 
-void StickersManager::load_sticker_sets_without_stickers(vector<int64> &&sticker_set_ids, Promise<Unit> &&promise) {
+void StickersManager::load_sticker_sets_without_stickers(vector<StickerSetId> &&sticker_set_ids,
+                                                         Promise<Unit> &&promise) {
   if (sticker_set_ids.empty()) {
     promise.set_value(Unit());
     return;
@@ -2878,14 +2973,14 @@ void StickersManager::load_sticker_sets_without_stickers(vector<int64> &&sticker
       sticker_set->load_without_stickers_requests.push_back(load_request_id);
       if (sticker_set->load_without_stickers_requests.size() == 1u) {
         if (G()->parameters().use_file_db) {
-          LOG(INFO) << "Trying to load sticker set " << sticker_set_id << " from database";
+          LOG(INFO) << "Trying to load " << sticker_set_id << " from database";
           G()->td_db()->get_sqlite_pmc()->get(
               get_sticker_set_database_key(sticker_set_id), PromiseCreator::lambda([sticker_set_id](string value) {
                 send_closure(G()->stickers_manager(), &StickersManager::on_load_sticker_set_from_database,
                              sticker_set_id, false, std::move(value));
               }));
         } else {
-          LOG(INFO) << "Trying to load sticker set " << sticker_set_id << " from server";
+          LOG(INFO) << "Trying to load " << sticker_set_id << " from server";
           do_reload_sticker_set(sticker_set_id, get_input_sticker_set(sticker_set), Auto());
         }
       }
@@ -2893,15 +2988,15 @@ void StickersManager::load_sticker_sets_without_stickers(vector<int64> &&sticker
   }
 }
 
-void StickersManager::on_load_sticker_set_from_database(int64 sticker_set_id, bool with_stickers, string value) {
+void StickersManager::on_load_sticker_set_from_database(StickerSetId sticker_set_id, bool with_stickers, string value) {
   StickerSet *sticker_set = get_sticker_set(sticker_set_id);
   CHECK(sticker_set != nullptr);
   if (sticker_set->was_loaded) {
-    LOG(INFO) << "Sticker set " << sticker_set_id << " was loaded";
+    LOG(INFO) << "Receive from database previously loaded " << sticker_set_id;
     return;
   }
   if (!with_stickers && sticker_set->is_inited) {
-    LOG(INFO) << "Sticker set " << sticker_set_id << " was inited";
+    LOG(INFO) << "Receive from database previously inited " << sticker_set_id;
     return;
   }
 
@@ -2916,25 +3011,25 @@ void StickersManager::on_load_sticker_set_from_database(int64 sticker_set_id, bo
     return do_reload_sticker_set(sticker_set_id, get_input_sticker_set(sticker_set), Auto());
   }
 
-  LOG(INFO) << "Successfully loaded sticker set " << sticker_set_id << " with" << (with_stickers ? "" : "out")
+  LOG(INFO) << "Successfully loaded " << sticker_set_id << " with" << (with_stickers ? "" : "out")
             << " stickers of size " << value.size() << " from database";
 
   auto old_sticker_count = sticker_set->sticker_ids.size();
 
   {
-    LOG_IF(ERROR, sticker_set->is_changed) << "Sticker set with" << (with_stickers ? "" : "out") << " stickers "
-                                           << sticker_set_id << " was changed before it is loaded from database";
+    LOG_IF(ERROR, sticker_set->is_changed) << sticker_set_id << " with" << (with_stickers ? "" : "out")
+                                           << " stickers was changed before it is loaded from database";
     LogEventParser parser(value);
     parse_sticker_set(sticker_set, parser);
     LOG_IF(ERROR, sticker_set->is_changed)
-        << "Sticker set with" << (with_stickers ? "" : "out") << " stickers " << sticker_set_id << " is changed";
+        << sticker_set_id << " with" << (with_stickers ? "" : "out") << " stickers is changed";
     parser.fetch_end();
     auto status = parser.get_status();
     if (status.is_error()) {
       G()->td_db()->get_sqlite_sync_pmc()->erase(with_stickers ? get_full_sticker_set_database_key(sticker_set_id)
                                                                : get_sticker_set_database_key(sticker_set_id));
       // need to crash, because the current StickerSet state is spoiled by parse_sticker_set
-      LOG(FATAL) << "Failed to parse sticker set " << sticker_set_id << ": " << status << ' '
+      LOG(FATAL) << "Failed to parse " << sticker_set_id << ": " << status << ' '
                  << format::as_hex_dump<4>(Slice(value));
     }
   }
@@ -2950,12 +3045,13 @@ void StickersManager::on_load_sticker_set_from_database(int64 sticker_set_id, bo
   update_load_requests(sticker_set, with_stickers, Status::OK());
 }
 
-void StickersManager::reload_sticker_set(int64 sticker_set_id, int64 access_hash, Promise<Unit> &&promise) {
-  do_reload_sticker_set(sticker_set_id, make_tl_object<telegram_api::inputStickerSetID>(sticker_set_id, access_hash),
+void StickersManager::reload_sticker_set(StickerSetId sticker_set_id, int64 access_hash, Promise<Unit> &&promise) {
+  do_reload_sticker_set(sticker_set_id,
+                        make_tl_object<telegram_api::inputStickerSetID>(sticker_set_id.get(), access_hash),
                         std::move(promise));
 }
 
-void StickersManager::do_reload_sticker_set(int64 sticker_set_id,
+void StickersManager::do_reload_sticker_set(StickerSetId sticker_set_id,
                                             tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set,
                                             Promise<Unit> &&promise) const {
   if (G()->close_flag()) {
@@ -2964,7 +3060,7 @@ void StickersManager::do_reload_sticker_set(int64 sticker_set_id,
   td_->create_handler<GetStickerSetQuery>(std::move(promise))->send(sticker_set_id, std::move(input_sticker_set));
 }
 
-void StickersManager::on_install_sticker_set(int64 set_id, bool is_archived,
+void StickersManager::on_install_sticker_set(StickerSetId set_id, bool is_archived,
                                              tl_object_ptr<telegram_api::messages_StickerSetInstallResult> &&result) {
   StickerSet *sticker_set = get_sticker_set(set_id);
   CHECK(sticker_set != nullptr);
@@ -2977,8 +3073,9 @@ void StickersManager::on_install_sticker_set(int64 set_id, bool is_archived,
     case telegram_api::messages_stickerSetInstallResultArchive::ID: {
       auto archived_sets = move_tl_object_as<telegram_api::messages_stickerSetInstallResultArchive>(result);
       for (auto &archived_set_ptr : archived_sets->sets_) {
-        int64 archived_sticker_set_id = on_get_sticker_set_covered(std::move(archived_set_ptr), true);
-        if (archived_sticker_set_id != 0) {
+        StickerSetId archived_sticker_set_id =
+            on_get_sticker_set_covered(std::move(archived_set_ptr), true, "on_install_sticker_set");
+        if (archived_sticker_set_id.is_valid()) {
           auto archived_sticker_set = get_sticker_set(archived_sticker_set_id);
           CHECK(archived_sticker_set != nullptr);
           update_sticker_set(archived_sticker_set);
@@ -2993,7 +3090,7 @@ void StickersManager::on_install_sticker_set(int64 set_id, bool is_archived,
   send_update_installed_sticker_sets();
 }
 
-void StickersManager::on_uninstall_sticker_set(int64 set_id) {
+void StickersManager::on_uninstall_sticker_set(StickerSetId set_id) {
   StickerSet *sticker_set = get_sticker_set(set_id);
   CHECK(sticker_set != nullptr);
   on_update_sticker_set(sticker_set, false, false, true);
@@ -3012,7 +3109,7 @@ void StickersManager::on_update_sticker_sets() {
   reload_installed_sticker_sets(true, true);
 }
 
-void StickersManager::view_featured_sticker_sets(const vector<int64> &sticker_set_ids) {
+void StickersManager::view_featured_sticker_sets(const vector<StickerSetId> &sticker_set_ids) {
   for (auto sticker_set_id : sticker_set_ids) {
     auto set = get_sticker_set(sticker_set_id);
     if (set != nullptr && !set->is_viewed) {
@@ -3038,23 +3135,24 @@ void StickersManager::read_featured_sticker_sets(void *td_void) {
   auto td = static_cast<Td *>(td_void);
 
   auto &set_ids = td->stickers_manager_->pending_viewed_featured_sticker_set_ids_;
-  td->create_handler<ReadFeaturedStickerSetsQuery>()->send(vector<int64>(set_ids.begin(), set_ids.end()));
+  td->create_handler<ReadFeaturedStickerSetsQuery>()->send(vector<StickerSetId>(set_ids.begin(), set_ids.end()));
   set_ids.clear();
 }
 
-std::pair<int32, vector<int64>> StickersManager::get_archived_sticker_sets(bool is_masks, int64 offset_sticker_set_id,
-                                                                           int32 limit, bool force,
-                                                                           Promise<Unit> &&promise) {
+std::pair<int32, vector<StickerSetId>> StickersManager::get_archived_sticker_sets(bool is_masks,
+                                                                                  StickerSetId offset_sticker_set_id,
+                                                                                  int32 limit, bool force,
+                                                                                  Promise<Unit> &&promise) {
   if (limit <= 0) {
     promise.set_error(Status::Error(3, "Parameter limit must be positive"));
     return {};
   }
 
-  vector<int64> &sticker_set_ids = archived_sticker_set_ids_[is_masks];
+  vector<StickerSetId> &sticker_set_ids = archived_sticker_set_ids_[is_masks];
   int32 total_count = total_archived_sticker_set_count_[is_masks];
   if (total_count >= 0) {
     auto offset_it = sticker_set_ids.begin();
-    if (offset_sticker_set_id != 0) {
+    if (offset_sticker_set_id.is_valid()) {
       offset_it = std::find(sticker_set_ids.begin(), sticker_set_ids.end(), offset_sticker_set_id);
       if (offset_it == sticker_set_ids.end()) {
         offset_it = sticker_set_ids.begin();
@@ -3062,13 +3160,13 @@ std::pair<int32, vector<int64>> StickersManager::get_archived_sticker_sets(bool 
         ++offset_it;
       }
     }
-    vector<int64> result;
+    vector<StickerSetId> result;
     while (result.size() < static_cast<size_t>(limit)) {
       if (offset_it == sticker_set_ids.end()) {
         break;
       }
       auto sticker_set_id = *offset_it++;
-      if (sticker_set_id == 0) {  // end of the list
+      if (!sticker_set_id.is_valid()) {  // end of the list
         promise.set_value(Unit());
         return {total_count, std::move(result)};
       }
@@ -3085,10 +3183,10 @@ std::pair<int32, vector<int64>> StickersManager::get_archived_sticker_sets(bool 
 }
 
 void StickersManager::on_get_archived_sticker_sets(
-    bool is_masks, int64 offset_sticker_set_id, vector<tl_object_ptr<telegram_api::StickerSetCovered>> &&sticker_sets,
-    int32 total_count) {
-  vector<int64> &sticker_set_ids = archived_sticker_set_ids_[is_masks];
-  if (!sticker_set_ids.empty() && sticker_set_ids.back() == 0) {
+    bool is_masks, StickerSetId offset_sticker_set_id,
+    vector<tl_object_ptr<telegram_api::StickerSetCovered>> &&sticker_sets, int32 total_count) {
+  vector<StickerSetId> &sticker_set_ids = archived_sticker_set_ids_[is_masks];
+  if (!sticker_set_ids.empty() && sticker_set_ids.back() == StickerSetId()) {
     return;
   }
   if (total_count < 0) {
@@ -3098,18 +3196,19 @@ void StickersManager::on_get_archived_sticker_sets(
   // if 0 sticker sets are received, then set offset_sticker_set_id was found and there is no stickers after it
   // or it wasn't found and there is no archived sets at all
   bool is_last =
-      sticker_sets.empty() &&
-      (offset_sticker_set_id == 0 || (!sticker_set_ids.empty() && offset_sticker_set_id == sticker_set_ids.back()));
+      sticker_sets.empty() && (!offset_sticker_set_id.is_valid() ||
+                               (!sticker_set_ids.empty() && offset_sticker_set_id == sticker_set_ids.back()));
 
   total_archived_sticker_set_count_[is_masks] = total_count;
   for (auto &sticker_set_covered : sticker_sets) {
-    auto sticker_set_id = on_get_sticker_set_covered(std::move(sticker_set_covered), false);
-    if (sticker_set_id != 0) {
+    auto sticker_set_id =
+        on_get_sticker_set_covered(std::move(sticker_set_covered), false, "on_get_archived_sticker_sets");
+    if (sticker_set_id.is_valid()) {
       auto sticker_set = get_sticker_set(sticker_set_id);
       CHECK(sticker_set != nullptr);
       update_sticker_set(sticker_set);
 
-      if (std::find(sticker_set_ids.begin(), sticker_set_ids.end(), sticker_set_id) == sticker_set_ids.end()) {
+      if (!td::contains(sticker_set_ids, sticker_set_id)) {
         sticker_set_ids.push_back(sticker_set_id);
       }
     }
@@ -3120,12 +3219,12 @@ void StickersManager::on_get_archived_sticker_sets(
                  << " found";
       total_archived_sticker_set_count_[is_masks] = static_cast<int32>(sticker_set_ids.size());
     }
-    sticker_set_ids.push_back(0);
+    sticker_set_ids.push_back(StickerSetId());
   }
   send_update_installed_sticker_sets();
 }
 
-vector<int64> StickersManager::get_featured_sticker_sets(Promise<Unit> &&promise) {
+vector<StickerSetId> StickersManager::get_featured_sticker_sets(Promise<Unit> &&promise) {
   if (!are_featured_sticker_sets_loaded_) {
     load_featured_sticker_sets(std::move(promise));
     return {};
@@ -3148,12 +3247,15 @@ void StickersManager::on_get_featured_sticker_sets(
   CHECK(constructor_id == telegram_api::messages_featuredStickers::ID);
   auto featured_stickers = move_tl_object_as<telegram_api::messages_featuredStickers>(sticker_sets_ptr);
 
-  vector<int64> featured_sticker_set_ids;
-  std::unordered_set<int64> unread_sticker_set_ids(featured_stickers->unread_.begin(),
-                                                   featured_stickers->unread_.end());
+  std::unordered_set<StickerSetId, StickerSetIdHash> unread_sticker_set_ids;
+  for (auto &unread_sticker_set_id : featured_stickers->unread_) {
+    unread_sticker_set_ids.insert(StickerSetId(unread_sticker_set_id));
+  }
+
+  vector<StickerSetId> featured_sticker_set_ids;
   for (auto &sticker_set : featured_stickers->sets_) {
-    int64 set_id = on_get_sticker_set_covered(std::move(sticker_set), true);
-    if (set_id == 0) {
+    StickerSetId set_id = on_get_sticker_set_covered(std::move(sticker_set), true, "on_get_featured_sticker_sets");
+    if (!set_id.is_valid()) {
       continue;
     }
 
@@ -3236,7 +3338,7 @@ void StickersManager::on_load_featured_sticker_sets_from_database(string value) 
     return reload_featured_sticker_sets(true);
   }
 
-  vector<int64> sets_to_load;
+  vector<StickerSetId> sets_to_load;
   for (auto sticker_set_id : log_event.sticker_set_ids) {
     StickerSet *sticker_set = get_sticker_set(sticker_set_id);
     CHECK(sticker_set != nullptr);
@@ -3255,7 +3357,7 @@ void StickersManager::on_load_featured_sticker_sets_from_database(string value) 
       }));
 }
 
-void StickersManager::on_load_featured_sticker_sets_finished(vector<int64> &&featured_sticker_set_ids) {
+void StickersManager::on_load_featured_sticker_sets_finished(vector<StickerSetId> &&featured_sticker_set_ids) {
   featured_sticker_set_ids_ = std::move(featured_sticker_set_ids);
   are_featured_sticker_sets_loaded_ = true;
   need_update_featured_sticker_sets_ = true;
@@ -3267,7 +3369,7 @@ void StickersManager::on_load_featured_sticker_sets_finished(vector<int64> &&fea
   }
 }
 
-vector<int64> StickersManager::get_attached_sticker_sets(FileId file_id, Promise<Unit> &&promise) {
+vector<StickerSetId> StickersManager::get_attached_sticker_sets(FileId file_id, Promise<Unit> &&promise) {
   if (!file_id.is_valid()) {
     promise.set_error(Status::Error(5, "Wrong file_id specified"));
     return {};
@@ -3296,12 +3398,12 @@ void StickersManager::send_get_attached_stickers_query(FileId file_id, Promise<U
 
   tl_object_ptr<telegram_api::InputStickeredMedia> input_stickered_media;
   string file_reference;
-  if (file_view.remote_location().is_photo()) {
-    auto input_photo = file_view.remote_location().as_input_photo();
+  if (file_view.main_remote_location().is_photo()) {
+    auto input_photo = file_view.main_remote_location().as_input_photo();
     file_reference = input_photo->file_reference_.as_slice().str();
     input_stickered_media = make_tl_object<telegram_api::inputStickeredMediaPhoto>(std::move(input_photo));
   } else {
-    auto input_document = file_view.remote_location().as_input_document();
+    auto input_document = file_view.main_remote_location().as_input_document();
     file_reference = input_document->file_reference_.as_slice().str();
     input_stickered_media = make_tl_object<telegram_api::inputStickeredMediaDocument>(std::move(input_document));
   }
@@ -3312,11 +3414,12 @@ void StickersManager::send_get_attached_stickers_query(FileId file_id, Promise<U
 
 void StickersManager::on_get_attached_sticker_sets(
     FileId file_id, vector<tl_object_ptr<telegram_api::StickerSetCovered>> &&sticker_sets) {
-  vector<int64> &sticker_set_ids = attached_sticker_sets_[file_id];
+  vector<StickerSetId> &sticker_set_ids = attached_sticker_sets_[file_id];
   sticker_set_ids.clear();
   for (auto &sticker_set_covered : sticker_sets) {
-    auto sticker_set_id = on_get_sticker_set_covered(std::move(sticker_set_covered), true);
-    if (sticker_set_id != 0) {
+    auto sticker_set_id =
+        on_get_sticker_set_covered(std::move(sticker_set_covered), true, "on_get_attached_sticker_sets");
+    if (sticker_set_id.is_valid()) {
       auto sticker_set = get_sticker_set(sticker_set_id);
       CHECK(sticker_set != nullptr);
       update_sticker_set(sticker_set);
@@ -3329,18 +3432,19 @@ void StickersManager::on_get_attached_sticker_sets(
 
 // -1 - order can't be applied, because some sticker sets aren't loaded or aren't installed,
 // 0 - order wasn't changed, 1 - order was partly replaced by the new order, 2 - order was replaced by the new order
-int StickersManager::apply_installed_sticker_sets_order(bool is_masks, const vector<int64> &sticker_set_ids) {
+int StickersManager::apply_installed_sticker_sets_order(bool is_masks, const vector<StickerSetId> &sticker_set_ids) {
   if (!are_installed_sticker_sets_loaded_[is_masks]) {
     return -1;
   }
 
-  vector<int64> &current_sticker_set_ids = installed_sticker_set_ids_[is_masks];
+  vector<StickerSetId> &current_sticker_set_ids = installed_sticker_set_ids_[is_masks];
   if (sticker_set_ids == current_sticker_set_ids) {
     return 0;
   }
 
-  std::unordered_set<int64> valid_set_ids(current_sticker_set_ids.begin(), current_sticker_set_ids.end());
-  vector<int64> new_sticker_set_ids;
+  std::unordered_set<StickerSetId, StickerSetIdHash> valid_set_ids(current_sticker_set_ids.begin(),
+                                                                   current_sticker_set_ids.end());
+  vector<StickerSetId> new_sticker_set_ids;
   for (auto sticker_set_id : sticker_set_ids) {
     auto it = valid_set_ids.find(sticker_set_id);
     if (it != valid_set_ids.end()) {
@@ -3354,7 +3458,7 @@ int StickersManager::apply_installed_sticker_sets_order(bool is_masks, const vec
     return 0;
   }
   if (!valid_set_ids.empty()) {
-    vector<int64> missed_sticker_set_ids;
+    vector<StickerSetId> missed_sticker_set_ids;
     for (auto sticker_set_id : current_sticker_set_ids) {
       auto it = valid_set_ids.find(sticker_set_id);
       if (it != valid_set_ids.end()) {
@@ -3379,7 +3483,7 @@ int StickersManager::apply_installed_sticker_sets_order(bool is_masks, const vec
   return 2;
 }
 
-void StickersManager::on_update_sticker_sets_order(bool is_masks, const vector<int64> &sticker_set_ids) {
+void StickersManager::on_update_sticker_sets_order(bool is_masks, const vector<StickerSetId> &sticker_set_ids) {
   int result = apply_installed_sticker_sets_order(is_masks, sticker_set_ids);
   if (result < 0) {
     return reload_installed_sticker_sets(is_masks, true);
@@ -3389,7 +3493,7 @@ void StickersManager::on_update_sticker_sets_order(bool is_masks, const vector<i
   }
 }
 
-void StickersManager::reorder_installed_sticker_sets(bool is_masks, const vector<int64> &sticker_set_ids,
+void StickersManager::reorder_installed_sticker_sets(bool is_masks, const vector<StickerSetId> &sticker_set_ids,
                                                      Promise<Unit> &&promise) {
   auto result = apply_installed_sticker_sets_order(is_masks, sticker_set_ids);
   if (result < 0) {
@@ -3429,13 +3533,13 @@ Result<std::tuple<FileId, bool, bool>> StickersManager::prepare_input_file(
     return Status::Error(400, "Can't use encrypted file");
   }
 
-  if (file_view.has_remote_location() && file_view.remote_location().is_web()) {
+  if (file_view.has_remote_location() && file_view.main_remote_location().is_web()) {
     return Status::Error(400, "Can't use web file to create a sticker");
   }
   bool is_url = false;
   bool is_local = false;
   if (file_view.has_remote_location()) {
-    CHECK(file_view.remote_location().is_document());
+    CHECK(file_view.main_remote_location().is_document());
   } else {
     if (file_view.has_url()) {
       is_url = true;
@@ -3487,7 +3591,7 @@ tl_object_ptr<telegram_api::inputStickerSetItem> StickersManager::get_input_stic
                                                                                     FileId file_id) const {
   FileView file_view = td_->file_manager_->get_file_view(file_id);
   CHECK(file_view.has_remote_location());
-  auto input_document = file_view.remote_location().as_input_document();
+  auto input_document = file_view.main_remote_location().as_input_document();
 
   tl_object_ptr<telegram_api::maskCoords> mask_coords;
   if (sticker->mask_position_ != nullptr && sticker->mask_position_->point_ != nullptr) {
@@ -3808,13 +3912,13 @@ void StickersManager::set_sticker_position_in_set(const tl_object_ptr<td_api::In
 
   auto file_id = r_file_id.move_as_ok();
   auto file_view = td_->file_manager_->get_file_view(file_id);
-  if (!file_view.has_remote_location() || !file_view.remote_location().is_document() ||
-      file_view.remote_location().is_web()) {
+  if (!file_view.has_remote_location() || !file_view.main_remote_location().is_document() ||
+      file_view.main_remote_location().is_web()) {
     return promise.set_error(Status::Error(7, "Wrong sticker file specified"));
   }
 
   td_->create_handler<SetStickerPositionQuery>(std::move(promise))
-      ->send(file_view.remote_location().as_input_document(), position);
+      ->send(file_view.main_remote_location().as_input_document(), position);
 }
 
 void StickersManager::remove_sticker_from_set(const tl_object_ptr<td_api::InputFile> &sticker,
@@ -3826,13 +3930,13 @@ void StickersManager::remove_sticker_from_set(const tl_object_ptr<td_api::InputF
 
   auto file_id = r_file_id.move_as_ok();
   auto file_view = td_->file_manager_->get_file_view(file_id);
-  if (!file_view.has_remote_location() || !file_view.remote_location().is_document() ||
-      file_view.remote_location().is_web()) {
+  if (!file_view.has_remote_location() || !file_view.main_remote_location().is_document() ||
+      file_view.main_remote_location().is_web()) {
     return promise.set_error(Status::Error(7, "Wrong sticker file specified"));
   }
 
   td_->create_handler<DeleteStickerFromSetQuery>(std::move(promise))
-      ->send(file_view.remote_location().as_input_document());
+      ->send(file_view.main_remote_location().as_input_document());
 }
 
 vector<FileId> StickersManager::get_attached_sticker_file_ids(const vector<int32> &int_file_ids) {
@@ -3846,7 +3950,7 @@ vector<FileId> StickersManager::get_attached_sticker_file_ids(const vector<int32
       LOG(WARNING) << "Can't find sticker " << file_id;
       continue;
     }
-    if (s->set_id == 0) {
+    if (!s->set_id.is_valid()) {
       // only stickers from sticker sets can be attached to files
       continue;
     }
@@ -3875,7 +3979,7 @@ vector<FileId> StickersManager::get_attached_sticker_file_ids(const vector<int32
   return result;
 }
 
-int32 StickersManager::get_sticker_sets_hash(const vector<int64> &sticker_set_ids) const {
+int32 StickersManager::get_sticker_sets_hash(const vector<StickerSetId> &sticker_set_ids) const {
   vector<uint32> numbers;
   numbers.reserve(sticker_set_ids.size());
   for (auto sticker_set_id : sticker_set_ids) {
@@ -3895,7 +3999,7 @@ int32 StickersManager::get_featured_sticker_sets_hash() const {
     CHECK(sticker_set != nullptr);
     CHECK(sticker_set->is_inited);
 
-    uint64 pack_id = static_cast<uint64>(sticker_set_id);
+    uint64 pack_id = static_cast<uint64>(sticker_set_id.get());
     numbers.push_back(static_cast<uint32>(pack_id >> 32));
     numbers.push_back(static_cast<uint32>(pack_id & 0xFFFFFFFF));
 
@@ -3906,10 +4010,18 @@ int32 StickersManager::get_featured_sticker_sets_hash() const {
   return get_vector_hash(numbers);
 }
 
+vector<int64> StickersManager::convert_sticker_set_ids(const vector<StickerSetId> &sticker_set_ids) {
+  return transform(sticker_set_ids, [](StickerSetId sticker_set_id) { return sticker_set_id.get(); });
+}
+
+vector<StickerSetId> StickersManager::convert_sticker_set_ids(const vector<int64> &sticker_set_ids) {
+  return transform(sticker_set_ids, [](int64 sticker_set_id) { return StickerSetId(sticker_set_id); });
+}
+
 td_api::object_ptr<td_api::updateInstalledStickerSets> StickersManager::get_update_installed_sticker_sets_object(
     int is_masks) const {
-  return td_api::make_object<td_api::updateInstalledStickerSets>(is_masks != 0,
-                                                                 vector<int64>(installed_sticker_set_ids_[is_masks]));
+  return td_api::make_object<td_api::updateInstalledStickerSets>(
+      is_masks != 0, convert_sticker_set_ids(installed_sticker_set_ids_[is_masks]));
 }
 
 void StickersManager::send_update_installed_sticker_sets(bool from_database) {
@@ -4136,13 +4248,7 @@ void StickersManager::add_recent_sticker(bool is_attached, const tl_object_ptr<t
     return promise.set_error(Status::Error(7, r_file_id.error().message()));  // TODO do not drop error code
   }
 
-  add_recent_sticker_inner(is_attached, r_file_id.ok(), std::move(promise));
-}
-
-void StickersManager::add_recent_sticker_inner(bool is_attached, FileId sticker_id, Promise<Unit> &&promise) {
-  if (add_recent_sticker_impl(is_attached, sticker_id, promise)) {
-    send_save_recent_sticker_query(is_attached, sticker_id, false, std::move(promise));
-  }
+  add_recent_sticker_impl(is_attached, r_file_id.ok(), true, std::move(promise));
 }
 
 void StickersManager::send_save_recent_sticker_query(bool is_attached, FileId sticker_id, bool unsave,
@@ -4162,25 +4268,25 @@ void StickersManager::send_save_recent_sticker_query(bool is_attached, FileId st
 
 void StickersManager::add_recent_sticker_by_id(bool is_attached, FileId sticker_id) {
   // TODO log event
-  Promise<Unit> promise;
-  add_recent_sticker_impl(is_attached, sticker_id, promise);
+  add_recent_sticker_impl(is_attached, sticker_id, false, Auto());
 }
 
-bool StickersManager::add_recent_sticker_impl(bool is_attached, FileId sticker_id, Promise<Unit> &promise) {
+void StickersManager::add_recent_sticker_impl(bool is_attached, FileId sticker_id, bool add_on_server,
+                                              Promise<Unit> &&promise) {
   CHECK(!td_->auth_manager_->is_bot());
 
   LOG(INFO) << "Add recent " << (is_attached ? "attached " : "") << "sticker " << sticker_id;
   if (!are_recent_stickers_loaded_[is_attached]) {
-    load_recent_stickers(is_attached, PromiseCreator::lambda([is_attached, sticker_id,
+    load_recent_stickers(is_attached, PromiseCreator::lambda([is_attached, sticker_id, add_on_server,
                                                               promise = std::move(promise)](Result<> result) mutable {
                            if (result.is_ok()) {
-                             send_closure(G()->stickers_manager(), &StickersManager::add_recent_sticker_inner,
-                                          is_attached, sticker_id, std::move(promise));
+                             send_closure(G()->stickers_manager(), &StickersManager::add_recent_sticker_impl,
+                                          is_attached, sticker_id, add_on_server, std::move(promise));
                            } else {
                              promise.set_error(result.move_as_error());
                            }
                          }));
-    return false;
+    return;
   }
 
   auto is_equal = [sticker_id](FileId file_id) {
@@ -4194,32 +4300,26 @@ bool StickersManager::add_recent_sticker_impl(bool is_attached, FileId sticker_i
       save_recent_stickers_to_database(is_attached);
     }
 
-    promise.set_value(Unit());
-    return false;
+    return promise.set_value(Unit());
   }
 
   auto sticker = get_sticker(sticker_id);
   if (sticker == nullptr) {
-    promise.set_error(Status::Error(7, "Sticker not found"));
-    return false;
+    return promise.set_error(Status::Error(7, "Sticker not found"));
   }
-  if (sticker->set_id == 0) {
-    promise.set_error(Status::Error(7, "Stickers without sticker set can't be added to recent"));
-    return false;
+  if (!sticker->set_id.is_valid()) {
+    return promise.set_error(Status::Error(7, "Stickers without sticker set can't be added to recent"));
   }
 
   auto file_view = td_->file_manager_->get_file_view(sticker_id);
   if (!file_view.has_remote_location()) {
-    promise.set_error(Status::Error(7, "Can save only sent stickers"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can save only sent stickers"));
   }
   if (file_view.remote_location().is_web()) {
-    promise.set_error(Status::Error(7, "Can't save web stickers"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can't save web stickers"));
   }
   if (!file_view.remote_location().is_document()) {
-    promise.set_error(Status::Error(7, "Can't save encrypted stickers"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can't save encrypted stickers"));
   }
 
   need_update_recent_stickers_[is_attached] = true;
@@ -4239,7 +4339,9 @@ bool StickersManager::add_recent_sticker_impl(bool is_attached, FileId sticker_i
   }
 
   send_update_recent_stickers();
-  return true;
+  if (add_on_server) {
+    send_save_recent_sticker_query(is_attached, sticker_id, false, std::move(promise));
+  }
 }
 
 void StickersManager::remove_recent_sticker(bool is_attached, const tl_object_ptr<td_api::InputFile> &input_file,
@@ -4259,8 +4361,7 @@ void StickersManager::remove_recent_sticker(bool is_attached, const tl_object_pt
 
   vector<FileId> &sticker_ids = recent_sticker_ids_[is_attached];
   FileId file_id = r_file_id.ok();
-  auto it = std::find(sticker_ids.begin(), sticker_ids.end(), file_id);
-  if (it == sticker_ids.end()) {
+  if (!td::remove(sticker_ids, file_id)) {
     return promise.set_value(Unit());
   }
 
@@ -4270,8 +4371,6 @@ void StickersManager::remove_recent_sticker(bool is_attached, const tl_object_pt
   }
 
   send_save_recent_sticker_query(is_attached, file_id, true, std::move(promise));
-
-  sticker_ids.erase(it);
 
   need_update_recent_stickers_[is_attached] = true;
   send_update_recent_stickers();
@@ -4551,13 +4650,7 @@ void StickersManager::add_favorite_sticker(const tl_object_ptr<td_api::InputFile
     return promise.set_error(Status::Error(7, r_file_id.error().message()));  // TODO do not drop error code
   }
 
-  add_favorite_sticker_inner(r_file_id.ok(), std::move(promise));
-}
-
-void StickersManager::add_favorite_sticker_inner(FileId sticker_id, Promise<Unit> &&promise) {
-  if (add_favorite_sticker_impl(sticker_id, promise)) {
-    send_fave_sticker_query(sticker_id, false, std::move(promise));
-  }
+  add_favorite_sticker_impl(r_file_id.ok(), true, std::move(promise));
 }
 
 void StickersManager::send_fave_sticker_query(FileId sticker_id, bool unsave, Promise<Unit> &&promise) {
@@ -4576,23 +4669,23 @@ void StickersManager::send_fave_sticker_query(FileId sticker_id, bool unsave, Pr
 
 void StickersManager::add_favorite_sticker_by_id(FileId sticker_id) {
   // TODO log event
-  Promise<Unit> promise;
-  add_favorite_sticker_impl(sticker_id, promise);
+  add_favorite_sticker_impl(sticker_id, false, Auto());
 }
 
-bool StickersManager::add_favorite_sticker_impl(FileId sticker_id, Promise<Unit> &promise) {
+void StickersManager::add_favorite_sticker_impl(FileId sticker_id, bool add_on_server, Promise<Unit> &&promise) {
   CHECK(!td_->auth_manager_->is_bot());
 
   if (!are_favorite_stickers_loaded_) {
-    load_favorite_stickers(PromiseCreator::lambda([sticker_id, promise = std::move(promise)](Result<> result) mutable {
-      if (result.is_ok()) {
-        send_closure(G()->stickers_manager(), &StickersManager::add_favorite_sticker_inner, sticker_id,
-                     std::move(promise));
-      } else {
-        promise.set_error(result.move_as_error());
-      }
-    }));
-    return false;
+    load_favorite_stickers(
+        PromiseCreator::lambda([sticker_id, add_on_server, promise = std::move(promise)](Result<> result) mutable {
+          if (result.is_ok()) {
+            send_closure(G()->stickers_manager(), &StickersManager::add_favorite_sticker_impl, sticker_id,
+                         add_on_server, std::move(promise));
+          } else {
+            promise.set_error(result.move_as_error());
+          }
+        }));
+    return;
   }
 
   auto is_equal = [sticker_id](FileId file_id) {
@@ -4605,32 +4698,26 @@ bool StickersManager::add_favorite_sticker_impl(FileId sticker_id, Promise<Unit>
       save_favorite_stickers_to_database();
     }
 
-    promise.set_value(Unit());
-    return false;
+    return promise.set_value(Unit());
   }
 
   auto sticker = get_sticker(sticker_id);
   if (sticker == nullptr) {
-    promise.set_error(Status::Error(7, "Sticker not found"));
-    return false;
+    return promise.set_error(Status::Error(7, "Sticker not found"));
   }
-  if (sticker->set_id == 0) {
-    promise.set_error(Status::Error(7, "Stickers without sticker set can't be favorite"));
-    return false;
+  if (!sticker->set_id.is_valid()) {
+    return promise.set_error(Status::Error(7, "Stickers without sticker set can't be favorite"));
   }
 
   auto file_view = td_->file_manager_->get_file_view(sticker_id);
   if (!file_view.has_remote_location()) {
-    promise.set_error(Status::Error(7, "Can add to favorites only sent stickers"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can add to favorites only sent stickers"));
   }
   if (file_view.remote_location().is_web()) {
-    promise.set_error(Status::Error(7, "Can't add to favorites web stickers"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can't add to favorites web stickers"));
   }
   if (!file_view.remote_location().is_document()) {
-    promise.set_error(Status::Error(7, "Can't add to favorites encrypted stickers"));
-    return false;
+    return promise.set_error(Status::Error(7, "Can't add to favorites encrypted stickers"));
   }
 
   auto it = std::find_if(favorite_sticker_ids_.begin(), favorite_sticker_ids_.end(), is_equal);
@@ -4648,7 +4735,9 @@ bool StickersManager::add_favorite_sticker_impl(FileId sticker_id, Promise<Unit>
   }
 
   send_update_favorite_stickers();
-  return true;
+  if (add_on_server) {
+    send_fave_sticker_query(sticker_id, false, std::move(promise));
+  }
 }
 
 void StickersManager::remove_favorite_sticker(const tl_object_ptr<td_api::InputFile> &input_file,
@@ -4667,8 +4756,7 @@ void StickersManager::remove_favorite_sticker(const tl_object_ptr<td_api::InputF
   }
 
   FileId file_id = r_file_id.ok();
-  auto it = std::find(favorite_sticker_ids_.begin(), favorite_sticker_ids_.end(), file_id);
-  if (it == favorite_sticker_ids_.end()) {
+  if (!td::remove(favorite_sticker_ids_, file_id)) {
     return promise.set_value(Unit());
   }
 
@@ -4678,8 +4766,6 @@ void StickersManager::remove_favorite_sticker(const tl_object_ptr<td_api::InputF
   }
 
   send_fave_sticker_query(file_id, true, std::move(promise));
-
-  favorite_sticker_ids_.erase(it);
 
   send_update_favorite_stickers();
 }
@@ -4733,7 +4819,7 @@ vector<string> StickersManager::get_sticker_emojis(const tl_object_ptr<td_api::I
     promise.set_value(Unit());
     return {};
   }
-  if (sticker->set_id == 0) {
+  if (!sticker->set_id.is_valid()) {
     promise.set_value(Unit());
     return {};
   }
@@ -4863,15 +4949,13 @@ void StickersManager::on_get_language_codes(const string &key, Result<vector<str
 
   auto language_codes = result.move_as_ok();
   LOG(INFO) << "Receive language codes " << language_codes << " for emojis search";
-  language_codes.erase(std::remove_if(language_codes.begin(), language_codes.end(),
-                                      [](const auto &language_code) {
-                                        if (language_code.empty() || language_code.find('$') != string::npos) {
-                                          LOG(ERROR) << "Receive language_code \"" << language_code << '"';
-                                          return true;
-                                        }
-                                        return false;
-                                      }),
-                       language_codes.end());
+  td::remove_if(language_codes, [](const auto &language_code) {
+    if (language_code.empty() || language_code.find('$') != string::npos) {
+      LOG(ERROR) << "Receive language_code \"" << language_code << '"';
+      return true;
+    }
+    return false;
+  });
   if (language_codes.empty()) {
     LOG(ERROR) << "Language codes list is empty";
     language_codes.emplace_back("en");
@@ -5069,7 +5153,7 @@ void StickersManager::on_get_emoji_keywords_difference(
           vector<string> emojis = search_language_emojis(language_code, text, true);
           bool is_changed = false;
           for (auto &emoji : keyword->emoticons_) {
-            if (std::find(emojis.begin(), emojis.end(), emoji) == emojis.end()) {
+            if (!td::contains(emojis, emoji)) {
               emojis.push_back(emoji);
               is_changed = true;
             }
@@ -5089,9 +5173,7 @@ void StickersManager::on_get_emoji_keywords_difference(
         vector<string> emojis = search_language_emojis(language_code, text, true);
         bool is_changed = false;
         for (auto &emoji : keyword->emoticons_) {
-          auto it = std::find(emojis.begin(), emojis.end(), emoji);
-          if (it != emojis.end()) {
-            emojis.erase(it);
+          if (td::remove(emojis, emoji)) {
             is_changed = true;
           }
         }
@@ -5232,6 +5314,9 @@ string StickersManager::remove_emoji_modifiers(string emoji) {
 }
 
 void StickersManager::after_get_difference() {
+  if (!td_->auth_manager_->is_bot()) {
+    return;
+  }
   if (td_->is_online()) {
     get_installed_sticker_sets(false, Auto());
     get_installed_sticker_sets(true, Auto());
@@ -5239,6 +5324,7 @@ void StickersManager::after_get_difference() {
     get_recent_stickers(false, Auto());
     get_recent_stickers(true, Auto());
     get_favorite_stickers(Auto());
+    td_->create_handler<ReloadAnimatedEmojiStickerSetQuery>()->send();
   }
 }
 

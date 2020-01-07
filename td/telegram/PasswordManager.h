@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -79,6 +79,8 @@ class PasswordManager : public NetQueryCallback {
   void recover_password(string code, Promise<State> promise);
 
   void get_secure_secret(string password, Promise<secure_storage::Secret> promise);
+  void get_input_check_password_srp(string password,
+                                    Promise<tl_object_ptr<telegram_api::InputCheckPasswordSRP>> &&promise);
 
   void get_temp_password_state(Promise<TempState> promise) /*const*/;
   void create_temp_password(string password, int32 timeout, Promise<TempState> promise);
@@ -171,8 +173,8 @@ class PasswordManager : public NetQueryCallback {
   static Result<BufferSlice> calc_password_srp_hash(Slice password, Slice client_salt, Slice server_salt, int32 g,
                                                     Slice p);
 
-  tl_object_ptr<telegram_api::InputCheckPasswordSRP> get_input_check_password(Slice password,
-                                                                              const PasswordState &state) const;
+  static tl_object_ptr<telegram_api::InputCheckPasswordSRP> get_input_check_password(Slice password,
+                                                                                     const PasswordState &state);
 
   void update_password_settings(UpdateSettings update_settings, Promise<State> promise);
   void do_update_password_settings(UpdateSettings update_settings, PasswordFullState full_state, Promise<bool> promise);

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -40,8 +40,7 @@ Status FileLog::init(string path, int64 rotate_threshold, bool redirect_stderr) 
   } else {
     path_ = r_path.move_as_ok();
   }
-  TRY_RESULT(size, fd_.get_size());
-  size_ = size;
+  TRY_RESULT_ASSIGN(size_, fd_.get_size());
   rotate_threshold_ = rotate_threshold;
   redirect_stderr_ = redirect_stderr;
   return Status::OK();

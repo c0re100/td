@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -170,6 +170,9 @@ TEST(Mtproto, config) {
     run(get_simple_config_azure, true);
     run(get_simple_config_google_dns, true);
     run(get_simple_config_mozilla_dns, true);
+    run(get_simple_config_firebase_remote_config, false);
+    run(get_simple_config_firebase_realtime, false);
+    run(get_simple_config_firebase_firestore, false);
   }
   cnt--;
   sched.start();

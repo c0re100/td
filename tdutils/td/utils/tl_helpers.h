@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -19,6 +19,7 @@
 
 #include <type_traits>
 #include <unordered_set>
+#include <utility>
 
 #define BEGIN_STORE_FLAGS() \
   do {                      \
@@ -150,6 +151,18 @@ void parse(vector<T> &vec, ParserT &parser) {
   }
 }
 
+template <class T, class StorerT>
+void store(const unique_ptr<T> &ptr, StorerT &storer) {
+  CHECK(ptr != nullptr);
+  store(*ptr, storer);
+}
+template <class T, class ParserT>
+void parse(unique_ptr<T> &ptr, ParserT &parser) {
+  CHECK(ptr == nullptr);
+  ptr = make_unique<T>();
+  parse(*ptr, parser);
+}
+
 template <class Key, class Hash, class KeyEqual, class Allocator, class StorerT>
 void store(const std::unordered_set<Key, Hash, KeyEqual, Allocator> &s, StorerT &storer) {
   storer.store_binary(narrow_cast<int32>(s.size()));
@@ -170,6 +183,17 @@ void parse(std::unordered_set<Key, Hash, KeyEqual, Allocator> &s, ParserT &parse
     parse(val, parser);
     s.insert(std::move(val));
   }
+}
+
+template <class U, class V, class StorerT>
+void store(const std::pair<U, V> &pair, StorerT &storer) {
+  store(pair.first, storer);
+  store(pair.second, storer);
+}
+template <class U, class V, class ParserT>
+void parse(std::pair<U, V> &pair, ParserT &parser) {
+  parse(pair.first, parser);
+  parse(pair.second, parser);
 }
 
 template <class T, class StorerT>

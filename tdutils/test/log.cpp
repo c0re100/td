@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -22,6 +22,9 @@
 // LOG uses thread local LogInterface
 // void append(CSlice slice, int log_level);
 
+char disable_linker_warning_about_empty_file_tdutils_test_log_cpp TD_UNUSED;
+
+#if !TD_THREAD_UNSUPPORTED
 template <class Log>
 class LogBenchmark : public td::Benchmark {
  public:
@@ -125,3 +128,4 @@ TEST(Log, TsLogger) {
     return td::make_unique<FileLog>();
   });
 }
+#endif

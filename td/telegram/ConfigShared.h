@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2019
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -41,7 +41,6 @@ class ConfigShared {
   void set_option_string(Slice name, Slice value);
 
   bool have_option(Slice name) const;
-  string get_option(Slice name) const;
   std::unordered_map<string, string> get_options(Slice prefix) const;
   std::unordered_map<string, string> get_options() const;
 
@@ -58,6 +57,8 @@ class ConfigShared {
   unique_ptr<Callback> callback_;
 
   bool set_option(Slice name, Slice value);
+
+  string get_option(Slice name) const;
 
   void on_option_updated(Slice name) const;
 };
