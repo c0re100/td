@@ -121,6 +121,7 @@
 #include "td/utils/tl_parsers.h"
 #include "td/utils/utf8.h"
 
+#include <cmath>
 #include <limits>
 #include <tuple>
 #include <type_traits>
@@ -2778,11 +2779,13 @@ class GetStickerEmojisRequest : public RequestActor<> {
 class SearchEmojisRequest : public RequestActor<> {
   string text_;
   bool exact_match_;
+  string input_language_code_;
 
   vector<string> emojis_;
 
   void do_run(Promise<Unit> &&promise) override {
-    emojis_ = td->stickers_manager_->search_emojis(text_, exact_match_, get_tries() < 2, std::move(promise));
+    emojis_ = td->stickers_manager_->search_emojis(text_, exact_match_, input_language_code_, get_tries() < 2,
+                                                   std::move(promise));
   }
 
   void do_send_result() override {
@@ -2790,8 +2793,12 @@ class SearchEmojisRequest : public RequestActor<> {
   }
 
  public:
-  SearchEmojisRequest(ActorShared<Td> td, uint64 request_id, string &&text, bool exact_match)
-      : RequestActor(std::move(td), request_id), text_(std::move(text)), exact_match_(exact_match) {
+  SearchEmojisRequest(ActorShared<Td> td, uint64 request_id, string &&text, bool exact_match,
+                      string &&input_language_code)
+      : RequestActor(std::move(td), request_id)
+      , text_(std::move(text))
+      , exact_match_(exact_match)
+      , input_language_code_(std::move(input_language_code)) {
     set_tries(3);
   }
 };
@@ -3301,6 +3308,17 @@ void Td::on_alarm_timeout_callback(void *td_ptr, int64 alarm_id) {
   auto td = static_cast<Td *>(td_ptr);
   auto td_id = td->actor_id(td);
   send_closure_later(td_id, &Td::on_alarm_timeout, alarm_id);
+}
+
+void Td::on_update_server_time_difference() {
+  auto diff = G()->get_server_time_difference();
+  if (std::abs(diff - last_sent_server_time_difference_) < 0.5) {
+    return;
+  }
+
+  last_sent_server_time_difference_ = diff;
+  send_update(td_api::make_object<td_api::updateOption>(
+      "unix_time", td_api::make_object<td_api::optionValueInteger>(G()->unix_time())));
 }
 
 void Td::on_alarm_timeout(int64 alarm_id) {
@@ -4298,7 +4316,11 @@ Status Td::init(DbKey key) {
   LOG(INFO) << "Successfully inited database in " << tag("database_directory", parameters_.database_directory)
             << " and " << tag("files_directory", parameters_.files_directory);
   VLOG(td_init) << "Successfully inited database";
+
   G()->init(parameters_, actor_id(this), r_td_db.move_as_ok()).ensure();
+  last_sent_server_time_difference_ = G()->get_server_time_difference();
+  send_update(td_api::make_object<td_api::updateOption>(
+      "unix_time", td_api::make_object<td_api::optionValueInteger>(G()->unix_time())));
 
   init_options_and_network();
 
@@ -4670,6 +4692,7 @@ void Td::send_update(tl_object_ptr<td_api::Update> &&object) {
     case td_api::updateTrendingStickerSets::ID:
       VLOG(td_requests) << "Sending update: updateTrendingStickerSets { ... }";
       break;
+    case td_api::updateOption::ID / 2:
     case td_api::updateChatReadInbox::ID / 2:
     case td_api::updateUnreadMessageCount::ID / 2:
     case td_api::updateUnreadChatCount::ID / 2:
@@ -6726,7 +6749,9 @@ void Td::on_request(uint64 id, td_api::getStickerEmojis &request) {
 void Td::on_request(uint64 id, td_api::searchEmojis &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.text_);
-  CREATE_REQUEST(SearchEmojisRequest, std::move(request.text_), request.exact_match_);
+  CLEAN_INPUT_STRING(request.input_language_code_);
+  CREATE_REQUEST(SearchEmojisRequest, std::move(request.text_), request.exact_match_,
+                 std::move(request.input_language_code_));
 }
 
 void Td::on_request(uint64 id, td_api::getEmojiSuggestionsUrl &request) {

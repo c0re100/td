@@ -4948,8 +4948,8 @@ void StickersManager::on_get_language_codes(const string &key, Result<vector<str
   }
 
   auto language_codes = result.move_as_ok();
-  LOG(INFO) << "Receive language codes " << language_codes << " for emojis search";
-  td::remove_if(language_codes, [](const auto &language_code) {
+  LOG(INFO) << "Receive language codes " << language_codes << " for emojis search with key " << key;
+  td::remove_if(language_codes, [](const string &language_code) {
     if (language_code.empty() || language_code.find('$') != string::npos) {
       LOG(ERROR) << "Receive language_code \"" << language_code << '"';
       return true;
@@ -4963,21 +4963,27 @@ void StickersManager::on_get_language_codes(const string &key, Result<vector<str
   std::sort(language_codes.begin(), language_codes.end());
   language_codes.erase(std::unique(language_codes.begin(), language_codes.end()), language_codes.end());
 
-  G()->td_db()->get_sqlite_pmc()->set(key, implode(language_codes, '$'), Auto());
   auto it = emoji_language_codes_.find(key);
   CHECK(it != emoji_language_codes_.end());
-  it->second = std::move(language_codes);
+  if (it->second != language_codes) {
+    LOG(INFO) << "Update emoji language codes for " << key << " to " << language_codes;
+    G()->td_db()->get_sqlite_pmc()->set(key, implode(language_codes, '$'), Auto());
+    it->second = std::move(language_codes);
+  }
 
   for (auto &promise : promises) {
     promise.set_value(Unit());
   }
 }
 
-vector<string> StickersManager::get_emoji_language_codes(Promise<Unit> &promise) {
+vector<string> StickersManager::get_emoji_language_codes(const string &input_language_code, Promise<Unit> &promise) {
   vector<string> language_codes = td_->language_pack_manager_->get_actor_unsafe()->get_used_language_codes();
   auto system_language_code = G()->mtproto_header().get_system_language_code();
   if (!system_language_code.empty() && system_language_code.find('$') == string::npos) {
     language_codes.push_back(system_language_code);
+  }
+  if (!input_language_code.empty() && input_language_code.find('$') == string::npos) {
+    language_codes.push_back(input_language_code);
   }
 
   if (language_codes.empty()) {
@@ -4987,6 +4993,7 @@ vector<string> StickersManager::get_emoji_language_codes(Promise<Unit> &promise)
   std::sort(language_codes.begin(), language_codes.end());
   language_codes.erase(std::unique(language_codes.begin(), language_codes.end()), language_codes.end());
 
+  LOG(DEBUG) << "Have language codes " << language_codes;
   auto key = get_emoji_language_codes_database_key(language_codes);
   auto it = emoji_language_codes_.find(key);
   if (it == emoji_language_codes_.end()) {
@@ -5002,6 +5009,9 @@ vector<string> StickersManager::get_emoji_language_codes(Promise<Unit> &promise)
           get_emoji_language_code_version(language_code) != 0) {
         load_emoji_keywords_difference(language_code);
       }
+    }
+    if (reloaded_emoji_keywords_.insert(key).second) {
+      load_language_codes(std::move(language_codes), std::move(key), Auto());
     }
   }
   return it->second;
@@ -5196,14 +5206,14 @@ void StickersManager::on_get_emoji_keywords_difference(
   emoji_language_code_last_difference_times_[language_code] = static_cast<int32>(Time::now_cached());
 }
 
-vector<string> StickersManager::search_emojis(const string &text, bool exact_match, bool force,
-                                              Promise<Unit> &&promise) {
+vector<string> StickersManager::search_emojis(const string &text, bool exact_match, const string &input_language_code,
+                                              bool force, Promise<Unit> &&promise) {
   if (text.empty() || !G()->parameters().use_file_db /* have SQLite PMC */) {
     promise.set_value(Unit());
     return {};
   }
 
-  auto language_codes = get_emoji_language_codes(promise);
+  auto language_codes = get_emoji_language_codes(input_language_code, promise);
   if (language_codes.empty()) {
     // promise was consumed
     return {};

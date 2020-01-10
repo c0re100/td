@@ -205,7 +205,8 @@ class StickersManager : public Actor {
 
   vector<string> get_sticker_emojis(const tl_object_ptr<td_api::InputFile> &input_file, Promise<Unit> &&promise);
 
-  vector<string> search_emojis(const string &text, bool exact_match, bool force, Promise<Unit> &&promise);
+  vector<string> search_emojis(const string &text, bool exact_match, const string &input_language_code, bool force,
+                               Promise<Unit> &&promise);
 
   int64 get_emoji_suggestions_url(const string &language_code, Promise<Unit> &&promise);
 
@@ -504,7 +505,7 @@ class StickersManager : public Actor {
 
   double get_emoji_language_code_last_difference_time(const string &language_code);
 
-  vector<string> get_emoji_language_codes(Promise<Unit> &promise);
+  vector<string> get_emoji_language_codes(const string &input_language_code, Promise<Unit> &promise);
 
   void load_language_codes(vector<string> language_codes, string key, Promise<Unit> &&promise);
 
@@ -612,6 +613,7 @@ class StickersManager : public Actor {
   std::unordered_map<string, vector<string>> emoji_language_codes_;
   std::unordered_map<string, int32> emoji_language_code_versions_;
   std::unordered_map<string, double> emoji_language_code_last_difference_times_;
+  std::unordered_set<string> reloaded_emoji_keywords_;
   std::unordered_map<string, vector<Promise<Unit>>> load_emoji_keywords_queries_;
   std::unordered_map<string, vector<Promise<Unit>>> load_language_codes_queries_;
   std::unordered_map<int64, string> emoji_suggestions_urls_;

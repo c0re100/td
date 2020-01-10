@@ -163,7 +163,9 @@ TEST(Misc, base64) {
   ASSERT_TRUE(is_base64("dGVzdB==") == false);
   ASSERT_TRUE(is_base64("dGVzdA=") == false);
   ASSERT_TRUE(is_base64("dGVzdA") == false);
+  ASSERT_TRUE(is_base64("dGVzd") == false);
   ASSERT_TRUE(is_base64("dGVz") == true);
+  ASSERT_TRUE(is_base64("dGVz====") == false);
   ASSERT_TRUE(is_base64("") == true);
   ASSERT_TRUE(is_base64("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/") == true);
   ASSERT_TRUE(is_base64("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=") == false);
@@ -175,13 +177,39 @@ TEST(Misc, base64) {
   ASSERT_TRUE(is_base64url("dGVzdB==") == false);
   ASSERT_TRUE(is_base64url("dGVzdA=") == false);
   ASSERT_TRUE(is_base64url("dGVzdA") == true);
+  ASSERT_TRUE(is_base64url("dGVzd") == false);
   ASSERT_TRUE(is_base64url("dGVz") == true);
+  ASSERT_TRUE(is_base64url("dGVz====") == false);
   ASSERT_TRUE(is_base64url("") == true);
   ASSERT_TRUE(is_base64url("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_") == true);
   ASSERT_TRUE(is_base64url("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=") == false);
   ASSERT_TRUE(is_base64url("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-/") == false);
   ASSERT_TRUE(is_base64url("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/") == false);
   ASSERT_TRUE(is_base64url("====") == false);
+
+  ASSERT_TRUE(is_base64_characters("dGVzdA==") == false);
+  ASSERT_TRUE(is_base64_characters("dGVzdB==") == false);
+  ASSERT_TRUE(is_base64_characters("dGVzdA=") == false);
+  ASSERT_TRUE(is_base64_characters("dGVzdA") == true);
+  ASSERT_TRUE(is_base64_characters("dGVz") == true);
+  ASSERT_TRUE(is_base64_characters("") == true);
+  ASSERT_TRUE(is_base64_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/") == true);
+  ASSERT_TRUE(is_base64_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=") == false);
+  ASSERT_TRUE(is_base64_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-/") == false);
+  ASSERT_TRUE(is_base64_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_") == false);
+  ASSERT_TRUE(is_base64_characters("====") == false);
+
+  ASSERT_TRUE(is_base64url_characters("dGVzdA==") == false);
+  ASSERT_TRUE(is_base64url_characters("dGVzdB==") == false);
+  ASSERT_TRUE(is_base64url_characters("dGVzdA=") == false);
+  ASSERT_TRUE(is_base64url_characters("dGVzdA") == true);
+  ASSERT_TRUE(is_base64url_characters("dGVz") == true);
+  ASSERT_TRUE(is_base64url_characters("") == true);
+  ASSERT_TRUE(is_base64url_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_") == true);
+  ASSERT_TRUE(is_base64url_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=") == false);
+  ASSERT_TRUE(is_base64url_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-/") == false);
+  ASSERT_TRUE(is_base64url_characters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/") == false);
+  ASSERT_TRUE(is_base64url_characters("====") == false);
 
   for (int l = 0; l < 300000; l += l / 20 + l / 1000 * 500 + 1) {
     for (int t = 0; t < 10; t++) {
@@ -195,6 +223,10 @@ TEST(Misc, base64) {
       decoded = base64_decode(encoded);
       ASSERT_TRUE(decoded.is_ok());
       ASSERT_TRUE(decoded.ok() == s);
+
+      auto decoded_secure = base64_decode_secure(encoded);
+      ASSERT_TRUE(decoded_secure.is_ok());
+      ASSERT_TRUE(decoded_secure.ok().as_slice() == s);
     }
   }
 
@@ -207,6 +239,9 @@ TEST(Misc, base64) {
   ASSERT_TRUE(base64_encode("      /'.;.';≤.];,].',[.;/,.;/]/..;!@#!*(%?::;!%\";") ==
               "ICAgICAgLycuOy4nO+KJpC5dOyxdLicsWy47LywuOy9dLy4uOyFAIyEqKCU/"
               "Ojo7ISUiOw==");
+  ASSERT_TRUE(base64url_encode("ab><") == "YWI-PA");
+  ASSERT_TRUE(base64url_encode("ab><c") == "YWI-PGM");
+  ASSERT_TRUE(base64url_encode("ab><cd") == "YWI-PGNk");
 }
 
 template <class T>
