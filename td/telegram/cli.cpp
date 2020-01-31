@@ -1627,10 +1627,10 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::deleteSavedOrderInfo>());
     } else if (op == "dsc") {
       send_request(td_api::make_object<td_api::deleteSavedCredentials>());
-    } else if (op == "stlsr") {
-      send_request(td_api::make_object<td_api::sendTonLiteServerRequest>());
-    } else if (op == "gtwps") {
-      send_request(td_api::make_object<td_api::getTonWalletPasswordSalt>());
+      // } else if (op == "stlsr") {
+      //   send_request(td_api::make_object<td_api::sendTonLiteServerRequest>());
+      // } else if (op == "gtwps") {
+      //   send_request(td_api::make_object<td_api::getTonWalletPasswordSalt>());
     } else if (op == "gpr") {
       send_request(td_api::make_object<td_api::getUserPrivacySettingRules>(get_user_privacy_setting(args)));
     } else if (op == "spr") {
@@ -3194,14 +3194,21 @@ class CliClient final : public Actor {
 
       send_message(chat_id, td_api::make_object<td_api::inputMessageLocation>(as_location(latitude, longitude),
                                                                               to_integer<int32>(period)));
-    } else if (op == "spoll") {
+    } else if (op == "spoll" || op == "spollm" || op == "spollp" || op == "squiz") {
       string chat_id;
       string question;
       std::tie(chat_id, args) = split(args);
       std::tie(question, args) = split(args);
       auto options = full_split(args);
 
-      send_message(chat_id, td_api::make_object<td_api::inputMessagePoll>(question, std::move(options)));
+      td_api::object_ptr<td_api::PollType> poll_type;
+      if (op == "squiz") {
+        poll_type = td_api::make_object<td_api::pollTypeQuiz>(narrow_cast<int32>(options.size() - 1));
+      } else {
+        poll_type = td_api::make_object<td_api::pollTypeRegular>(op == "spollm");
+      }
+      send_message(chat_id, td_api::make_object<td_api::inputMessagePoll>(question, std::move(options), op != "spollp",
+                                                                          std::move(poll_type), false));
     } else if (op == "sp" || op == "spcaption" || op == "spttl") {
       string chat_id;
       string photo_path;
@@ -3482,6 +3489,20 @@ class CliClient final : public Actor {
       std::tie(message_id, option_ids) = split(args);
       send_request(td_api::make_object<td_api::setPollAnswer>(as_chat_id(chat_id), as_message_id(message_id),
                                                               to_integers<int32>(option_ids)));
+    } else if (op == "gpollv") {
+      string chat_id;
+      string message_id;
+      string option_id;
+      string offset;
+      string limit;
+
+      std::tie(chat_id, args) = split(args);
+      std::tie(message_id, args) = split(args);
+      std::tie(option_id, args) = split(args);
+      std::tie(offset, limit) = split(args);
+      send_request(td_api::make_object<td_api::getPollVoters>(as_chat_id(chat_id), as_message_id(message_id),
+                                                              to_integer<int32>(option_id), to_integer<int32>(offset),
+                                                              to_integer<int32>(limit)));
     } else if (op == "stoppoll") {
       string chat_id;
       string message_id;

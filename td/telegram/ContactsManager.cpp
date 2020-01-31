@@ -35,7 +35,6 @@
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TopDialogManager.h"
 #include "td/telegram/UpdatesManager.h"
 #include "td/telegram/Version.h"
 
@@ -2975,6 +2974,8 @@ void ContactsManager::User::parse(ParserT &parser) {
   }
   if (have_access_hash) {
     parse(access_hash, parser);
+  } else {
+    is_min_access_hash = true;
   }
   if (has_photo) {
     parse(photo, parser);
@@ -6418,7 +6419,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   User *u = add_user(user_id, "on_get_user");
   if (have_access_hash) {  // access_hash must be updated before photo
     auto access_hash = user->access_hash_;
-    bool is_min_access_hash = !is_received && ((flags & USER_FLAG_HAS_PHONE_NUMBER) == 0);
+    bool is_min_access_hash = !is_received && !((flags & USER_FLAG_HAS_PHONE_NUMBER) != 0 && user->phone_.empty());
     if (u->access_hash != access_hash && (!is_min_access_hash || u->is_min_access_hash || u->access_hash == -1)) {
       LOG(ERROR) << "Access hash has changed for " << user_id << " from " << u->access_hash << "/"
                  << u->is_min_access_hash << " to " << access_hash << "/" << is_min_access_hash;
@@ -6427,7 +6428,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
       u->need_save_to_database = true;
     }
   }
-  if (is_received) {
+  if (is_received || !user->phone_.empty()) {
     on_update_user_phone_number(u, user_id, std::move(user->phone_));
   }
   on_update_user_photo(u, user_id, std::move(user->photo_), source);
@@ -6520,7 +6521,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   if (is_deleted != u->is_deleted) {
     u->is_deleted = is_deleted;
 
-    LOG(DEBUG) << "User.is_deleted has changed for " << user_id;
+    LOG(DEBUG) << "User.is_deleted has changed for " << user_id << " to " << u->is_deleted;
     u->is_is_deleted_changed = true;
     u->is_changed = true;
   }
@@ -6531,7 +6532,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   if (u->language_code != user->lang_code_ && !user->lang_code_.empty()) {
     u->language_code = user->lang_code_;
 
-    LOG(DEBUG) << "Language code has changed for " << user_id;
+    LOG(DEBUG) << "Language code has changed for " << user_id << " to " << u->language_code;
     u->is_changed = true;
   }
 
@@ -7533,7 +7534,7 @@ void ContactsManager::on_load_user_full_from_database(UserId user_id, string val
 
   Dependencies dependencies;
   dependencies.user_ids.insert(user_id);
-  td_->messages_manager_->resolve_dependencies_force(dependencies);
+  resolve_dependencies_force(td_, dependencies);
 
   if (user_full->need_phone_number_privacy_exception && is_user_contact(user_id)) {
     user_full->need_phone_number_privacy_exception = false;
@@ -7703,7 +7704,7 @@ void ContactsManager::on_load_chat_full_from_database(ChatId chat_id, string val
     dependencies.user_ids.insert(participant.user_id);
     dependencies.user_ids.insert(participant.inviter_user_id);
   }
-  td_->messages_manager_->resolve_dependencies_force(dependencies);
+  resolve_dependencies_force(td_, dependencies);
 
   for (auto &participant : chat_full->participants) {
     get_bot_info_force(participant.user_id);
@@ -7776,10 +7777,10 @@ void ContactsManager::on_load_channel_full_from_database(ChannelId channel_id, s
 
   Dependencies dependencies;
   dependencies.channel_ids.insert(channel_id);
-  td_->messages_manager_->add_dialog_dependencies(dependencies, DialogId(channel_full->linked_channel_id));
+  MessagesManager::add_dialog_dependencies(dependencies, DialogId(channel_full->linked_channel_id));
   dependencies.chat_ids.insert(channel_full->migrated_from_chat_id);
   dependencies.user_ids.insert(channel_full->bot_user_ids.begin(), channel_full->bot_user_ids.end());
-  td_->messages_manager_->resolve_dependencies_force(dependencies);
+  resolve_dependencies_force(td_, dependencies);
 
   for (auto &user_id : channel_full->bot_user_ids) {
     get_bot_info_force(user_id);
@@ -7892,13 +7893,6 @@ void ContactsManager::update_user(User *u, UserId user_id, bool from_binlog, boo
 
   if (u->is_deleted) {
     td_->inline_queries_manager_->remove_recent_inline_bot(user_id, Promise<>());
-    /*
-    DialogId dialog_id(user_id);
-    for (auto category : {TopDialogCategory::Correspondent, TopDialogCategory::BotPM, TopDialogCategory::BotInline}) {
-      send_closure(G()->top_dialog_manager(), &TopDialogManager::delete_dialog, category, dialog_id,
-                   get_input_peer_user(user_id, AccessRights::Read));
-    }
-    */
   }
 
   LOG(DEBUG) << "Update " << user_id << ": need_save_to_database = " << u->need_save_to_database
@@ -9440,6 +9434,7 @@ bool ContactsManager::on_get_channel_error(ChannelId channel_id, const Status &s
         c->has_location = false;
         update_channel(c, channel_id);
       }
+      on_update_channel_linked_channel_id(channel_id, ChannelId());
     }
     invalidate_channel_full(channel_id, false, !c->is_slow_mode_enabled);
     LOG_IF(ERROR, have_input_peer_channel(c, channel_id, AccessRights::Read))
@@ -9474,6 +9469,7 @@ void ContactsManager::on_get_channel_participants_success(
 
   vector<DialogParticipant> result;
   for (auto &participant_ptr : participants) {
+    auto debug_participant = to_string(participant_ptr);
     result.push_back(get_dialog_participant(channel_id, std::move(participant_ptr)));
     if ((filter.is_bots() && !is_user_bot(result.back().user_id)) ||
         (filter.is_administrators() && !result.back().status.is_administrator()) ||
@@ -9485,7 +9481,7 @@ void ContactsManager::on_get_channel_participants_success(
                         (filter.is_contacts() && result.back().user_id == get_my_id());
       if (!skip_error) {
         LOG(ERROR) << "Receive " << result.back() << ", while searching for " << filter << " in " << channel_id
-                   << " with offset " << offset << " and limit " << limit;
+                   << " with offset " << offset << " and limit " << limit << ": " << oneline(debug_participant);
       }
       result.pop_back();
       total_count--;
@@ -12715,8 +12711,8 @@ tl_object_ptr<td_api::user> ContactsManager::get_user_object(UserId user_id, con
       u->is_received, std::move(type), u->language_code);
 }
 
-vector<int32> ContactsManager::get_user_ids_object(const vector<UserId> &user_ids) const {
-  return transform(user_ids, [this](UserId user_id) { return get_user_id_object(user_id, "get_user_ids_object"); });
+vector<int32> ContactsManager::get_user_ids_object(const vector<UserId> &user_ids, const char *source) const {
+  return transform(user_ids, [this, source](UserId user_id) { return get_user_id_object(user_id, source); });
 }
 
 tl_object_ptr<td_api::users> ContactsManager::get_users_object(int32 total_count,
@@ -12724,7 +12720,7 @@ tl_object_ptr<td_api::users> ContactsManager::get_users_object(int32 total_count
   if (total_count == -1) {
     total_count = narrow_cast<int32>(user_ids.size());
   }
-  return td_api::make_object<td_api::users>(total_count, get_user_ids_object(user_ids));
+  return td_api::make_object<td_api::users>(total_count, get_user_ids_object(user_ids, "get_users_object"));
 }
 
 tl_object_ptr<td_api::userFullInfo> ContactsManager::get_user_full_info_object(UserId user_id) const {
@@ -12955,7 +12951,7 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
     invite_link_photo = as_dialog_photo(invite_link_info->photo);
     photo = &invite_link_photo;
     participant_count = invite_link_info->participant_count;
-    member_user_ids = get_user_ids_object(invite_link_info->participant_user_ids);
+    member_user_ids = get_user_ids_object(invite_link_info->participant_user_ids, "get_chat_invite_link_info_object");
     is_public = invite_link_info->is_public;
 
     if (invite_link_info->is_chat) {

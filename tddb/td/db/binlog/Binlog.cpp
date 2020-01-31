@@ -108,7 +108,7 @@ class BinlogReader {
     return offset_;
   }
   Result<size_t> read_next(BinlogEvent *event) {
-    if (state_ == ReadLength) {
+    if (state_ == State::ReadLength) {
       if (input_->size() < 4) {
         return 4;
       }
@@ -129,7 +129,7 @@ class BinlogReader {
                                           << expected_size_ << ' ' << tag("is_encrypted", is_encrypted_)
                                           << format::as_hex_dump<4>(Slice(input_->prepare_read().truncate(28))));
       }
-      state_ = ReadEvent;
+      state_ = State::ReadEvent;
     }
 
     if (input_->size() < size_) {
@@ -140,13 +140,14 @@ class BinlogReader {
     TRY_STATUS(event->init(input_->cut_head(size_).move_as_buffer_slice()));
     offset_ += size_;
     event->offset_ = offset_;
-    state_ = ReadLength;
+    state_ = State::ReadLength;
     return 0;
   }
 
  private:
   ChainBufferReader *input_;
-  enum { ReadLength, ReadEvent } state_ = ReadLength;
+  enum class State { ReadLength, ReadEvent };
+  State state_ = State::ReadLength;
   size_t size_{0};
   int64 offset_{0};
   int64 expected_size_{0};
@@ -161,8 +162,6 @@ static int64 file_size(CSlice path) {
   return r_stat.ok().size_;
 }
 }  // namespace detail
-
-bool Binlog::IGNORE_ERASE_HACK = false;
 
 Binlog::Binlog() = default;
 
@@ -521,17 +520,12 @@ Status Binlog::load_binlog(const Callback &callback, const Callback &debug_callb
     auto need_size = r_need_size.move_as_ok();
     // LOG(ERROR) << "Need size = " << need_size;
     if (need_size == 0) {
-      if (IGNORE_ERASE_HACK && event.type_ == BinlogEvent::ServiceTypes::Empty &&
-          (event.flags_ & BinlogEvent::Flags::Rewrite) != 0) {
-        // skip erase
-      } else {
-        if (debug_callback) {
-          debug_callback(event);
-        }
-        do_add_event(std::move(event));
-        if (info_.wrong_password) {
-          return Status::OK();
-        }
+      if (debug_callback) {
+        debug_callback(event);
+      }
+      do_add_event(std::move(event));
+      if (info_.wrong_password) {
+        return Status::OK();
       }
     } else {
       TRY_STATUS(fd_.flush_read(max(need_size, static_cast<size_t>(4096))));
@@ -560,7 +554,7 @@ Status Binlog::load_binlog(const Callback &callback, const Callback &debug_callb
     fd_.truncate_to_current_position(offset).ensure();
     db_key_used_ = false;  // force reindex
   }
-  LOG_CHECK(IGNORE_ERASE_HACK || fd_size_ == offset) << fd_size << " " << fd_size_ << " " << offset;
+  LOG_CHECK(fd_size_ == offset) << fd_size << " " << fd_size_ << " " << offset;
   binlog_reader_ptr_ = nullptr;
   state_ = State::Run;
 

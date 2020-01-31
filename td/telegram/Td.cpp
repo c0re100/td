@@ -80,6 +80,7 @@
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StorageManager.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TopDialogCategory.h"
 #include "td/telegram/TopDialogManager.h"
 #include "td/telegram/UpdatesManager.h"
 #include "td/telegram/VideoNotesManager.h"
@@ -3515,7 +3516,7 @@ bool Td::is_preauthentication_request(int32 id) {
     case td_api::setCustomLanguagePackString::ID:
     case td_api::deleteLanguagePack::ID:
     case td_api::processPushNotification::ID:
-    case td_api::sendTonLiteServerRequest::ID:
+    // case td_api::sendTonLiteServerRequest::ID:
     case td_api::getOption::ID:
     case td_api::setOption::ID:
     case td_api::getStorageStatistics::ID:
@@ -3679,8 +3680,9 @@ td_api::object_ptr<td_api::Object> Td::static_request(td_api::object_ptr<td_api:
     return td_api::make_object<td_api::error>(400, "Request is empty");
   }
 
-  bool need_logging = [&] {
-    switch (function->get_id()) {
+  auto function_id = function->get_id();
+  bool need_logging = [function_id] {
+    switch (function_id) {
       case td_api::parseTextEntities::ID:
       case td_api::getFileMimeType::ID:
       case td_api::getFileExtension::ID:
@@ -3700,6 +3702,7 @@ td_api::object_ptr<td_api::Object> Td::static_request(td_api::object_ptr<td_api:
 
   td_api::object_ptr<td_api::Object> response;
   downcast_call(*function, [&response](auto &request) { response = Td::do_static_request(request); });
+  LOG_CHECK(response != nullptr) << function_id;
 
   if (need_logging) {
     VLOG(td_requests) << "Sending result for static request: " << to_string(response);
@@ -4405,7 +4408,7 @@ Status Td::init(DbKey key) {
   // that RequestKey was already sent.
   //
   // 3. During replay of binlog some queries may be sent to other actors. They shouldn't process such events before all
-  // their binlog events are processed. So actor may receive some old queries. It must be in it's actual state in
+  // their binlog events are processed. So actor may receive some old queries. It must be in its actual state in
   // orded to handle them properly.
   //
   // -- Use send_closure_later, so actors don't even start process binlog events, before all binlog events are sent
@@ -7251,6 +7254,21 @@ void Td::on_request(uint64 id, td_api::setPollAnswer &request) {
                                      std::move(request.option_ids_), std::move(promise));
 }
 
+void Td::on_request(uint64 id, td_api::getPollVoters &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  auto query_promise = PromiseCreator::lambda(
+      [promise = std::move(promise), td = this](Result<std::pair<int32, vector<UserId>>> result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+        } else {
+          promise.set_value(td->contacts_manager_->get_users_object(result.ok().first, result.ok().second));
+        }
+      });
+  messages_manager_->get_poll_voters({DialogId(request.chat_id_), MessageId(request.message_id_)}, request.option_id_,
+                                     request.offset_, request.limit_, std::move(query_promise));
+}
+
 void Td::on_request(uint64 id, td_api::stopPoll &request) {
   CREATE_OK_REQUEST_PROMISE();
   messages_manager_->stop_poll({DialogId(request.chat_id_), MessageId(request.message_id_)},
@@ -7363,17 +7381,17 @@ void Td::on_request(uint64 id, const td_api::deleteSavedCredentials &request) {
   delete_saved_credentials(std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::sendTonLiteServerRequest &request) {
-  CHECK_IS_USER();
-  CREATE_REQUEST_PROMISE();
-  send_ton_lite_server_request(request.request_, std::move(promise));
-}
+// void Td::on_request(uint64 id, const td_api::sendTonLiteServerRequest &request) {
+//   CHECK_IS_USER();
+//   CREATE_REQUEST_PROMISE();
+//   send_ton_lite_server_request(request.request_, std::move(promise));
+// }
 
-void Td::on_request(uint64 id, const td_api::getTonWalletPasswordSalt &request) {
-  CHECK_IS_USER();
-  CREATE_REQUEST_PROMISE();
-  send_closure(password_manager_, &PasswordManager::get_ton_wallet_password_salt, std::move(promise));
-}
+// void Td::on_request(uint64 id, const td_api::getTonWalletPasswordSalt &request) {
+//   CHECK_IS_USER();
+//   CREATE_REQUEST_PROMISE();
+//   send_closure(password_manager_, &PasswordManager::get_ton_wallet_password_salt, std::move(promise));
+// }
 
 void Td::on_request(uint64 id, td_api::getPassportElement &request) {
   CHECK_IS_USER();

@@ -24,8 +24,7 @@
 #include "td/telegram/FolderId.h"
 #include "td/telegram/FullMessageId.h"
 #include "td/telegram/Global.h"
-#include "td/telegram/MessageContent.h"
-#include "td/telegram/MessageEntity.h"
+#include "td/telegram/MessageContentType.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessagesDb.h"
 #include "td/telegram/net/NetQuery.h"
@@ -73,11 +72,15 @@ namespace td {
 
 struct BinlogEvent;
 
-class Td;
+class DraftMessage;
+
+struct InputMessageContent;
+
+class MessageContent;
 
 class MultiSequenceDispatcher;
 
-class DraftMessage;
+class Td;
 
 class dummyUpdate : public telegram_api::Update {
  public:
@@ -266,7 +269,7 @@ class MessagesManager : public Actor {
   void on_update_sent_text_message(int64 random_id, tl_object_ptr<telegram_api::MessageMedia> message_media,
                                    vector<tl_object_ptr<telegram_api::MessageEntity>> &&entities);
 
-  void on_update_message_web_page(FullMessageId full_message_id, bool have_web_page);
+  void delete_pending_message_web_page(FullMessageId full_message_id);
 
   void on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<telegram_api::Dialog>> &&dialog_folders,
                       int32 total_count, vector<tl_object_ptr<telegram_api::Message>> &&messages,
@@ -315,7 +318,7 @@ class MessagesManager : public Actor {
 
   void on_update_some_live_location_viewed(Promise<Unit> &&promise);
 
-  void on_update_message_content(FullMessageId full_message_id);
+  void on_external_update_message_content(FullMessageId full_message_id);
 
   void on_read_channel_inbox(ChannelId channel_id, MessageId max_message_id, int32 server_unread_count, int32 pts,
                              const char *source);
@@ -803,6 +806,9 @@ class MessagesManager : public Actor {
 
   void set_poll_answer(FullMessageId full_message_id, vector<int32> &&option_ids, Promise<Unit> &&promise);
 
+  void get_poll_voters(FullMessageId full_message_id, int32 option_id, int32 offset, int32 limit,
+                       Promise<std::pair<int32, vector<UserId>>> &&promise);
+
   void stop_poll(FullMessageId full_message_id, td_api::object_ptr<td_api::ReplyMarkup> &&reply_markup,
                  Promise<Unit> &&promise);
 
@@ -820,8 +826,6 @@ class MessagesManager : public Actor {
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
 
   static void add_dialog_dependencies(Dependencies &dependencies, DialogId dialog_id);
-
-  void resolve_dependencies_force(const Dependencies &dependencies);
 
   ActorOwn<MultiSequenceDispatcher> sequence_dispatcher_;
 
@@ -1068,11 +1072,6 @@ class MessagesManager : public Actor {
     MessageId being_updated_last_new_message_id;
     MessageId being_updated_last_database_message_id;
     MessageId being_deleted_message_id;
-    const char *debug_being_deleted_message_id_source = "";
-    bool debug_being_added_need_update = false;   // TODO remove
-    MessageId debug_preloaded_pinned_message_id;  // TODO remove
-    MessageId debug_added_pinned_message_id;      // TODO remove
-    const char *debug_add_message_to_dialog_fail_reason = "";
 
     NotificationGroupInfo message_notification_group;
     NotificationGroupInfo mention_notification_group;
@@ -1527,10 +1526,10 @@ class MessagesManager : public Actor {
 
   Status can_send_message(DialogId dialog_id) const TD_WARN_UNUSED_RESULT;
 
-  Status can_send_message_content(DialogId dialog_id, const MessageContent *content, bool is_forward,
-                                  bool is_via_bot = false) const TD_WARN_UNUSED_RESULT;
+  Status can_send_message_content(DialogId dialog_id, const MessageContent *content,
+                                  bool is_forward) const TD_WARN_UNUSED_RESULT;
 
-  static bool can_resend_message(const Message *m);
+  bool can_resend_message(const Message *m) const;
 
   bool can_edit_message(DialogId dialog_id, const Message *m, bool is_editing, bool only_reply_markup = false) const;
 
@@ -1929,7 +1928,7 @@ class MessagesManager : public Actor {
 
   static Result<int32> get_message_schedule_date(td_api::object_ptr<td_api::MessageSchedulingState> &&scheduling_state);
 
-  static tl_object_ptr<td_api::MessageSendingState> get_message_sending_state_object(const Message *m);
+  tl_object_ptr<td_api::MessageSendingState> get_message_sending_state_object(const Message *m) const;
 
   static tl_object_ptr<td_api::MessageSchedulingState> get_message_scheduling_state_object(int32 send_date);
 
@@ -2622,8 +2621,6 @@ class MessagesManager : public Actor {
   std::unordered_map<DialogId, uint64, DialogIdHash> get_dialog_query_logevent_id_;
 
   std::unordered_map<FullMessageId, int32, FullMessageIdHash> replied_by_yet_unsent_messages_;
-
-  std::unordered_set<FullMessageId, FullMessageIdHash> waiting_for_web_page_messages_;
 
   struct ActiveDialogAction {
     UserId user_id;

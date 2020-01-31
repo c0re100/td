@@ -212,6 +212,15 @@ maskPosition point:MaskPoint x_shift:double y_shift:double scale:double = MaskPo
 pollOption text:string voter_count:int32 vote_percentage:int32 is_chosen:Bool is_being_chosen:Bool = PollOption;
 
 
+//@class PollType @description Describes the type of a poll
+
+//@description A regular poll @allow_multiple_answers True, if multiple answer options can be chosen simultaneously
+pollTypeRegular allow_multiple_answers:Bool = PollType;
+
+//@description A poll in quiz mode, which has exactly one correct answer option and can be answered only once @correct_option_id 0-based identifier of the correct answer option; -1 for a yet unanswered poll
+pollTypeQuiz correct_option_id:int32 = PollType;
+
+
 //@description Describes an animation file. The animation must be encoded in GIF or MPEG4 format @duration Duration of the animation, in seconds; as defined by the sender @width Width of the animation @height Height of the animation
 //@file_name Original name of the file; as defined by the sender @mime_type MIME type of the file, usually "image/gif" or "video/mp4"
 //@minithumbnail Animation minithumbnail; may be null @thumbnail Animation thumbnail; may be null @animation File containing the animation
@@ -258,8 +267,10 @@ venue location:location title:string address:string provider:string id:string ty
 //@param_description Game description @photo Game photo @animation Game animation; may be null
 game id:int64 short_name:string title:string text:formattedText description:string photo:photo animation:animation = Game;
 
-//@description Describes a poll @id Unique poll identifier @question Poll question, 1-255 characters @options List of poll answer options @total_voter_count Total number of voters, participating in the poll @is_closed True, if the poll is closed
-poll id:int64 question:string options:vector<pollOption> total_voter_count:int32 is_closed:Bool = Poll;
+//@description Describes a poll @id Unique poll identifier @question Poll question, 1-255 characters @options List of poll answer options
+//@total_voter_count Total number of voters, participating in the poll @recent_voter_user_ids User identifiers of recent voters, if the poll is non-anonymous
+//@is_anonymous True, if the poll is anonymous @type Type of the poll @is_closed True, if the poll is closed
+poll id:int64 question:string options:vector<pollOption> total_voter_count:int32 recent_voter_user_ids:vector<int32> is_anonymous:Bool type:PollType is_closed:Bool = Poll;
 
 
 //@description Describes a user profile photo @id Photo identifier; 0 for an empty photo. Can be used to find a photo in a list of userProfilePhotos
@@ -270,7 +281,7 @@ profilePhoto id:int64 small:file big:file = ProfilePhoto;
 chatPhoto small:file big:file = ChatPhoto;
 
 
-//@class UserType @description Represents the type of the user. The following types are possible: regular users, deleted users and bots
+//@class UserType @description Represents the type of a user. The following types are possible: regular users, deleted users and bots
 
 //@description A regular user
 userTypeRegular = UserType;
@@ -504,7 +515,7 @@ secretChatStateClosed = SecretChatState;
 //@state State of the secret chat
 //@is_outbound True, if the chat was created by the current user; otherwise false
 //@ttl Current message Time To Live setting (self-destruct timer) for the chat, in seconds
-//@key_hash Hash of the currently used key for comparison with the hash of the chat partner's key. This is a string of 36 little-endian bytes, which must be split into groups of 2 bits, each denoting a pixel of one of 4 colors.
+//@key_hash Hash of the currently used key for comparison with the hash of the chat partner's key. This is a string of 36 little-endian bytes, which must be split into groups of 2 bits, each denoting a pixel of one of 4 colors FFFFFF, D5E6F3, 2D5775, and 2F99C9.
 //-The pixels must be used to make a 12x12 square image filled from left to right, top to bottom. Alternatively, the first 32 bytes of the hash can be converted to the hexadecimal format and printed as 32 2-digit hex numbers
 //@layer Secret chat layer; determines features supported by the other client. Video notes are supported if the layer >= 66; nested text entities and underline and strikethrough entities are supported if the layer >= 101
 secretChat id:int32 user_id:int32 state:SecretChatState is_outbound:Bool ttl:int32 key_hash:bytes layer:int32 = SecretChat;
@@ -726,6 +737,9 @@ keyboardButtonTypeRequestPhoneNumber = KeyboardButtonType;
 
 //@description A button that sends the user's location when pressed; available only in private chats
 keyboardButtonTypeRequestLocation = KeyboardButtonType;
+
+//@description A button that allows the user to create and send a poll when pressed; available only in private chats @force_regular If true, only regular polls must be allowed to create @force_quiz If true, only polls in quiz mode must be allowed to create
+keyboardButtonTypeRequestPoll force_regular:Bool force_quiz:Bool = KeyboardButtonType;
 
 
 //@description Represents a single button in a bot keyboard @text Text of the button @type Type of the button
@@ -975,9 +989,13 @@ pageBlockMap location:location zoom:int32 width:int32 height:int32 caption:pageB
 webPageInstantView page_blocks:vector<PageBlock> version:int32 url:string is_rtl:Bool is_full:Bool = WebPageInstantView;
 
 
-//@description Describes a web page preview @url Original URL of the link @display_url URL to display
+//@description Describes a web page preview
+//@url Original URL of the link
+//@display_url URL to display
 //@type Type of the web page. Can be: article, photo, audio, video, document, profile, app, or something else
-//@site_name Short name of the site (e.g., Google Docs, App Store) @title Title of the content @param_description Description of the content
+//@site_name Short name of the site (e.g., Google Docs, App Store)
+//@title Title of the content
+//@param_description Description of the content
 //@photo Image representing the content; may be null
 //@embed_url URL to show in the embedded preview
 //@embed_type MIME type of the embedded preview, (e.g., text/html or video/mp4)
@@ -1305,50 +1323,50 @@ inputPassportElementError type:PassportElementType message:string source:InputPa
 //@description A text message @text Text of the message @web_page A preview of the web page that's mentioned in the text; may be null
 messageText text:formattedText web_page:webPage = MessageContent;
 
-//@description An animation message (GIF-style). @animation Message content @caption Animation caption @is_secret True, if the animation thumbnail must be blurred and the animation must be shown only while tapped
+//@description An animation message (GIF-style). @animation The animation description @caption Animation caption @is_secret True, if the animation thumbnail must be blurred and the animation must be shown only while tapped
 messageAnimation animation:animation caption:formattedText is_secret:Bool = MessageContent;
 
-//@description An audio message @audio Message content @caption Audio caption
+//@description An audio message @audio The audio description @caption Audio caption
 messageAudio audio:audio caption:formattedText = MessageContent;
 
-//@description A document message (general file) @document Message content @caption Document caption
+//@description A document message (general file) @document The document description @caption Document caption
 messageDocument document:document caption:formattedText = MessageContent;
 
-//@description A photo message @photo Message content @caption Photo caption @is_secret True, if the photo must be blurred and must be shown only while tapped
+//@description A photo message @photo The photo description @caption Photo caption @is_secret True, if the photo must be blurred and must be shown only while tapped
 messagePhoto photo:photo caption:formattedText is_secret:Bool = MessageContent;
 
 //@description An expired photo message (self-destructed after TTL has elapsed)
 messageExpiredPhoto = MessageContent;
 
-//@description A sticker message @sticker Message content
+//@description A sticker message @sticker The sticker description
 messageSticker sticker:sticker = MessageContent;
 
-//@description A video message @video Message content @caption Video caption @is_secret True, if the video thumbnail must be blurred and the video must be shown only while tapped
+//@description A video message @video The video description @caption Video caption @is_secret True, if the video thumbnail must be blurred and the video must be shown only while tapped
 messageVideo video:video caption:formattedText is_secret:Bool = MessageContent;
 
 //@description An expired video message (self-destructed after TTL has elapsed)
 messageExpiredVideo = MessageContent;
 
-//@description A video note message @video_note Message content @is_viewed True, if at least one of the recipients has viewed the video note @is_secret True, if the video note thumbnail must be blurred and the video note must be shown only while tapped
+//@description A video note message @video_note The video note description @is_viewed True, if at least one of the recipients has viewed the video note @is_secret True, if the video note thumbnail must be blurred and the video note must be shown only while tapped
 messageVideoNote video_note:videoNote is_viewed:Bool is_secret:Bool = MessageContent;
 
-//@description A voice note message @voice_note Message content @caption Voice note caption @is_listened True, if at least one of the recipients has listened to the voice note
+//@description A voice note message @voice_note The voice note description @caption Voice note caption @is_listened True, if at least one of the recipients has listened to the voice note
 messageVoiceNote voice_note:voiceNote caption:formattedText is_listened:Bool = MessageContent;
 
-//@description A message with a location @location Message content @live_period Time relative to the message sent date until which the location can be updated, in seconds
+//@description A message with a location @location The location description @live_period Time relative to the message sent date until which the location can be updated, in seconds
 //@expires_in Left time for which the location can be updated, in seconds. updateMessageContent is not sent when this field changes
 messageLocation location:location live_period:int32 expires_in:int32 = MessageContent;
 
-//@description A message with information about a venue @venue Message content
+//@description A message with information about a venue @venue The venue description
 messageVenue venue:venue = MessageContent;
 
-//@description A message with a user contact @contact Message content
+//@description A message with a user contact @contact The contact description
 messageContact contact:contact = MessageContent;
 
-//@description A message with a game @game Game
+//@description A message with a game @game The game description
 messageGame game:game = MessageContent;
 
-//@description A message with a poll @poll Poll
+//@description A message with a poll @poll The poll description
 messagePoll poll:poll = MessageContent;
 
 //@description A message with an invoice from a bot @title Product title @param_description Product description @photo Product photo; may be null @currency Currency for the product price @total_amount Product total price in the minimal quantity of the currency
@@ -1534,7 +1552,7 @@ inputMessageVideoNote video_note:InputFile thumbnail:inputThumbnail duration:int
 //@description A voice note message @voice_note Voice note to be sent @duration Duration of the voice note, in seconds @waveform Waveform representation of the voice note, in 5-bit format @caption Voice note caption; 0-GetOption("message_caption_length_max") characters
 inputMessageVoiceNote voice_note:InputFile duration:int32 waveform:bytes caption:formattedText = InputMessageContent;
 
-//@description A message with a location @location Location to be sent @live_period Period for which the location can be updated, in seconds; should bebetween 60 and 86400 for a live location and 0 otherwise
+//@description A message with a location @location Location to be sent @live_period Period for which the location can be updated, in seconds; should be between 60 and 86400 for a live location and 0 otherwise
 inputMessageLocation location:location live_period:int32 = InputMessageContent;
 
 //@description A message with information about a venue @venue Venue to send
@@ -1550,8 +1568,9 @@ inputMessageGame bot_user_id:int32 game_short_name:string = InputMessageContent;
 //@payload The invoice payload @provider_token Payment provider token @provider_data JSON-encoded data about the invoice, which will be shared with the payment provider @start_parameter Unique invoice bot start_parameter for the generation of this invoice
 inputMessageInvoice invoice:invoice title:string description:string photo_url:string photo_size:int32 photo_width:int32 photo_height:int32 payload:bytes provider_token:string provider_data:string start_parameter:string = InputMessageContent;
 
-//@description A message with a poll. Polls can't be sent to private or secret chats @question Poll question, 1-255 characters @options List of poll answer options, 2-10 strings 1-100 characters each
-inputMessagePoll question:string options:vector<string> = InputMessageContent;
+//@description A message with a poll. Polls can't be sent to secret chats. Polls can be sent only to a private chat with a bot @question Poll question, 1-255 characters @options List of poll answer options, 2-10 strings 1-100 characters each
+//@is_anonymous True, if the poll voters are anonymous. Non-anonymous polls can't be sent or forwarded to channels @type Type of the poll @is_closed True, if the poll needs to be sent already closed; for bots only
+inputMessagePoll question:string options:vector<string> is_anonymous:Bool type:PollType is_closed:Bool = InputMessageContent;
 
 //@description A forwarded message @from_chat_id Identifier for the chat this forwarded message came from @message_id Identifier of the message to forward
 //@in_game_share True, if a game message should be shared within a launched game; applies only to game messages
@@ -1929,13 +1948,6 @@ gameHighScore position:int32 user_id:int32 score:int32 = GameHighScore;
 gameHighScores scores:vector<gameHighScore> = GameHighScores;
 
 
-//@description Contains the response of a request to TON lite server @response The response
-tonLiteServerResponse response:bytes = TonLiteServerResponse;
-
-//@description Contains the salt to be used with locally stored password to access a local TON-based wallet @salt The salt
-tonWalletPasswordSalt salt:bytes = TonWalletPasswordSalt;
-
-
 //@class ChatEventAction @description Represents a chat event
 
 //@description A message was edited @old_message The original message before the edit @new_message The message after it was edited
@@ -2109,7 +2121,7 @@ backgroundFillSolid color:int32 = BackgroundFill;
 backgroundFillGradient top_color:int32 bottom_color:int32 rotation_angle:int32 = BackgroundFill;
 
 
-//@class BackgroundType @description Describes a type of a background
+//@class BackgroundType @description Describes the type of a background
 
 //@description A wallpaper in JPEG format
 //@is_blurred True, if the wallpaper must be downscaled to fit in 450x450 square and then box-blurred with radius 12
@@ -2142,7 +2154,7 @@ backgrounds backgrounds:vector<background> = Backgrounds;
 //@class InputBackground @description Contains information about background to set
 
 //@description A background from a local file
-//@background Background file to use. Only inputFileLocal and inputFileGenerated are supported. The file nust be in JPEG format for wallpapers and in PNG format for patterns
+//@background Background file to use. Only inputFileLocal and inputFileGenerated are supported. The file must be in JPEG format for wallpapers and in PNG format for patterns
 inputBackgroundLocal background:InputFile = InputBackground;
 
 //@description A background from the server @background_id The background identifier
@@ -2221,8 +2233,8 @@ pushMessageContentLocation is_live:Bool is_pinned:Bool = PushMessageContent;
 //@description A photo message @photo Message content; may be null @caption Photo caption @is_secret True, if the photo is secret @is_pinned True, if the message is a pinned message with the specified content
 pushMessageContentPhoto photo:photo caption:string is_secret:Bool is_pinned:Bool = PushMessageContent;
 
-//@description A message with a poll @question Poll question @is_pinned True, if the message is a pinned message with the specified content
-pushMessageContentPoll question:string is_pinned:Bool = PushMessageContent;
+//@description A message with a poll @question Poll question @is_regular True, if the poll is regular and not in quiz mode @is_pinned True, if the message is a pinned message with the specified content
+pushMessageContentPoll question:string is_regular:Bool is_pinned:Bool = PushMessageContent;
 
 //@description A screenshot of a message in the chat has been taken
 pushMessageContentScreenshotTaken = PushMessageContent;
@@ -2286,7 +2298,7 @@ notificationTypeNewCall call_id:int32 = NotificationType;
 notificationTypeNewPushMessage message_id:int53 sender_user_id:int32 content:PushMessageContent = NotificationType;
 
 
-//@class NotificationGroupType @description Describes type of notifications in the group
+//@class NotificationGroupType @description Describes the type of notifications in a notification group
 
 //@description A group containing notifications of type notificationTypeNewMessage and notificationTypeNewPushMessage with ordinary unread messages
 notificationGroupTypeMessages = NotificationGroupType;
@@ -2686,7 +2698,7 @@ textParseModeMarkdown version:int32 = TextParseMode;
 textParseModeHTML = TextParseMode;
 
 
-//@class ProxyType @description Describes the type of the proxy server
+//@class ProxyType @description Describes the type of a proxy server
 
 //@description A SOCKS5 proxy server @username Username for logging in; may be empty @password Password for logging in; may be empty
 proxyTypeSocks5 username:string password:string = ProxyType;
@@ -2965,8 +2977,11 @@ updateNewCustomEvent event:string = Update;
 //@description A new incoming query; for bots only @id The query identifier @data JSON-serialized query data @timeout Query timeout
 updateNewCustomQuery id:int64 data:string timeout:int32 = Update;
 
-//@description Information about a poll was updated; for bots only @poll New data about the poll
+//@description A poll was updated; for bots only @poll New data about the poll
 updatePoll poll:poll = Update;
+
+//@description A user changed the answer to a poll; for bots only @poll_id Unique poll identifier @user_id The user, who changed the answer to the poll @option_ids 0-based identifiers of answer options, chosen by the user
+updatePollAnswer poll_id:int64 user_id:int32 option_ids:vector<int32> = Update;
 
 
 //@description Contains a list of updates @updates List of updates
@@ -3063,7 +3078,7 @@ destroy = Ok;
 confirmQrCodeAuthentication link:string = Session;
 
 
-//@description Returns all updates needed to restore current TDLib state, i.e. all actual UpdateAuthorizationState/UpdateUser/UpdateNewChat and others. This is especially usefull if TDLib is run in a separate process. This is an offline method. Can be called before authorization
+//@description Returns all updates needed to restore current TDLib state, i.e. all actual UpdateAuthorizationState/UpdateUser/UpdateNewChat and others. This is especially useful if TDLib is run in a separate process. This is an offline method. Can be called before authorization
 getCurrentState = Updates;
 
 
@@ -3414,9 +3429,17 @@ getJsonValue json:string = JsonValue;
 getJsonString json_value:JsonValue = Text;
 
 
-//@description Changes user answer to a poll @chat_id Identifier of the chat to which the poll belongs @message_id Identifier of the message containing the poll
-//@option_ids 0-based identifiers of options, chosen by the user. Currently user can't choose more than 1 option
+//@description Changes the user answer to a poll. A poll in quiz mode can be answered only once
+//@chat_id Identifier of the chat to which the poll belongs @message_id Identifier of the message containing the poll
+//@option_ids 0-based identifiers of answer options, chosen by the user. User can choose more than 1 answer option only is the poll allows multiple answers
 setPollAnswer chat_id:int53 message_id:int53 option_ids:vector<int32> = Ok;
+
+//@description Returns users voted for the specified option in a non-anonymous polls. For the optimal performance the number of returned users is chosen by the library
+//@chat_id Identifier of the chat to which the poll belongs @message_id Identifier of the message containing the poll
+//@option_id 0-based identifier of the answer option
+//@offset Number of users to skip in the result; must be non-negative
+//@limit The maximum number of users to be returned; must be positive and can't be greater than 50. Fewer users may be returned than specified by the limit, even if the end of the voter list has not been reached
+getPollVoters chat_id:int53 message_id:int53 option_id:int32 offset:int32 limit:int32 = Users;
 
 //@description Stops a poll. A poll in a message can be stopped when the message has can_be_edited flag set
 //@chat_id Identifier of the chat to which the poll belongs @message_id Identifier of the message containing the poll @reply_markup The new message reply markup; for bots only
@@ -3661,7 +3684,7 @@ cancelUploadFile file_id:int32 = Ok;
 //@generation_id The identifier of the generation process @offset The offset from which to write the data to the file @data The data to write
 writeGeneratedFilePart generation_id:int64 offset:int32 data:bytes = Ok;
 
-//@description Informs TDLib on a file generation prograss
+//@description Informs TDLib on a file generation progress
 //@generation_id The identifier of the generation process
 //@expected_size Expected size of the generated file, in bytes; 0 if unknown
 //@local_prefix_size The number of bytes already generated
@@ -3820,7 +3843,7 @@ removeFavoriteSticker sticker:InputFile = Ok;
 //@description Returns emoji corresponding to a sticker. The list is only for informational purposes, because a sticker is always sent with a fixed emoji from the corresponding Sticker object @sticker Sticker file identifier
 getStickerEmojis sticker:InputFile = Emojis;
 
-//@description Searches for emojis by keywords. Supported only if the file database is enabled @text Text to search for @exact_match True, if only emojis, which exactly match text needs to be returned @input_language_code IETF language tag of the user's input language; can be empty if unknown
+//@description Searches for emojis by keywords. Supported only if the file database is enabled @text Text to search for @exact_match True, if only emojis, which exactly match text needs to be returned @input_language_code IETF language tag of the user's input language; may be empty if unknown
 searchEmojis text:string exact_match:Bool input_language_code:string = Emojis;
 
 //@description Returns an HTTP URL which can be used to automatically log in to the translation platform and suggest new emoji replacements. The URL will be valid for 30 seconds after generation @language_code Language code for which the emoji replacements will be suggested
@@ -3925,7 +3948,7 @@ getSupergroupMembers supergroup_id:int32 filter:SupergroupMembersFilter offset:i
 deleteSupergroup supergroup_id:int32 = Ok;
 
 
-//@description Closes a secret chat, effectively transfering its state to secretChatStateClosed @secret_chat_id Secret chat identifier
+//@description Closes a secret chat, effectively transferring its state to secretChatStateClosed @secret_chat_id Secret chat identifier
 closeSecretChat secret_chat_id:int32 = Ok;
 
 
@@ -3977,7 +4000,7 @@ searchBackground name:string = Background;
 //@for_dark_theme True, if the background is chosen for dark theme
 setBackground background:InputBackground type:BackgroundType for_dark_theme:Bool = Background;
 
-//@description Removes background from the list of installed backgrounds @background_id The background indentifier
+//@description Removes background from the list of installed backgrounds @background_id The background identifier
 removeBackground background_id:int64 = Ok;
 
 //@description Resets list of installed backgrounds to its default value
@@ -4202,13 +4225,6 @@ sendCustomRequest method:string parameters:string = CustomRequestResult;
 
 //@description Answers a custom query; for bots only @custom_query_id Identifier of a custom query @data JSON-serialized answer to the query
 answerCustomQuery custom_query_id:int64 data:string = Ok;
-
-
-//@description Sends a request to TON lite server through Telegram servers. Can be called before authorization @request The request
-sendTonLiteServerRequest request:bytes = TonLiteServerResponse;
-
-//@description Returns a salt to be used with locally stored password to access a local TON-based wallet
-getTonWalletPasswordSalt = TonWalletPasswordSalt;
 
 
 //@description Succeeds after a specified amount of time has passed. Can be called before authorization. Can be called before initialization @seconds Number of seconds before the function returns

@@ -11,14 +11,17 @@
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/FullMessageId.h"
 #include "td/telegram/logevent/LogEvent.h"
+#include "td/telegram/MessageContentType.h"
 #include "td/telegram/MessageEntity.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/ReplyMarkup.h"
 #include "td/telegram/secret_api.h"
+#include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/StickerSetId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
+#include "td/telegram/TopDialogCategory.h"
 #include "td/telegram/UserId.h"
 #include "td/telegram/WebPageId.h"
 
@@ -27,7 +30,8 @@
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/Status.h"
-#include "td/utils/StringBuilder.h"
+
+#include <utility>
 
 namespace td {
 
@@ -36,53 +40,6 @@ struct Photo;
 class Td;
 
 class MultiPromiseActor;
-
-enum class MessageContentType : int32 {
-  None = -1,
-  Text,
-  Animation,
-  Audio,
-  Document,
-  Photo,
-  Sticker,
-  Video,
-  VoiceNote,
-  Contact,
-  Location,
-  Venue,
-  ChatCreate,
-  ChatChangeTitle,
-  ChatChangePhoto,
-  ChatDeletePhoto,
-  ChatDeleteHistory,
-  ChatAddUsers,
-  ChatJoinedByLink,
-  ChatDeleteUser,
-  ChatMigrateTo,
-  ChannelCreate,
-  ChannelMigrateFrom,
-  PinMessage,
-  Game,
-  GameScore,
-  ScreenshotTaken,
-  ChatSetTtl,
-  Unsupported,
-  Call,
-  Invoice,
-  PaymentSuccessful,
-  VideoNote,
-  ContactRegistered,
-  ExpiredPhoto,
-  ExpiredVideo,
-  LiveLocation,
-  CustomServiceAction,
-  WebsiteConnected,
-  PassportDataSent,
-  PassportDataReceived,
-  Poll
-};
-
-StringBuilder &operator<<(StringBuilder &string_builder, MessageContentType content_type);
 
 // Do not forget to update merge_message_contents when one of the inheritors of this class changes
 class MessageContent {
@@ -142,6 +99,8 @@ unique_ptr<MessageContent> create_chat_set_ttl_message_content(int32 ttl);
 Result<InputMessageContent> get_input_message_content(
     DialogId dialog_id, tl_object_ptr<td_api::InputMessageContent> &&input_message_content, Td *td);
 
+bool can_have_input_media(const Td *td, const MessageContent *content);
+
 SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
                                         tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
                                         BufferSlice thumbnail, int32 layer);
@@ -156,15 +115,7 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
 
 void delete_message_content_thumbnail(MessageContent *content, Td *td);
 
-bool is_allowed_media_group_content(MessageContentType content_type);
-
 bool can_forward_message_content(const MessageContent *content);
-
-bool is_secret_message_content(int32 ttl, MessageContentType content_type);
-
-bool is_service_message_content(MessageContentType content_type);
-
-bool can_have_message_content_caption(MessageContentType content_type);
 
 bool update_opened_message_content(MessageContent *content);
 
@@ -178,20 +129,22 @@ vector<UserId> get_message_content_added_user_ids(const MessageContent *content)
 
 UserId get_message_content_deleted_user_id(const MessageContent *content);
 
-UserId get_message_content_game_bot_user_id(const MessageContent *content);
-
 int32 get_message_content_live_location_period(const MessageContent *content);
 
 bool get_message_content_poll_is_closed(const Td *td, const MessageContent *content);
 
-WebPageId get_message_content_web_page_id(const MessageContent *content);
+bool get_message_content_poll_is_anonymous(const Td *td, const MessageContent *content);
 
-void set_message_content_web_page_id(MessageContent *content, WebPageId web_page_id);
+void remove_message_content_web_page(MessageContent *content);
 
-void set_message_content_poll_answer(Td *td, MessageContent *content, FullMessageId full_message_id,
+void set_message_content_poll_answer(Td *td, const MessageContent *content, FullMessageId full_message_id,
                                      vector<int32> &&option_ids, Promise<Unit> &&promise);
 
-void stop_message_content_poll(Td *td, MessageContent *content, FullMessageId full_message_id,
+void get_message_content_poll_voters(Td *td, const MessageContent *content, FullMessageId full_message_id,
+                                     int32 option_id, int32 offset, int32 limit,
+                                     Promise<std::pair<int32, vector<UserId>>> &&promise);
+
+void stop_message_content_poll(Td *td, const MessageContent *content, FullMessageId full_message_id,
                                unique_ptr<ReplyMarkup> &&reply_markup, Promise<Unit> &&promise);
 
 void merge_message_contents(Td *td, const MessageContent *old_content, MessageContent *new_content,
@@ -201,6 +154,9 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
 bool merge_message_content_file_id(Td *td, MessageContent *message_content, FileId new_file_id);
 
 void register_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id);
+
+void reregister_message_content(Td *td, const MessageContent *old_content, const MessageContent *new_content,
+                                FullMessageId full_message_id);
 
 void unregister_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id);
 
@@ -215,8 +171,10 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message_tex
                                                DialogId owner_dialog_id, bool is_content_read, UserId via_bot_user_id,
                                                int32 *ttl);
 
+enum class MessageContentDupType : int32 { Send, SendViaBot, Forward, Copy, CopyWithoutCaption };
+
 unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const MessageContent *content,
-                                               bool for_forward, bool remove_caption = false);
+                                               MessageContentDupType type);
 
 unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<telegram_api::MessageAction> &&action,
                                                       DialogId owner_dialog_id, MessageId reply_to_message_id);
@@ -255,5 +213,9 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
 void on_sent_message_content(Td *td, const MessageContent *content);
 
 StickerSetId add_sticker_set(Td *td, tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set);
+
+void on_dialog_used(TopDialogCategory category, DialogId dialog_id, int32 date);
+
+void update_used_hashtags(Td *td, const MessageContent *content);
 
 }  // namespace td

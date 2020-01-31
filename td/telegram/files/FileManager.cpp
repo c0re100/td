@@ -2726,14 +2726,10 @@ string FileManager::get_persistent_id(const FullGenerateFileLocation &location) 
 }
 
 string FileManager::get_persistent_id(const FullRemoteFileLocation &location) {
-  auto location_copy = location;
-  location_copy.clear_file_reference();
-  auto binary = serialize(location_copy);
+  auto binary = serialize(location);
 
   binary = zero_encode(binary);
-  binary.push_back(static_cast<char>(narrow_cast<uint8>(Version::AddFolders) - 1));
-  // TODO return back correct version
-  // binary.push_back(static_cast<char>(narrow_cast<uint8>(Version::Next) - 1));
+  binary.push_back(static_cast<char>(narrow_cast<uint8>(Version::Next) - 1));
   binary.push_back(PERSISTENT_ID_VERSION);
   return base64url_encode(binary);
 }
@@ -3526,7 +3522,8 @@ void FileManager::on_error_impl(FileNodePtr node, Query::Type type, bool was_act
     node->set_generate_location(nullptr);
   }
 
-  if (status.message() == "FILE_ID_INVALID" && FileView(node).may_reload_photo()) {
+  if ((status.message() == "FILE_ID_INVALID" || status.message() == "LOCATION_INVALID") &&
+      FileView(node).may_reload_photo()) {
     node->need_reload_photo_ = true;
     run_download(node);
     return;

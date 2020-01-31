@@ -485,7 +485,7 @@ class ContactsManager : public Actor {
 
   tl_object_ptr<td_api::user> get_user_object(UserId user_id) const;
 
-  vector<int32> get_user_ids_object(const vector<UserId> &user_ids) const;
+  vector<int32> get_user_ids_object(const vector<UserId> &user_ids, const char *source) const;
 
   tl_object_ptr<td_api::users> get_users_object(int32 total_count, const vector<UserId> &user_ids) const;
 
@@ -551,7 +551,7 @@ class ContactsManager : public Actor {
     static constexpr uint32 CACHE_VERSION = 1;
     uint32 cache_version = 0;
 
-    bool is_min_access_hash = false;
+    bool is_min_access_hash = true;
     bool is_received = false;
     bool is_verified = false;
     bool is_support = false;
