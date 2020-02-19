@@ -64,6 +64,8 @@ StringBuilder &operator<<(StringBuilder &string_builder, const MessageEntity::Ty
       return string_builder << "Cashtag";
     case MessageEntity::Type::PhoneNumber:
       return string_builder << "PhoneNumber";
+    case MessageEntity::Type::BankCardNumber:
+      return string_builder << "BankCardNumber";
     default:
       UNREACHABLE();
       return string_builder << "Impossible";
@@ -119,6 +121,8 @@ tl_object_ptr<td_api::TextEntityType> MessageEntity::get_text_entity_type_object
       return make_tl_object<td_api::textEntityTypeCashtag>();
     case MessageEntity::Type::PhoneNumber:
       return make_tl_object<td_api::textEntityTypePhoneNumber>();
+    case MessageEntity::Type::BankCardNumber:
+      return make_tl_object<td_api::textEntityTypeBankCardNumber>();
     default:
       UNREACHABLE();
       return nullptr;
@@ -406,6 +410,46 @@ static vector<Slice> match_cashtags(Slice str) {
   return result;
 }
 
+static vector<Slice> match_bank_card_numbers(Slice str) {
+  vector<Slice> result;
+  const unsigned char *begin = str.ubegin();
+  const unsigned char *end = str.uend();
+  const unsigned char *ptr = begin;
+
+  // '/[\d- ]{13,}/'
+
+  while (true) {
+    while (ptr != end && !is_digit(*ptr)) {
+      ptr++;
+    }
+    if (ptr == end) {
+      break;
+    }
+
+    auto card_number_begin = ptr;
+    size_t digit_count = 0;
+    while (ptr != end && (is_digit(*ptr) || *ptr == ' ' || *ptr == '-')) {
+      digit_count += static_cast<size_t>(is_digit(*ptr));
+      ptr++;
+    }
+    if (digit_count < 13 || digit_count > 19) {
+      continue;
+    }
+
+    auto card_number_end = ptr;
+    while (!is_digit(card_number_end[-1])) {
+      card_number_end--;
+    }
+    auto card_number_size = static_cast<size_t>(card_number_end - card_number_begin);
+    if (card_number_size > 2 * digit_count - 1) {
+      continue;
+    }
+
+    result.emplace_back(card_number_begin, card_number_end);
+  }
+  return result;
+}
+
 static vector<Slice> match_urls(Slice str) {
   vector<Slice> result;
   const unsigned char *begin = str.ubegin();
@@ -635,6 +679,60 @@ static vector<Slice> match_urls(Slice str) {
   }
 
   return result;
+}
+
+static bool is_valid_bank_card(Slice str) {
+  const size_t MIN_CARD_LENGTH = 13;
+  const size_t MAX_CARD_LENGTH = 19;
+  char digits[MAX_CARD_LENGTH];
+  size_t digit_count = 0;
+  for (auto c : str) {
+    if (is_digit(c)) {
+      CHECK(digit_count < MAX_CARD_LENGTH);
+      digits[digit_count++] = c;
+    }
+  }
+  CHECK(digit_count >= MIN_CARD_LENGTH);
+
+  // Luhn algorithm
+  int32 sum = 0;
+  for (size_t i = digit_count; i > 0; i--) {
+    int32 digit = digits[i - 1] - '0';
+    if ((digit_count - i) % 2 == 0) {
+      sum += digit;
+    } else {
+      sum += (digit < 5 ? 2 * digit : 2 * digit - 9);
+    }
+  }
+  if (sum % 10 != 0) {
+    return false;
+  }
+
+  int32 prefix1 = (digits[0] - '0');
+  int32 prefix2 = prefix1 * 10 + (digits[1] - '0');
+  int32 prefix3 = prefix2 * 10 + (digits[2] - '0');
+  int32 prefix4 = prefix3 * 10 + (digits[3] - '0');
+  if (prefix1 == 4) {
+    // Visa
+    return digit_count == 13 || digit_count == 16 || digit_count == 18 || digit_count == 19;
+  }
+  if ((51 <= prefix2 && prefix2 <= 55) || (2221 <= prefix4 && prefix4 <= 2720)) {
+    // mastercard
+    return digit_count == 16;
+  }
+  if (prefix2 == 34 || prefix2 == 37) {
+    // American Express
+    return digit_count == 15;
+  }
+  if (prefix2 == 62 || prefix2 == 81) {
+    // UnionPay
+    return digit_count >= 16;
+  }
+  if (2200 <= prefix4 && prefix4 <= 2204) {
+    // MIR
+    return digit_count == 16;
+  }
+  return true;  // skip length check
 }
 
 bool is_email_address(Slice str) {
@@ -1010,6 +1108,16 @@ vector<Slice> find_cashtags(Slice str) {
   return match_cashtags(str);
 }
 
+vector<Slice> find_bank_card_numbers(Slice str) {
+  vector<Slice> result;
+  for (auto bank_card : match_bank_card_numbers(str)) {
+    if (is_valid_bank_card(bank_card)) {
+      result.emplace_back(bank_card);
+    }
+  }
+  return result;
+}
+
 vector<std::pair<Slice, bool>> find_urls(Slice str) {
   vector<std::pair<Slice, bool>> result;
   for (auto url : match_urls(str)) {
@@ -1105,33 +1213,22 @@ vector<MessageEntity> find_entities(Slice text, bool skip_bot_commands, bool onl
   vector<MessageEntity> entities;
 
   if (!only_urls) {
-    auto mentions = find_mentions(text);
-    for (auto &mention : mentions) {
-      entities.emplace_back(MessageEntity::Type::Mention, narrow_cast<int32>(mention.begin() - text.begin()),
-                            narrow_cast<int32>(mention.size()));
-    }
-
-    if (!skip_bot_commands) {
-      auto bot_commands = find_bot_commands(text);
-      for (auto &bot_command : bot_commands) {
-        entities.emplace_back(MessageEntity::Type::BotCommand, narrow_cast<int32>(bot_command.begin() - text.begin()),
-                              narrow_cast<int32>(bot_command.size()));
+    auto add_entities = [&entities, &text](MessageEntity::Type type, vector<Slice> (*find_entities)(Slice)) mutable {
+      auto new_entities = find_entities(text);
+      for (auto &entity : new_entities) {
+        auto offset = narrow_cast<int32>(entity.begin() - text.begin());
+        auto length = narrow_cast<int32>(entity.size());
+        entities.emplace_back(type, offset, length);
       }
+    };
+    add_entities(MessageEntity::Type::Mention, find_mentions);
+    if (!skip_bot_commands) {
+      add_entities(MessageEntity::Type::BotCommand, find_bot_commands);
     }
-
-    auto hashtags = find_hashtags(text);
-    for (auto &hashtag : hashtags) {
-      entities.emplace_back(MessageEntity::Type::Hashtag, narrow_cast<int32>(hashtag.begin() - text.begin()),
-                            narrow_cast<int32>(hashtag.size()));
-    }
-
-    auto cashtags = find_cashtags(text);
-    for (auto &cashtag : cashtags) {
-      entities.emplace_back(MessageEntity::Type::Cashtag, narrow_cast<int32>(cashtag.begin() - text.begin()),
-                            narrow_cast<int32>(cashtag.size()));
-    }
-
+    add_entities(MessageEntity::Type::Hashtag, find_hashtags);
+    add_entities(MessageEntity::Type::Cashtag, find_cashtags);
     // TODO find_phone_numbers
+    add_entities(MessageEntity::Type::BankCardNumber, find_bank_card_numbers);
   }
 
   auto urls = find_urls(text);
@@ -1270,6 +1367,8 @@ string get_first_url(Slice text, const vector<MessageEntity> &entities) {
       case MessageEntity::Type::Cashtag:
         break;
       case MessageEntity::Type::PhoneNumber:
+        break;
+      case MessageEntity::Type::BankCardNumber:
         break;
       default:
         UNREACHABLE();
@@ -1955,6 +2054,7 @@ vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(co
       case MessageEntity::Type::EmailAddress:
       case MessageEntity::Type::Cashtag:
       case MessageEntity::Type::PhoneNumber:
+      case MessageEntity::Type::BankCardNumber:
         continue;
       case MessageEntity::Type::Bold:
         result.push_back(make_tl_object<telegram_api::messageEntityBold>(entity.offset, entity.length));
@@ -2023,6 +2123,10 @@ vector<tl_object_ptr<secret_api::MessageEntity>> get_input_secret_message_entiti
         break;
       case MessageEntity::Type::BotCommand:
         break;
+      case MessageEntity::Type::PhoneNumber:
+        break;
+      case MessageEntity::Type::BankCardNumber:
+        break;
       case MessageEntity::Type::Url:
         result.push_back(make_tl_object<secret_api::messageEntityUrl>(entity.offset, entity.length));
         break;
@@ -2065,8 +2169,6 @@ vector<tl_object_ptr<secret_api::MessageEntity>> get_input_secret_message_entiti
         break;
       case MessageEntity::Type::MentionName:
         break;
-      case MessageEntity::Type::PhoneNumber:
-        break;
       default:
         UNREACHABLE();
     }
@@ -2091,6 +2193,7 @@ Result<vector<MessageEntity>> get_message_entities(const ContactsManager *contac
       case td_api::textEntityTypeEmailAddress::ID:
       case td_api::textEntityTypeCashtag::ID:
       case td_api::textEntityTypePhoneNumber::ID:
+      case td_api::textEntityTypeBankCardNumber::ID:
         break;
       case td_api::textEntityTypeBold::ID:
         entities.emplace_back(MessageEntity::Type::Bold, entity->offset_, entity->length_);
@@ -2180,6 +2283,12 @@ vector<MessageEntity> get_message_entities(const ContactsManager *contacts_manag
         auto entity_bot_command = static_cast<const telegram_api::messageEntityBotCommand *>(entity.get());
         entities.emplace_back(MessageEntity::Type::BotCommand, entity_bot_command->offset_,
                               entity_bot_command->length_);
+        break;
+      }
+      case telegram_api::messageEntityBankCard::ID: {
+        auto entity_bank_card = static_cast<const telegram_api::messageEntityBankCard *>(entity.get());
+        entities.emplace_back(MessageEntity::Type::BankCardNumber, entity_bank_card->offset_,
+                              entity_bank_card->length_);
         break;
       }
       case telegram_api::messageEntityUrl::ID: {
@@ -2290,6 +2399,9 @@ vector<MessageEntity> get_message_entities(vector<tl_object_ptr<secret_api::Mess
         break;
       case secret_api::messageEntityBotCommand::ID:
         // skip all bot commands in secret chats
+        break;
+      case secret_api::messageEntityBankCard::ID:
+        // skip, will find it ourselves
         break;
       case secret_api::messageEntityUrl::ID: {
         auto entity_url = static_cast<const secret_api::messageEntityUrl *>(entity.get());

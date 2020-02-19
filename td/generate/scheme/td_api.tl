@@ -1014,6 +1014,13 @@ webPageInstantView page_blocks:vector<PageBlock> version:int32 url:string is_rtl
 webPage url:string display_url:string type:string site_name:string title:string description:string photo:photo embed_url:string embed_type:string embed_width:int32 embed_height:int32 duration:int32 author:string animation:animation audio:audio document:document sticker:sticker video:video video_note:videoNote voice_note:voiceNote instant_view_version:int32 = WebPage;
 
 
+//@description Describes an action associated with a bank card number @text Action text @url The URL to be opened
+bankCardActionOpenUrl text:string url:string = BankCardActionOpenUrl;
+
+//@description Information about a bank card @title Title of the bank card description @actions Actions that can be done with the bank card number
+bankCardInfo title:string actions:vector<bankCardActionOpenUrl> = BankCardInfo;
+
+
 //@description Describes an address @country_code A two-letter ISO 3166-1 alpha-2 country code @state State, if applicable @city City @street_line1 First line of the address @street_line2 Second line of the address @postal_code Address postal code
 address country_code:string state:string city:string street_line1:string street_line2:string postal_code:string = Address;
 
@@ -1468,6 +1475,9 @@ textEntityTypeEmailAddress = TextEntityType;
 
 //@description A phone number
 textEntityTypePhoneNumber = TextEntityType;
+
+//@description A bank card number. The getBankCardInfo method can be used to get information about the bank card
+textEntityTypeBankCardNumber = TextEntityType;
 
 //@description A bold text
 textEntityTypeBold = TextEntityType;
@@ -3403,7 +3413,7 @@ editInlineMessageReplyMarkup inline_message_id:string reply_markup:ReplyMarkup =
 editMessageSchedulingState chat_id:int53 message_id:int53 scheduling_state:MessageSchedulingState = Ok;
 
 
-//@description Returns all entities (mentions, hashtags, cashtags, bot commands, URLs, and email addresses) contained in the text. This is an offline method. Can be called before authorization. Can be called synchronously @text The text in which to look for entites
+//@description Returns all entities (mentions, hashtags, cashtags, bot commands, bank card numbers, URLs, and email addresses) contained in the text. This is an offline method. Can be called before authorization. Can be called synchronously @text The text in which to look for entites
 getTextEntities text:string = TextEntities;
 
 //@description Parses Bold, Italic, Underline, Strikethrough, Code, Pre, PreCode, TextUrl and MentionName entities contained in the text. This is an offline method. Can be called before authorization. Can be called synchronously @text The text which should be parsed @parse_mode Text parse mode
@@ -3894,6 +3904,9 @@ setBio bio:string = Ok;
 //@description Changes the username of the current user. If something changes, updateUser will be sent @username The new value of the username. Use an empty string to remove the username
 setUsername username:string = Ok;
 
+//@description Changes the location of the current user. Needs to be called if GetOption("is_location_visible") is true and location changes for more than 1 kilometer @location The new location of the user
+setLocation location:location = Ok;
+
 //@description Changes the phone number of the user and sends an authentication code to the user's new phone number. On success, returns information about the sent code
 //@phone_number The new phone number of the user in international format @settings Settings for the authentication of the user's phone number
 changePhoneNumber phone_number:string settings:phoneNumberAuthenticationSettings = AuthenticationCodeInfo;
@@ -4079,7 +4092,7 @@ deleteAccount reason:string = Ok;
 //@description Removes a chat action bar without any other action @chat_id Chat identifier
 removeChatActionBar chat_id:int53 = Ok;
 
-//@description Reports a chat to the Telegram moderators. Supported only for supergroups, channels, or private chats with bots, since other chats can't be checked by moderators, or when the report is done from the chat action bar @chat_id Chat identifier @reason The reason for reporting the chat @message_ids Identifiers of reported messages, if any
+//@description Reports a chat to the Telegram moderators. A chat can be reported only from the chat action bar, or if this is a private chats with a bot, a private chat with a user sharing their location, a supergroup, or a channel, since other chats can't be checked by moderators @chat_id Chat identifier @reason The reason for reporting the chat @message_ids Identifiers of reported messages, if any
 reportChat chat_id:int53 reason:ChatReportReason message_ids:vector<int53> = Ok;
 
 
@@ -4126,6 +4139,10 @@ getAutoDownloadSettingsPresets = AutoDownloadSettingsPresets;
 
 //@description Sets auto-download settings @settings New user auto-download settings @type Type of the network for which the new settings are applied
 setAutoDownloadSettings settings:autoDownloadSettings type:NetworkType = Ok;
+
+
+//@description Returns information about a bank card @bank_card_number The bank card number
+getBankCardInfo bank_card_number:string = BankCardInfo;
 
 
 //@description Returns one of the available Telegram Passport elements @type Telegram Passport element type @password Password of the current user

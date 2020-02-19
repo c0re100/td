@@ -1451,6 +1451,7 @@ class MessagesManager : public Actor {
 
   static constexpr int32 USERNAME_CACHE_EXPIRE_TIME = 3 * 86400;
   static constexpr int32 USERNAME_CACHE_EXPIRE_TIME_SHORT = 900;
+  static constexpr int32 AUTH_NOTIFICATION_ID_CACHE_TIME = 7 * 86400;
 
   static constexpr int32 ONLINE_MEMBER_COUNT_UPDATE_TIME = 5 * 60;
 
@@ -2258,7 +2259,7 @@ class MessagesManager : public Actor {
 
   void update_dialog_notification_settings_on_server(DialogId dialog_id, bool from_binlog);
 
-  void send_update_dialog_notification_settings_query(DialogId dialog_id, Promise<Unit> &&promise);
+  void send_update_dialog_notification_settings_query(const Dialog *d, Promise<Unit> &&promise);
 
   void on_updated_dialog_notification_settings(DialogId dialog_id, uint64 generation);
 
@@ -2371,6 +2372,8 @@ class MessagesManager : public Actor {
   static uint64 get_sequence_dispatcher_id(DialogId dialog_id, MessageContentType message_content_type);
 
   Dialog *get_service_notifications_dialog();
+
+  void save_auth_notification_ids();
 
   static MessageId get_next_message_id(Dialog *d, MessageType type);
 
@@ -2736,6 +2739,8 @@ class MessagesManager : public Actor {
   };
 
   std::unordered_map<DialogId, OnlineMemberCountInfo, DialogIdHash> dialog_online_member_counts_;
+
+  std::unordered_map<string, int32> auth_notification_id_date_;
 
   uint32 scheduled_messages_sync_generation_ = 1;
 

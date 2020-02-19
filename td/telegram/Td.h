@@ -227,7 +227,7 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.6.0";
+  static constexpr const char *TDLIB_VERSION = "1.6.1";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
@@ -781,6 +781,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::setUsername &request);
 
+  void on_request(uint64 id, const td_api::setLocation &request);
+
   void on_request(uint64 id, td_api::setProfilePhoto &request);
 
   void on_request(uint64 id, const td_api::deleteProfilePhoto &request);
@@ -926,6 +928,8 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, td_api::answerShippingQuery &request);
 
   void on_request(uint64 id, td_api::answerPreCheckoutQuery &request);
+
+  void on_request(uint64 id, td_api::getBankCardInfo &request);
 
   void on_request(uint64 id, const td_api::getPaymentForm &request);
 

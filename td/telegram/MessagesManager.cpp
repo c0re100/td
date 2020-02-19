@@ -5447,11 +5447,45 @@ MessagesManager::Dialog *MessagesManager::get_service_notifications_dialog() {
   return get_dialog(service_notifications_dialog_id);
 }
 
+void MessagesManager::save_auth_notification_ids() {
+  auto min_date = G()->unix_time() - AUTH_NOTIFICATION_ID_CACHE_TIME;
+  vector<string> ids;
+  for (auto &it : auth_notification_id_date_) {
+    auto date = it.second;
+    if (date < min_date) {
+      continue;
+    }
+    ids.push_back(it.first);
+    ids.push_back(to_string(date));
+  }
+
+  if (ids.empty()) {
+    G()->td_db()->get_binlog_pmc()->erase("auth_notification_ids");
+    return;
+  }
+
+  G()->td_db()->get_binlog_pmc()->set("auth_notification_ids", implode(ids, ','));
+}
+
 void MessagesManager::on_update_service_notification(tl_object_ptr<telegram_api::updateServiceNotification> &&update,
                                                      bool skip_new_entities, Promise<Unit> &&promise) {
   int32 ttl = 0;
   bool has_date = (update->flags_ & telegram_api::updateServiceNotification::INBOX_DATE_MASK) != 0;
   auto date = has_date ? update->inbox_date_ : G()->unix_time();
+  if (date <= 0) {
+    LOG(ERROR) << "Receive message date " << date << " in " << to_string(update);
+    return;
+  }
+  bool is_auth_notification = begins_with(update->type_, "auth");
+  if (is_auth_notification) {
+    auto &old_date = auth_notification_id_date_[update->type_.substr(4)];
+    if (date <= old_date) {
+      LOG(INFO) << "Skip already applied " << to_string(update);
+      return;
+    }
+    old_date = date;
+  }
+
   auto message_text =
       get_message_text(td_->contacts_manager_.get(), std::move(update->message_), std::move(update->entities_),
                        skip_new_entities, date, false, "on_update_service_notification");
@@ -5459,6 +5493,7 @@ void MessagesManager::on_update_service_notification(tl_object_ptr<telegram_api:
       td_, std::move(message_text), std::move(update->media_),
       td_->auth_manager_->is_bot() ? DialogId() : get_service_notifications_dialog()->dialog_id, false, UserId(), &ttl);
   bool is_content_secret = is_secret_message_content(ttl, content->get_type());
+
   if ((update->flags_ & telegram_api::updateServiceNotification::POPUP_MASK) != 0) {
     send_closure(G()->td(), &Td::send_update,
                  td_api::make_object<td_api::updateServiceNotification>(
@@ -5469,6 +5504,7 @@ void MessagesManager::on_update_service_notification(tl_object_ptr<telegram_api:
     CHECK(d != nullptr);
     auto dialog_id = d->dialog_id;
     CHECK(dialog_id.get_type() == DialogType::User);
+
     auto new_message = make_unique<Message>();
     set_message_id(new_message, get_next_local_message_id(d));
     new_message->sender_user_id = dialog_id.get_user_id();
@@ -5493,6 +5529,10 @@ void MessagesManager::on_update_service_notification(tl_object_ptr<telegram_api:
     }
   }
   promise.set_value(Unit());
+
+  if (is_auth_notification) {
+    save_auth_notification_ids();
+  }
 }
 
 void MessagesManager::on_update_new_channel_message(tl_object_ptr<telegram_api::updateNewChannelMessage> &&update) {
@@ -6951,7 +6991,7 @@ void MessagesManager::report_dialog(DialogId dialog_id, const tl_object_ptr<td_a
   }
 
   if (reason == nullptr) {
-    return promise.set_error(Status::Error(3, "Reason shouldn't be empty"));
+    return promise.set_error(Status::Error(3, "Reason must not be empty"));
   }
 
   Dialog *user_d = d;
@@ -7903,7 +7943,7 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
   }
 
   //  LOG_IF(ERROR, d->first_message_id.is_valid() && d->first_message_id > first_received_message_id)
-  //      << "Receive message " << first_received_message_id << ", but first chat message is " << d->first_message_id;
+  //      << "Receive " << first_received_message_id << ", but first chat message is " << d->first_message_id;
 
   bool need_update_database_message_ids =
       last_added_message_id.is_valid() && (from_the_end || (last_added_message_id >= d->first_database_message_id &&
@@ -10413,6 +10453,26 @@ void MessagesManager::init() {
     }
   }
   G()->td_db()->get_binlog_pmc()->erase("nsfac");
+
+  auto auth_notification_ids_string = G()->td_db()->get_binlog_pmc()->get("auth_notification_ids");
+  if (!auth_notification_ids_string.empty()) {
+    VLOG(notifications) << "Load auth_notification_ids = " << auth_notification_ids_string;
+    auto ids = full_split(auth_notification_ids_string, ',');
+    CHECK(ids.size() % 2 == 0);
+    bool is_changed = false;
+    auto min_date = G()->unix_time() - AUTH_NOTIFICATION_ID_CACHE_TIME;
+    for (size_t i = 0; i < ids.size(); i += 2) {
+      auto date = to_integer_safe<int32>(ids[i + 1]).ok();
+      if (date < min_date) {
+        is_changed = true;
+        continue;
+      }
+      auth_notification_id_date_.emplace(std::move(ids[i]), date);
+    }
+    if (is_changed) {
+      save_auth_notification_ids();
+    }
+  }
 
   /*
   FI LE *f = std::f open("error.txt", "r");
@@ -14601,14 +14661,14 @@ void MessagesManager::update_dialog_notification_settings_on_server(DialogId dia
         });
   }
 
-  send_update_dialog_notification_settings_query(dialog_id, std::move(promise));
+  send_update_dialog_notification_settings_query(d, std::move(promise));
 }
 
-void MessagesManager::send_update_dialog_notification_settings_query(DialogId dialog_id, Promise<Unit> &&promise) {
-  auto d = get_dialog(dialog_id);
+void MessagesManager::send_update_dialog_notification_settings_query(const Dialog *d, Promise<Unit> &&promise) {
   CHECK(d != nullptr);
   // TODO do not send two queries simultaneously or use SequenceDispatcher
-  td_->create_handler<UpdateDialogNotifySettingsQuery>(std::move(promise))->send(dialog_id, d->notification_settings);
+  td_->create_handler<UpdateDialogNotifySettingsQuery>(std::move(promise))
+      ->send(d->dialog_id, d->notification_settings);
 }
 
 void MessagesManager::on_updated_dialog_notification_settings(DialogId dialog_id, uint64 generation) {
@@ -17121,7 +17181,7 @@ void MessagesManager::on_get_history_from_database(DialogId dialog_id, MessageId
     }
     if (message->message_id >= debug_cur_message_id) {
       // TODO move to ERROR
-      LOG(FATAL) << "Receive message " << message->message_id << " after " << debug_cur_message_id
+      LOG(FATAL) << "Receive " << message->message_id << " after " << debug_cur_message_id
                  << " from database in the history of " << dialog_id << " from " << from_message_id << " with offset "
                  << offset << ", limit " << limit << ", from_the_end = " << from_the_end;
       break;
@@ -21244,8 +21304,7 @@ void MessagesManager::on_dialog_updated(DialogId dialog_id, const char *source) 
 void MessagesManager::send_update_new_message(const Dialog *d, const Message *m) {
   CHECK(d != nullptr);
   CHECK(m != nullptr);
-
-  LOG(INFO) << "Send updateNewMessage for " << m->message_id << " in " << d->dialog_id;
+  CHECK(d->is_update_new_chat_sent);
   send_closure(G()->td(), &Td::send_update,
                make_tl_object<td_api::updateNewMessage>(get_message_object(d->dialog_id, m)));
 }
@@ -22436,6 +22495,7 @@ void MessagesManager::remove_message_dialog_notifications(Dialog *d, MessageId m
 
 void MessagesManager::send_update_message_send_succeeded(Dialog *d, MessageId old_message_id, const Message *m) const {
   CHECK(m != nullptr);
+  CHECK(d->is_update_new_chat_sent);
   d->yet_unsent_message_id_to_persistent_message_id.emplace(old_message_id, m->message_id);
   send_closure(
       G()->td(), &Td::send_update,
@@ -27750,7 +27810,7 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_datab
       break;
     case DialogType::Chat:
       if (d->last_read_inbox_message_id < d->last_read_outbox_message_id) {
-        LOG(INFO) << "Have last read outbox message " << d->last_read_outbox_message_id << " in " << dialog_id
+        LOG(INFO) << "Last read outbox message is " << d->last_read_outbox_message_id << " in " << dialog_id
                   << ", but last read inbox message is " << d->last_read_inbox_message_id;
         // can't fix last_read_inbox_message_id by last_read_outbox_message_id because last_read_outbox_message_id is
         // just a message identifier not less than an identifier of last read outgoing message and less than
@@ -27807,7 +27867,7 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_datab
                       << " with last " << d->mention_notification_group.last_notification_id << " sent at "
                       << d->mention_notification_group.last_notification_date << ", max removed "
                       << d->mention_notification_group.max_removed_notification_id << "/"
-                      << d->mention_notification_group.max_removed_message_id << " and pinned message "
+                      << d->mention_notification_group.max_removed_message_id << " and pinned "
                       << d->pinned_message_notification_message_id;
   VLOG(notifications) << "In " << dialog_id << " have last_read_inbox_message_id = " << d->last_read_inbox_message_id
                       << ", last_new_message_id = " << d->last_new_message_id

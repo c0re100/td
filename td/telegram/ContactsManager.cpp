@@ -772,9 +772,16 @@ class SearchDialogsNearbyQuery : public Td::ResultHandler {
       : promise_(std::move(promise)) {
   }
 
-  void send(const Location &location) {
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::contacts_getLocated(location.get_input_geo_point()))));
+  void send(const Location &location, bool from_background, int32 expire_date) {
+    int32 flags = 0;
+    if (from_background) {
+      flags |= telegram_api::contacts_getLocated::BACKGROUND_MASK;
+    }
+    if (expire_date != -1) {
+      flags |= telegram_api::contacts_getLocated::SELF_EXPIRES_MASK;
+    }
+    send_query(G()->net_query_creator().create(create_storer(
+        telegram_api::contacts_getLocated(flags, false /*ignored*/, location.get_input_geo_point(), expire_date))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -2689,6 +2696,22 @@ ContactsManager::ContactsManager(Td *td, ActorShared<> parent) : td_(td), parent
   if (was_online_local_ >= G()->unix_time_cached() && !td_->is_online()) {
     was_online_local_ = G()->unix_time_cached() - 1;
   }
+
+  location_visibility_expire_date_ =
+      to_integer<int32>(G()->td_db()->get_binlog_pmc()->get("location_visibility_expire_date"));
+  if (location_visibility_expire_date_ != 0 && location_visibility_expire_date_ <= G()->unix_time()) {
+    location_visibility_expire_date_ = 0;
+    G()->td_db()->get_binlog_pmc()->erase("location_visibility_expire_date");
+  }
+  auto pending_location_visibility_expire_date_string =
+      G()->td_db()->get_binlog_pmc()->get("pending_location_visibility_expire_date");
+  if (!pending_location_visibility_expire_date_string.empty()) {
+    pending_location_visibility_expire_date_ = to_integer<int32>(pending_location_visibility_expire_date_string);
+    try_send_set_location_visibility_query();
+  }
+  update_is_location_visible();
+  LOG(INFO) << "Loaded location_visibility_expire_date = " << location_visibility_expire_date_
+            << " and pending_location_visibility_expire_date = " << pending_location_visibility_expire_date_;
 
   user_online_timeout_.set_callback(on_user_online_timeout_callback);
   user_online_timeout_.set_callback_data(static_cast<void *>(this));
@@ -4819,12 +4842,28 @@ void ContactsManager::search_dialogs_nearby(const Location &location,
   if (location.empty()) {
     return promise.set_error(Status::Error(400, "Invalid location specified"));
   }
+  last_user_location_ = location;
+  try_send_set_location_visibility_query();
 
   auto query_promise = PromiseCreator::lambda([actor_id = actor_id(this), promise = std::move(promise)](
                                                   Result<tl_object_ptr<telegram_api::Updates>> result) mutable {
     send_closure(actor_id, &ContactsManager::on_get_dialogs_nearby, std::move(result), std::move(promise));
   });
-  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))->send(location);
+  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))->send(location, false, -1);
+}
+
+void ContactsManager::set_location(const Location &location, Promise<Unit> &&promise) {
+  if (location.empty()) {
+    return promise.set_error(Status::Error(400, "Invalid location specified"));
+  }
+  last_user_location_ = location;
+  try_send_set_location_visibility_query();
+
+  auto query_promise = PromiseCreator::lambda(
+      [promise = std::move(promise)](Result<tl_object_ptr<telegram_api::Updates>> result) mutable {
+        promise.set_value(Unit());
+      });
+  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))->send(location, true, -1);
 }
 
 vector<td_api::object_ptr<td_api::chatNearby>> ContactsManager::get_chats_nearby_object(
@@ -4863,13 +4902,22 @@ void ContactsManager::on_get_dialogs_nearby(Result<tl_object_ptr<telegram_api::U
   auto old_users_nearby = std::move(users_nearby_);
   users_nearby_.clear();
   channels_nearby_.clear();
+  int32 location_visibility_expire_date = 0;
   for (auto &update_ptr : update->updates_) {
     if (update_ptr->get_id() != telegram_api::updatePeerLocated::ID) {
       LOG(ERROR) << "Receive unexpected " << to_string(update);
       continue;
     }
 
-    on_update_peer_located(std::move(static_cast<telegram_api::updatePeerLocated *>(update_ptr.get())->peers_), false);
+    auto expire_date = on_update_peer_located(
+        std::move(static_cast<telegram_api::updatePeerLocated *>(update_ptr.get())->peers_), false);
+    if (expire_date != -1) {
+      location_visibility_expire_date = expire_date;
+    }
+  }
+  if (location_visibility_expire_date != location_visibility_expire_date_) {
+    set_location_visibility_expire_date(location_visibility_expire_date);
+    update_is_location_visible();
   }
 
   std::sort(users_nearby_.begin(), users_nearby_.end());
@@ -4880,11 +4928,89 @@ void ContactsManager::on_get_dialogs_nearby(Result<tl_object_ptr<telegram_api::U
                                                              get_chats_nearby_object(channels_nearby_)));
 }
 
-void ContactsManager::on_update_peer_located(vector<tl_object_ptr<telegram_api::peerLocated>> &&peers,
-                                             bool from_update) {
+void ContactsManager::set_location_visibility() {
+  bool is_location_visible = G()->shared_config().get_option_boolean("is_location_visible");
+  auto pending_location_visibility_expire_date = is_location_visible ? std::numeric_limits<int32>::max() : 0;
+  if (pending_location_visibility_expire_date_ == -1 &&
+      pending_location_visibility_expire_date == location_visibility_expire_date_) {
+    return;
+  }
+  if (pending_location_visibility_expire_date_ != pending_location_visibility_expire_date) {
+    pending_location_visibility_expire_date_ = pending_location_visibility_expire_date;
+    G()->td_db()->get_binlog_pmc()->set("pending_location_visibility_expire_date",
+                                        to_string(pending_location_visibility_expire_date));
+    update_is_location_visible();
+  }
+  try_send_set_location_visibility_query();
+}
+
+void ContactsManager::try_send_set_location_visibility_query() {
+  if (G()->close_flag()) {
+    return;
+  }
+  if (pending_location_visibility_expire_date_ == -1) {
+    return;
+  }
+
+  if (is_set_location_visibility_request_sent_) {
+    return;
+  }
+  if (pending_location_visibility_expire_date_ != 0 && last_user_location_.empty()) {
+    return;
+  }
+
+  is_set_location_visibility_request_sent_ = true;
+  auto query_promise =
+      PromiseCreator::lambda([actor_id = actor_id(this), set_expire_date = pending_location_visibility_expire_date_](
+                                 Result<tl_object_ptr<telegram_api::Updates>> result) {
+        send_closure(actor_id, &ContactsManager::on_set_location_visibility_expire_date, set_expire_date,
+                     result.is_ok() ? 0 : result.error().code());
+      });
+  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))
+      ->send(last_user_location_, true, pending_location_visibility_expire_date_);
+}
+
+void ContactsManager::on_set_location_visibility_expire_date(int32 set_expire_date, int32 error_code) {
+  bool success = error_code == 0;
+  is_set_location_visibility_request_sent_ = false;
+
+  if (set_expire_date != pending_location_visibility_expire_date_) {
+    try_send_set_location_visibility_query();
+    return;
+  }
+
+  if (success) {
+    set_location_visibility_expire_date(pending_location_visibility_expire_date_);
+  } else {
+    if (G()->close_flag()) {
+      // request will be re-sent after restart
+      return;
+    }
+    if (error_code != 406) {
+      LOG(ERROR) << "Failed to set location visibility expire date to " << pending_location_visibility_expire_date_;
+    }
+  }
+  G()->td_db()->get_binlog_pmc()->erase("pending_location_visibility_expire_date");
+  pending_location_visibility_expire_date_ = -1;
+  update_is_location_visible();
+}
+
+int32 ContactsManager::on_update_peer_located(vector<tl_object_ptr<telegram_api::PeerLocated>> &&peers,
+                                              bool from_update) {
   auto now = G()->unix_time();
   bool need_update = false;
-  for (auto &peer_located : peers) {
+  int32 location_visibility_expire_date = -1;
+  for (auto &peer_located_ptr : peers) {
+    if (peer_located_ptr->get_id() == telegram_api::peerSelfLocated::ID) {
+      auto peer_self_located = telegram_api::move_object_as<telegram_api::peerSelfLocated>(peer_located_ptr);
+      if (peer_self_located->expires_ == 0 || peer_self_located->expires_ > G()->unix_time()) {
+        location_visibility_expire_date = peer_self_located->expires_;
+      }
+      continue;
+    }
+
+    CHECK(peer_located_ptr->get_id() == telegram_api::peerLocated::ID);
+    auto peer_located = telegram_api::move_object_as<telegram_api::peerLocated>(peer_located_ptr);
     DialogId dialog_id(peer_located->peer_);
     int32 expires_at = peer_located->expires_;
     int32 distance = peer_located->distance_;
@@ -4928,6 +5054,7 @@ void ContactsManager::on_update_peer_located(vector<tl_object_ptr<telegram_api::
     td_->messages_manager_->force_create_dialog(dialog_id, "on_update_peer_located");
 
     if (from_update) {
+      CHECK(dialog_type == DialogType::User);
       bool is_found = false;
       for (auto &dialog_nearby : users_nearby_) {
         if (dialog_nearby.dialog_id == dialog_id) {
@@ -4941,17 +5068,43 @@ void ContactsManager::on_update_peer_located(vector<tl_object_ptr<telegram_api::
       }
       if (!is_found) {
         users_nearby_.emplace_back(dialog_id, distance);
+        all_users_nearby_.insert(dialog_id.get_user_id());
         need_update = true;
       }
     } else {
-      auto &dialogs_nearby = dialog_type == DialogType::User ? users_nearby_ : channels_nearby_;
-      dialogs_nearby.emplace_back(dialog_id, distance);
+      if (dialog_type == DialogType::User) {
+        users_nearby_.emplace_back(dialog_id, distance);
+        all_users_nearby_.insert(dialog_id.get_user_id());
+      } else {
+        channels_nearby_.emplace_back(dialog_id, distance);
+      }
     }
   }
   if (need_update) {
     std::sort(users_nearby_.begin(), users_nearby_.end());
     send_update_users_nearby();
   }
+  return location_visibility_expire_date;
+}
+
+void ContactsManager::set_location_visibility_expire_date(int32 expire_date) {
+  if (location_visibility_expire_date_ == expire_date) {
+    return;
+  }
+
+  LOG(INFO) << "Set set_location_visibility_expire_date to " << expire_date;
+  location_visibility_expire_date_ = expire_date;
+  if (expire_date == 0) {
+    G()->td_db()->get_binlog_pmc()->erase("location_visibility_expire_date");
+  } else {
+    G()->td_db()->get_binlog_pmc()->set("location_visibility_expire_date", to_string(expire_date));
+  }
+}
+
+void ContactsManager::update_is_location_visible() {
+  auto expire_date = pending_location_visibility_expire_date_ != -1 ? pending_location_visibility_expire_date_
+                                                                    : location_visibility_expire_date_;
+  G()->shared_config().set_option_boolean("is_location_visible", expire_date != 0);
 }
 
 void ContactsManager::set_profile_photo(const tl_object_ptr<td_api::InputFile> &input_photo, Promise<Unit> &&promise) {
@@ -10966,7 +11119,7 @@ bool ContactsManager::is_user_status_exact(UserId user_id) const {
 
 bool ContactsManager::can_report_user(UserId user_id) const {
   auto u = get_user(user_id);
-  return u != nullptr && !u->is_deleted && u->is_bot && !u->is_support;
+  return u != nullptr && !u->is_deleted && !u->is_support && (u->is_bot || all_users_nearby_.count(user_id) != 0);
 }
 
 const ContactsManager::User *ContactsManager::get_user(UserId user_id) const {
@@ -12076,7 +12229,7 @@ std::pair<int32, vector<DialogParticipant>> ContactsManager::get_channel_partici
   }
 
   if (channel_full != nullptr && !channel_full->is_expired() && !channel_full->can_get_participants) {
-    promise.set_error(Status::Error(3, "Supergroup members are unavailable"));
+    promise.set_error(Status::Error(3, "Member list is inaccessible"));
     return result;
   }
 
