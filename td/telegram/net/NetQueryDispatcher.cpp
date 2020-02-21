@@ -65,8 +65,16 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
       } else if (code == NetQuery::Resend) {
         net_query->resend();
       } else if (code < 0 || code == 500 || code == 420) {
-        net_query->debug("sent to NetQueryDelayer");
-        return send_closure(delayer_, &NetQueryDelayer::delay, std::move(net_query));
+        //net_query->debug("sent to NetQueryDelayer");
+        //return send_closure(delayer_, &NetQueryDelayer::delay, std::move(net_query));
+        // hypnosis-i2p dirty hack to specially handle 420 {
+        if (code == 420) {
+            net_query->set_error(Status::Error(420, std::move(net_query->error().message())));
+            return complete_net_query(std::move(net_query));
+        } else {
+            net_query->debug("sent to NetQueryDelayer");
+            return send_closure(delayer_, &NetQueryDelayer::delay, std::move(net_query));
+        }
       }
     }
   }
