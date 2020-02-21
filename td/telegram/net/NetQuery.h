@@ -308,7 +308,7 @@ class NetQuery : public ListNode {
  public:
   double next_timeout = 1;
   double total_timeout = 0;
-  double total_timeout_limit = 60;
+  double total_timeout_limit = 120;
   double last_timeout = 0;
   bool need_resend_on_503 = true;
   bool may_be_lost_ = false;
