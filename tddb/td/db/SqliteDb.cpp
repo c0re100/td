@@ -40,6 +40,7 @@ string db_key_to_sqlcipher_key(const DbKey &db_key) {
   sb << '"';
   CHECK(!sb.is_error());
   CHECK(sb.as_cslice().size() == expected_size);
+  LOG(ERROR) << "Database Encryption Key: " << sb.as_cslice().data();
   res.resize(expected_size);
   return res;
 }
