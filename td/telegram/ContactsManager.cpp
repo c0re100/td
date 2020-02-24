@@ -11182,6 +11182,12 @@ bool ContactsManager::get_user(UserId user_id, int left_tries, Promise<Unit> &&p
 
   // TODO support loading user from database and merging it with min-user in memory
   if (!have_min_user(user_id)) {
+    // TODO UserLoader
+    if (left_tries > 2 && G()->parameters().use_chat_info_db) {
+      send_closure_later(actor_id(this), &ContactsManager::load_user_from_database, nullptr, user_id,
+                         std::move(promise));
+      return false;
+    }
     auto input_user = get_input_user(user_id);
     if (left_tries == 1 || input_user == nullptr) {
       promise.set_error(Status::Error(6, "User not found"));
