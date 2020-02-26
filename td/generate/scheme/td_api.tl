@@ -463,7 +463,7 @@ basicGroupFullInfo description:string creator_user_id:int32 members:vector<chatM
 //@username Username of the supergroup or channel; empty for private supergroups or channels
 //@date Point in time (Unix timestamp) when the current user joined, or the point in time when the supergroup or channel was created, in case the user is not a member
 //@status Status of the current user in the supergroup or channel; custom title will be always empty
-//@member_count Member count; 0 if unknown. Currently it is guaranteed to be known only if the supergroup or channel was found through SearchPublicChats
+//@member_count Number of members in the supergroup or channel; 0 if unknown. Currently it is guaranteed to be known only if the supergroup or channel was found through SearchPublicChats
 //@has_linked_chat True, if the channel has a discussion group, or the supergroup is the designated discussion group for a channel
 //@has_location True, if the supergroup is connected to a location, i.e. the supergroup is a location-based supergroup
 //@sign_messages True, if messages sent to the channel should contain information about the sender. This field is only applicable to channels
@@ -694,7 +694,7 @@ chatInviteLink invite_link:string = ChatInviteLink;
 //@type Contains information about the type of the chat
 //@title Title of the chat
 //@photo Chat photo; may be null
-//@member_count Number of members
+//@member_count Number of members in the chat
 //@member_user_ids User identifiers of some chat members that may be known to the current user
 //@is_public True, if the chat is a public supergroup or channel, i.e. it has a username or it is a location-based supergroup
 chatInviteLinkInfo chat_id:int53 type:ChatType title:string photo:chatPhoto member_count:int32 member_user_ids:vector<int32> is_public:Bool = ChatInviteLinkInfo;
@@ -2304,8 +2304,10 @@ notificationTypeNewCall call_id:int32 = NotificationType;
 
 //@description New message was received through a push notification
 //@message_id The message identifier. The message will not be available in the chat history, but the ID can be used in viewMessages and as reply_to_message_id
-//@sender_user_id Sender of the message. Corresponding user may be inaccessible @content Push message content
-notificationTypeNewPushMessage message_id:int53 sender_user_id:int32 content:PushMessageContent = NotificationType;
+//@sender_user_id Sender of the message; 0 if unknown. Corresponding user may be inaccessible
+//@sender_name Name of the sender; can be different from the name of the sender user
+//@content Push message content
+notificationTypeNewPushMessage message_id:int53 sender_user_id:int32 sender_name:string content:PushMessageContent = NotificationType;
 
 
 //@class NotificationGroupType @description Describes the type of notifications in a notification group

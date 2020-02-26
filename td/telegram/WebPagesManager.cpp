@@ -650,14 +650,14 @@ void WebPagesManager::on_get_web_page_by_url(const string &url, WebPageId web_pa
   cached_web_page_id = web_page_id;
 }
 
-void WebPagesManager::register_web_page(WebPageId web_page_id, FullMessageId full_message_id) {
+void WebPagesManager::register_web_page(WebPageId web_page_id, FullMessageId full_message_id, const char *source) {
   if (!web_page_id.is_valid()) {
     return;
   }
 
-  LOG(INFO) << "Register " << web_page_id << " from " << full_message_id;
+  LOG(INFO) << "Register " << web_page_id << " from " << full_message_id << " from " << source;
   bool is_inserted = web_page_messages_[web_page_id].insert(full_message_id).second;
-  CHECK(is_inserted);
+  LOG_CHECK(is_inserted) << source << " " << web_page_id << full_message_id;
 
   if (!td_->auth_manager_->is_bot() && !have_web_page_force(web_page_id)) {
     LOG(INFO) << "Waiting for " << web_page_id << " needed in " << full_message_id;
@@ -665,15 +665,15 @@ void WebPagesManager::register_web_page(WebPageId web_page_id, FullMessageId ful
   }
 }
 
-void WebPagesManager::unregister_web_page(WebPageId web_page_id, FullMessageId full_message_id) {
+void WebPagesManager::unregister_web_page(WebPageId web_page_id, FullMessageId full_message_id, const char *source) {
   if (!web_page_id.is_valid()) {
     return;
   }
 
-  LOG(INFO) << "Unregister " << web_page_id << " from " << full_message_id;
+  LOG(INFO) << "Unregister " << web_page_id << " from " << full_message_id << " from " << source;
   auto &message_ids = web_page_messages_[web_page_id];
   auto is_deleted = message_ids.erase(full_message_id);
-  CHECK(is_deleted);
+  LOG_CHECK(is_deleted) << source << " " << web_page_id << full_message_id;
 
   if (message_ids.empty()) {
     web_page_messages_.erase(web_page_id);
@@ -748,7 +748,7 @@ int64 WebPagesManager::get_web_page_preview(td_api::object_ptr<td_api::formatted
   auto entities = r_entities.move_as_ok();
 
   auto result = fix_formatted_text(text->text_, entities, true, false, true, false);
-  if (text->text_.empty()) {
+  if (result.is_error() || text->text_.empty()) {
     promise.set_value(Unit());
     return 0;
   }

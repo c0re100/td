@@ -3174,20 +3174,22 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
   return false;
 }
 
-void register_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id) {
+void register_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id,
+                              const char *source) {
   switch (content->get_type()) {
     case MessageContentType::Text:
       return td->web_pages_manager_->register_web_page(static_cast<const MessageText *>(content)->web_page_id,
-                                                       full_message_id);
+                                                       full_message_id, source);
     case MessageContentType::Poll:
-      return td->poll_manager_->register_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id);
+      return td->poll_manager_->register_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
+                                              source);
     default:
       return;
   }
 }
 
 void reregister_message_content(Td *td, const MessageContent *old_content, const MessageContent *new_content,
-                                FullMessageId full_message_id) {
+                                FullMessageId full_message_id, const char *source) {
   auto old_content_type = old_content->get_type();
   auto new_content_type = new_content->get_type();
   if (old_content_type == new_content_type) {
@@ -3208,39 +3210,22 @@ void reregister_message_content(Td *td, const MessageContent *old_content, const
         return;
     }
   }
-  unregister_message_content(td, old_content, full_message_id);
-  register_message_content(td, new_content, full_message_id);
+  unregister_message_content(td, old_content, full_message_id, source);
+  register_message_content(td, new_content, full_message_id, source);
 }
 
-void unregister_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id) {
+void unregister_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id,
+                                const char *source) {
   switch (content->get_type()) {
     case MessageContentType::Text:
       return td->web_pages_manager_->unregister_web_page(static_cast<const MessageText *>(content)->web_page_id,
-                                                         full_message_id);
+                                                         full_message_id, source);
     case MessageContentType::Poll:
-      return td->poll_manager_->unregister_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id);
+      return td->poll_manager_->unregister_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
+                                                source);
     default:
       return;
   }
-}
-
-static FormattedText get_secret_media_caption(string &&message_text, string &&message_caption) {
-  // message_text was already cleaned
-  if (!clean_input_string(message_caption)) {
-    message_caption.clear();
-  }
-
-  FormattedText caption;
-  if (message_text.empty()) {
-    caption.text = std::move(message_caption);
-  } else if (message_caption.empty()) {
-    caption.text = std::move(message_text);
-  } else {
-    caption.text = message_text + "\n\n" + message_caption;
-  }
-
-  caption.entities = find_entities(caption.text, false);
-  return caption;
 }
 
 template <class ToT, class FromT>
@@ -3444,17 +3429,6 @@ static unique_ptr<MessageContent> get_document_message_content(Document &&parsed
   }
 }
 
-static unique_ptr<MessageContent> get_secret_document_message_content(
-    Td *td, tl_object_ptr<telegram_api::encryptedFile> file,
-    tl_object_ptr<secret_api::decryptedMessageMediaDocument> &&document,
-    vector<tl_object_ptr<telegram_api::DocumentAttribute>> &&attributes, DialogId owner_dialog_id,
-    FormattedText &&caption, bool is_opened) {
-  return get_document_message_content(
-      td->documents_manager_->on_get_document({std::move(file), std::move(document), std::move(attributes)},
-                                              owner_dialog_id),
-      std::move(caption), is_opened);
-}
-
 static unique_ptr<MessageContent> get_document_message_content(Td *td, tl_object_ptr<telegram_api::document> &&document,
                                                                DialogId owner_dialog_id, FormattedText &&caption,
                                                                bool is_opened,
@@ -3469,6 +3443,35 @@ unique_ptr<MessageContent> get_secret_message_content(
     tl_object_ptr<secret_api::DecryptedMessageMedia> &&media,
     vector<tl_object_ptr<secret_api::MessageEntity>> &&secret_entities, DialogId owner_dialog_id,
     MultiPromiseActor &load_data_multipromise) {
+  int32 constructor_id = media == nullptr ? secret_api::decryptedMessageMediaEmpty::ID : media->get_id();
+  auto caption = [&] {
+    switch (constructor_id) {
+      case secret_api::decryptedMessageMediaVideo::ID: {
+        auto video = static_cast<secret_api::decryptedMessageMediaVideo *>(media.get());
+        return std::move(video->caption_);
+      }
+      case secret_api::decryptedMessageMediaPhoto::ID: {
+        auto photo = static_cast<secret_api::decryptedMessageMediaPhoto *>(media.get());
+        return std::move(photo->caption_);
+      }
+      case secret_api::decryptedMessageMediaDocument::ID: {
+        auto document = static_cast<secret_api::decryptedMessageMediaDocument *>(media.get());
+        return std::move(document->caption_);
+      }
+      default:
+        return string();
+    }
+  }();
+  if (!clean_input_string(caption)) {
+    caption.clear();
+  }
+
+  if (message_text.empty()) {
+    message_text = std::move(caption);
+  } else if (!caption.empty()) {
+    message_text = message_text + "\n\n" + caption;
+  }
+
   auto entities = get_message_entities(std::move(secret_entities));
   auto status = fix_formatted_text(message_text, entities, true, false, true, false);
   if (status.is_error()) {
@@ -3477,20 +3480,7 @@ unique_ptr<MessageContent> get_secret_message_content(
     if (!clean_input_string(message_text)) {
       message_text.clear();
     }
-    entities.clear();
-  }
-
-  if (media == nullptr) {
-    return create_text_message_content(std::move(message_text), std::move(entities), WebPageId());
-  }
-
-  int32 constructor_id = media->get_id();
-  if (message_text.size()) {
-    if (constructor_id != secret_api::decryptedMessageMediaEmpty::ID) {
-      LOG(INFO) << "Receive non-empty message text and media";
-    } else {
-      return create_text_message_content(std::move(message_text), std::move(entities), WebPageId());
-    }
+    entities = find_entities(message_text, true);
   }
 
   // support of old layer and old constructions
@@ -3502,7 +3492,7 @@ unique_ptr<MessageContent> get_secret_message_content(
           make_tl_object<secret_api::documentAttributeVideo>(video->duration_, video->w_, video->h_));
       media = make_tl_object<secret_api::decryptedMessageMediaDocument>(
           std::move(video->thumb_), video->thumb_w_, video->thumb_h_, video->mime_type_, video->size_,
-          std::move(video->key_), std::move(video->iv_), std::move(attributes), std::move(video->caption_));
+          std::move(video->key_), std::move(video->iv_), std::move(attributes), string());
 
       constructor_id = secret_api::decryptedMessageMediaDocument::ID;
       break;
@@ -3512,7 +3502,9 @@ unique_ptr<MessageContent> get_secret_message_content(
   bool is_media_empty = false;
   switch (constructor_id) {
     case secret_api::decryptedMessageMediaEmpty::ID:
-      LOG(ERROR) << "Receive empty message text and media";
+      if (message_text.empty()) {
+        LOG(ERROR) << "Receive empty message text and media";
+      }
       is_media_empty = true;
       break;
     case secret_api::decryptedMessageMediaGeoPoint::ID: {
@@ -3612,7 +3604,7 @@ unique_ptr<MessageContent> get_secret_message_content(
       auto message_photo = move_tl_object_as<secret_api::decryptedMessageMediaPhoto>(media);
       return make_unique<MessagePhoto>(
           get_encrypted_file_photo(td->file_manager_.get(), std::move(file), std::move(message_photo), owner_dialog_id),
-          get_secret_media_caption(std::move(message_text), std::move(message_photo->caption_)));
+          FormattedText{std::move(message_text), std::move(entities)});
     }
     case secret_api::decryptedMessageMediaDocument::ID: {
       auto message_document = move_tl_object_as<secret_api::decryptedMessageMediaDocument>(media);
@@ -3621,9 +3613,9 @@ unique_ptr<MessageContent> get_secret_message_content(
       }
       auto attributes = secret_to_telegram(message_document->attributes_);
       message_document->attributes_.clear();
-      return get_secret_document_message_content(
-          td, std::move(file), std::move(message_document), std::move(attributes), owner_dialog_id,
-          get_secret_media_caption(std::move(message_text), std::move(message_document->caption_)), false);
+      auto document = td->documents_manager_->on_get_document(
+          {std::move(file), std::move(message_document), std::move(attributes)}, owner_dialog_id);
+      return get_document_message_content(std::move(document), {std::move(message_text), std::move(entities)}, false);
     }
     default:
       LOG(ERROR) << "Unsupported: " << to_string(media);
@@ -3635,21 +3627,12 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
                                                tl_object_ptr<telegram_api::MessageMedia> &&media,
                                                DialogId owner_dialog_id, bool is_content_read, UserId via_bot_user_id,
                                                int32 *ttl) {
-  if (media == nullptr) {
-    return make_unique<MessageText>(std::move(message), WebPageId());
-  }
-
-  int32 constructor_id = media->get_id();
-  if (message.text.size()) {
-    if (constructor_id != telegram_api::messageMediaEmpty::ID) {
-      LOG(INFO) << "Receive non-empty message text and media for message from " << owner_dialog_id;
-    } else {
-      return make_unique<MessageText>(std::move(message), WebPageId());
-    }
-  }
+  int32 constructor_id = media == nullptr ? telegram_api::messageMediaEmpty::ID : media->get_id();
   switch (constructor_id) {
     case telegram_api::messageMediaEmpty::ID:
-      LOG(ERROR) << "Receive empty message text and media for message from " << owner_dialog_id;
+      if (message.text.empty()) {
+        LOG(ERROR) << "Receive empty message text and media for message from " << owner_dialog_id;
+      }
       return make_unique<MessageText>(std::move(message), WebPageId());
     case telegram_api::messageMediaPhoto::ID: {
       auto message_photo = move_tl_object_as<telegram_api::messageMediaPhoto>(media);

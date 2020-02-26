@@ -4356,6 +4356,7 @@ void MessagesManager::Dialog::store(StorerT &storer) const {
     STORE_FLAG(can_report_location);
     STORE_FLAG(has_scheduled_server_messages);
     STORE_FLAG(has_scheduled_database_messages);
+    STORE_FLAG(need_repair_channel_server_unread_count);
     END_STORE_FLAGS();
   }
 
@@ -4516,6 +4517,7 @@ void MessagesManager::Dialog::parse(ParserT &parser) {
     PARSE_FLAG(can_report_location);
     PARSE_FLAG(has_scheduled_server_messages);
     PARSE_FLAG(has_scheduled_database_messages);
+    PARSE_FLAG(need_repair_channel_server_unread_count);
     END_PARSE_FLAGS();
   } else {
     is_folder_id_inited = false;
@@ -6514,11 +6516,11 @@ bool MessagesManager::update_dialog_notification_settings(DialogId dialog_id,
     *current_settings = new_settings;
 
     if (!was_muted && is_dialog_muted(d)) {
-      remove_all_dialog_notifications(d, false, "save_scope_notification_settings");
+      remove_all_dialog_notifications(d, false, "update_dialog_notification_settings 2");
     }
     if (is_dialog_pinned_message_notifications_disabled(d) && d->mention_notification_group.group_id.is_valid() &&
         d->pinned_message_notification_message_id.is_valid()) {
-      remove_dialog_pinned_message_notification(d);
+      remove_dialog_pinned_message_notification(d, "update_dialog_notification_settings 3");
     }
     if (was_dialog_mentions_disabled != is_dialog_mention_notifications_disabled(d)) {
       if (was_dialog_mentions_disabled) {
@@ -6564,7 +6566,7 @@ bool MessagesManager::update_scope_notification_settings(NotificationSettingsSco
         if (d->notification_settings.use_default_disable_pinned_message_notifications &&
             d->mention_notification_group.group_id.is_valid() && d->pinned_message_notification_message_id.is_valid() &&
             get_dialog_notification_setting_scope(d->dialog_id) == scope) {
-          remove_dialog_pinned_message_notification(d);
+          remove_dialog_pinned_message_notification(d, "update_scope_notification_settings");
         }
       }
     }
@@ -9479,8 +9481,11 @@ int32 MessagesManager::calc_new_unread_count(Dialog *d, MessageId max_message_id
 }
 
 void MessagesManager::repair_server_unread_count(DialogId dialog_id, int32 unread_count) {
-  if (td_->auth_manager_->is_bot()) {
+  if (td_->auth_manager_->is_bot() || !have_input_peer(dialog_id, AccessRights::Read)) {
     return;
+  }
+  if (pending_read_history_timeout_.has_timeout(dialog_id.get())) {
+    return;  // postpone until read history request is sent
   }
 
   LOG(INFO) << "Repair server unread count in " << dialog_id << " from " << unread_count;
@@ -9507,9 +9512,12 @@ void MessagesManager::repair_channel_server_unread_count(Dialog *d) {
     // there is no unread count in left channels
     return;
   }
+  if (!d->need_repair_channel_server_unread_count) {
+    d->need_repair_channel_server_unread_count = true;
+    on_dialog_updated(d->dialog_id, "repair_channel_server_unread_count");
+  }
 
   LOG(INFO) << "Reload ChannelFull for " << d->dialog_id << " to repair unread message counts";
-  // TODO logevent?
   td_->contacts_manager_->get_channel_full(d->dialog_id.get_channel_id(), Promise<Unit>());
 }
 
@@ -9523,6 +9531,11 @@ void MessagesManager::read_history_inbox(DialogId dialog_id, MessageId max_messa
 
   Dialog *d = get_dialog_force(dialog_id);
   if (d != nullptr) {
+    if (d->need_repair_channel_server_unread_count) {
+      d->need_repair_channel_server_unread_count = false;
+      on_dialog_updated(dialog_id, "read_history_inbox");
+    }
+
     // there can be updateReadHistoryInbox up to message 0, if messages where read and then all messages where deleted
     if (!max_message_id.is_valid() && max_message_id != MessageId()) {
       LOG(ERROR) << "Receive read inbox update in " << dialog_id << " up to " << max_message_id << " from " << source;
@@ -9531,6 +9544,10 @@ void MessagesManager::read_history_inbox(DialogId dialog_id, MessageId max_messa
     if (d->is_last_read_inbox_message_id_inited && max_message_id <= d->last_read_inbox_message_id) {
       LOG(INFO) << "Receive read inbox update in " << dialog_id << " up to " << max_message_id << " from " << source
                 << ", but all messages have already been read up to " << d->last_read_inbox_message_id;
+      if (max_message_id == d->last_read_inbox_message_id && unread_count >= 0 &&
+          unread_count != d->server_unread_count) {
+        set_dialog_last_read_inbox_message_id(d, MessageId::min(), unread_count, d->local_unread_count, true, source);
+      }
       return;
     }
 
@@ -9870,7 +9887,7 @@ void MessagesManager::set_dialog_last_read_inbox_message_id(Dialog *d, MessageId
     if (d->mention_notification_group.group_id.is_valid() && d->pinned_message_notification_message_id.is_valid() &&
         d->pinned_message_notification_message_id <= d->last_read_inbox_message_id) {
       // remove pinned message notification when it is read
-      remove_dialog_pinned_message_notification(d);
+      remove_dialog_pinned_message_notification(d, "set_dialog_last_read_inbox_message_id 2");
     }
   }
 
@@ -10234,10 +10251,10 @@ void MessagesManager::on_message_ttl_expired(Dialog *d, Message *m) {
   CHECK(m->ttl > 0);
   CHECK(d->dialog_id.get_type() != DialogType::SecretChat);
   ttl_unregister_message(d->dialog_id, m, Time::now(), "on_message_ttl_expired");
-  unregister_message_content(td_, m->content.get(), {d->dialog_id, m->message_id});
+  unregister_message_content(td_, m->content.get(), {d->dialog_id, m->message_id}, "on_message_ttl_expired");
   remove_message_file_sources(d->dialog_id, m);
   on_message_ttl_expired_impl(d, m);
-  register_message_content(td_, m->content.get(), {d->dialog_id, m->message_id});
+  register_message_content(td_, m->content.get(), {d->dialog_id, m->message_id}, "on_message_ttl_expired");
   send_update_message_content(d->dialog_id, m->message_id, m->content.get(), m->date, m->is_content_secret,
                               "on_message_ttl_expired");
 }
@@ -11819,7 +11836,7 @@ void MessagesManager::try_restore_dialog_reply_markup(Dialog *d, const Message *
   }
 }
 
-void MessagesManager::set_dialog_pinned_message_notification(Dialog *d, MessageId message_id) {
+void MessagesManager::set_dialog_pinned_message_notification(Dialog *d, MessageId message_id, const char *source) {
   CHECK(d != nullptr);
   CHECK(!message_id.is_scheduled());
   auto old_message_id = d->pinned_message_notification_message_id;
@@ -11829,24 +11846,23 @@ void MessagesManager::set_dialog_pinned_message_notification(Dialog *d, MessageI
   VLOG(notifications) << "Change pinned message notification in " << d->dialog_id << " from " << old_message_id
                       << " to " << message_id;
   if (old_message_id.is_valid()) {
-    auto m = get_message_force(d, old_message_id, "set_dialog_pinned_message_notification");
+    auto m = get_message_force(d, old_message_id, source);
     if (m != nullptr && m->notification_id.is_valid() && is_message_notification_active(d, m)) {
       // Can't remove pinned_message_notification_message_id  before the call,
       // because the notification needs to be still active inside remove_message_notification_id
       remove_message_notification_id(d, m, true, false, true);
-      on_message_changed(d, m, false, "set_dialog_pinned_message_notification");
+      on_message_changed(d, m, false, source);
     } else {
       send_closure_later(G()->notification_manager(), &NotificationManager::remove_temporary_notification_by_message_id,
-                         d->mention_notification_group.group_id, old_message_id, false,
-                         "set_dialog_pinned_message_notification 2");
+                         d->mention_notification_group.group_id, old_message_id, false, source);
     }
   }
   d->pinned_message_notification_message_id = message_id;
-  on_dialog_updated(d->dialog_id, "set_dialog_pinned_message_notification");
+  on_dialog_updated(d->dialog_id, source);
 }
 
-void MessagesManager::remove_dialog_pinned_message_notification(Dialog *d) {
-  set_dialog_pinned_message_notification(d, MessageId());
+void MessagesManager::remove_dialog_pinned_message_notification(Dialog *d, const char *source) {
+  set_dialog_pinned_message_notification(d, MessageId(), source);
 }
 
 void MessagesManager::remove_dialog_mention_notifications(Dialog *d) {
@@ -11959,7 +11975,8 @@ void MessagesManager::on_update_sent_text_message(int64 random_id,
                          is_content_changed, need_update);
 
   if (is_content_changed || need_update) {
-    reregister_message_content(td_, m->content.get(), new_content.get(), full_message_id);
+    reregister_message_content(td_, m->content.get(), new_content.get(), full_message_id,
+                               "on_update_sent_text_message");
     m->content = std::move(new_content);
     m->is_content_secret = is_secret_message_content(m->ttl, MessageContentType::Text);
   }
@@ -11977,9 +11994,9 @@ void MessagesManager::delete_pending_message_web_page(FullMessageId full_message
   CHECK(m != nullptr);
 
   MessageContent *content = m->content.get();
-  unregister_message_content(td_, content, full_message_id);
+  unregister_message_content(td_, content, full_message_id, "delete_pending_message_web_page");
   remove_message_content_web_page(content);
-  register_message_content(td_, content, full_message_id);
+  register_message_content(td_, content, full_message_id, "delete_pending_message_web_page");
 
   // don't need to send an updateMessageContent, because the web page was pending
 
@@ -12247,13 +12264,38 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
 
     if (!G()->parameters().use_message_db || is_new || !d->is_last_read_inbox_message_id_inited ||
         d->need_repair_server_unread_count) {
-      if (d->need_repair_server_unread_count) {
+      if (d->last_read_inbox_message_id.is_valid() && !d->last_read_inbox_message_id.is_server() &&
+          read_inbox_max_message_id == d->last_read_inbox_message_id.get_prev_server_message_id()) {
+        read_inbox_max_message_id = d->last_read_inbox_message_id;
+      }
+      if (d->need_repair_server_unread_count && (d->last_read_inbox_message_id <= read_inbox_max_message_id ||
+                                                 d->order == 0 || !have_input_peer(dialog_id, AccessRights::Read))) {
         LOG(INFO) << "Repaired server unread count in " << dialog_id << " from " << d->last_read_inbox_message_id << "/"
                   << d->server_unread_count << " to " << read_inbox_max_message_id << "/" << dialog->unread_count_;
         d->need_repair_server_unread_count = false;
-        on_dialog_updated(dialog_id, "repair dialog server unread count");
+        on_dialog_updated(dialog_id, "repaired dialog server unread count");
       }
-      if (d->server_unread_count != dialog->unread_count_ ||
+      if (d->need_repair_server_unread_count) {
+        auto &previous_message_id = previous_repaired_read_inbox_max_message_id_[dialog_id];
+        if (previous_message_id >= read_inbox_max_message_id) {
+          // protect from sending the request in a loop
+          LOG(ERROR) << "Failed to repair server unread count in " << dialog_id
+                     << ", because receive read_inbox_max_message_id = " << read_inbox_max_message_id << " after "
+                     << previous_message_id << ", but messages are read up to " << d->last_read_inbox_message_id;
+          d->need_repair_server_unread_count = false;
+          on_dialog_updated(dialog_id, "failed to repair dialog server unread count");
+        } else {
+          LOG(INFO) << "Have last_read_inbox_message_id = " << d->last_read_inbox_message_id << ", but received only "
+                    << read_inbox_max_message_id << " from the server, trying to repair server unread count again";
+          previous_message_id = read_inbox_max_message_id;
+          repair_server_unread_count(dialog_id, d->server_unread_count);
+        }
+      }
+      if (!d->need_repair_server_unread_count) {
+        previous_repaired_read_inbox_max_message_id_.erase(dialog_id);
+      }
+      if ((d->server_unread_count != dialog->unread_count_ &&
+           d->last_read_inbox_message_id == read_inbox_max_message_id) ||
           d->last_read_inbox_message_id < read_inbox_max_message_id) {
         set_dialog_last_read_inbox_message_id(d, read_inbox_max_message_id, dialog->unread_count_,
                                               d->local_unread_count, true, "on_get_dialogs");
@@ -12492,7 +12534,8 @@ void MessagesManager::remove_message_notification_id(Dialog *d, Message *m, bool
   m->notification_id = NotificationId();
   if (d->pinned_message_notification_message_id == m->message_id && is_permanent &&
       !ignore_pinned_message_notification_removal) {
-    remove_dialog_pinned_message_notification(d);  // must be called after notification_id is removed
+    remove_dialog_pinned_message_notification(
+        d, "remove_message_notification_id");  // must be called after notification_id is removed
   }
   if (group_info.last_notification_id == notification_id) {
     // last notification is deleted, need to find new last notification
@@ -12862,7 +12905,7 @@ void MessagesManager::on_message_deleted(Dialog *d, Message *m, bool is_permanen
       UNREACHABLE();
   }
   ttl_unregister_message(d->dialog_id, m, Time::now(), source);
-  unregister_message_content(td_, m->content.get(), {d->dialog_id, m->message_id});
+  unregister_message_content(td_, m->content.get(), {d->dialog_id, m->message_id}, "on_message_deleted");
   if (m->notification_id.is_valid()) {
     delete_notification_id_to_message_id_correspondence(d, m->notification_id, m->message_id);
   }
@@ -12908,7 +12951,7 @@ unique_ptr<MessagesManager::Message> MessagesManager::do_delete_scheduled_messag
 
   cancel_send_deleted_message(d->dialog_id, result.get(), is_permanently_deleted);
 
-  unregister_message_content(td_, result->content.get(), {d->dialog_id, message_id});
+  unregister_message_content(td_, result->content.get(), {d->dialog_id, message_id}, "do_delete_scheduled_message");
 
   return result;
 }
@@ -14975,8 +15018,6 @@ Status MessagesManager::view_messages(DialogId dialog_id, const vector<MessageId
   if (need_read && max_message_id > d->last_read_inbox_message_id) {
     MessageId last_read_message_id = max_message_id;
     MessageId prev_last_read_inbox_message_id = d->last_read_inbox_message_id;
-    read_history_inbox(d->dialog_id, last_read_message_id, -1, "view_messages");
-
     if (dialog_id.get_type() != DialogType::SecretChat) {
       if (last_read_message_id.get_prev_server_message_id().get() >
           prev_last_read_inbox_message_id.get_prev_server_message_id().get()) {
@@ -14987,6 +15028,8 @@ Status MessagesManager::view_messages(DialogId dialog_id, const vector<MessageId
         read_history_on_server(d, last_read_message_id);
       }
     }
+    // read history on server after sending server request to not repair unread_count early
+    read_history_inbox(d->dialog_id, last_read_message_id, -1, "view_messages");
   }
   if (need_read && d->is_marked_as_unread) {
     set_dialog_is_marked_as_unread(d, false);
@@ -15968,6 +16011,9 @@ void MessagesManager::read_history_on_server_impl(DialogId dialog_id, MessageId 
         send_closure(actor_id, &MessagesManager::on_read_history_finished, dialog_id, generation);
       }
     });
+  }
+  if (d->need_repair_server_unread_count && d->order != 0) {
+    repair_server_unread_count(dialog_id, d->server_unread_count);
   }
 
   if (!max_message_id.is_valid()) {
@@ -18685,10 +18731,15 @@ void MessagesManager::on_secret_message_media_uploaded(DialogId dialog_id, const
             LOG(INFO) << "Send secret media from " << m->message_id << " in " << dialog_id << " in reply to "
                       << m->reply_to_message_id;
             int64 random_id = begin_send_message(dialog_id, m);
+            auto layer = td_->contacts_manager_->get_secret_chat_layer(dialog_id.get_secret_chat_id());
+            auto caption = get_message_content_caption(m->content.get());
+            vector<tl_object_ptr<secret_api::MessageEntity>> entities;
+            if (caption != nullptr && !caption->entities.empty()) {
+              entities = get_input_secret_message_entities(caption->entities, layer);
+            }
             send_closure(td_->create_net_actor<SendSecretMessageActor>(), &SendSecretMessageActor::send, dialog_id,
-                         m->reply_to_random_id, m->ttl, "", std::move(secret_input_media),
-                         vector<tl_object_ptr<secret_api::MessageEntity>>(), m->via_bot_user_id, m->media_album_id,
-                         random_id);
+                         m->reply_to_random_id, m->ttl, "", std::move(secret_input_media), std::move(entities),
+                         m->via_bot_user_id, m->media_album_id, random_id);
           }));
 }
 
@@ -21405,14 +21456,14 @@ Result<MessagesManager::MessagePushNotificationInfo> MessagesManager::get_messag
   std::tie(have_settings, mute_until) = get_dialog_mute_until(settings_dialog_id, settings_dialog);
   if (have_settings && mute_until > date) {
     if (is_new_pinned) {
-      remove_dialog_pinned_message_notification(d);
+      remove_dialog_pinned_message_notification(d, "get_message_push_notification_info");
     }
     return Status::Error("Ignore notification in muted chat");
   }
 
   if (is_dialog_message_notification_disabled(settings_dialog_id, date)) {
     if (is_new_pinned) {
-      remove_dialog_pinned_message_notification(d);
+      remove_dialog_pinned_message_notification(d, "get_message_push_notification_info");
     }
     return Status::Error("Ignore notification in chat, because notifications are disabled in the chat");
   }
@@ -21425,7 +21476,8 @@ Result<MessagesManager::MessagePushNotificationInfo> MessagesManager::get_messag
 
   if (message_id.is_valid() && message_id > d->max_notification_message_id) {
     if (is_new_pinned) {
-      set_dialog_pinned_message_notification(d, contains_mention ? message_id : MessageId());
+      set_dialog_pinned_message_notification(d, contains_mention ? message_id : MessageId(),
+                                             "get_message_push_notification_info");
     }
     d->max_notification_message_id = message_id;
     on_dialog_updated(dialog_id, "set_max_notification_message_id");
@@ -21608,7 +21660,7 @@ void MessagesManager::try_add_pinned_message_notification(Dialog *d, vector<Noti
       }
     }
   } else {
-    remove_dialog_pinned_message_notification(d);
+    remove_dialog_pinned_message_notification(d, "try_add_pinned_message_notification");
   }
 }
 
@@ -22265,7 +22317,7 @@ bool MessagesManager::add_new_message_notification(Dialog *d, Message *m, bool f
   if (!is_active) {
     VLOG(notifications) << "Disable inactive notification for " << m->message_id << " in " << d->dialog_id;
     if (is_pinned) {
-      remove_dialog_pinned_message_notification(d);
+      remove_dialog_pinned_message_notification(d, "add_new_message_notification");
     }
     return false;
   }
@@ -22288,7 +22340,7 @@ bool MessagesManager::add_new_message_notification(Dialog *d, Message *m, bool f
   if (mute_until > m->date && (have_settings || force)) {
     VLOG(notifications) << "Disable notification, because " << settings_dialog_id << " is muted";
     if (is_pinned) {
-      remove_dialog_pinned_message_notification(d);
+      remove_dialog_pinned_message_notification(d, "add_new_message_notification");
     }
     return false;
   }
@@ -22368,7 +22420,8 @@ bool MessagesManager::add_new_message_notification(Dialog *d, Message *m, bool f
                                                  "add_new_message_notification 3");
   CHECK(is_changed);
   if (is_pinned) {
-    set_dialog_pinned_message_notification(d, from_mentions ? m->message_id : MessageId());
+    set_dialog_pinned_message_notification(d, from_mentions ? m->message_id : MessageId(),
+                                           "add_new_message_notification");
   }
   if (!m->notification_id.is_valid()) {
     // protection from accidental notification_id removal in set_dialog_pinned_message_notification
@@ -24235,6 +24288,27 @@ RestrictedRights MessagesManager::get_dialog_permissions(DialogId dialog_id) con
   }
 }
 
+bool MessagesManager::is_dialog_action_unneded(DialogId dialog_id) const {
+  if (is_broadcast_channel(dialog_id)) {
+    return true;
+  }
+
+  auto dialog_type = dialog_id.get_type();
+  if (dialog_type == DialogType::User || dialog_type == DialogType::SecretChat) {
+    UserId user_id = dialog_type == DialogType::User
+                         ? dialog_id.get_user_id()
+                         : td_->contacts_manager_->get_secret_chat_user_id(dialog_id.get_secret_chat_id());
+    if (!user_id.is_valid() || td_->contacts_manager_->is_user_bot(user_id) ||
+        td_->contacts_manager_->is_user_deleted(user_id)) {
+      return true;
+    }
+    if (!td_->auth_manager_->is_bot() && !td_->contacts_manager_->is_user_status_exact(user_id)) {
+      // return true;
+    }
+  }
+  return false;
+}
+
 void MessagesManager::send_dialog_action(DialogId dialog_id, const tl_object_ptr<td_api::ChatAction> &action,
                                          Promise<Unit> &&promise) {
   if (action == nullptr) {
@@ -24253,25 +24327,11 @@ void MessagesManager::send_dialog_action(DialogId dialog_id, const tl_object_ptr
     return promise.set_value(Unit());
   }
 
-  if (is_broadcast_channel(dialog_id)) {
+  if (is_dialog_action_unneded(dialog_id)) {
     return promise.set_value(Unit());
   }
 
-  auto dialog_type = dialog_id.get_type();
-  if (dialog_type == DialogType::User || dialog_type == DialogType::SecretChat) {
-    UserId user_id = dialog_type == DialogType::User
-                         ? dialog_id.get_user_id()
-                         : td_->contacts_manager_->get_secret_chat_user_id(dialog_id.get_secret_chat_id());
-    if (!user_id.is_valid() || td_->contacts_manager_->is_user_bot(user_id) ||
-        td_->contacts_manager_->is_user_deleted(user_id)) {
-      return promise.set_value(Unit());
-    }
-    if (!td_->auth_manager_->is_bot() && !td_->contacts_manager_->is_user_status_exact(user_id)) {
-      // return promise.set_value(Unit());
-    }
-  }
-
-  if (dialog_type == DialogType::SecretChat) {
+  if (dialog_id.get_type() == DialogType::SecretChat) {
     tl_object_ptr<secret_api::SendMessageAction> send_action;
     switch (action->get_id()) {
       case td_api::chatActionCancel::ID:
@@ -26072,17 +26132,15 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
     // in get_message_notification_group_force
     get_dialog_notification_group_id(d->dialog_id, get_notification_group_info(d, message.get()));
   }
-  MessageId added_pinned_message_id;      // TODO remove
-  MessageId preloaded_pinned_message_id;  // TODO remove
-  if (*need_update) {
+  if (*need_update || (!d->last_new_message_id.is_valid() && !message_id.is_yet_unsent() && !message->from_database)) {
     auto pinned_message_id = get_message_content_pinned_message_id(message->content.get());
-    added_pinned_message_id = pinned_message_id;
-    if (pinned_message_id.is_valid() && have_message_force({dialog_id, pinned_message_id}, "preload pinned message")) {
-      preloaded_pinned_message_id = pinned_message_id;
+    if (pinned_message_id.is_valid() && pinned_message_id < message_id &&
+        have_message_force({dialog_id, pinned_message_id}, "preload pinned message")) {
       LOG(INFO) << "Preloaded pinned " << pinned_message_id << " from database";
     }
 
     if (d->pinned_message_notification_message_id.is_valid() &&
+        d->pinned_message_notification_message_id < message_id &&
         have_message_force({dialog_id, d->pinned_message_notification_message_id},
                            "preload previously pinned message")) {
       LOG(INFO) << "Preloaded previously pinned " << d->pinned_message_notification_message_id << " from database";
@@ -26092,7 +26150,7 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
   // there must be no two recursive calls to add_message_to_dialog
   LOG_CHECK(!d->being_added_message_id.is_valid())
       << d->dialog_id << " " << d->being_added_message_id << " " << message_id << " " << *need_update << " "
-      << d->pinned_message_notification_message_id << " " << preloaded_pinned_message_id << " " << source;
+      << d->pinned_message_notification_message_id << " " << d->last_new_message_id << " " << source;
   LOG_CHECK(!d->being_deleted_message_id.is_valid())
       << d->being_deleted_message_id << " " << message_id << " " << source;
 
@@ -26168,7 +26226,7 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
     if (queue_id & 1) {
       LOG(INFO) << "Add " << message_id << " from " << source << " to queue " << queue_id;
       yet_unsent_media_queues_[queue_id][message_id.get()];  // reserve place for promise
-      if (!td_->auth_manager_->is_bot() && !is_broadcast_channel(dialog_id)) {
+      if (!td_->auth_manager_->is_bot() && !is_dialog_action_unneded(dialog_id)) {
         pending_send_dialog_action_timeout_.add_timeout_in(dialog_id.get(), 1.0);
       }
     }
@@ -26397,7 +26455,7 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
 
   add_message_file_sources(dialog_id, m);
 
-  register_message_content(td_, m->content.get(), {dialog_id, m->message_id});
+  register_message_content(td_, m->content.get(), {dialog_id, m->message_id}, "add_message_to_dialog");
 
   if (*need_update && m->message_id.is_server() && message_content_type == MessageContentType::PinMessage) {
     // always update pinned message from service message, even new pinned_message_id is invalid
@@ -26566,7 +26624,7 @@ MessagesManager::Message *MessagesManager::add_scheduled_message_to_dialog(Dialo
 
   add_message_file_sources(dialog_id, m);
 
-  register_message_content(td_, m->content.get(), {dialog_id, m->message_id});
+  register_message_content(td_, m->content.get(), {dialog_id, m->message_id}, "add_scheduled_message_to_dialog");
 
   if (from_update) {
     update_sent_message_contents(dialog_id, m);
@@ -26669,7 +26727,7 @@ void MessagesManager::delete_all_dialog_messages_from_database(Dialog *d, Messag
   }
   if (d->pinned_message_notification_message_id.is_valid() &&
       d->pinned_message_notification_message_id <= max_message_id) {
-    remove_dialog_pinned_message_notification(d);
+    remove_dialog_pinned_message_notification(d, "delete_all_dialog_messages_from_database");
   }
   remove_message_dialog_notifications(d, max_message_id, false, source);
   remove_message_dialog_notifications(d, max_message_id, true, source);
@@ -27329,7 +27387,8 @@ bool MessagesManager::update_message_content(DialogId dialog_id, Message *old_me
 
   if (is_content_changed || need_update) {
     if (is_message_in_dialog) {
-      reregister_message_content(td_, old_content.get(), new_content.get(), {dialog_id, old_message->message_id});
+      reregister_message_content(td_, old_content.get(), new_content.get(), {dialog_id, old_message->message_id},
+                                 "update_message_content");
     }
     old_content = std::move(new_content);
     update_message_content_file_id_remote(old_content.get(), old_file_id);
@@ -27847,9 +27906,12 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_datab
     get_history_from_the_end(dialog_id, true, false, Auto());
   }
 
-  if (d->need_repair_server_unread_count && have_input_peer(dialog_id, AccessRights::Read)) {
+  if (d->need_repair_server_unread_count && d->order != 0) {
     CHECK(dialog_type != DialogType::SecretChat);
     repair_server_unread_count(dialog_id, d->server_unread_count);
+  }
+  if (d->need_repair_channel_server_unread_count) {
+    repair_channel_server_unread_count(d);
   }
 
   update_dialog_pos(d, false, "fix_new_dialog 7", true, is_loaded_from_database);
@@ -28755,6 +28817,10 @@ void MessagesManager::on_get_channel_dialog(DialogId dialog_id, MessageId last_m
     }
   }
 
+  if (d->last_read_inbox_message_id.is_valid() && !d->last_read_inbox_message_id.is_server() &&
+      read_inbox_max_message_id == d->last_read_inbox_message_id.get_prev_server_message_id()) {
+    read_inbox_max_message_id = d->last_read_inbox_message_id;
+  }
   if (d->server_unread_count != server_unread_count || d->last_read_inbox_message_id != read_inbox_max_message_id) {
     set_dialog_last_read_inbox_message_id(d, read_inbox_max_message_id, server_unread_count, d->local_unread_count,
                                           false, "on_get_channel_dialog 50");

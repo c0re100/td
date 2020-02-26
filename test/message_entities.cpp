@@ -10,6 +10,7 @@
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/Random.h"
 #include "td/utils/Slice.h"
 #include "td/utils/tests.h"
 #include "td/utils/utf8.h"
@@ -575,8 +576,9 @@ TEST(MessageEntities, url) {
 
 static void check_fix_formatted_text(td::string str, td::vector<td::MessageEntity> entities,
                                      const td::string &expected_str,
-                                     const td::vector<td::MessageEntity> &expected_entities, bool allow_empty,
-                                     bool skip_new_entities, bool skip_bot_commands, bool for_draft) {
+                                     const td::vector<td::MessageEntity> &expected_entities, bool allow_empty = true,
+                                     bool skip_new_entities = false, bool skip_bot_commands = false,
+                                     bool for_draft = true) {
   ASSERT_TRUE(
       td::fix_formatted_text(str, entities, allow_empty, skip_new_entities, skip_bot_commands, for_draft).is_ok());
   ASSERT_STREQ(expected_str, str);
@@ -717,13 +719,13 @@ TEST(MessageEntities, fix_formatted_text) {
       td::vector<td::MessageEntity> entities;
       entities.emplace_back(td::MessageEntity::Type::Bold, offset, length);
       td::vector<td::MessageEntity> fixed_entities;
-      if (length > 0 && offset >= 0 && static_cast<size_t>(length + offset) > str.size()) {
+      if (length < 0 || offset < 0 || (length > 0 && static_cast<size_t>(length + offset) > str.size())) {
         check_fix_formatted_text(str, entities, true, false, false, false);
         check_fix_formatted_text(str, entities, false, false, false, true);
         continue;
       }
 
-      if (length > 0 && offset >= 0 && (length >= 2 || offset != 3)) {
+      if (length > 0 && (length >= 2 || offset != 3)) {
         fixed_entities.emplace_back(td::MessageEntity::Type::Bold, offset, length);
       }
       check_fix_formatted_text(str, entities, str, fixed_entities, true, false, false, false);
@@ -778,6 +780,213 @@ TEST(MessageEntities, fix_formatted_text) {
   for (td::string text : {"\t", "\r", "\n", "\t ", "\r ", "\n "}) {
     for (auto type : {td::MessageEntity::Type::Bold, td::MessageEntity::Type::TextUrl}) {
       check_fix_formatted_text(text, {{type, 0, 1, "http://telegram.org/"}}, "", {}, true, false, false, true);
+    }
+  }
+
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 1, 1}, {td::MessageEntity::Type::Italic, 0, 1}},
+                           "abc", {{td::MessageEntity::Type::Italic, 0, 2}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 1, 1}, {td::MessageEntity::Type::Italic, 1, 1}},
+                           "abc", {{td::MessageEntity::Type::Italic, 1, 1}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 0, 2}, {td::MessageEntity::Type::Italic, 1, 2}},
+                           "abc", {{td::MessageEntity::Type::Italic, 0, 3}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 0, 2}, {td::MessageEntity::Type::Italic, 2, 1}},
+                           "abc", {{td::MessageEntity::Type::Italic, 0, 3}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 0, 1}, {td::MessageEntity::Type::Italic, 2, 1}},
+                           "abc", {{td::MessageEntity::Type::Italic, 0, 1}, {td::MessageEntity::Type::Italic, 2, 1}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 0, 2}, {td::MessageEntity::Type::Bold, 1, 2}},
+                           "abc",
+                           {{td::MessageEntity::Type::Italic, 0, 1},
+                            {td::MessageEntity::Type::Bold, 1, 2},
+                            {td::MessageEntity::Type::Italic, 1, 1}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 0, 2}, {td::MessageEntity::Type::Bold, 2, 1}},
+                           "abc", {{td::MessageEntity::Type::Italic, 0, 2}, {td::MessageEntity::Type::Bold, 2, 1}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 0, 1}, {td::MessageEntity::Type::Bold, 2, 1}},
+                           "abc", {{td::MessageEntity::Type::Italic, 0, 1}, {td::MessageEntity::Type::Bold, 2, 1}});
+
+  // _a*b*_
+  check_fix_formatted_text(
+      "ab", {{td::MessageEntity::Type::Underline, 0, 2}, {td::MessageEntity::Type::Strikethrough, 1, 1}}, "ab",
+      {{td::MessageEntity::Type::Underline, 0, 2}, {td::MessageEntity::Type::Strikethrough, 1, 1}});
+  check_fix_formatted_text("ab",
+                           {{td::MessageEntity::Type::Underline, 0, 1},
+                            {td::MessageEntity::Type::Underline, 1, 1},
+                            {td::MessageEntity::Type::Strikethrough, 1, 1}},
+                           "ab",
+                           {{td::MessageEntity::Type::Underline, 0, 1},
+                            {td::MessageEntity::Type::Underline, 1, 1},
+                            {td::MessageEntity::Type::Strikethrough, 1, 1}});
+  check_fix_formatted_text(
+      "ab", {{td::MessageEntity::Type::Strikethrough, 0, 2}, {td::MessageEntity::Type::Underline, 1, 1}}, "ab",
+      {{td::MessageEntity::Type::Strikethrough, 0, 2}, {td::MessageEntity::Type::Underline, 1, 1}});
+  check_fix_formatted_text("ab",
+                           {{td::MessageEntity::Type::Strikethrough, 0, 1},
+                            {td::MessageEntity::Type::Strikethrough, 1, 1},
+                            {td::MessageEntity::Type::Underline, 1, 1}},
+                           "ab",
+                           {{td::MessageEntity::Type::Strikethrough, 0, 1},
+                            {td::MessageEntity::Type::Underline, 1, 1},
+                            {td::MessageEntity::Type::Strikethrough, 1, 1}});
+
+  // _*a*b_
+  check_fix_formatted_text(
+      "ab", {{td::MessageEntity::Type::Underline, 0, 2}, {td::MessageEntity::Type::Strikethrough, 0, 1}}, "ab",
+      {{td::MessageEntity::Type::Underline, 0, 2}, {td::MessageEntity::Type::Strikethrough, 0, 1}});
+  check_fix_formatted_text(
+      "ab",
+      {{td::MessageEntity::Type::Underline, 0, 1},
+       {td::MessageEntity::Type::Underline, 1, 1},
+       {td::MessageEntity::Type::Strikethrough, 0, 1}},
+      "ab", {{td::MessageEntity::Type::Underline, 0, 2}, {td::MessageEntity::Type::Strikethrough, 0, 1}});
+
+  // _*a*_\r_*b*_
+  check_fix_formatted_text("a\rb",
+                           {{td::MessageEntity::Type::Bold, 0, 1},
+                            {td::MessageEntity::Type::Strikethrough, 0, 1},
+                            {td::MessageEntity::Type::Bold, 2, 1},
+                            {td::MessageEntity::Type::Strikethrough, 2, 1}},
+                           "ab",
+                           {{td::MessageEntity::Type::Bold, 0, 2}, {td::MessageEntity::Type::Strikethrough, 0, 2}});
+  check_fix_formatted_text("a\nb",
+                           {{td::MessageEntity::Type::Bold, 0, 1},
+                            {td::MessageEntity::Type::Strikethrough, 0, 1},
+                            {td::MessageEntity::Type::Bold, 2, 1},
+                            {td::MessageEntity::Type::Strikethrough, 2, 1}},
+                           "a\nb",
+                           {{td::MessageEntity::Type::Bold, 0, 1},
+                            {td::MessageEntity::Type::Strikethrough, 0, 1},
+                            {td::MessageEntity::Type::Bold, 2, 1},
+                            {td::MessageEntity::Type::Strikethrough, 2, 1}});
+
+  // _`a`_
+  check_fix_formatted_text("a", {{td::MessageEntity::Type::Pre, 0, 1}, {td::MessageEntity::Type::Strikethrough, 0, 1}},
+                           "a", {{td::MessageEntity::Type::Pre, 0, 1}});
+  check_fix_formatted_text("a", {{td::MessageEntity::Type::Strikethrough, 0, 1}, {td::MessageEntity::Type::Pre, 0, 1}},
+                           "a", {{td::MessageEntity::Type::Pre, 0, 1}});
+  check_fix_formatted_text("abc",
+                           {{td::MessageEntity::Type::Pre, 0, 3}, {td::MessageEntity::Type::Strikethrough, 1, 1}},
+                           "abc", {{td::MessageEntity::Type::Pre, 0, 3}});
+  check_fix_formatted_text(
+      "abc", {{td::MessageEntity::Type::Pre, 1, 1}, {td::MessageEntity::Type::Strikethrough, 0, 3}}, "abc",
+      {{td::MessageEntity::Type::Strikethrough, 0, 1},
+       {td::MessageEntity::Type::Pre, 1, 1},
+       {td::MessageEntity::Type::Strikethrough, 2, 1}});
+  check_fix_formatted_text(
+      "abc", {{td::MessageEntity::Type::Pre, 1, 1}, {td::MessageEntity::Type::Strikethrough, 1, 2}}, "abc",
+      {{td::MessageEntity::Type::Pre, 1, 1}, {td::MessageEntity::Type::Strikethrough, 2, 1}});
+  check_fix_formatted_text(
+      "abc", {{td::MessageEntity::Type::Pre, 1, 1}, {td::MessageEntity::Type::Strikethrough, 0, 2}}, "abc",
+      {{td::MessageEntity::Type::Strikethrough, 0, 1}, {td::MessageEntity::Type::Pre, 1, 1}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::Pre, 0, 3}, {td::MessageEntity::Type::BlockQuote, 1, 1}},
+                           "abc", {{td::MessageEntity::Type::BlockQuote, 1, 1}});
+  check_fix_formatted_text("abc", {{td::MessageEntity::Type::BlockQuote, 0, 3}, {td::MessageEntity::Type::Pre, 1, 1}},
+                           "abc", {{td::MessageEntity::Type::BlockQuote, 0, 3}, {td::MessageEntity::Type::Pre, 1, 1}});
+
+  check_fix_formatted_text("example.com", {}, "example.com", {{td::MessageEntity::Type::Url, 0, 11}});
+  check_fix_formatted_text("example.com", {{td::MessageEntity::Type::Pre, 0, 3}}, "example.com",
+                           {{td::MessageEntity::Type::Pre, 0, 3}});
+  check_fix_formatted_text("example.com", {{td::MessageEntity::Type::BlockQuote, 0, 3}}, "example.com",
+                           {{td::MessageEntity::Type::BlockQuote, 0, 3}});
+  check_fix_formatted_text("example.com", {{td::MessageEntity::Type::BlockQuote, 0, 11}}, "example.com",
+                           {{td::MessageEntity::Type::BlockQuote, 0, 11}, {td::MessageEntity::Type::Url, 0, 11}});
+  check_fix_formatted_text("example.com", {{td::MessageEntity::Type::Italic, 0, 11}}, "example.com",
+                           {{td::MessageEntity::Type::Url, 0, 11}, {td::MessageEntity::Type::Italic, 0, 11}});
+  check_fix_formatted_text("example.com", {{td::MessageEntity::Type::Italic, 0, 3}}, "example.com",
+                           {{td::MessageEntity::Type::Url, 0, 11}, {td::MessageEntity::Type::Italic, 0, 3}});
+  check_fix_formatted_text("example.com a", {{td::MessageEntity::Type::Italic, 0, 13}}, "example.com a",
+                           {{td::MessageEntity::Type::Url, 0, 11},
+                            {td::MessageEntity::Type::Italic, 0, 11},
+                            {td::MessageEntity::Type::Italic, 11, 2}});
+  check_fix_formatted_text("a example.com", {{td::MessageEntity::Type::Italic, 0, 13}}, "a example.com",
+                           {{td::MessageEntity::Type::Italic, 0, 2},
+                            {td::MessageEntity::Type::Url, 2, 11},
+                            {td::MessageEntity::Type::Italic, 2, 11}});
+
+  for (size_t test_n = 0; test_n < 100000; test_n++) {
+    bool is_url = td::Random::fast(0, 1) == 1;
+    td::int32 url_offset = 0;
+    td::int32 url_end = 0;
+    if (is_url) {
+      str = td::string(td::Random::fast(1, 5), 'a') + ":example.com:" + td::string(td::Random::fast(1, 5), 'a');
+      url_offset = static_cast<td::int32>(str.find('e'));
+      url_end = url_offset + 11;
+    } else {
+      str = td::string(td::Random::fast(1, 20), 'a');
+    }
+
+    auto n = td::Random::fast(1, 20);
+    td::vector<td::MessageEntity> entities;
+    for (int j = 0; j < n; j++) {
+      td::int32 type = td::Random::fast(4, 16);
+      td::int32 offset = td::Random::fast(0, static_cast<int>(str.size()) - 1);
+      auto max_length = static_cast<int>(str.size() - offset);
+      if ((test_n & 1) != 0 && max_length > 4) {
+        max_length = 4;
+      }
+      td::int32 length = td::Random::fast(0, max_length);
+      entities.emplace_back(static_cast<td::MessageEntity::Type>(type), offset, length);
+    }
+
+    auto get_type_mask = [](std::size_t length, const td::vector<td::MessageEntity> &entities) {
+      td::vector<td::int32> result(length);
+      for (auto &entity : entities) {
+        for (auto pos = 0; pos < entity.length; pos++) {
+          result[entity.offset + pos] |= (1 << static_cast<td::int32>(entity.type));
+        }
+      }
+      return result;
+    };
+    auto old_type_mask = get_type_mask(str.size(), entities);
+    ASSERT_TRUE(td::fix_formatted_text(str, entities, false, false, true, false).is_ok());
+    auto new_type_mask = get_type_mask(str.size(), entities);
+    auto splittable_mask = (1 << 5) | (1 << 6) | (1 << 14) | (1 << 15);
+    auto pre_mask = (1 << 7) | (1 << 8) | (1 << 9);
+    for (std::size_t pos = 0; pos < str.size(); pos++) {
+      if ((new_type_mask[pos] & pre_mask) != 0) {
+        ASSERT_EQ(0, new_type_mask[pos] & splittable_mask);
+      } else {
+        ASSERT_EQ(old_type_mask[pos] & splittable_mask, new_type_mask[pos] & splittable_mask);
+      }
+    }
+    bool keep_url = is_url;
+    td::MessageEntity url_entity(td::MessageEntity::Type::Url, url_offset, url_end - url_offset);
+    for (auto &entity : entities) {
+      if (entity == url_entity) {
+        continue;
+      }
+      td::int32 offset = entity.offset;
+      td::int32 end = offset + entity.length;
+
+      if (keep_url && ((1 << static_cast<td::int32>(entity.type)) & splittable_mask) == 0 &&
+          !(end <= url_offset || url_end <= offset)) {
+        keep_url = (entity.type == td::MessageEntity::Type::BlockQuote && offset <= url_offset && url_end <= end);
+      }
+    }
+    ASSERT_EQ(keep_url, std::count(entities.begin(), entities.end(), url_entity) == 1);
+
+    for (size_t i = 0; i < entities.size(); i++) {
+      auto type_mask = 1 << static_cast<td::int32>(entities[i].type);
+      for (size_t j = i + 1; j < entities.size(); j++) {
+        // sorted
+        ASSERT_TRUE(entities[j].offset > entities[i].offset ||
+                    (entities[j].offset == entities[i].offset && entities[j].length <= entities[i].length));
+
+        // not intersecting
+        ASSERT_TRUE(entities[j].offset >= entities[i].offset + entities[i].length ||
+                    entities[j].offset + entities[j].length <= entities[i].offset + entities[i].length);
+
+        if (entities[j].offset < entities[i].offset + entities[i].length) {  // if nested
+          // types are different
+          ASSERT_TRUE(entities[j].type != entities[i].type);
+
+          // pre can't contain other entities
+          ASSERT_TRUE((type_mask & pre_mask) == 0);
+
+          if ((type_mask & splittable_mask) == 0 && entities[i].type != td::MessageEntity::Type::BlockQuote) {
+            // continuous entities can contain only splittable entities
+            ASSERT_TRUE(((1 << static_cast<td::int32>(entities[j].type)) & splittable_mask) != 0);
+          }
+        }
+      }
     }
   }
 }

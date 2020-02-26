@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <tuple>
 #include <unordered_set>
 
@@ -1135,54 +1136,133 @@ vector<std::pair<Slice, bool>> find_urls(Slice str) {
   return result;
 }
 
-// keeps nested, but removes mutually intersecting and empty entities
-// entities must be pre-sorted
-static void remove_unallowed_entities(vector<MessageEntity> &entities) {
-  vector<const MessageEntity *> nested_entities_stack;
-  size_t left_entities = 0;
-  for (size_t i = 0; i < entities.size(); i++) {
-    if (entities[i].offset < 0 || entities[i].length <= 0 || entities[i].offset > 1000000 ||
-        entities[i].length > 1000000) {
-      continue;
-    }
+static void check_is_sorted(const vector<MessageEntity> &entities) {
+  CHECK(std::is_sorted(entities.begin(), entities.end()));
+}
 
+static void check_non_intersecting(const vector<MessageEntity> &entities) {
+  for (size_t i = 0; i + 1 < entities.size(); i++) {
+    CHECK(entities[i].offset + entities[i].length <= entities[i + 1].offset);
+  }
+}
+
+static constexpr int32 get_entity_type_mask(MessageEntity::Type type) {
+  return 1 << static_cast<int32>(type);
+}
+
+static constexpr int32 get_splittable_entities_mask() {
+  return get_entity_type_mask(MessageEntity::Type::Bold) | get_entity_type_mask(MessageEntity::Type::Italic) |
+         get_entity_type_mask(MessageEntity::Type::Underline) |
+         get_entity_type_mask(MessageEntity::Type::Strikethrough);
+}
+
+static constexpr int32 get_blockquote_entities_mask() {
+  return get_entity_type_mask(MessageEntity::Type::BlockQuote);
+}
+
+static constexpr int32 get_continuous_entities_mask() {
+  return get_entity_type_mask(MessageEntity::Type::Mention) | get_entity_type_mask(MessageEntity::Type::Hashtag) |
+         get_entity_type_mask(MessageEntity::Type::BotCommand) | get_entity_type_mask(MessageEntity::Type::Url) |
+         get_entity_type_mask(MessageEntity::Type::EmailAddress) | get_entity_type_mask(MessageEntity::Type::TextUrl) |
+         get_entity_type_mask(MessageEntity::Type::MentionName) | get_entity_type_mask(MessageEntity::Type::Cashtag) |
+         get_entity_type_mask(MessageEntity::Type::PhoneNumber) |
+         get_entity_type_mask(MessageEntity::Type::BankCardNumber);
+}
+
+static constexpr int32 get_pre_entities_mask() {
+  return get_entity_type_mask(MessageEntity::Type::Pre) | get_entity_type_mask(MessageEntity::Type::Code) |
+         get_entity_type_mask(MessageEntity::Type::PreCode);
+}
+
+static int32 is_splittable_entity(MessageEntity::Type type) {
+  return (get_entity_type_mask(type) & get_splittable_entities_mask()) != 0;
+}
+
+static int32 is_blockquote_entity(MessageEntity::Type type) {
+  return type == MessageEntity::Type::BlockQuote;
+}
+
+static int32 is_continuous_entity(MessageEntity::Type type) {
+  return (get_entity_type_mask(type) & get_continuous_entities_mask()) != 0;
+}
+
+static int32 is_pre_entity(MessageEntity::Type type) {
+  return (get_entity_type_mask(type) & get_pre_entities_mask()) != 0;
+}
+
+static constexpr size_t SPLITTABLE_ENTITY_TYPE_COUNT = 4;
+
+static size_t get_splittable_entity_type_index(MessageEntity::Type type) {
+  if (static_cast<int32>(type) <= static_cast<int32>(MessageEntity::Type::Bold) + 1) {
+    // Bold or Italic
+    return static_cast<int32>(type) - static_cast<int32>(MessageEntity::Type::Bold);
+  } else {
+    // Underline or Strikethrough
+    return static_cast<int32>(type) - static_cast<int32>(MessageEntity::Type::Underline) + 2;
+  }
+}
+
+static bool are_entities_valid(const vector<MessageEntity> &entities) {
+  if (entities.empty()) {
+    return true;
+  }
+  check_is_sorted(entities);
+
+  int32 end_pos[SPLITTABLE_ENTITY_TYPE_COUNT];
+  std::fill_n(end_pos, SPLITTABLE_ENTITY_TYPE_COUNT, -1);
+  vector<const MessageEntity *> nested_entities_stack;
+  int32 nested_entity_type_mask = 0;
+  for (auto &entity : entities) {
     while (!nested_entities_stack.empty() &&
-           entities[i].offset >= nested_entities_stack.back()->offset + nested_entities_stack.back()->length) {
+           entity.offset >= nested_entities_stack.back()->offset + nested_entities_stack.back()->length) {
       // remove non-intersecting entities from the stack
+      nested_entity_type_mask -= get_entity_type_mask(nested_entities_stack.back()->type);
       nested_entities_stack.pop_back();
     }
 
     if (!nested_entities_stack.empty()) {
-      // entity intersects some previous entity
-      if (entities[i].offset + entities[i].length >
-          nested_entities_stack.back()->offset + nested_entities_stack.back()->length) {
-        // it must be nested
-        continue;
+      if (entity.offset + entity.length > nested_entities_stack.back()->offset + nested_entities_stack.back()->length) {
+        // entity intersects some previous entity
+        return false;
+      }
+      if ((nested_entity_type_mask & get_entity_type_mask(entity.type)) != 0) {
+        // entity has the same type as one of the previous nested
+        return false;
       }
       auto parent_type = nested_entities_stack.back()->type;
-      if (entities[i].type == parent_type) {
-        // the type must be different
-        continue;
-      }
-      if (parent_type == MessageEntity::Type::Code || parent_type == MessageEntity::Type::Pre ||
-          parent_type == MessageEntity::Type::PreCode) {
+      if (is_pre_entity(parent_type)) {
         // Pre and Code can't contain nested entities
-        continue;
+        return false;
+      }
+      // parents are not pre after this point
+      if (is_pre_entity(entity.type) && (nested_entity_type_mask & ~get_blockquote_entities_mask()) != 0) {
+        // Pre and Code can't be contained in other entities, except blockquote
+        return false;
+      }
+      if ((is_continuous_entity(entity.type) || is_blockquote_entity(entity.type)) &&
+          (nested_entity_type_mask & get_continuous_entities_mask()) != 0) {
+        // continuous and blockquote can't be contained in continuous
+        return false;
       }
     }
 
-    if (i != left_entities) {
-      entities[left_entities] = std::move(entities[i]);
+    if (is_splittable_entity(entity.type)) {
+      auto index = get_splittable_entity_type_index(entity.type);
+      if (end_pos[index] >= entity.offset) {
+        // the entities can be merged
+        return false;
+      }
+      end_pos[index] = entity.offset + entity.length;
     }
-    nested_entities_stack.push_back(&entities[left_entities++]);
+    nested_entities_stack.push_back(&entity);
+    nested_entity_type_mask += get_entity_type_mask(entity.type);
   }
-
-  entities.erase(entities.begin() + left_entities, entities.end());
+  return true;
 }
 
 // removes all intersecting entities, including nested
-// entities must be pre-sorted and pre-validated
 static void remove_intersecting_entities(vector<MessageEntity> &entities) {
+  check_is_sorted(entities);
   int32 last_entity_end = 0;
   size_t left_entities = 0;
   for (size_t i = 0; i < entities.size(); i++) {
@@ -1198,15 +1278,36 @@ static void remove_intersecting_entities(vector<MessageEntity> &entities) {
   entities.erase(entities.begin() + left_entities, entities.end());
 }
 
-static void fix_entities(vector<MessageEntity> &entities) {
-  if (entities.empty()) {
+// continuous_entities and blockquote_entities must be pre-sorted and non-overlapping
+static void remove_entities_intersecting_blockquote(vector<MessageEntity> &entities,
+                                                    const vector<MessageEntity> &blockquote_entities) {
+  check_non_intersecting(entities);
+  check_non_intersecting(blockquote_entities);
+  if (blockquote_entities.empty()) {
     // fast path
     return;
   }
 
-  std::sort(entities.begin(), entities.end());
-
-  remove_unallowed_entities(entities);
+  auto blockquote_it = blockquote_entities.begin();
+  size_t left_entities = 0;
+  for (size_t i = 0; i < entities.size(); i++) {
+    while (blockquote_it != blockquote_entities.end() &&
+           (blockquote_it->type != MessageEntity::Type::BlockQuote ||
+            blockquote_it->offset + blockquote_it->length <= entities[i].offset)) {
+      blockquote_it++;
+    }
+    if (blockquote_it != blockquote_entities.end() &&
+        (blockquote_it->offset + blockquote_it->length < entities[i].offset + entities[i].length ||
+         (entities[i].offset < blockquote_it->offset &&
+          blockquote_it->offset < entities[i].offset + entities[i].length))) {
+      continue;
+    }
+    if (i != left_entities) {
+      entities[left_entities] = std::move(entities[i]);
+    }
+    left_entities++;
+  }
+  entities.erase(entities.begin() + left_entities, entities.end());
 }
 
 vector<MessageEntity> find_entities(Slice text, bool skip_bot_commands, bool only_urls) {
@@ -2487,6 +2588,8 @@ vector<MessageEntity> get_message_entities(vector<tl_object_ptr<secret_api::Mess
 // like clean_input_string but also fixes entities
 // entities must be sorted, can be nested, but must not intersect each other
 static Result<string> clean_input_string_with_entities(const string &text, vector<MessageEntity> &entities) {
+  check_is_sorted(entities);
+
   struct EntityInfo {
     MessageEntity *entity;
     int32 utf16_skipped_before;
@@ -2627,7 +2730,9 @@ static Result<string> clean_input_string_with_entities(const string &text, vecto
 }
 
 // removes entities containing whitespaces only
+// returns {last_non_whitespace_pos, last_non_whitespace_utf16_offset}
 static std::pair<size_t, int32> remove_invalid_entities(const string &text, vector<MessageEntity> &entities) {
+  check_is_sorted(entities);
   vector<MessageEntity *> nested_entities_stack;
   size_t current_entity = 0;
 
@@ -2696,11 +2801,188 @@ static std::pair<size_t, int32> remove_invalid_entities(const string &text, vect
   return {last_non_whitespace_pos, last_non_whitespace_utf16_offset};
 }
 
+// enitities must contain only splittable entities
+void split_entities(vector<MessageEntity> &entities, const vector<MessageEntity> &other_entities) {
+  check_is_sorted(entities);
+  check_is_sorted(other_entities);
+
+  int32 begin_pos[SPLITTABLE_ENTITY_TYPE_COUNT] = {};
+  int32 end_pos[SPLITTABLE_ENTITY_TYPE_COUNT] = {};
+  auto it = entities.begin();
+  vector<MessageEntity> result;
+  auto add_entities = [&](int32 end_offset) {
+    auto flush_entities = [&](int32 offset) {
+      for (auto type : {MessageEntity::Type::Bold, MessageEntity::Type::Italic, MessageEntity::Type::Underline,
+                        MessageEntity::Type::Strikethrough}) {
+        auto index = get_splittable_entity_type_index(type);
+        if (end_pos[index] != 0 && begin_pos[index] < offset) {
+          if (end_pos[index] <= offset) {
+            result.emplace_back(type, begin_pos[index], end_pos[index] - begin_pos[index]);
+            begin_pos[index] = 0;
+            end_pos[index] = 0;
+          } else {
+            result.emplace_back(type, begin_pos[index], offset - begin_pos[index]);
+            begin_pos[index] = offset;
+          }
+        }
+      }
+    };
+
+    while (it != entities.end()) {
+      if (it->offset >= end_offset) {
+        break;
+      }
+      CHECK(is_splittable_entity(it->type));
+      auto index = get_splittable_entity_type_index(it->type);
+      if (it->offset <= end_pos[index] && end_pos[index] != 0) {
+        if (it->offset + it->length > end_pos[index]) {
+          end_pos[index] = it->offset + it->length;
+        }
+      } else {
+        flush_entities(it->offset);
+        begin_pos[index] = it->offset;
+        end_pos[index] = it->offset + it->length;
+      }
+      ++it;
+    }
+    flush_entities(end_offset);
+  };
+
+  vector<const MessageEntity *> nested_entities_stack;
+  auto add_offset = [&](int32 offset) {
+    while (!nested_entities_stack.empty() &&
+           offset >= nested_entities_stack.back()->offset + nested_entities_stack.back()->length) {
+      // remove non-intersecting entities from the stack
+      auto old_size = result.size();
+      add_entities(nested_entities_stack.back()->offset + nested_entities_stack.back()->length);
+      if (is_pre_entity(nested_entities_stack.back()->type)) {
+        result.resize(old_size);
+      }
+      nested_entities_stack.pop_back();
+    }
+
+    add_entities(offset);
+  };
+  for (auto &other_entity : other_entities) {
+    add_offset(other_entity.offset);
+    nested_entities_stack.push_back(&other_entity);
+  }
+  add_offset(std::numeric_limits<int32>::max());
+
+  entities = std::move(result);
+
+  // entities are sorted only by offset now, re-sort if needed
+  if (!std::is_sorted(entities.begin(), entities.end())) {
+    std::sort(entities.begin(), entities.end());
+  }
+}
+
+static vector<MessageEntity> resplit_entities(vector<MessageEntity> &&splittable_entities,
+                                              vector<MessageEntity> &&entities) {
+  if (!splittable_entities.empty()) {
+    split_entities(splittable_entities, entities);  // can merge some entities
+
+    if (entities.empty()) {
+      return std::move(splittable_entities);
+    }
+
+    combine(entities, std::move(splittable_entities));
+    std::sort(entities.begin(), entities.end());
+  }
+  return std::move(entities);
+}
+
+static void fix_entities(vector<MessageEntity> &entities) {
+  if (!std::is_sorted(entities.begin(), entities.end())) {
+    std::sort(entities.begin(), entities.end());
+  }
+
+  if (are_entities_valid(entities)) {
+    // fast path
+    return;
+  }
+
+  vector<MessageEntity> continuous_entities;
+  vector<MessageEntity> blockquote_entities;
+  vector<MessageEntity> splittable_entities;
+  for (auto &entity : entities) {
+    if (is_splittable_entity(entity.type)) {
+      splittable_entities.push_back(std::move(entity));
+    } else if (is_blockquote_entity(entity.type)) {
+      blockquote_entities.push_back(std::move(entity));
+    } else {
+      continuous_entities.push_back(std::move(entity));
+    }
+  }
+  remove_intersecting_entities(continuous_entities);  // continuous entities can't intersect each other
+
+  if (!blockquote_entities.empty()) {
+    remove_intersecting_entities(blockquote_entities);  // blockquote entities can't intersect each other
+
+    // blockquote entities can contain continuous entities, but can't intersect them in the other ways
+    remove_entities_intersecting_blockquote(continuous_entities, blockquote_entities);
+
+    combine(continuous_entities, std::move(blockquote_entities));
+    std::sort(continuous_entities.begin(), continuous_entities.end());
+  }
+
+  // must be called once to not merge some adjacent entities
+  entities = resplit_entities(std::move(splittable_entities), std::move(continuous_entities));
+  check_is_sorted(entities);
+}
+
+static void merge_new_entities(vector<MessageEntity> &entities, vector<MessageEntity> new_entities) {
+  check_is_sorted(entities);
+  if (new_entities.empty()) {
+    // fast path
+    return;
+  }
+
+  check_non_intersecting(new_entities);
+
+  vector<MessageEntity> continuous_entities;
+  vector<MessageEntity> blockquote_entities;
+  vector<MessageEntity> splittable_entities;
+  for (auto &entity : entities) {
+    if (is_splittable_entity(entity.type)) {
+      splittable_entities.push_back(std::move(entity));
+    } else if (is_blockquote_entity(entity.type)) {
+      blockquote_entities.push_back(std::move(entity));
+    } else {
+      continuous_entities.push_back(std::move(entity));
+    }
+  }
+
+  remove_entities_intersecting_blockquote(new_entities, blockquote_entities);
+
+  // merge before combining with blockquote entities
+  continuous_entities = merge_entities(std::move(continuous_entities), std::move(new_entities));
+
+  if (!blockquote_entities.empty()) {
+    combine(continuous_entities, std::move(blockquote_entities));
+    std::sort(continuous_entities.begin(), continuous_entities.end());
+  }
+
+  // must be called once to not merge some adjacent entities
+  entities = resplit_entities(std::move(splittable_entities), std::move(continuous_entities));
+  check_is_sorted(entities);
+}
+
 Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool allow_empty, bool skip_new_entities,
                           bool skip_bot_commands, bool for_draft) {
   if (!check_utf8(text)) {
     return Status::Error(400, "Strings must be encoded in UTF-8");
   }
+
+  for (auto &entity : entities) {
+    if (entity.offset < 0 || entity.offset > 1000000) {
+      return Status::Error(400, PSLICE() << "Receive an entity with incorrect offset " << entity.offset);
+    }
+    if (entity.length < 0 || entity.length > 1000000) {
+      return Status::Error(400, PSLICE() << "Receive an entity with incorrect length " << entity.length);
+    }
+  }
+  td::remove_if(entities, [](const MessageEntity &entity) { return entity.length == 0; });
 
   fix_entities(entities);
 
@@ -2721,9 +3003,10 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
     return Status::Error(3, "Message must be non-empty");
   }
 
-  if (!std::is_sorted(entities.begin(), entities.end())) {
-    std::sort(entities.begin(), entities.end());  // re-sort entities if needed after removal of some characters
-  }
+  // re-fix entities if needed after removal of some characters
+  // the sort order can be incorrect by type
+  // some splittable entities may be needed to be concatenated
+  fix_entities(entities);
 
   if (for_draft) {
     text = std::move(result);
@@ -2781,7 +3064,7 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
   }
 
   if (!skip_new_entities) {
-    entities = merge_entities(std::move(entities), find_entities(text, skip_bot_commands));
+    merge_new_entities(entities, find_entities(text, skip_bot_commands));
   }
 
   // TODO MAX_MESSAGE_LENGTH and MAX_CAPTION_LENGTH
@@ -2805,7 +3088,7 @@ FormattedText get_message_text(const ContactsManager *contacts_manager, string m
     if (!clean_input_string(message_text)) {
       message_text.clear();
     }
-    entities.clear();
+    entities = find_entities(message_text, false);
   }
   return FormattedText{std::move(message_text), std::move(entities)};
 }

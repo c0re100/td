@@ -1104,6 +1104,7 @@ class MessagesManager : public Actor {
     bool is_pinned_message_id_inited = false;
     bool is_folder_id_inited = false;
     bool need_repair_server_unread_count = false;
+    bool need_repair_channel_server_unread_count = false;
     bool is_marked_as_unread = false;
     bool last_sent_has_scheduled_messages = false;
     bool has_scheduled_server_messages = false;
@@ -2012,9 +2013,9 @@ class MessagesManager : public Actor {
 
   void try_restore_dialog_reply_markup(Dialog *d, const Message *m);
 
-  void set_dialog_pinned_message_notification(Dialog *d, MessageId message_id);
+  void set_dialog_pinned_message_notification(Dialog *d, MessageId message_id, const char *source);
 
-  void remove_dialog_pinned_message_notification(Dialog *d);
+  void remove_dialog_pinned_message_notification(Dialog *d, const char *source);
 
   void remove_dialog_mention_notifications(Dialog *d);
 
@@ -2041,6 +2042,8 @@ class MessagesManager : public Actor {
   void on_scope_unmute(NotificationSettingsScope scope);
 
   bool update_dialog_silent_send_message(Dialog *d, bool silent_send_message);
+
+  bool is_dialog_action_unneded(DialogId dialog_id) const;
 
   void on_send_dialog_action_timeout(DialogId dialog_id);
 
@@ -2741,6 +2744,8 @@ class MessagesManager : public Actor {
   std::unordered_map<DialogId, OnlineMemberCountInfo, DialogIdHash> dialog_online_member_counts_;
 
   std::unordered_map<string, int32> auth_notification_id_date_;
+
+  std::unordered_map<DialogId, MessageId, DialogIdHash> previous_repaired_read_inbox_max_message_id_;
 
   uint32 scheduled_messages_sync_generation_ = 1;
 
