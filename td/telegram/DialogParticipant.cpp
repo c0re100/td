@@ -393,12 +393,16 @@ DialogParticipantStatus get_dialog_participant_status(const tl_object_ptr<td_api
       auto permissions = st->permissions_.get();
       bool can_send_polls = permissions->can_send_polls_;
       bool can_send_media = permissions->can_send_media_messages_;
+	  bool can_send_stickers = permissions->can_send_stickers_;
+      bool can_send_animations = permissions->can_send_animations_;
+      bool can_send_games = permissions->can_send_games_;
+      bool can_use_inline_bots = permissions->can_use_inline_bots_;
       bool can_send_messages = permissions->can_send_messages_ || can_send_media || can_send_polls ||
-                               permissions->can_send_other_messages_ || permissions->can_add_web_page_previews_;
+                               can_send_stickers || can_send_animations || can_send_games || can_use_inline_bots || permissions->can_add_web_page_previews_;
       return DialogParticipantStatus::Restricted(
           st->is_member_, st->restricted_until_date_, can_send_messages, can_send_media,
-          permissions->can_send_other_messages_, permissions->can_send_other_messages_,
-          permissions->can_send_other_messages_, permissions->can_send_other_messages_,
+          permissions->can_send_stickers_, permissions->can_send_animations_,
+          permissions->can_send_games_, permissions->can_use_inline_bots_,
           permissions->can_add_web_page_previews_, permissions->can_send_polls_, permissions->can_change_info_,
           permissions->can_invite_users_, permissions->can_pin_messages_);
     }
@@ -473,7 +477,7 @@ RestrictedRights::RestrictedRights(bool can_send_messages, bool can_send_media, 
 tl_object_ptr<td_api::chatPermissions> RestrictedRights::get_chat_permissions_object() const {
   return td_api::make_object<td_api::chatPermissions>(
       can_send_messages(), can_send_media(), can_send_polls(),
-      can_send_stickers() || can_send_animations() || can_send_games() || can_use_inline_bots(),
+      can_send_stickers(), can_send_animations(), can_send_games(), can_use_inline_bots(),
       can_add_web_page_previews(), can_change_info_and_settings(), can_invite_users(), can_pin_messages());
 }
 
@@ -596,11 +600,15 @@ RestrictedRights get_restricted_rights(const tl_object_ptr<telegram_api::chatBan
 RestrictedRights get_restricted_rights(const td_api::object_ptr<td_api::chatPermissions> &permissions) {
   bool can_send_polls = permissions->can_send_polls_;
   bool can_send_media = permissions->can_send_media_messages_;
+  bool can_send_stickers = permissions->can_send_stickers_;
+  bool can_send_animations = permissions->can_send_animations_;
+  bool can_send_games = permissions->can_send_games_;
+  bool can_use_inline_bots = permissions->can_use_inline_bots_;
   bool can_send_messages = permissions->can_send_messages_ || can_send_media || can_send_polls ||
-                           permissions->can_send_other_messages_ || permissions->can_add_web_page_previews_;
-  return RestrictedRights(can_send_messages, can_send_media, permissions->can_send_other_messages_,
-                          permissions->can_send_other_messages_, permissions->can_send_other_messages_,
-                          permissions->can_send_other_messages_, permissions->can_add_web_page_previews_,
+                          can_send_stickers || can_send_animations || can_send_games || can_use_inline_bots || permissions->can_add_web_page_previews_;
+  return RestrictedRights(can_send_messages, can_send_media, permissions->can_send_stickers_, 
+                          permissions->can_send_animations_, permissions->can_send_games_, 
+                          permissions->can_use_inline_bots_, permissions->can_add_web_page_previews_,
                           permissions->can_send_polls_, permissions->can_change_info_, permissions->can_invite_users_,
                           permissions->can_pin_messages_);
 }

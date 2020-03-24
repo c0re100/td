@@ -3446,12 +3446,12 @@ class CliClient final : public Actor {
       string permissions;
 
       std::tie(chat_id, permissions) = split(args);
-      if (permissions.size() == 8) {
+      if (permissions.size() == 11) {
         auto &s = permissions;
         send_request(td_api::make_object<td_api::setChatPermissions>(
             as_chat_id(chat_id),
             td_api::make_object<td_api::chatPermissions>(s[0] == '1', s[1] == '1', s[2] == '1', s[3] == '1',
-                                                         s[4] == '1', s[5] == '1', s[6] == '1', s[7] == '1')));
+                                                         s[4] == '1', s[5] == '1', s[6] == '1', s[7] == '1', s[8] == '1', s[9] == '1', s[10] == '1')));
       } else {
         LOG(ERROR) << "Wrong permissions size, expected 8";
       }
@@ -3548,18 +3548,18 @@ class CliClient final : public Actor {
       } else if (status_str == "rest") {
         status = td_api::make_object<td_api::chatMemberStatusRestricted>(
             true, static_cast<int32>(120 + std::time(nullptr)),
-            td_api::make_object<td_api::chatPermissions>(false, false, false, false, false, false, false, false));
+            td_api::make_object<td_api::chatPermissions>(false, false, false, false, false, false, false, false, false, false, false));
       } else if (status_str == "restkick") {
         status = td_api::make_object<td_api::chatMemberStatusRestricted>(
             false, static_cast<int32>(120 + std::time(nullptr)),
-            td_api::make_object<td_api::chatPermissions>(true, false, false, false, false, false, false, false));
+            td_api::make_object<td_api::chatPermissions>(true, false, false, false, false, false, false, false, false, false, false));
       } else if (status_str == "restunkick") {
         status = td_api::make_object<td_api::chatMemberStatusRestricted>(
             true, static_cast<int32>(120 + std::time(nullptr)),
-            td_api::make_object<td_api::chatPermissions>(true, false, false, false, false, false, false, false));
+            td_api::make_object<td_api::chatPermissions>(true, false, false, false, false, false, false, false, false, false, false));
       } else if (status_str == "unrest") {
         status = td_api::make_object<td_api::chatMemberStatusRestricted>(
-            true, 0, td_api::make_object<td_api::chatPermissions>(true, true, true, true, true, true, true, true));
+            true, 0, td_api::make_object<td_api::chatPermissions>(true, true, true, true, true, true, true, true, true, true, true));
       }
       if (status != nullptr) {
         send_request(td_api::make_object<td_api::setChatMemberStatus>(as_chat_id(chat_id), as_user_id(user_id),
