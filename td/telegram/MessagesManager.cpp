@@ -8601,6 +8601,9 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
         }
       }
     }
+    else {
+        deleted_server_message_ids.push_back(message_id);
+    }
   }
 
   bool is_bot = td_->auth_manager_->is_bot();
