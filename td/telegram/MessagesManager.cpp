@@ -8651,9 +8651,9 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
   bool is_bot = td_->auth_manager_->is_bot();
   for (auto message_id : message_ids) {
     auto m = get_message(d, message_id);
-    if (!can_delete_message(dialog_id, m)) {
-      return promise.set_error(Status::Error(6, "Message can't be deleted"));
-    }
+    //if (!can_delete_message(dialog_id, m)) {
+    //  return promise.set_error(Status::Error(6, "Message can't be deleted"));
+    //}
     if (is_bot && !message_id.is_scheduled() && message_id.is_server() && !can_revoke_message(dialog_id, m)) {
       return promise.set_error(Status::Error(6, "Message can't be deleted for everyone"));
     }
