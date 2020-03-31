@@ -13,17 +13,17 @@
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/SignalSlot.h"
 
-#include "td/mtproto/utils.h"  // for create_storer, fetch_result TODO
-
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/format.h"
 #include "td/utils/List.h"
 #include "td/utils/logging.h"
 #include "td/utils/ObjectPool.h"
+#include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/Time.h"
+#include "td/utils/tl_parsers.h"
 
 #include <atomic>
 #include <utility>
@@ -330,7 +330,7 @@ class NetQuery : public ListNode {
   NetQueryCounter nq_counter_;
 
   NetQuery(State state, uint64 id, BufferSlice &&query, BufferSlice &&answer, DcId dc_id, Type type, AuthFlag auth_flag,
-           GzipFlag gzip_flag, int32 tl_constructor)
+           GzipFlag gzip_flag, int32 tl_constructor, double total_timeout_limit)
       : state_(state)
       , type_(type)
       , auth_flag_(auth_flag)
@@ -341,6 +341,7 @@ class NetQuery : public ListNode {
       , query_(std::move(query))
       , answer_(std::move(answer))
       , tl_constructor_(tl_constructor)
+      , total_timeout_limit(total_timeout_limit)
       , nq_counter_(true) {
     my_id_ = get_my_id();
     start_timestamp_ = Time::now();
@@ -365,6 +366,7 @@ inline StringBuilder &operator<<(StringBuilder &stream, const NetQuery &net_quer
   stream << "]";
   return stream;
 }
+
 inline StringBuilder &operator<<(StringBuilder &stream, const NetQueryPtr &net_query_ptr) {
   return stream << *net_query_ptr;
 }
@@ -376,6 +378,21 @@ inline void cancel_query(NetQueryRef &ref) {
     return;
   }
   ref->cancel(ref.generation());
+}
+
+template <class T>
+Result<typename T::ReturnType> fetch_result(const BufferSlice &message) {
+  TlBufferParser parser(&message);
+  auto result = T::fetch_result(parser);
+  parser.fetch_end();
+
+  const char *error = parser.get_error();
+  if (error != nullptr) {
+    LOG(ERROR) << "Can't parse: " << format::as_hex_dump<4>(message.as_slice());
+    return Status::Error(500, Slice(error));
+  }
+
+  return std::move(result);
 }
 
 template <class T>
@@ -397,6 +414,7 @@ Result<typename T::ReturnType> fetch_result(Result<NetQueryPtr> r_query) {
 inline void NetQueryCallback::on_result(NetQueryPtr query) {
   on_result_resendable(std::move(query), Auto());
 }
+
 inline void NetQueryCallback::on_result_resendable(NetQueryPtr query, Promise<NetQueryPtr> promise) {
   on_result(std::move(query));
 }
@@ -404,6 +422,7 @@ inline void NetQueryCallback::on_result_resendable(NetQueryPtr query, Promise<Ne
 inline void start_migrate(NetQueryPtr &net_query, int32 sched_id) {
   net_query->start_migrate(sched_id);
 }
+
 inline void finish_migrate(NetQueryPtr &net_query) {
   net_query->finish_migrate();
 }

@@ -79,7 +79,7 @@ class GetUpdatesStateQuery : public Td::ResultHandler {
   void send() {
     // TODO this call must be first after client is logged in, there must be no API calls before
     // it succeeds
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::updates_getState())));
+    send_query(G()->net_query_creator().create(telegram_api::updates_getState()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -106,7 +106,7 @@ class GetUpdatesStateQuery : public Td::ResultHandler {
 class PingServerQuery : public Td::ResultHandler {
  public:
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::updates_getState())));
+    send_query(G()->net_query_creator().create(telegram_api::updates_getState()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -138,8 +138,7 @@ class GetDifferenceQuery : public Td::ResultHandler {
 
     VLOG(get_difference) << tag("pts", pts) << tag("qts", qts) << tag("date", date);
 
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::updates_getDifference(0, pts, 0, date, qts))));
+    send_query(G()->net_query_creator().create(telegram_api::updates_getDifference(0, pts, 0, date, qts)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -639,10 +638,25 @@ void UpdatesManager::on_get_updates(tl_object_ptr<telegram_api::Updates> &&updat
     LOG(INFO) << "Receive " << to_string(updates_ptr);
   }
   if (!td_->auth_manager_->is_authorized()) {
-    if (updates_type == telegram_api::updateShort::ID &&
-        static_cast<const telegram_api::updateShort *>(updates_ptr.get())->update_->get_id() ==
-            telegram_api::updateLoginToken::ID) {
-      return td_->auth_manager_->on_update_login_token();
+    if (updates_type == telegram_api::updateShort::ID && !G()->close_flag()) {
+      auto &update = static_cast<telegram_api::updateShort *>(updates_ptr.get())->update_;
+      auto update_id = update->get_id();
+      if (update_id == telegram_api::updateLoginToken::ID) {
+        return td_->auth_manager_->on_update_login_token();
+      }
+
+      switch (update_id) {
+        case telegram_api::updateServiceNotification::ID:
+        case telegram_api::updateDcOptions::ID:
+        case telegram_api::updateConfig::ID:
+        case telegram_api::updateLangPackTooLong::ID:
+        case telegram_api::updateLangPack::ID:
+          LOG(INFO) << "Apply without authorization " << to_string(updates_ptr);
+          downcast_call(*update, OnUpdate(this, update, false));
+          return;
+        default:
+          break;
+      }
     }
     LOG(INFO) << "Ignore received before authorization or after logout " << to_string(updates_ptr);
     return;
@@ -2016,6 +2030,15 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateLoginToken> upd
 // unsupported updates
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateTheme> update, bool /*force_apply*/) {
+}
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDialogFilter> update, bool /*force_apply*/) {
+}
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDialogFilterOrder> update, bool /*force_apply*/) {
+}
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDialogFilters> update, bool /*force_apply*/) {
 }
 
 }  // namespace td

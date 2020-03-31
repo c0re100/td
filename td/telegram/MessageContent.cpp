@@ -643,6 +643,19 @@ class MessagePoll : public MessageContent {
   }
 };
 
+class MessageDice : public MessageContent {
+ public:
+  int32 dice_value = 0;
+
+  MessageDice() = default;
+  explicit MessageDice(int32 dice_value) : dice_value(dice_value) {
+  }
+
+  MessageContentType get_type() const override {
+    return MessageContentType::Dice;
+  }
+};
+
 template <class StorerT>
 static void store(const MessageContent *content, StorerT &storer) {
   CHECK(content != nullptr);
@@ -898,6 +911,11 @@ static void store(const MessageContent *content, StorerT &storer) {
     case MessageContentType::Poll: {
       auto m = static_cast<const MessagePoll *>(content);
       store(m->poll_id, storer);
+      break;
+    }
+    case MessageContentType::Dice: {
+      auto m = static_cast<const MessageDice *>(content);
+      store(m->dice_value, storer);
       break;
     }
     default:
@@ -1242,6 +1260,13 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       content = std::move(m);
       break;
     }
+    case MessageContentType::Dice: {
+      auto m = make_unique<MessageDice>();
+      parse(m->dice_value, parser);
+      is_bad = m->dice_value < 0 || m->dice_value > 6;
+      content = std::move(m);
+      break;
+    }
     default:
       LOG(FATAL) << "Have unknown message content type " << static_cast<int32>(content_type);
   }
@@ -1450,6 +1475,9 @@ static Result<InputMessageContent> create_input_message_content(
       content = make_unique<MessageAudio>(file_id, std::move(caption));
       break;
     }
+    case td_api::inputMessageDice::ID:
+      content = make_unique<MessageDice>();
+      break;
     case td_api::inputMessageDocument::ID:
       td->documents_manager_->create_document(file_id, string(), thumbnail, std::move(file_name), std::move(mime_type),
                                               false);
@@ -1903,6 +1931,7 @@ bool can_have_input_media(const Td *td, const MessageContent *content) {
     case MessageContentType::Animation:
     case MessageContentType::Audio:
     case MessageContentType::Contact:
+    case MessageContentType::Dice:
     case MessageContentType::Document:
     case MessageContentType::Invoice:
     case MessageContentType::LiveLocation:
@@ -1981,6 +2010,7 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
       return td->voice_notes_manager_->get_secret_input_media(m->file_id, std::move(input_file), m->caption.text);
     }
     case MessageContentType::Call:
+    case MessageContentType::Dice:
     case MessageContentType::Game:
     case MessageContentType::Invoice:
     case MessageContentType::LiveLocation:
@@ -2113,6 +2143,8 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
       auto m = static_cast<const MessageContact *>(content);
       return m->contact.get_input_media_contact();
     }
+    case MessageContentType::Dice:
+      return make_tl_object<telegram_api::inputMediaDice>();
     case MessageContentType::Document: {
       auto m = static_cast<const MessageDocument *>(content);
       return td->documents_manager_->get_input_media(m->file_id, std::move(input_file), std::move(input_thumbnail));
@@ -2268,6 +2300,7 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td) {
       return td->video_notes_manager_->delete_video_note_thumbnail(m->file_id);
     }
     case MessageContentType::Contact:
+    case MessageContentType::Dice:
     case MessageContentType::Game:
     case MessageContentType::Invoice:
     case MessageContentType::LiveLocation:
@@ -2436,6 +2469,7 @@ static int32 get_message_content_media_index_mask(const MessageContent *content,
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
     case MessageContentType::Poll:
+    case MessageContentType::Dice:
       return 0;
     default:
       UNREACHABLE();
@@ -2512,11 +2546,16 @@ bool get_message_content_poll_is_anonymous(const Td *td, const MessageContent *c
   }
 }
 
+bool has_message_content_web_page(const MessageContent *content) {
+  if (content->get_type() == MessageContentType::Text) {
+    return static_cast<const MessageText *>(content)->web_page_id.is_valid();
+  }
+  return false;
+}
+
 void remove_message_content_web_page(MessageContent *content) {
   CHECK(content->get_type() == MessageContentType::Text);
-  auto &web_page_id = static_cast<MessageText *>(content)->web_page_id;
-  CHECK(web_page_id.is_valid());
-  web_page_id = WebPageId();
+  static_cast<MessageText *>(content)->web_page_id = WebPageId();
 }
 
 void set_message_content_poll_answer(Td *td, const MessageContent *content, FullMessageId full_message_id,
@@ -3034,6 +3073,14 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
       }
       break;
     }
+    case MessageContentType::Dice: {
+      auto old_ = static_cast<const MessageDice *>(old_content);
+      auto new_ = static_cast<const MessageDice *>(new_content);
+      if (old_->dice_value != new_->dice_value) {
+        need_update = true;
+      }
+      break;
+    }
     case MessageContentType::Unsupported: {
       auto old_ = static_cast<const MessageUnsupported *>(old_content);
       auto new_ = static_cast<const MessageUnsupported *>(new_content);
@@ -3165,6 +3212,7 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
     case MessageContentType::Poll:
+    case MessageContentType::Dice:
       LOG(ERROR) << "Receive new file " << new_file_id << " in a sent message of the type " << content_type;
       break;
     default:
@@ -3627,6 +3675,11 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
                                                tl_object_ptr<telegram_api::MessageMedia> &&media,
                                                DialogId owner_dialog_id, bool is_content_read, UserId via_bot_user_id,
                                                int32 *ttl) {
+  if (!td->auth_manager_->is_authorized() && !G()->close_flag() && media != nullptr) {
+    LOG(ERROR) << "Receive without authorization " << to_string(media);
+    media = nullptr;
+  }
+
   int32 constructor_id = media == nullptr ? telegram_api::messageMediaEmpty::ID : media->get_id();
   switch (constructor_id) {
     case telegram_api::messageMediaEmpty::ID:
@@ -3654,6 +3707,16 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
         *ttl = message_photo->ttl_seconds_;
       }
       return make_unique<MessagePhoto>(std::move(photo), std::move(message));
+    }
+    case telegram_api::messageMediaDice::ID: {
+      auto message_dice = move_tl_object_as<telegram_api::messageMediaDice>(media);
+
+      auto m = make_unique<MessageDice>(message_dice->value_);
+      if (m->dice_value < 0 || m->dice_value > 6) {
+        break;
+      }
+
+      return std::move(m);
     }
     case telegram_api::messageMediaGeo::ID: {
       auto message_geo_point = move_tl_object_as<telegram_api::messageMediaGeo>(media);
@@ -3837,6 +3900,12 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     }
     case MessageContentType::Contact:
       return make_unique<MessageContact>(*static_cast<const MessageContact *>(content));
+    case MessageContentType::Dice:
+      if (type != MessageContentDupType::Forward) {
+        return make_unique<MessageDice>();
+      } else {
+        return make_unique<MessageDice>(*static_cast<const MessageDice *>(content));
+      }
     case MessageContentType::Document: {
       auto result = make_unique<MessageDocument>(*static_cast<const MessageDocument *>(content));
       if (remove_caption) {
@@ -4366,6 +4435,10 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       const MessagePoll *m = static_cast<const MessagePoll *>(content);
       return make_tl_object<td_api::messagePoll>(td->poll_manager_->get_poll_object(m->poll_id));
     }
+    case MessageContentType::Dice: {
+      const MessageDice *m = static_cast<const MessageDice *>(content);
+      return make_tl_object<td_api::messageDice>(m->dice_value);
+    }
     default:
       UNREACHABLE();
       return nullptr;
@@ -4476,7 +4549,7 @@ void update_message_content_file_id_remote(MessageContent *content, FileId file_
   if (file_id.get_remote() == 0) {
     return;
   }
-  FileId *old_file_id = [&]() {
+  FileId *old_file_id = [&] {
     switch (content->get_type()) {
       case MessageContentType::Animation:
         return &static_cast<MessageAnimation *>(content)->file_id;
@@ -4658,6 +4731,7 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::WebsiteConnected:
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
+    case MessageContentType::Dice:
       return string();
     default:
       UNREACHABLE();
@@ -4848,6 +4922,8 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
       break;
     case MessageContentType::Poll:
       // no need to add poll dependencies, because they are forcely loaded with the poll
+      break;
+    case MessageContentType::Dice:
       break;
     default:
       UNREACHABLE();

@@ -27,7 +27,7 @@ namespace td {
 Result<PrivacyManager::UserPrivacySetting> PrivacyManager::UserPrivacySetting::from_td_api(
     tl_object_ptr<td_api::UserPrivacySetting> key) {
   if (!key) {
-    return Status::Error(5, "UserPrivacySetting should not be empty");
+    return Status::Error(5, "UserPrivacySetting must be non-empty");
   }
   return UserPrivacySetting(*key);
 }
@@ -368,12 +368,12 @@ Result<PrivacyManager::UserPrivacySettingRules> PrivacyManager::UserPrivacySetti
 Result<PrivacyManager::UserPrivacySettingRules> PrivacyManager::UserPrivacySettingRules::from_td_api(
     tl_object_ptr<td_api::userPrivacySettingRules> rules) {
   if (!rules) {
-    return Status::Error(5, "UserPrivacySettingRules should not be empty");
+    return Status::Error(5, "UserPrivacySettingRules must be non-empty");
   }
   UserPrivacySettingRules result;
   for (auto &rule : rules->rules_) {
     if (!rule) {
-      return Status::Error(5, "UserPrivacySettingRule should not be empty");
+      return Status::Error(5, "UserPrivacySettingRule must be non-empty");
     }
     result.rules_.emplace_back(*rule);
   }
@@ -409,8 +409,8 @@ void PrivacyManager::get_privacy(tl_object_ptr<td_api::UserPrivacySetting> key,
     // query has already been sent, just wait for the result
     return;
   }
-  auto net_query = G()->net_query_creator().create(
-      create_storer(telegram_api::account_getPrivacy(user_privacy_setting.as_telegram_api())));
+  auto net_query =
+      G()->net_query_creator().create(telegram_api::account_getPrivacy(user_privacy_setting.as_telegram_api()));
 
   send_with_promise(std::move(net_query),
                     PromiseCreator::lambda([this, user_privacy_setting](Result<NetQueryPtr> x_net_query) {
@@ -442,8 +442,8 @@ void PrivacyManager::set_privacy(tl_object_ptr<td_api::UserPrivacySetting> key,
     // TODO cancel previous query
     return promise.set_error(Status::Error(5, "Another set_privacy query is active"));
   }
-  auto net_query = G()->net_query_creator().create(create_storer(
-      telegram_api::account_setPrivacy(user_privacy_setting.as_telegram_api(), privacy_rules.as_telegram_api())));
+  auto net_query = G()->net_query_creator().create(
+      telegram_api::account_setPrivacy(user_privacy_setting.as_telegram_api(), privacy_rules.as_telegram_api()));
 
   info.has_set_query = true;
   send_with_promise(std::move(net_query),

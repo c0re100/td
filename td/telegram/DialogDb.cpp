@@ -38,19 +38,19 @@ Status init_dialog_db(SqliteDb &db, int32 version, bool &was_created) {
     version = 0;
   }
 
-  auto create_notification_group_table = [&db]() {
+  auto create_notification_group_table = [&db] {
     return db.exec(
         "CREATE TABLE IF NOT EXISTS notification_groups (notification_group_id INT4 PRIMARY KEY, dialog_id "
         "INT8, last_notification_date INT4)");
   };
 
-  auto create_last_notification_date_index = [&db]() {
+  auto create_last_notification_date_index = [&db] {
     return db.exec(
         "CREATE INDEX IF NOT EXISTS notification_group_by_last_notification_date ON notification_groups "
         "(last_notification_date, dialog_id, notification_group_id) WHERE last_notification_date IS NOT NULL");
   };
 
-  auto add_dialogs_in_folder_index = [&db]() {
+  auto add_dialogs_in_folder_index = [&db] {
     return db.exec(
         "CREATE INDEX IF NOT EXISTS dialog_in_folder_by_dialog_order ON dialogs (folder_id, dialog_order, dialog_id) "
         "WHERE folder_id IS NOT NULL");
@@ -75,7 +75,7 @@ Status init_dialog_db(SqliteDb &db, int32 version, bool &was_created) {
     TRY_STATUS(db.exec("DROP INDEX IF EXISTS dialog_by_dialog_order"));
     TRY_STATUS(db.exec("ALTER TABLE dialogs ADD COLUMN folder_id INT4"));
     TRY_STATUS(add_dialogs_in_folder_index());
-    TRY_STATUS(db.exec("UPDATE dialogs SET folder_id = 0 WHERE dialog_id < -1500000000000 AND dialog_order != 0"));
+    TRY_STATUS(db.exec("UPDATE dialogs SET folder_id = 0 WHERE dialog_id < -1500000000000 AND dialog_order > 0"));
   }
 
   return Status::OK();
@@ -129,7 +129,7 @@ class DialogDbImpl : public DialogDbSyncInterface {
     TRY_RESULT_ASSIGN(
         get_secret_chat_count_stmt_,
         db_.get_statement(
-            "SELECT COUNT(*) FROM dialogs WHERE folder_id = ?1 AND dialog_order != 0 AND dialog_id < -1500000000000"));
+            "SELECT COUNT(*) FROM dialogs WHERE folder_id = ?1 AND dialog_order > 0 AND dialog_id < -1500000000000"));
 
     // LOG(ERROR) << get_dialog_stmt_.explain().ok();
     // LOG(ERROR) << get_dialogs_stmt_.explain().ok();

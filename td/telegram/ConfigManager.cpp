@@ -141,7 +141,7 @@ Result<int32> HttpDate::parse_http_date(std::string slice) {
 }
 
 Result<SimpleConfig> decode_config(Slice input) {
-  static auto rsa = RSA::from_pem(
+  static auto rsa = RSA::from_pem_public_key(
                         "-----BEGIN RSA PUBLIC KEY-----\n"
                         "MIIBCgKCAQEAyr+18Rex2ohtVy8sroGP\n"
                         "BwXD3DOoKCSpjDqYoXgCqB7ioln4eDCFfOBUlfXUEvM/fnKCpF46VkAftlb4VuPD\n"
@@ -167,7 +167,7 @@ Result<SimpleConfig> decode_config(Slice input) {
   }
 
   MutableSlice data_rsa_slice(data_rsa);
-  rsa.decrypt(data_rsa_slice, data_rsa_slice);
+  rsa.decrypt_signature(data_rsa_slice, data_rsa_slice);
 
   MutableSlice data_cbc = data_rsa_slice.substr(32);
   UInt256 key;
@@ -254,6 +254,7 @@ static ActorOwn<> get_simple_config_dns(Slice address, Slice host, Promise<Simpl
     name = is_test ? "tapv3.stel.com" : "apv3.stel.com";
   }
   auto get_config = [](HttpQuery &http_query) -> Result<string> {
+    VLOG(config_recoverer) << "Receive DNS response " << http_query.content_;
     TRY_RESULT(json, json_decode(http_query.content_));
     if (json.type() != JsonValue::Type::Object) {
       return Status::Error("Expected JSON object");
@@ -282,7 +283,7 @@ static ActorOwn<> get_simple_config_dns(Slice address, Slice host, Promise<Simpl
     return data;
   };
   return get_simple_config_impl(std::move(promise), scheduler_id,
-                                PSTRING() << "https://" << address << "?name=" << url_encode(name) << "&type=16",
+                                PSTRING() << "https://" << address << "?name=" << url_encode(name) << "&type=TXT",
                                 host.str(), {{"Accept", "application/dns-json"}}, prefer_ipv6, std::move(get_config));
 }
 
@@ -503,9 +504,8 @@ ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorSh
                                        int_dc_id, false /*is_main*/, true /*use_pfs*/, false /*is_cdn*/,
                                        false /*need_destroy_auth_key*/, mtproto::AuthKey(),
                                        std::vector<mtproto::ServerSalt>());
-      auto query = G()->net_query_creator().create(create_storer(telegram_api::help_getConfig()), DcId::empty(),
-                                                   NetQuery::Type::Common, NetQuery::AuthFlag::Off,
-                                                   NetQuery::GzipFlag::On, 60 * 60 * 24);
+      auto query = G()->net_query_creator().create_unauth(telegram_api::help_getConfig(), DcId::empty());
+      query->total_timeout_limit = 60 * 60 * 24;
       query->set_callback(actor_shared(this));
       query->dispatch_ttl = 0;
       send_closure(session_, &Session::send, std::move(query));
@@ -790,7 +790,7 @@ class ConfigRecoverer : public Actor {
           PromiseCreator::lambda([actor_id = actor_shared(this)](Result<SimpleConfigResult> r_simple_config) {
             send_closure(actor_id, &ConfigRecoverer::on_simple_config, std::move(r_simple_config), false);
           });
-      auto get_simple_config = [&]() {
+      auto get_simple_config = [&] {
         switch (simple_config_turn_ % 4) {
           case 2:
             return get_simple_config_azure;
@@ -931,11 +931,9 @@ void ConfigManager::get_app_config(Promise<td_api::object_ptr<td_api::JsonValue>
 
   get_app_config_queries_.push_back(std::move(promise));
   if (get_app_config_queries_.size() == 1) {
-    G()->net_query_dispatcher().dispatch_with_callback(
-        G()->net_query_creator().create(create_storer(telegram_api::help_getAppConfig()), DcId::main(),
-                                        NetQuery::Type::Common, NetQuery::AuthFlag::Off, NetQuery::GzipFlag::On,
-                                        60 * 60 * 24),
-        actor_shared(this, 1));
+    auto query = G()->net_query_creator().create_unauth(telegram_api::help_getAppConfig());
+    query->total_timeout_limit = 60 * 60 * 24;
+    G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this, 1));
   }
 }
 
@@ -952,8 +950,7 @@ void ConfigManager::get_content_settings(Promise<Unit> &&promise) {
   get_content_settings_queries_.push_back(std::move(promise));
   if (get_content_settings_queries_.size() == 1) {
     G()->net_query_dispatcher().dispatch_with_callback(
-        G()->net_query_creator().create(create_storer(telegram_api::account_getContentSettings())),
-        actor_shared(this, 2));
+        G()->net_query_creator().create(telegram_api::account_getContentSettings()), actor_shared(this, 2));
   }
 }
 
@@ -972,8 +969,7 @@ void ConfigManager::set_content_settings(bool ignore_sensitive_content_restricti
       flags |= telegram_api::account_setContentSettings::SENSITIVE_ENABLED_MASK;
     }
     G()->net_query_dispatcher().dispatch_with_callback(
-        G()->net_query_creator().create(
-            create_storer(telegram_api::account_setContentSettings(flags, false /*ignored*/))),
+        G()->net_query_creator().create(telegram_api::account_setContentSettings(flags, false /*ignored*/)),
         actor_shared(this, 3 + static_cast<uint64>(ignore_sensitive_content_restrictions)));
   }
 }
@@ -991,10 +987,9 @@ void ConfigManager::on_dc_options_update(DcOptions dc_options) {
 
 void ConfigManager::request_config_from_dc_impl(DcId dc_id) {
   config_sent_cnt_++;
-  G()->net_query_dispatcher().dispatch_with_callback(
-      G()->net_query_creator().create(create_storer(telegram_api::help_getConfig()), dc_id, NetQuery::Type::Common,
-                                      NetQuery::AuthFlag::Off, NetQuery::GzipFlag::On, 60 * 60 * 24),
-      actor_shared(this, 0));
+  auto query = G()->net_query_creator().create_unauth(telegram_api::help_getConfig(), dc_id);
+  query->total_timeout_limit = 60 * 60 * 24;
+  G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this, 0));
 }
 
 void ConfigManager::set_ignore_sensitive_content_restrictions(bool ignore_sensitive_content_restrictions) {
@@ -1098,7 +1093,7 @@ void ConfigManager::on_result(NetQueryPtr res) {
   auto r_config = fetch_result<telegram_api::help_getConfig>(std::move(res));
   if (r_config.is_error()) {
     if (!G()->close_flag()) {
-      LOG(ERROR) << "TODO: getConfig failed: " << r_config.error();
+      LOG(ERROR) << "getConfig failed: " << r_config.error();
       expire_time_ = Timestamp::in(60.0);  // try again in a minute
       set_timeout_in(expire_time_.in());
     }

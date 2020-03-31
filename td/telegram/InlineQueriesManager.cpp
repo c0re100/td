@@ -80,9 +80,9 @@ class GetInlineBotResultsQuery : public Td::ResultHandler {
       input_peer = make_tl_object<telegram_api::inputPeerEmpty>();
     }
 
-    auto net_query = G()->net_query_creator().create(create_storer(telegram_api::messages_getInlineBotResults(
+    auto net_query = G()->net_query_creator().create(telegram_api::messages_getInlineBotResults(
         flags, std::move(bot_input_user), std::move(input_peer),
-        user_location.empty() ? nullptr : user_location.get_input_geo_point(), query, offset)));
+        user_location.empty() ? nullptr : user_location.get_input_geo_point(), query, offset));
     auto result = net_query.get_weak();
     net_query->need_resend_on_503 = false;
     send_query(std::move(net_query));
@@ -135,9 +135,9 @@ class SetInlineBotResultsQuery : public Td::ResultHandler {
       flags |= telegram_api::messages_setInlineBotResults::SWITCH_PM_MASK;
       inline_bot_switch_pm = make_tl_object<telegram_api::inlineBotSwitchPM>(switch_pm_text, switch_pm_parameter);
     }
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_setInlineBotResults(
+    send_query(G()->net_query_creator().create(telegram_api::messages_setInlineBotResults(
         flags, false /*ignored*/, false /*ignored*/, inline_query_id, std::move(results), cache_time, next_offset,
-        std::move(inline_bot_switch_pm)))));
+        std::move(inline_bot_switch_pm))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -450,7 +450,7 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
           return promise.set_error(Status::Error(400, "Field \"phone_number\" must contain a valid phone number"));
         }
         if (first_name.empty()) {
-          return promise.set_error(Status::Error(400, "Field \"first_name\" should be non-empty"));
+          return promise.set_error(Status::Error(400, "Field \"first_name\" must be non-empty"));
         }
         title = last_name.empty() ? first_name : first_name + " " + last_name;
         description = std::move(phone_number);
@@ -633,7 +633,7 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
     }
     auto inline_message = r_inline_message.move_as_ok();
     if (inline_message->get_id() == telegram_api::inputBotInlineMessageMediaAuto::ID && file_type == FileType::Temp) {
-      return promise.set_error(Status::Error(400, "Sent message content should be explicitly specified"));
+      return promise.set_error(Status::Error(400, "Sent message content must be explicitly specified"));
     }
 
     if (duration < 0) {

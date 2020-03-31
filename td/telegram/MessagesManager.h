@@ -646,7 +646,8 @@ class MessagesManager : public Actor {
   int32 get_dialog_message_count(DialogId dialog_id, const tl_object_ptr<td_api::SearchMessagesFilter> &filter,
                                  bool return_local, int64 &random_id, Promise<Unit> &&promise);
 
-  vector<MessageId> get_dialog_scheduled_messages(DialogId dialog_id, Promise<Unit> &&promise);
+  vector<MessageId> get_dialog_scheduled_messages(DialogId dialog_id, bool force, bool ignore_result,
+                                                  Promise<Unit> &&promise);
 
   tl_object_ptr<td_api::message> get_dialog_message_by_date_object(int64 random_id);
 
@@ -698,7 +699,7 @@ class MessagesManager : public Actor {
 
   void remove_dialog_action_bar(DialogId dialog_id, Promise<Unit> &&promise);
 
-  void repair_dialog_action_bar(DialogId dialog_id, const char *source);
+  void reget_dialog_action_bar(DialogId dialog_id, const char *source);
 
   void report_dialog(DialogId dialog_id, const tl_object_ptr<td_api::ChatReportReason> &reason,
                      const vector<MessageId> &message_ids, Promise<Unit> &&promise);
@@ -1068,6 +1069,7 @@ class MessagesManager : public Actor {
     MessageId max_notification_message_id;
     MessageId last_edited_message_id;
     uint32 scheduled_messages_sync_generation = 0;
+    uint32 last_repair_scheduled_messages_generation = 0;
 
     MessageId max_added_message_id;
     MessageId being_added_message_id;
@@ -1111,6 +1113,7 @@ class MessagesManager : public Actor {
     bool has_scheduled_database_messages = false;
     bool is_has_scheduled_database_messages_checked = false;
     bool has_loaded_scheduled_messages_from_database = false;
+    bool sent_scheduled_messages = false;
 
     bool increment_view_counter = false;
 
@@ -1131,6 +1134,8 @@ class MessagesManager : public Actor {
     std::unordered_map<ScheduledServerMessageId, int32, ScheduledServerMessageIdHash> scheduled_message_date;
 
     std::unordered_map<MessageId, MessageId, MessageIdHash> yet_unsent_message_id_to_persistent_message_id;
+
+    std::unordered_map<int32, MessageId> last_assigned_scheduled_message_id;  // date -> message_id
 
     std::unordered_set<MessageId, MessageIdHash> deleted_message_ids;
     std::unordered_set<ScheduledServerMessageId, ScheduledServerMessageIdHash> deleted_scheduled_server_message_ids;
@@ -1187,7 +1192,7 @@ class MessagesManager : public Actor {
     const char *debug_set_dialog_last_database_message_id = "Unknown";  // to be removed soon
     vector<MessageOp> debug_message_op;
 
-    // message identifiers loaded from database, to be removed soon
+    // message identifiers loaded from database
     MessageId debug_last_new_message_id;
     MessageId debug_first_database_message_id;
     MessageId debug_last_database_message_id;
@@ -1221,12 +1226,11 @@ class MessagesManager : public Actor {
     int32 server_dialog_total_count_ = -1;
     int32 secret_chat_total_count_ = -1;
 
-    std::set<DialogDate> ordered_dialogs_;         // all dialogs with date <= last_dialog_date_
-    std::set<DialogDate> ordered_server_dialogs_;  // all known dialogs, including with default order
-
-    // date of last dialog in the dialog list
-    // last_dialog_date_ == min(last_server_dialog_date_, last_secret_chat_dialog_date_)
+    // date of the last dialog in loaded the dialog list prefix
     DialogDate last_dialog_date_ = MIN_DIALOG_DATE;  // in memory
+    std::set<DialogDate> ordered_dialogs_;           // all dialogs with date <= last_dialog_date_
+
+    std::set<DialogDate> ordered_server_dialogs_;  // all known dialogs, including with default order
 
     // date of last known user/group/channel dialog in the right order
     DialogDate last_server_dialog_date_ = MIN_DIALOG_DATE;
@@ -1622,6 +1626,8 @@ class MessagesManager : public Actor {
 
   static bool can_delete_channel_message(DialogParticipantStatus status, const Message *m, bool is_bot);
 
+  bool can_delete_message(DialogId dialog_id, const Message *m) const;
+
   bool can_revoke_message(DialogId dialog_id, const Message *m) const;
 
   bool can_unload_message(const Dialog *d, const Message *m) const;
@@ -1926,7 +1932,9 @@ class MessagesManager : public Actor {
 
   void send_update_chat_action_bar(const Dialog *d);
 
-  void send_update_chat_has_scheduled_messages(Dialog *d);
+  void send_update_chat_has_scheduled_messages(Dialog *d, bool from_deletion);
+
+  void repair_dialog_action_bar(Dialog *d, const char *source);
 
   void hide_dialog_action_bar(Dialog *d);
 
@@ -1948,7 +1956,7 @@ class MessagesManager : public Actor {
 
   static bool need_unread_counter(int64 dialog_order);
 
-  static int32 get_dialog_total_count(const DialogList &list);
+  int32 get_dialog_total_count(const DialogList &list) const;
 
   void repair_server_dialog_total_count(FolderId folder_id);
 
@@ -1959,10 +1967,9 @@ class MessagesManager : public Actor {
   void recalc_unread_count(FolderId folder_id);
 
   td_api::object_ptr<td_api::updateUnreadMessageCount> get_update_unread_message_count_object(
-      FolderId folder_id, const DialogList &list) const;
+      const DialogList &list) const;
 
-  td_api::object_ptr<td_api::updateUnreadChatCount> get_update_unread_chat_count_object(FolderId folder_id,
-                                                                                        const DialogList &list) const;
+  td_api::object_ptr<td_api::updateUnreadChatCount> get_update_unread_chat_count_object(const DialogList &list) const;
 
   void set_dialog_last_read_inbox_message_id(Dialog *d, MessageId message_id, int32 server_unread_count,
                                              int32 local_unread_count, bool force_update, const char *source);
@@ -1993,7 +2000,7 @@ class MessagesManager : public Actor {
 
   void set_dialog_pinned_message_id(Dialog *d, MessageId pinned_message_id);
 
-  void repair_dialog_scheduled_messages(DialogId dialog_id);
+  void repair_dialog_scheduled_messages(Dialog *d);
 
   void set_dialog_has_scheduled_server_messages(Dialog *d, bool has_scheduled_server_messages);
 
@@ -2073,7 +2080,7 @@ class MessagesManager : public Actor {
 
   td_api::object_ptr<td_api::ChatType> get_chat_type_object(DialogId dialog_id) const;
 
-  static td_api::object_ptr<td_api::ChatList> get_chat_list_object(const Dialog *d);
+  td_api::object_ptr<td_api::ChatList> get_chat_list_object(const Dialog *d) const;
 
   static td_api::object_ptr<td_api::ChatList> get_chat_list_object(FolderId folder_id);
 
@@ -2162,6 +2169,8 @@ class MessagesManager : public Actor {
 
   void cancel_send_deleted_message(DialogId dialog_id, Message *m, bool is_permanently_deleted);
 
+  static bool get_message_disable_web_page_preview(const Message *m);
+
   static int32 get_message_flags(const Message *m);
 
   static bool is_forward_info_sender_hidden(const MessageForwardInfo *forward_info);
@@ -2249,7 +2258,11 @@ class MessagesManager : public Actor {
 
   RestrictedRights get_dialog_permissions(DialogId dialog_id) const;
 
+  bool get_dialog_has_scheduled_messages(const Dialog *d) const;
+
   static int64 get_dialog_order(MessageId message_id, int32 message_date);
+
+  bool is_dialog_sponsored(const Dialog *d) const;
 
   int64 get_dialog_public_order(const Dialog *d) const;
 
@@ -2279,8 +2292,10 @@ class MessagesManager : public Actor {
 
   int64 get_next_pinned_dialog_order();
 
-  void update_dialog_pos(Dialog *d, bool remove_from_dialog_list, const char *source,
-                         bool need_send_update_chat_order = true, bool is_loaded_from_database = false);
+  bool is_removed_from_dialog_list(const Dialog *d) const;
+
+  void update_dialog_pos(Dialog *d, const char *source, bool need_send_update_chat_order = true,
+                         bool is_loaded_from_database = false);
 
   bool set_dialog_order(Dialog *d, int64 new_order, bool need_send_update_chat_order, bool is_loaded_from_database,
                         const char *source);
@@ -2384,7 +2399,7 @@ class MessagesManager : public Actor {
 
   static MessageId get_next_yet_unsent_message_id(Dialog *d);
 
-  static MessageId get_next_yet_unsent_scheduled_message_id(const Dialog *d, int32 date);
+  static MessageId get_next_yet_unsent_scheduled_message_id(Dialog *d, int32 date);
 
   bool add_recently_found_dialog_internal(DialogId dialog_id);
 
@@ -2750,6 +2765,8 @@ class MessagesManager : public Actor {
   uint32 scheduled_messages_sync_generation_ = 1;
 
   DialogId sponsored_dialog_id_;
+
+  FullMessageId being_readded_message_id_;
 
   DialogId being_added_dialog_id_;
 

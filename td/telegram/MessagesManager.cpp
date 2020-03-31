@@ -71,7 +71,6 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
-#include <set>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -97,8 +96,7 @@ class GetOnlinesQuery : public Td::ResultHandler {
       return on_error(0, Status::Error(400, "Can't access the chat"));
     }
 
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::messages_getOnlines(std::move(input_peer)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getOnlines(std::move(input_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -120,7 +118,7 @@ class GetOnlinesQuery : public Td::ResultHandler {
 class GetAllDraftsQuery : public Td::ResultHandler {
  public:
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getAllDrafts())));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getAllDrafts()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -135,7 +133,9 @@ class GetAllDraftsQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    LOG(ERROR) << "Receive error for GetAllDraftsQuery: " << status;
+    if (!G()->is_expected_error(status)) {
+      LOG(ERROR) << "Receive error for GetAllDraftsQuery: " << status;
+    }
     status.ignore();
   }
 };
@@ -146,8 +146,8 @@ class GetDialogQuery : public Td::ResultHandler {
  public:
   void send(DialogId dialog_id) {
     dialog_id_ = dialog_id;
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getPeerDialogs(
-        td->messages_manager_->get_input_dialog_peers({dialog_id}, AccessRights::Read)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getPeerDialogs(
+        td->messages_manager_->get_input_dialog_peers({dialog_id}, AccessRights::Read))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -192,8 +192,7 @@ class GetPinnedDialogsActor : public NetActorOnce {
 
   NetQueryRef send(FolderId folder_id, uint64 sequence_id) {
     folder_id_ = folder_id;
-    auto query =
-        G()->net_query_creator().create(create_storer(telegram_api::messages_getPinnedDialogs(folder_id.get())));
+    auto query = G()->net_query_creator().create(telegram_api::messages_getPinnedDialogs(folder_id.get()));
     auto result = query.get_weak();
     send_closure(td->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
                  std::move(query), actor_shared(this), sequence_id);
@@ -224,7 +223,7 @@ class GetPinnedDialogsActor : public NetActorOnce {
 class GetDialogUnreadMarksQuery : public Td::ResultHandler {
  public:
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getDialogUnreadMarks())));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getDialogUnreadMarks()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -242,7 +241,7 @@ class GetDialogUnreadMarksQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for GetDialogUnreadMarksQuery: " << status;
     }
     status.ignore();
@@ -257,8 +256,7 @@ class GetMessagesQuery : public Td::ResultHandler {
   }
 
   void send(vector<tl_object_ptr<telegram_api::InputMessage>> &&message_ids) {
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::messages_getMessages(std::move(message_ids)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getMessages(std::move(message_ids))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -297,7 +295,7 @@ class GetChannelMessagesQuery : public Td::ResultHandler {
     channel_id_ = channel_id;
     CHECK(input_channel != nullptr);
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::channels_getMessages(std::move(input_channel), std::move(message_ids)))));
+        telegram_api::channels_getMessages(std::move(input_channel), std::move(message_ids))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -336,7 +334,7 @@ class GetScheduledMessagesQuery : public Td::ResultHandler {
     dialog_id_ = dialog_id;
     CHECK(input_peer != nullptr);
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_getScheduledMessages(std::move(input_peer), std::move(message_ids)))));
+        telegram_api::messages_getScheduledMessages(std::move(input_peer), std::move(message_ids))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -387,8 +385,8 @@ class UpdateDialogPinnedMessageQuery : public Td::ResultHandler {
       flags |= telegram_api::messages_updatePinnedMessage::SILENT_MASK;
     }
 
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_updatePinnedMessage(
-        flags, false /*ignored*/, std::move(input_peer), message_id.get_server_message_id().get()))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_updatePinnedMessage(
+        flags, false /*ignored*/, std::move(input_peer), message_id.get_server_message_id().get())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -436,8 +434,8 @@ class ExportChannelMessageLinkQuery : public Td::ResultHandler {
     ignore_result_ = ignore_result;
     auto input_channel = td->contacts_manager_->get_input_channel(channel_id);
     CHECK(input_channel != nullptr);
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::channels_exportMessageLink(
-        std::move(input_channel), message_id.get_server_message_id().get(), for_group))));
+    send_query(G()->net_query_creator().create(telegram_api::channels_exportMessageLink(
+        std::move(input_channel), message_id.get_server_message_id().get(), for_group)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -483,8 +481,8 @@ class GetDialogListActor : public NetActorOnce {
     int32 flags =
         telegram_api::messages_getDialogs::EXCLUDE_PINNED_MASK | telegram_api::messages_getDialogs::FOLDER_ID_MASK;
     auto query = G()->net_query_creator().create(
-        create_storer(telegram_api::messages_getDialogs(flags, false /*ignored*/, folder_id.get(), offset_date,
-                                                        offset_message_id.get(), std::move(input_peer), limit, 0)));
+        telegram_api::messages_getDialogs(flags, false /*ignored*/, folder_id.get(), offset_date,
+                                          offset_message_id.get(), std::move(input_peer), limit, 0));
     send_closure(td->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
                  std::move(query), actor_shared(this), sequence_id);
   }
@@ -534,8 +532,7 @@ class SearchPublicDialogsQuery : public Td::ResultHandler {
  public:
   void send(const string &query) {
     query_ = query;
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::contacts_search(query, 3 /* ignored server-side */))));
+    send_query(G()->net_query_creator().create(telegram_api::contacts_search(query, 3 /* ignored server-side */)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -553,7 +550,7 @@ class SearchPublicDialogsQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for SearchPublicDialogsQuery: " << status;
     }
     td->messages_manager_->on_failed_public_dialogs_search(query_, std::move(status));
@@ -578,7 +575,7 @@ class GetCommonDialogsQuery : public Td::ResultHandler {
     CHECK(input_user != nullptr);
 
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_getCommonChats(std::move(input_user), offset_chat_id, limit))));
+        telegram_api::messages_getCommonChats(std::move(input_user), offset_chat_id, limit)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -624,8 +621,7 @@ class CreateChatQuery : public Td::ResultHandler {
 
   void send(vector<tl_object_ptr<telegram_api::InputUser>> &&input_users, const string &title, int64 random_id) {
     random_id_ = random_id;
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_createChat(std::move(input_users), title))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_createChat(std::move(input_users), title)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -667,8 +663,8 @@ class CreateChannelQuery : public Td::ResultHandler {
 
     random_id_ = random_id;
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::channels_createChannel(flags, false /*ignored*/, false /*ignored*/, title, about,
-                                                           location.get_input_geo_point(), location.get_address()))));
+        telegram_api::channels_createChannel(flags, false /*ignored*/, false /*ignored*/, title, about,
+                                             location.get_input_geo_point(), location.get_address())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -708,15 +704,15 @@ class EditDialogPhotoQuery : public Td::ResultHandler {
 
     switch (dialog_id.get_type()) {
       case DialogType::Chat:
-        send_query(G()->net_query_creator().create(create_storer(
-            telegram_api::messages_editChatPhoto(dialog_id.get_chat_id().get(), std::move(input_chat_photo)))));
+        send_query(G()->net_query_creator().create(
+            telegram_api::messages_editChatPhoto(dialog_id.get_chat_id().get(), std::move(input_chat_photo))));
         break;
       case DialogType::Channel: {
         auto channel_id = dialog_id.get_channel_id();
         auto input_channel = td->contacts_manager_->get_input_channel(channel_id);
         CHECK(input_channel != nullptr);
         send_query(G()->net_query_creator().create(
-            create_storer(telegram_api::channels_editPhoto(std::move(input_channel), std::move(input_chat_photo)))));
+            telegram_api::channels_editPhoto(std::move(input_channel), std::move(input_chat_photo))));
         break;
       }
       default:
@@ -786,14 +782,13 @@ class EditDialogTitleQuery : public Td::ResultHandler {
     switch (dialog_id.get_type()) {
       case DialogType::Chat:
         send_query(G()->net_query_creator().create(
-            create_storer(telegram_api::messages_editChatTitle(dialog_id.get_chat_id().get(), title))));
+            telegram_api::messages_editChatTitle(dialog_id.get_chat_id().get(), title)));
         break;
       case DialogType::Channel: {
         auto channel_id = dialog_id.get_channel_id();
         auto input_channel = td->contacts_manager_->get_input_channel(channel_id);
         CHECK(input_channel != nullptr);
-        send_query(G()->net_query_creator().create(
-            create_storer(telegram_api::channels_editTitle(std::move(input_channel), title))));
+        send_query(G()->net_query_creator().create(telegram_api::channels_editTitle(std::move(input_channel), title)));
         break;
       }
       default:
@@ -844,8 +839,8 @@ class EditDialogDefaultBannedRightsQuery : public Td::ResultHandler {
     dialog_id_ = dialog_id;
     auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
     CHECK(input_peer != nullptr);
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_editChatDefaultBannedRights(
-        std::move(input_peer), permissions.get_chat_banned_rights()))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_editChatDefaultBannedRights(
+        std::move(input_peer), permissions.get_chat_banned_rights())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -907,13 +902,13 @@ class SaveDraftMessageQuery : public Td::ResultHandler {
       }
     }
 
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_saveDraft(
+    send_query(G()->net_query_creator().create(telegram_api::messages_saveDraft(
         flags, false /*ignored*/, reply_to_message_id.get(), std::move(input_peer),
         draft_message == nullptr ? "" : draft_message->input_message_text.text.text,
         draft_message == nullptr
             ? vector<tl_object_ptr<telegram_api::MessageEntity>>()
             : get_input_message_entities(td->contacts_manager_.get(), draft_message->input_message_text.text.entities,
-                                         "SaveDraftMessageQuery")))));
+                                         "SaveDraftMessageQuery"))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -946,7 +941,7 @@ class ClearAllDraftsQuery : public Td::ResultHandler {
   }
 
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_clearAllDrafts())));
+    send_query(G()->net_query_creator().create(telegram_api::messages_clearAllDrafts()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -966,7 +961,7 @@ class ClearAllDraftsQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for ClearAllDraftsQuery: " << status;
     }
     promise_.set_error(std::move(status));
@@ -996,7 +991,7 @@ class ToggleDialogPinQuery : public Td::ResultHandler {
       flags |= telegram_api::messages_toggleDialogPin::PINNED_MASK;
     }
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_toggleDialogPin(flags, false /*ignored*/, std::move(input_peer)))));
+        telegram_api::messages_toggleDialogPin(flags, false /*ignored*/, std::move(input_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1033,9 +1028,9 @@ class ReorderPinnedDialogsQuery : public Td::ResultHandler {
   void send(FolderId folder_id, const vector<DialogId> &dialog_ids) {
     folder_id_ = folder_id;
     int32 flags = telegram_api::messages_reorderPinnedDialogs::FORCE_MASK;
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_reorderPinnedDialogs(
+    send_query(G()->net_query_creator().create(telegram_api::messages_reorderPinnedDialogs(
         flags, true /*ignored*/, folder_id.get(),
-        td->messages_manager_->get_input_dialog_peers(dialog_ids, AccessRights::Read)))));
+        td->messages_manager_->get_input_dialog_peers(dialog_ids, AccessRights::Read))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1054,7 +1049,7 @@ class ReorderPinnedDialogsQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for ReorderPinnedDialogsQuery: " << status;
     }
     td->messages_manager_->on_update_pinned_dialogs(folder_id_);
@@ -1085,7 +1080,7 @@ class ToggleDialogUnreadMarkQuery : public Td::ResultHandler {
       flags |= telegram_api::messages_markDialogUnread::UNREAD_MASK;
     }
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_markDialogUnread(flags, false /*ignored*/, std::move(input_peer)))));
+        telegram_api::messages_markDialogUnread(flags, false /*ignored*/, std::move(input_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1128,8 +1123,8 @@ class GetMessagesViewsQuery : public Td::ResultHandler {
 
     LOG(INFO) << "View " << message_ids_.size() << " messages in " << dialog_id
               << ", increment = " << increment_view_counter;
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getMessagesViews(
-        std::move(input_peer), MessagesManager::get_server_message_ids(message_ids_), increment_view_counter))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getMessagesViews(
+        std::move(input_peer), MessagesManager::get_server_message_ids(message_ids_), increment_view_counter)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1166,8 +1161,8 @@ class ReadMessagesContentsQuery : public Td::ResultHandler {
   void send(vector<MessageId> &&message_ids) {
     LOG(INFO) << "Receive ReadMessagesContentsQuery for messages " << format::as_array(message_ids);
 
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::messages_readMessageContents(MessagesManager::get_server_message_ids(message_ids)))));
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_readMessageContents(MessagesManager::get_server_message_ids(message_ids))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1188,7 +1183,7 @@ class ReadMessagesContentsQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for read message contents: " << status;
     }
     promise_.set_error(std::move(status));
@@ -1215,8 +1210,8 @@ class ReadChannelMessagesContentsQuery : public Td::ResultHandler {
     LOG(INFO) << "Receive ReadChannelMessagesContentsQuery for messages " << format::as_array(message_ids) << " in "
               << channel_id;
 
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::channels_readMessageContents(
-        std::move(input_channel), MessagesManager::get_server_message_ids(message_ids)))));
+    send_query(G()->net_query_creator().create(telegram_api::channels_readMessageContents(
+        std::move(input_channel), MessagesManager::get_server_message_ids(message_ids))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1260,7 +1255,7 @@ class GetDialogMessageByDateQuery : public Td::ResultHandler {
     random_id_ = random_id;
 
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_getHistory(std::move(input_peer), 0, date, -3, 5, 0, 0, 0))));
+        telegram_api::messages_getHistory(std::move(input_peer), 0, date, -3, 5, 0, 0, 0)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1309,8 +1304,8 @@ class GetHistoryQuery : public Td::ResultHandler {
     offset_ = offset;
     limit_ = limit;
     from_the_end_ = false;
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getHistory(
-        std::move(input_peer), from_message_id.get_server_message_id().get(), 0, offset, limit, 0, 0, 0))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getHistory(
+        std::move(input_peer), from_message_id.get_server_message_id().get(), 0, offset, limit, 0, 0, 0)));
   }
 
   void send_get_from_the_end(DialogId dialog_id, int32 limit) {
@@ -1325,7 +1320,7 @@ class GetHistoryQuery : public Td::ResultHandler {
     limit_ = limit;
     from_the_end_ = true;
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_getHistory(std::move(input_peer), 0, 0, 0, limit, 0, 0, 0))));
+        telegram_api::messages_getHistory(std::move(input_peer), 0, 0, 0, limit, 0, 0, 0)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1360,9 +1355,9 @@ class ReadHistoryQuery : public Td::ResultHandler {
 
   void send(DialogId dialog_id, MessageId max_message_id) {
     dialog_id_ = dialog_id;
-    send_query(G()->net_query_creator().create(create_storer(
+    send_query(G()->net_query_creator().create(
         telegram_api::messages_readHistory(td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read),
-                                           max_message_id.get_server_message_id().get()))));
+                                           max_message_id.get_server_message_id().get())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1404,8 +1399,8 @@ class ReadChannelHistoryQuery : public Td::ResultHandler {
     auto input_channel = td->contacts_manager_->get_input_channel(channel_id);
     CHECK(input_channel != nullptr);
 
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::channels_readHistory(std::move(input_channel), max_message_id.get_server_message_id().get()))));
+    send_query(G()->net_query_creator().create(
+        telegram_api::channels_readHistory(std::move(input_channel), max_message_id.get_server_message_id().get())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1460,19 +1455,19 @@ class SearchMessagesQuery : public Td::ResultHandler {
     random_id_ = random_id;
 
     if (filter == SearchMessagesFilter::UnreadMention) {
-      send_query(G()->net_query_creator().create(create_storer(
+      send_query(G()->net_query_creator().create(
           telegram_api::messages_getUnreadMentions(std::move(input_peer), from_message_id.get_server_message_id().get(),
-                                                   offset, limit, std::numeric_limits<int32>::max(), 0))));
+                                                   offset, limit, std::numeric_limits<int32>::max(), 0)));
     } else {
       int32 flags = 0;
       if (sender_input_user != nullptr) {
         flags |= telegram_api::messages_search::FROM_ID_MASK;
       }
 
-      send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_search(
+      send_query(G()->net_query_creator().create(telegram_api::messages_search(
           flags, std::move(input_peer), query, std::move(sender_input_user),
           MessagesManager::get_input_messages_filter(filter), 0, std::numeric_limits<int32>::max(),
-          from_message_id.get_server_message_id().get(), offset, limit, std::numeric_limits<int32>::max(), 0, 0))));
+          from_message_id.get_server_message_id().get(), offset, limit, std::numeric_limits<int32>::max(), 0, 0)));
     }
   }
 
@@ -1531,9 +1526,9 @@ class SearchMessagesGlobalQuery : public Td::ResultHandler {
     if (!ignore_folder_id) {
       flags |= telegram_api::messages_searchGlobal::FOLDER_ID_MASK;
     }
-    send_query(G()->net_query_creator().create(create_storer(
+    send_query(G()->net_query_creator().create(
         telegram_api::messages_searchGlobal(flags, folder_id.get(), query, offset_date_, std::move(input_peer),
-                                            offset_message_id.get_server_message_id().get(), limit))));
+                                            offset_message_id.get_server_message_id().get(), limit)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1572,8 +1567,8 @@ class GetAllScheduledMessagesQuery : public Td::ResultHandler {
     dialog_id_ = dialog_id;
     generation_ = generation;
 
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_getScheduledHistory(std::move(input_peer), hash))));
+    send_query(
+        G()->net_query_creator().create(telegram_api::messages_getScheduledHistory(std::move(input_peer), hash)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1619,8 +1614,8 @@ class GetRecentLocationsQuery : public Td::ResultHandler {
     limit_ = limit;
     random_id_ = random_id;
 
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_getRecentLocations(std::move(input_peer), limit, 0))));
+    send_query(
+        G()->net_query_creator().create(telegram_api::messages_getRecentLocations(std::move(input_peer), limit, 0)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1665,9 +1660,9 @@ class DeleteHistoryQuery : public Td::ResultHandler {
     }
     LOG(INFO) << "Delete " << dialog_id_ << " history up to " << max_message_id_ << " with flags " << flags;
 
-    send_query(G()->net_query_creator().create(create_storer(
+    send_query(G()->net_query_creator().create(
         telegram_api::messages_deleteHistory(flags, false /*ignored*/, false /*ignored*/, std::move(input_peer),
-                                             max_message_id_.get_server_message_id().get()))));
+                                             max_message_id_.get_server_message_id().get())));
   }
 
  public:
@@ -1728,8 +1723,8 @@ class DeleteChannelHistoryQuery : public Td::ResultHandler {
     auto input_channel = td->contacts_manager_->get_input_channel(channel_id);
     CHECK(input_channel != nullptr);
 
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::channels_deleteHistory(std::move(input_channel), max_message_id.get_server_message_id().get()))));
+    send_query(G()->net_query_creator().create(
+        telegram_api::channels_deleteHistory(std::move(input_channel), max_message_id.get_server_message_id().get())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1771,7 +1766,7 @@ class DeleteUserHistoryQuery : public Td::ResultHandler {
     LOG(INFO) << "Delete all messages from " << user_id_ << " in " << channel_id_;
 
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::channels_deleteUserHistory(std::move(input_channel), std::move(input_user)))));
+        telegram_api::channels_deleteUserHistory(std::move(input_channel), std::move(input_user))));
   }
 
  public:
@@ -1826,8 +1821,7 @@ class ReadAllMentionsQuery : public Td::ResultHandler {
 
     LOG(INFO) << "Read all mentions in " << dialog_id_;
 
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::messages_readMentions(std::move(input_peer)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_readMentions(std::move(input_peer))));
   }
 
  public:
@@ -1944,10 +1938,10 @@ class SendMessageActor : public NetActorOnce {
       flags |= MessagesManager::SEND_MESSAGE_FLAG_HAS_ENTITIES;
     }
 
-    auto query = G()->net_query_creator().create(create_storer(telegram_api::messages_sendMessage(
+    auto query = G()->net_query_creator().create(telegram_api::messages_sendMessage(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, std::move(input_peer),
         reply_to_message_id.get_server_message_id().get(), text, random_id, std::move(reply_markup),
-        std::move(entities), schedule_date)));
+        std::move(entities), schedule_date));
     if (G()->shared_config().get_option_boolean("use_quick_ack")) {
       query->quick_ack_promise_ = PromiseCreator::lambda(
           [random_id](Unit) {
@@ -2015,8 +2009,8 @@ class StartBotQuery : public Td::ResultHandler {
     random_id_ = random_id;
     dialog_id_ = dialog_id;
 
-    auto query = G()->net_query_creator().create(create_storer(
-        telegram_api::messages_startBot(std::move(bot_input_user), std::move(input_peer), random_id, parameter)));
+    auto query = G()->net_query_creator().create(
+        telegram_api::messages_startBot(std::move(bot_input_user), std::move(input_peer), random_id, parameter));
     if (G()->shared_config().get_option_boolean("use_quick_ack")) {
       query->quick_ack_promise_ = PromiseCreator::lambda(
           [random_id](Unit) {
@@ -2066,9 +2060,9 @@ class SendInlineBotResultQuery : public Td::ResultHandler {
     auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
     CHECK(input_peer != nullptr);
 
-    auto query = G()->net_query_creator().create(create_storer(telegram_api::messages_sendInlineBotResult(
+    auto query = G()->net_query_creator().create(telegram_api::messages_sendInlineBotResult(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, std::move(input_peer),
-        reply_to_message_id.get_server_message_id().get(), random_id, query_id, result_id, schedule_date)));
+        reply_to_message_id.get_server_message_id().get(), random_id, query_id, result_id, schedule_date));
     auto send_query_ref = query.get_weak();
     send_query(std::move(query));
     return send_query_ref;
@@ -2123,9 +2117,9 @@ class SendMultiMediaActor : public NetActorOnce {
       return;
     }
 
-    auto query = G()->net_query_creator().create(create_storer(telegram_api::messages_sendMultiMedia(
+    auto query = G()->net_query_creator().create(telegram_api::messages_sendMultiMedia(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, std::move(input_peer),
-        reply_to_message_id.get_server_message_id().get(), std::move(input_single_media), schedule_date)));
+        reply_to_message_id.get_server_message_id().get(), std::move(input_single_media), schedule_date));
     // no quick ack, because file reference errors are very likely to happen
     query->debug("send to MessagesManager::MultiSequenceDispatcher");
     send_closure(td->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
@@ -2241,7 +2235,7 @@ class SendMediaActor : public NetActorOnce {
                                              std::move(input_media), text, random_id, std::move(reply_markup),
                                              std::move(entities), schedule_date);
     LOG(INFO) << "Send media: " << to_string(request);
-    auto query = G()->net_query_creator().create(create_storer(request));
+    auto query = G()->net_query_creator().create(request);
     if (G()->shared_config().get_option_boolean("use_quick_ack") && was_uploaded_) {
       query->quick_ack_promise_ = PromiseCreator::lambda(
           [random_id](Unit) {
@@ -2341,7 +2335,7 @@ class UploadMediaQuery : public Td::ResultHandler {
     }
 
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_uploadMedia(std::move(input_peer), std::move(input_media)))));
+        telegram_api::messages_uploadMedia(std::move(input_peer), std::move(input_media))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -2414,7 +2408,7 @@ class SendScheduledMessageActor : public NetActorOnce {
 
     int32 server_message_id = message_id.get_scheduled_server_message_id().get();
     auto query = G()->net_query_creator().create(
-        create_storer(telegram_api::messages_sendScheduledMessages(std::move(input_peer), {server_message_id})));
+        telegram_api::messages_sendScheduledMessages(std::move(input_peer), {server_message_id}));
 
     query->debug("send to MessagesManager::MultiSequenceDispatcher");
     send_closure(td->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
@@ -2488,9 +2482,9 @@ class EditMessageActor : public NetActorOnce {
 
     int32 server_message_id = schedule_date != 0 ? message_id.get_scheduled_server_message_id().get()
                                                  : message_id.get_server_message_id().get();
-    auto query = G()->net_query_creator().create(create_storer(telegram_api::messages_editMessage(
+    auto query = G()->net_query_creator().create(telegram_api::messages_editMessage(
         flags, false /*ignored*/, std::move(input_peer), server_message_id, text, std::move(input_media),
-        std::move(reply_markup), std::move(entities), schedule_date)));
+        std::move(reply_markup), std::move(entities), schedule_date));
 
     query->debug("send to MessagesManager::MultiSequenceDispatcher");
     send_closure(td->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
@@ -2552,11 +2546,11 @@ class EditInlineMessageQuery : public Td::ResultHandler {
     LOG(DEBUG) << "Edit inline message with flags " << flags;
 
     auto dc_id = DcId::internal(input_bot_inline_message_id->dc_id_);
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::messages_editInlineBotMessage(
-                                            flags, false /*ignored*/, std::move(input_bot_inline_message_id), text,
-                                            std::move(input_media), std::move(reply_markup), std::move(entities))),
-                                        dc_id));
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_editInlineBotMessage(flags, false /*ignored*/, std::move(input_bot_inline_message_id),
+                                                    text, std::move(input_media), std::move(reply_markup),
+                                                    std::move(entities)),
+        dc_id));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -2604,9 +2598,9 @@ class SetGameScoreActor : public NetActorOnce {
     }
 
     CHECK(input_user != nullptr);
-    auto query = G()->net_query_creator().create(create_storer(
+    auto query = G()->net_query_creator().create(
         telegram_api::messages_setGameScore(flags, false /*ignored*/, false /*ignored*/, std::move(input_peer),
-                                            message_id.get_server_message_id().get(), std::move(input_user), score)));
+                                            message_id.get_server_message_id().get(), std::move(input_user), score));
 
     LOG(INFO) << "Set game score to " << score;
 
@@ -2658,9 +2652,8 @@ class SetInlineGameScoreQuery : public Td::ResultHandler {
     LOG(INFO) << "Set inline game score to " << score;
     auto dc_id = DcId::internal(input_bot_inline_message_id->dc_id_);
     send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_setInlineGameScore(flags, false /*ignored*/, false /*ignored*/,
-                                                                std::move(input_bot_inline_message_id),
-                                                                std::move(input_user), score)),
+        telegram_api::messages_setInlineGameScore(flags, false /*ignored*/, false /*ignored*/,
+                                                  std::move(input_bot_inline_message_id), std::move(input_user), score),
         dc_id));
   }
 
@@ -2699,8 +2692,8 @@ class GetGameHighScoresQuery : public Td::ResultHandler {
     CHECK(input_peer != nullptr);
 
     CHECK(input_user != nullptr);
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getGameHighScores(
-        std::move(input_peer), message_id.get_server_message_id().get(), std::move(input_user)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getGameHighScores(
+        std::move(input_peer), message_id.get_server_message_id().get(), std::move(input_user))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -2737,9 +2730,9 @@ class GetInlineGameHighScoresQuery : public Td::ResultHandler {
     random_id_ = random_id;
 
     auto dc_id = DcId::internal(input_bot_inline_message_id->dc_id_);
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getInlineGameHighScores(
-                                                   std::move(input_bot_inline_message_id), std::move(input_user))),
-                                               dc_id));
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_getInlineGameHighScores(std::move(input_bot_inline_message_id), std::move(input_user)),
+        dc_id));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -2789,10 +2782,10 @@ class ForwardMessagesActor : public NetActorOnce {
       return;
     }
 
-    auto query = G()->net_query_creator().create(create_storer(telegram_api::messages_forwardMessages(
+    auto query = G()->net_query_creator().create(telegram_api::messages_forwardMessages(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, std::move(from_input_peer),
         MessagesManager::get_server_message_ids(message_ids), std::move(random_ids), std::move(to_input_peer),
-        schedule_date)));
+        schedule_date));
     if (G()->shared_config().get_option_boolean("use_quick_ack")) {
       query->quick_ack_promise_ = PromiseCreator::lambda(
           [random_ids = random_ids_](Unit) {
@@ -2883,7 +2876,7 @@ class SendScreenshotNotificationQuery : public Td::ResultHandler {
     CHECK(input_peer != nullptr);
 
     auto query = G()->net_query_creator().create(
-        create_storer(telegram_api::messages_sendScreenshotNotification(std::move(input_peer), 0, random_id)));
+        telegram_api::messages_sendScreenshotNotification(std::move(input_peer), 0, random_id));
     send_query(std::move(query));
   }
 
@@ -2926,8 +2919,8 @@ class SetTypingQuery : public Td::ResultHandler {
     auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
     CHECK(input_peer != nullptr);
 
-    auto net_query = G()->net_query_creator().create(
-        create_storer(telegram_api::messages_setTyping(std::move(input_peer), std::move(action))));
+    auto net_query =
+        G()->net_query_creator().create(telegram_api::messages_setTyping(std::move(input_peer), std::move(action)));
     auto result = net_query.get_weak();
     send_query(std::move(net_query));
     return result;
@@ -2981,7 +2974,7 @@ class DeleteMessagesQuery : public Td::ResultHandler {
 
       query_count_++;
       send_query(G()->net_query_creator().create(
-          create_storer(telegram_api::messages_deleteMessages(flags, false /*ignored*/, std::move(slice)))));
+          telegram_api::messages_deleteMessages(flags, false /*ignored*/, std::move(slice))));
     }
   }
 
@@ -3004,7 +2997,7 @@ class DeleteMessagesQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for delete messages: " << status;
     }
     promise_.set_error(std::move(status));
@@ -3046,7 +3039,7 @@ class DeleteChannelMessagesQuery : public Td::ResultHandler {
       auto input_channel = td->contacts_manager_->get_input_channel(channel_id);
       CHECK(input_channel != nullptr);
       send_query(G()->net_query_creator().create(
-          create_storer(telegram_api::channels_deleteMessages(std::move(input_channel), std::move(slice)))));
+          telegram_api::channels_deleteMessages(std::move(input_channel), std::move(slice))));
     }
   }
 
@@ -3071,7 +3064,8 @@ class DeleteChannelMessagesQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!td->contacts_manager_->on_get_channel_error(channel_id_, status, "DeleteChannelMessagesQuery")) {
+    if (!td->contacts_manager_->on_get_channel_error(channel_id_, status, "DeleteChannelMessagesQuery") &&
+        status.message() != "MESSAGE_DELETE_FORBIDDEN") {
       LOG(ERROR) << "Receive error for delete channel messages: " << status;
     }
     promise_.set_error(std::move(status));
@@ -3094,8 +3088,8 @@ class DeleteScheduledMessagesQuery : public Td::ResultHandler {
     if (input_peer == nullptr) {
       return on_error(0, Status::Error(400, "Can't access the chat"));
     }
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_deleteScheduledMessages(
-        std::move(input_peer), MessagesManager::get_scheduled_server_message_ids(message_ids)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_deleteScheduledMessages(
+        std::move(input_peer), MessagesManager::get_scheduled_server_message_ids(message_ids))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3127,8 +3121,7 @@ class GetDialogNotifySettingsQuery : public Td::ResultHandler {
     dialog_id_ = dialog_id;
     auto input_notify_peer = td->messages_manager_->get_input_notify_peer(dialog_id);
     CHECK(input_notify_peer != nullptr);
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::account_getNotifySettings(std::move(input_notify_peer)))));
+    send_query(G()->net_query_creator().create(telegram_api::account_getNotifySettings(std::move(input_notify_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3165,8 +3158,8 @@ class GetNotifySettingsExceptionsQuery : public Td::ResultHandler {
     if (compare_sound) {
       flags |= telegram_api::account_getNotifyExceptions::COMPARE_SOUND_MASK;
     }
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::account_getNotifyExceptions(flags, false /* ignored */, std::move(input_notify_peer)))));
+    send_query(G()->net_query_creator().create(
+        telegram_api::account_getNotifyExceptions(flags, false /* ignored */, std::move(input_notify_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3224,8 +3217,7 @@ class GetScopeNotifySettingsQuery : public Td::ResultHandler {
     scope_ = scope;
     auto input_notify_peer = get_input_notify_peer(scope);
     CHECK(input_notify_peer != nullptr);
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::account_getNotifySettings(std::move(input_notify_peer)))));
+    send_query(G()->net_query_creator().create(telegram_api::account_getNotifySettings(std::move(input_notify_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3274,10 +3266,10 @@ class UpdateDialogNotifySettingsQuery : public Td::ResultHandler {
     if (new_settings.silent_send_message) {
       flags |= telegram_api::inputPeerNotifySettings::SILENT_MASK;
     }
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::account_updateNotifySettings(
+    send_query(G()->net_query_creator().create(telegram_api::account_updateNotifySettings(
         std::move(input_notify_peer), make_tl_object<telegram_api::inputPeerNotifySettings>(
                                           flags, new_settings.show_preview, new_settings.silent_send_message,
-                                          new_settings.mute_until, new_settings.sound)))));
+                                          new_settings.mute_until, new_settings.sound))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3322,10 +3314,10 @@ class UpdateScopeNotifySettingsQuery : public Td::ResultHandler {
     int32 flags = telegram_api::inputPeerNotifySettings::MUTE_UNTIL_MASK |
                   telegram_api::inputPeerNotifySettings::SOUND_MASK |
                   telegram_api::inputPeerNotifySettings::SHOW_PREVIEWS_MASK;
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::account_updateNotifySettings(
+    send_query(G()->net_query_creator().create(telegram_api::account_updateNotifySettings(
         std::move(input_notify_peer),
         make_tl_object<telegram_api::inputPeerNotifySettings>(flags, new_settings.show_preview, false,
-                                                              new_settings.mute_until, new_settings.sound)))));
+                                                              new_settings.mute_until, new_settings.sound))));
     scope_ = scope;
   }
 
@@ -3363,7 +3355,7 @@ class ResetNotifySettingsQuery : public Td::ResultHandler {
   }
 
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::account_resetNotifySettings())));
+    send_query(G()->net_query_creator().create(telegram_api::account_resetNotifySettings()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3381,7 +3373,7 @@ class ResetNotifySettingsQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for reset notification settings: " << status;
     }
     promise_.set_error(std::move(status));
@@ -3398,8 +3390,7 @@ class GetPeerSettingsQuery : public Td::ResultHandler {
     auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
     CHECK(input_peer != nullptr);
 
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::messages_getPeerSettings(std::move(input_peer)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getPeerSettings(std::move(input_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3434,11 +3425,9 @@ class UpdatePeerSettingsQuery : public Td::ResultHandler {
     }
 
     if (is_spam_dialog) {
-      send_query(
-          G()->net_query_creator().create(create_storer(telegram_api::messages_reportSpam(std::move(input_peer)))));
+      send_query(G()->net_query_creator().create(telegram_api::messages_reportSpam(std::move(input_peer))));
     } else {
-      send_query(G()->net_query_creator().create(
-          create_storer(telegram_api::messages_hidePeerSettingsBar(std::move(input_peer)))));
+      send_query(G()->net_query_creator().create(telegram_api::messages_hidePeerSettingsBar(std::move(input_peer))));
     }
   }
 
@@ -3463,7 +3452,7 @@ class UpdatePeerSettingsQuery : public Td::ResultHandler {
   void on_error(uint64 id, Status status) override {
     LOG(INFO) << "Receive error for update peer settings: " << status;
     td->messages_manager_->on_get_dialog_error(dialog_id_, status, "UpdatePeerSettingsQuery");
-    td->messages_manager_->repair_dialog_action_bar(dialog_id_, "UpdatePeerSettingsQuery");
+    td->messages_manager_->reget_dialog_action_bar(dialog_id_, "UpdatePeerSettingsQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -3483,8 +3472,7 @@ class ReportEncryptedSpamQuery : public Td::ResultHandler {
     CHECK(input_peer != nullptr);
     LOG(INFO) << "Report spam in " << to_string(input_peer);
 
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_reportEncryptedSpam(std::move(input_peer)))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_reportEncryptedSpam(std::move(input_peer))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3505,7 +3493,7 @@ class ReportEncryptedSpamQuery : public Td::ResultHandler {
   void on_error(uint64 id, Status status) override {
     LOG(INFO) << "Receive error for report encrypted spam: " << status;
     td->messages_manager_->on_get_dialog_error(dialog_id_, status, "ReportEncryptedSpamQuery");
-    td->messages_manager_->repair_dialog_action_bar(
+    td->messages_manager_->reget_dialog_action_bar(
         DialogId(td->contacts_manager_->get_secret_chat_user_id(dialog_id_.get_secret_chat_id())),
         "ReportEncryptedSpamQuery");
     promise_.set_error(std::move(status));
@@ -3529,10 +3517,10 @@ class ReportPeerQuery : public Td::ResultHandler {
 
     if (message_ids.empty()) {
       send_query(G()->net_query_creator().create(
-          create_storer(telegram_api::account_reportPeer(std::move(input_peer), std::move(report_reason)))));
+          telegram_api::account_reportPeer(std::move(input_peer), std::move(report_reason))));
     } else {
-      send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_report(
-          std::move(input_peer), MessagesManager::get_server_message_ids(message_ids), std::move(report_reason)))));
+      send_query(G()->net_query_creator().create(telegram_api::messages_report(
+          std::move(input_peer), MessagesManager::get_server_message_ids(message_ids), std::move(report_reason))));
     }
   }
 
@@ -3556,7 +3544,7 @@ class ReportPeerQuery : public Td::ResultHandler {
   void on_error(uint64 id, Status status) override {
     LOG(INFO) << "Receive error for report peer: " << status;
     td->messages_manager_->on_get_dialog_error(dialog_id_, status, "ReportPeerQuery");
-    td->messages_manager_->repair_dialog_action_bar(dialog_id_, "ReportPeerQuery");
+    td->messages_manager_->reget_dialog_action_bar(dialog_id_, "ReportPeerQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -3578,8 +3566,7 @@ class EditPeerFoldersQuery : public Td::ResultHandler {
     vector<telegram_api::object_ptr<telegram_api::inputFolderPeer>> input_folder_peers;
     input_folder_peers.push_back(
         telegram_api::make_object<telegram_api::inputFolderPeer>(std::move(input_peer), folder_id.get()));
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::folders_editPeerFolders(std::move(input_folder_peers)))));
+    send_query(G()->net_query_creator().create(telegram_api::folders_editPeerFolders(std::move(input_folder_peers))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3622,8 +3609,8 @@ class GetStatsUrlQuery : public Td::ResultHandler {
     if (is_dark) {
       flags |= telegram_api::messages_getStatsURL::DARK_MASK;
     }
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::messages_getStatsURL(flags, false /*ignored*/, std::move(input_peer), parameters))));
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_getStatsURL(flags, false /*ignored*/, std::move(input_peer), parameters)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3657,8 +3644,8 @@ class RequestUrlAuthQuery : public Td::ResultHandler {
     dialog_id_ = dialog_id;
     auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
     CHECK(input_peer != nullptr);
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_requestUrlAuth(
-        std::move(input_peer), message_id.get_server_message_id().get(), button_id))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_requestUrlAuth(
+        std::move(input_peer), message_id.get_server_message_id().get(), button_id)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3721,8 +3708,8 @@ class AcceptUrlAuthQuery : public Td::ResultHandler {
     if (allow_write_access) {
       flags |= telegram_api::messages_acceptUrlAuth::WRITE_ALLOWED_MASK;
     }
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_acceptUrlAuth(
-        flags, false /*ignored*/, std::move(input_peer), message_id.get_server_message_id().get(), button_id))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_acceptUrlAuth(
+        flags, false /*ignored*/, std::move(input_peer), message_id.get_server_message_id().get(), button_id)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3774,9 +3761,9 @@ class GetChannelDifferenceQuery : public Td::ResultHandler {
     if (force) {
       flags |= telegram_api::updates_getChannelDifference::FORCE_MASK;
     }
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::updates_getChannelDifference(
+    send_query(G()->net_query_creator().create(telegram_api::updates_getChannelDifference(
         flags, false /*ignored*/, std::move(input_channel), make_tl_object<telegram_api::channelMessagesFilterEmpty>(),
-        pts, limit))));
+        pts, limit)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3809,7 +3796,7 @@ class ResolveUsernameQuery : public Td::ResultHandler {
     username_ = username;
 
     LOG(INFO) << "Send ResolveUsernameQuery with username = " << username;
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::contacts_resolveUsername(username))));
+    send_query(G()->net_query_creator().create(telegram_api::contacts_resolveUsername(username)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -3862,8 +3849,8 @@ class GetChannelAdminLogQuery : public Td::ResultHandler {
       flags |= telegram_api::channels_getAdminLog::ADMINS_MASK;
     }
 
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::channels_getAdminLog(
-        flags, std::move(input_channel), query, std::move(filter), std::move(input_users), from_event_id, 0, limit))));
+    send_query(G()->net_query_creator().create(telegram_api::channels_getAdminLog(
+        flags, std::move(input_channel), query, std::move(filter), std::move(input_users), from_event_id, 0, limit)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -4249,8 +4236,12 @@ void MessagesManager::Message::parse(ParserT &parser) {
   if (has_reply_markup) {
     parse(reply_markup, parser);
   }
+
   is_content_secret |=
       is_secret_message_content(ttl, content->get_type());  // repair is_content_secret for old messages
+  if (hide_edit_date && content->get_type() == MessageContentType::LiveLocation) {
+    hide_edit_date = false;
+  }
 }
 
 template <class StorerT>
@@ -5488,12 +5479,14 @@ void MessagesManager::on_update_service_notification(tl_object_ptr<telegram_api:
     old_date = date;
   }
 
-  auto message_text =
-      get_message_text(td_->contacts_manager_.get(), std::move(update->message_), std::move(update->entities_),
-                       skip_new_entities, date, false, "on_update_service_notification");
-  auto content = get_message_content(
-      td_, std::move(message_text), std::move(update->media_),
-      td_->auth_manager_->is_bot() ? DialogId() : get_service_notifications_dialog()->dialog_id, false, UserId(), &ttl);
+  bool is_authorized = td_->auth_manager_->is_authorized();
+  bool is_user = is_authorized && !td_->auth_manager_->is_bot();
+  auto contacts_manager = is_authorized ? td_->contacts_manager_.get() : nullptr;
+  auto message_text = get_message_text(contacts_manager, std::move(update->message_), std::move(update->entities_),
+                                       skip_new_entities, date, false, "on_update_service_notification");
+  DialogId owner_dialog_id = is_user ? get_service_notifications_dialog()->dialog_id : DialogId();
+  auto content = get_message_content(td_, std::move(message_text), std::move(update->media_), owner_dialog_id, false,
+                                     UserId(), &ttl);
   bool is_content_secret = is_secret_message_content(ttl, content->get_type());
 
   if ((update->flags_ & telegram_api::updateServiceNotification::POPUP_MASK) != 0) {
@@ -5501,7 +5494,7 @@ void MessagesManager::on_update_service_notification(tl_object_ptr<telegram_api:
                  td_api::make_object<td_api::updateServiceNotification>(
                      update->type_, get_message_content_object(content.get(), td_, date, is_content_secret)));
   }
-  if (has_date && !td_->auth_manager_->is_bot()) {
+  if (has_date && is_user) {
     Dialog *d = get_service_notifications_dialog();
     CHECK(d != nullptr);
     auto dialog_id = d->dialog_id;
@@ -5677,7 +5670,7 @@ void MessagesManager::on_update_channel_too_long(tl_object_ptr<telegram_api::upd
       d = add_dialog(dialog_id);
       CHECK(d != nullptr);
       CHECK(d->pts == pts);
-      update_dialog_pos(d, false, "on_update_channel_too_long");
+      update_dialog_pos(d, "on_update_channel_too_long");
     }
   }
 
@@ -5962,7 +5955,7 @@ void MessagesManager::on_update_delete_scheduled_messages(DialogId dialog_id,
 
   send_update_delete_messages(dialog_id, std::move(deleted_message_ids), true, false);
 
-  send_update_chat_has_scheduled_messages(d);
+  send_update_chat_has_scheduled_messages(d, true);
 }
 
 void MessagesManager::on_update_include_sponsored_dialog_to_unread_count() {
@@ -6066,6 +6059,7 @@ bool MessagesManager::need_cancel_user_dialog_action(int32 action_id, MessageCon
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
     case MessageContentType::Poll:
+    case MessageContentType::Dice:
       return false;
     default:
       UNREACHABLE();
@@ -6205,7 +6199,7 @@ void MessagesManager::add_pending_channel_update(DialogId dialog_id, tl_object_p
       d = add_dialog(dialog_id);
       CHECK(d != nullptr);
       CHECK(d->pts == pts);
-      update_dialog_pos(d, false, "add_pending_channel_update");
+      update_dialog_pos(d, "add_pending_channel_update");
     }
   }
   if (d == nullptr) {
@@ -6822,12 +6816,12 @@ bool MessagesManager::update_dialog_silent_send_message(Dialog *d, bool silent_s
   return true;
 }
 
-void MessagesManager::repair_dialog_action_bar(DialogId dialog_id, const char *source) {
+void MessagesManager::reget_dialog_action_bar(DialogId dialog_id, const char *source) {
   if (G()->close_flag() || !dialog_id.is_valid() || td_->auth_manager_->is_bot()) {
     return;
   }
 
-  LOG(INFO) << "Repair action bar in " << dialog_id << " from " << source;
+  LOG(INFO) << "Reget action bar in " << dialog_id << " from " << source;
   switch (dialog_id.get_type()) {
     case DialogType::User:
       td_->contacts_manager_->reload_user_full(dialog_id.get_user_id());
@@ -6844,6 +6838,22 @@ void MessagesManager::repair_dialog_action_bar(DialogId dialog_id, const char *s
     default:
       UNREACHABLE();
   }
+}
+
+void MessagesManager::repair_dialog_action_bar(Dialog *d, const char *source) {
+  CHECK(d != nullptr);
+  auto dialog_id = d->dialog_id;
+  d->know_action_bar = false;
+  if (have_input_peer(dialog_id, AccessRights::Read)) {
+    create_actor<SleepActor>(
+        "RepairDialogActionBarActor", 1.0,
+        PromiseCreator::lambda([actor_id = actor_id(this), dialog_id, source](Result<Unit> result) {
+          send_closure(actor_id, &MessagesManager::reget_dialog_action_bar, dialog_id, source);
+        }))
+        .release();
+  }
+  // there is no need to change action bar
+  on_dialog_updated(dialog_id, source);
 }
 
 void MessagesManager::hide_dialog_action_bar(DialogId dialog_id) {
@@ -8279,11 +8289,14 @@ void MessagesManager::on_get_scheduled_server_messages(DialogId dialog_id, uint3
   Dialog *d = get_dialog(dialog_id);
   CHECK(d != nullptr);
   if (generation < d->scheduled_messages_sync_generation) {
+    LOG(INFO) << "Ignore scheduled messages with old generation " << generation << " instead of "
+              << d->scheduled_messages_sync_generation << " in " << dialog_id;
     return;
   }
   d->scheduled_messages_sync_generation = generation;
 
   if (is_not_modified) {
+    LOG(INFO) << "Scheduled messages are mot modified in " << dialog_id;
     return;
   }
 
@@ -8298,6 +8311,7 @@ void MessagesManager::on_get_scheduled_server_messages(DialogId dialog_id, uint3
   }
 
   bool is_channel_message = dialog_id.get_type() == DialogType::Channel;
+  bool has_scheduled_server_messages = false;
   for (auto &message : messages) {
     auto message_dialog_id = get_message_dialog_id(message);
     if (message_dialog_id != dialog_id) {
@@ -8308,14 +8322,16 @@ void MessagesManager::on_get_scheduled_server_messages(DialogId dialog_id, uint3
       continue;
     }
 
-    auto full_message_id = on_get_message(std::move(message), false, is_channel_message, true, false, false,
-                                          "on_get_scheduled_server_messages");
+    auto full_message_id = on_get_message(std::move(message), d->sent_scheduled_messages, is_channel_message, true,
+                                          false, false, "on_get_scheduled_server_messages");
     auto message_id = full_message_id.get_message_id();
     if (message_id.is_valid_scheduled()) {
       CHECK(message_id.is_scheduled_server());
       old_server_message_ids.erase(message_id.get_scheduled_server_message_id());
+      has_scheduled_server_messages = true;
     }
   }
+  on_update_dialog_has_scheduled_server_messages(dialog_id, has_scheduled_server_messages);
 
   for (auto it : old_server_message_ids) {
     auto message_id = it.second;
@@ -8324,7 +8340,7 @@ void MessagesManager::on_get_scheduled_server_messages(DialogId dialog_id, uint3
     send_update_delete_messages(dialog_id, {message->message_id.get()}, true, false);
   }
 
-  send_update_chat_has_scheduled_messages(d);
+  send_update_chat_has_scheduled_messages(d, false);
 }
 
 void MessagesManager::on_get_recent_locations(DialogId dialog_id, int32 limit, int64 random_id, int32 total_count,
@@ -8512,6 +8528,32 @@ bool MessagesManager::can_delete_channel_message(DialogParticipantStatus status,
   return true;
 }
 
+bool MessagesManager::can_delete_message(DialogId dialog_id, const Message *m) const {
+  if (m == nullptr) {
+    return true;
+  }
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      if (G()->unix_time_cached() < m->date + 86400 && m->content->get_type() == MessageContentType::Dice &&
+          dialog_id != get_my_dialog_id()) {
+        return false;
+      }
+      return true;
+    case DialogType::Chat:
+      return true;
+    case DialogType::Channel: {
+      auto dialog_status = td_->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id());
+      return can_delete_channel_message(dialog_status, m, td_->auth_manager_->is_bot());
+    }
+    case DialogType::SecretChat:
+      return true;
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+      return false;
+  }
+}
+
 bool MessagesManager::can_revoke_message(DialogId dialog_id, const Message *m) const {
   if (m == nullptr) {
     return true;
@@ -8589,15 +8631,15 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
 
     message_id = get_persistent_message_id(d, message_id);
     message_ids.push_back(message_id);
-    auto message = get_message_force(d, message_id, "delete_messages");
-    if (message != nullptr) {
-      if (message->message_id.is_scheduled()) {
-        if (message->message_id.is_scheduled_server()) {
-          deleted_scheduled_server_message_ids.push_back(message->message_id);
+    auto m = get_message_force(d, message_id, "delete_messages");
+    if (m != nullptr) {
+      if (m->message_id.is_scheduled()) {
+        if (m->message_id.is_scheduled_server()) {
+          deleted_scheduled_server_message_ids.push_back(m->message_id);
         }
       } else {
-        if (message->message_id.is_server() || is_secret) {
-          deleted_server_message_ids.push_back(message->message_id);
+        if (m->message_id.is_server() || is_secret) {
+          deleted_server_message_ids.push_back(m->message_id);
         }
       }
     }
@@ -8607,35 +8649,14 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
   }
 
   bool is_bot = td_->auth_manager_->is_bot();
-  switch (dialog_id.get_type()) {
-    case DialogType::User:
-    case DialogType::Chat:
-      if (is_bot) {
-        for (auto message_id : message_ids) {
-          if (!message_id.is_scheduled() && message_id.is_server() &&
-              !can_revoke_message(dialog_id, get_message(d, message_id))) {
-            //return promise.set_error(Status::Error(6, "Message can't be deleted"));
-          }
-        }
-      }
-      break;
-    case DialogType::Channel: {
-      if (is_bot) {
-        auto dialog_status = td_->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id());
-        for (auto message_id : message_ids) {
-          if (!can_delete_channel_message(dialog_status, get_message(d, message_id), is_bot)) {
-            deleted_server_message_ids.erase(remove(deleted_server_message_ids.begin(), deleted_server_message_ids.end(), message_id));
-            //return promise.set_error(Status::Error(6, "Message can't be deleted"));
-          }
-        }
-      }
-      break;
+  for (auto message_id : message_ids) {
+    auto m = get_message(d, message_id);
+    if (!can_delete_message(dialog_id, m)) {
+      return promise.set_error(Status::Error(6, "Message can't be deleted"));
     }
-    case DialogType::SecretChat:
-      break;
-    case DialogType::None:
-    default:
-      UNREACHABLE();
+    if (is_bot && !message_id.is_scheduled() && message_id.is_server() && !can_revoke_message(dialog_id, m)) {
+      return promise.set_error(Status::Error(6, "Message can't be deleted for everyone"));
+    }
   }
 
   MultiPromiseActorSafe mpas{"DeleteMessagesFromServerMultiPromiseActor"};
@@ -8666,7 +8687,7 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
   }
   send_update_delete_messages(dialog_id, std::move(deleted_message_ids), true, false);
 
-  send_update_chat_has_scheduled_messages(d);
+  send_update_chat_has_scheduled_messages(d, true);
 }
 
 void MessagesManager::delete_message_from_server(DialogId dialog_id, MessageId message_id, bool revoke) {
@@ -8818,7 +8839,6 @@ void MessagesManager::delete_dialog_history(DialogId dialog_id, bool remove_from
   }
 
   auto dialog_type = dialog_id.get_type();
-  bool is_secret = false;
   switch (dialog_type) {
     case DialogType::User:
     case DialogType::Chat:
@@ -8833,7 +8853,6 @@ void MessagesManager::delete_dialog_history(DialogId dialog_id, bool remove_from
       }
       break;
     case DialogType::SecretChat:
-      is_secret = true;
       // ok
       break;
     case DialogType::None:
@@ -8843,7 +8862,7 @@ void MessagesManager::delete_dialog_history(DialogId dialog_id, bool remove_from
   }
 
   auto last_new_message_id = d->last_new_message_id;
-  if (!is_secret && last_new_message_id == MessageId()) {
+  if (dialog_type != DialogType::SecretChat && last_new_message_id == MessageId()) {
     // TODO get dialog from the server and delete history from last message id
   }
 
@@ -9222,10 +9241,11 @@ void MessagesManager::delete_all_dialog_messages(Dialog *d, bool remove_from_dia
     set_dialog_last_message_id(d, MessageId(), "delete_all_dialog_messages");
     send_update_chat_last_message(d, "delete_all_dialog_messages");
   }
-  if (remove_from_dialog_list && d->pinned_order != DEFAULT_ORDER) {
-    set_dialog_is_pinned(d, false);
+  if (remove_from_dialog_list) {
+    set_dialog_order(d, DEFAULT_ORDER, true, false, "delete_all_dialog_messages 1");
+  } else {
+    update_dialog_pos(d, "delete_all_dialog_messages 2");
   }
-  update_dialog_pos(d, remove_from_dialog_list, "delete_all_dialog_messages");
 
   on_dialog_updated(d->dialog_id, "delete_all_dialog_messages");
 
@@ -9448,8 +9468,10 @@ int32 MessagesManager::calc_new_unread_count_from_the_end(Dialog *d, MessageId m
     }
 
     // hint_unread_count is definitely wrong, ignore it
-    LOG(ERROR) << "Receive hint_unread_count = " << hint_unread_count << ", but found " << unread_count
-               << " unread messages in " << d->dialog_id;
+    if (need_unread_counter(d->order)) {
+      LOG(ERROR) << "Receive hint_unread_count = " << hint_unread_count << ", but found " << unread_count
+                 << " unread messages in " << d->dialog_id;
+    }
   }
 
   if (!is_count_exact) {
@@ -9511,7 +9533,7 @@ void MessagesManager::repair_channel_server_unread_count(Dialog *d) {
     // all messages are already read
     return;
   }
-  if (d->order == 0) {
+  if (!need_unread_counter(d->order)) {
     // there is no unread count in left channels
     return;
   }
@@ -9592,7 +9614,7 @@ void MessagesManager::read_history_inbox(DialogId dialog_id, MessageId max_messa
     if (server_unread_count < 0) {
       server_unread_count = unread_count >= 0 ? unread_count : d->server_unread_count;
       if (dialog_id.get_type() != DialogType::SecretChat && have_input_peer(dialog_id, AccessRights::Read) &&
-          d->order > 0) {
+          need_unread_counter(d->order)) {
         d->need_repair_server_unread_count = true;
         repair_server_unread_count(dialog_id, server_unread_count);
       }
@@ -9663,15 +9685,24 @@ bool MessagesManager::need_unread_counter(int64 dialog_order) {
   return dialog_order != DEFAULT_ORDER;
 }
 
-int32 MessagesManager::get_dialog_total_count(const DialogList &list) {
+int32 MessagesManager::get_dialog_total_count(const DialogList &list) const {
+  int32 sponsored_dialog_count = 0;
+  if (sponsored_dialog_id_.is_valid() && list.folder_id == FolderId::main()) {
+    auto d = get_dialog(sponsored_dialog_id_);
+    CHECK(d != nullptr);
+    if (is_dialog_sponsored(d)) {
+      sponsored_dialog_count = 1;
+    }
+  }
   if (list.server_dialog_total_count_ != -1 && list.secret_chat_total_count_ != -1) {
     return std::max(list.server_dialog_total_count_ + list.secret_chat_total_count_,
-                    list.in_memory_dialog_total_count_);
+                    list.in_memory_dialog_total_count_) +
+           sponsored_dialog_count;
   }
   if (list.last_dialog_date_ == MAX_DIALOG_DATE) {
-    return list.in_memory_dialog_total_count_;
+    return list.in_memory_dialog_total_count_ + sponsored_dialog_count;
   }
-  return list.in_memory_dialog_total_count_ + 1;
+  return list.in_memory_dialog_total_count_ + sponsored_dialog_count + 1;
 }
 
 void MessagesManager::repair_server_dialog_total_count(FolderId folder_id) {
@@ -9856,8 +9887,7 @@ void MessagesManager::set_dialog_last_read_inbox_message_id(Dialog *d, MessageId
     }
     send_update_unread_chat_count(d->folder_id, d->dialog_id, force_update, source);
   }
-  if (message_id != MessageId::min() && d->last_read_inbox_message_id.is_valid() && d->order != DEFAULT_ORDER &&
-      d->order != SPONSORED_DIALOG_ORDER) {
+  if (message_id != MessageId::min() && d->last_read_inbox_message_id.is_valid() && d->order != DEFAULT_ORDER) {
     VLOG(notifications) << "Remove some notifications in " << d->dialog_id
                         << " after updating last read inbox message to " << message_id
                         << " and unread message count to " << server_unread_count << " + " << local_unread_count
@@ -10364,16 +10394,20 @@ void MessagesManager::init() {
       if (r_dialog_id.is_error()) {
         LOG(ERROR) << "Can't parse " << sponsored_dialog_id_string;
       } else {
-        sponsored_dialog_id_ = DialogId(r_dialog_id.ok());
-        if (!sponsored_dialog_id_.is_valid()) {
-          LOG(ERROR) << "Have invalid chat ID " << sponsored_dialog_id_string;
-          sponsored_dialog_id_ = DialogId();
-        } else {
-          Dialog *d = get_dialog_force(sponsored_dialog_id_);
-          if (d == nullptr) {
-            LOG(ERROR) << "Can't load " << sponsored_dialog_id_;
-            sponsored_dialog_id_ = DialogId();
+        DialogId dialog_id(r_dialog_id.ok());
+        Dialog *d = get_dialog_force(dialog_id);
+        if (d != nullptr) {
+          sponsored_dialog_id_ = dialog_id;
+          if (is_dialog_sponsored(d)) {
+            send_update_chat_chat_list(d);
+            auto folder_id = FolderId::main();
+            auto &list = get_dialog_list(folder_id);
+            list.last_server_dialog_date_ = DialogDate(SPONSORED_DIALOG_ORDER, d->dialog_id);
+            update_last_dialog_date(folder_id);
+            send_update_chat_is_sponsored(d);
           }
+        } else {
+          LOG(ERROR) << "Can't load " << dialog_id;
         }
       }
     }
@@ -11315,12 +11349,15 @@ std::pair<DialogId, unique_ptr<MessagesManager::Message>> MessagesManager::creat
     edit_date = 0;
   }
 
+  auto content_type = message_info.content->get_type();
   if (hide_edit_date && td_->auth_manager_->is_bot()) {
+    hide_edit_date = false;
+  }
+  if (hide_edit_date && content_type == MessageContentType::LiveLocation) {
     hide_edit_date = false;
   }
 
   int32 ttl = message_info.ttl;
-  auto content_type = message_info.content->get_type();
   bool is_content_secret = is_secret_message_content(ttl, content_type);  // should be calculated before TTL is adjusted
   if (ttl < 0) {
     LOG(ERROR) << "Wrong ttl = " << ttl << " received in " << message_id << " in " << dialog_id;
@@ -11439,12 +11476,12 @@ FullMessageId MessagesManager::on_get_message(MessageInfo &&message_info, bool f
   new_message->have_previous = have_previous;
   new_message->have_next = have_next;
 
-  bool need_update = from_update || message_id.is_scheduled();
+  bool need_update = from_update;
   bool need_update_dialog_pos = false;
 
   MessageId old_message_id = find_old_message_id(dialog_id, message_id);
   bool need_add_active_live_location = false;
-  LOG(INFO) << "Found old " << old_message_id << " by " << FullMessageId{dialog_id, message_id};
+  LOG(INFO) << "Found temporarily " << old_message_id << " for " << FullMessageId{dialog_id, message_id};
   if (old_message_id.is_valid() || old_message_id.is_valid_scheduled()) {
     Dialog *d = get_dialog(dialog_id);
     CHECK(d != nullptr);
@@ -11491,6 +11528,7 @@ FullMessageId MessagesManager::on_get_message(MessageInfo &&message_info, bool f
       return FullMessageId();
     }
 
+    being_readded_message_id_ = {dialog_id, old_message_id};
     unique_ptr<Message> old_message =
         delete_message(d, old_message_id, false, &need_update_dialog_pos, "add sent message");
     if (old_message == nullptr) {
@@ -11498,6 +11536,7 @@ FullMessageId MessagesManager::on_get_message(MessageInfo &&message_info, bool f
       // don't need to send update to the user, because the message has already been deleted
       LOG(INFO) << "Delete already deleted sent " << new_message->message_id << " from server";
       delete_message_from_server(dialog_id, new_message->message_id, true);
+      being_readded_message_id_ = FullMessageId();
       return FullMessageId();
     }
 
@@ -11531,6 +11570,7 @@ FullMessageId MessagesManager::on_get_message(MessageInfo &&message_info, bool f
 
   const Message *m = add_message_to_dialog(dialog_id, std::move(new_message), from_update, &need_update,
                                            &need_update_dialog_pos, source);
+  being_readded_message_id_ = FullMessageId();
   Dialog *d = get_dialog(dialog_id);
   if (m == nullptr) {
     if (need_update_dialog_pos && d != nullptr) {
@@ -11566,7 +11606,7 @@ FullMessageId MessagesManager::on_get_message(MessageInfo &&message_info, bool f
     return FullMessageId();
   }
 
-  send_update_chat_has_scheduled_messages(d);
+  send_update_chat_has_scheduled_messages(d, false);
 
   if (need_update_dialog_pos) {
     send_update_chat_last_message(d, "on_get_message");
@@ -11777,21 +11817,29 @@ void MessagesManager::set_dialog_is_empty(Dialog *d, const char *source) {
     set_dialog_last_database_message_id(d, MessageId(), "set_dialog_is_empty");
   }
 
-  update_dialog_pos(d, false, source);
+  update_dialog_pos(d, source);
 }
 
 void MessagesManager::set_dialog_is_pinned(DialogId dialog_id, bool is_pinned) {
   Dialog *d = get_dialog(dialog_id);
   CHECK(d != nullptr);
+  if (is_removed_from_dialog_list(d) && is_pinned) {
+    // the chat can't be pinned
+    return;
+  }
   if (!is_pinned && d->pinned_order == DEFAULT_ORDER) {
     return;
   }
   set_dialog_is_pinned(d, is_pinned);
-  update_dialog_pos(d, false, "set_dialog_is_pinned");
+  update_dialog_pos(d, "set_dialog_is_pinned");
 }
 
 void MessagesManager::set_dialog_is_pinned(Dialog *d, bool is_pinned) {
   CHECK(d != nullptr);
+  if (is_removed_from_dialog_list(d) && is_pinned) {
+    // the chat can't be pinned
+    return;
+  }
   bool was_pinned = d->pinned_order != DEFAULT_ORDER;
   d->pinned_order = is_pinned ? get_next_pinned_dialog_order() : DEFAULT_ORDER;
   on_dialog_updated(d->dialog_id, "set_dialog_is_pinned");
@@ -11799,7 +11847,7 @@ void MessagesManager::set_dialog_is_pinned(Dialog *d, bool is_pinned) {
   if (is_pinned != was_pinned) {
     LOG(INFO) << "Set " << d->dialog_id << " is pinned to " << is_pinned;
     LOG_CHECK(d->is_update_new_chat_sent) << "Wrong " << d->dialog_id << " in set_dialog_is_pinned";
-    update_dialog_pos(d, false, "set_dialog_is_pinned", false);
+    update_dialog_pos(d, "set_dialog_is_pinned", false);
     send_closure(G()->td(), &Td::send_update,
                  make_tl_object<td_api::updateChatIsPinned>(d->dialog_id.get(), is_pinned, get_dialog_public_order(d)));
   }
@@ -11997,6 +12045,7 @@ void MessagesManager::delete_pending_message_web_page(FullMessageId full_message
   CHECK(m != nullptr);
 
   MessageContent *content = m->content.get();
+  CHECK(has_message_content_web_page(content));
   unregister_message_content(td_, content, full_message_id, "delete_pending_message_web_page");
   remove_message_content_web_page(content);
   register_message_content(td_, content, full_message_id, "delete_pending_message_web_page");
@@ -12250,7 +12299,7 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
         set_channel_pts(d, channel_pts, "get channel");
       }
     }
-    bool is_pinned = (dialog->flags_ & DIALOG_FLAG_IS_PINNED) != 0;
+    bool is_pinned = !is_removed_from_dialog_list(d) && (dialog->flags_ & DIALOG_FLAG_IS_PINNED) != 0;
     bool was_pinned = d->pinned_order != DEFAULT_ORDER;
     if (is_pinned != was_pinned) {
       set_dialog_is_pinned(d, is_pinned);
@@ -12262,7 +12311,7 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
     }
 
     if (need_update_dialog_pos) {
-      update_dialog_pos(d, false, "on_get_dialogs");
+      update_dialog_pos(d, "on_get_dialogs");
     }
 
     if (!G()->parameters().use_message_db || is_new || !d->is_last_read_inbox_message_id_inited ||
@@ -12271,8 +12320,9 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
           read_inbox_max_message_id == d->last_read_inbox_message_id.get_prev_server_message_id()) {
         read_inbox_max_message_id = d->last_read_inbox_message_id;
       }
-      if (d->need_repair_server_unread_count && (d->last_read_inbox_message_id <= read_inbox_max_message_id ||
-                                                 d->order == 0 || !have_input_peer(dialog_id, AccessRights::Read))) {
+      if (d->need_repair_server_unread_count &&
+          (d->last_read_inbox_message_id <= read_inbox_max_message_id || !need_unread_counter(d->order) ||
+           !have_input_peer(dialog_id, AccessRights::Read))) {
         LOG(INFO) << "Repaired server unread count in " << dialog_id << " from " << d->last_read_inbox_message_id << "/"
                   << d->server_unread_count << " to " << read_inbox_max_message_id << "/" << dialog->unread_count_;
         d->need_repair_server_unread_count = false;
@@ -12765,7 +12815,7 @@ unique_ptr<MessagesManager::Message> MessagesManager::do_delete_message(Dialog *
           set_dialog_last_database_message_id(d, (*it)->message_id, "do_delete_message");
           if (d->last_database_message_id < d->first_database_message_id) {
             LOG(ERROR) << "Last database " << d->last_database_message_id << " became less than first database "
-                       << d->first_database_message_id << " in " << d->dialog_id;
+                       << d->first_database_message_id << " after deletion of " << full_message_id;
             set_dialog_first_database_message_id(d, d->last_database_message_id, "do_delete_message 2");
           }
         } else {
@@ -12852,7 +12902,7 @@ unique_ptr<MessagesManager::Message> MessagesManager::do_delete_message(Dialog *
       int32 local_unread_count = d->local_unread_count;
       int32 &unread_count = message_id.is_server() ? server_unread_count : local_unread_count;
       if (unread_count == 0) {
-        if (d->order > 0) {
+        if (need_unread_counter(d->order)) {
           LOG(ERROR) << "Unread count became negative in " << d->dialog_id << " after deletion of " << message_id
                      << ". Last read is " << d->last_read_inbox_message_id;
           dump_debug_message_op(d, 3);
@@ -13090,6 +13140,19 @@ vector<DialogId> MessagesManager::get_dialogs(FolderId folder_id, DialogDate off
     limit = MAX_GET_DIALOGS;
   }
 
+  if (folder_id == FolderId::main() && sponsored_dialog_id_.is_valid()) {
+    auto d = get_dialog(sponsored_dialog_id_);
+    CHECK(d != nullptr);
+    if (is_dialog_sponsored(d)) {
+      DialogDate date(get_dialog_public_order(d), d->dialog_id);
+      if (offset < date) {
+        result.push_back(sponsored_dialog_id_);
+        offset = date;
+        limit--;
+      }
+    }
+  }
+
   auto it = list.ordered_dialogs_.upper_bound(offset);
   auto end = list.ordered_dialogs_.end();
   while (it != end && limit-- > 0) {
@@ -13274,9 +13337,7 @@ vector<DialogId> MessagesManager::get_pinned_dialogs(FolderId folder_id) const {
       if (dialog_date.get_date() < MIN_PINNED_DIALOG_DATE) {
         break;
       }
-      if (dialog_date.get_order() != SPONSORED_DIALOG_ORDER) {
-        result.push_back(dialog_date.get_dialog_id());
-      }
+      result.push_back(dialog_date.get_dialog_id());
     }
   }
 
@@ -13379,8 +13440,9 @@ vector<DialogId> MessagesManager::sort_dialogs_by_order(const vector<DialogId> &
   auto dialog_dates = transform(dialog_ids, [this, &fake_order](DialogId dialog_id) {
     const Dialog *d = get_dialog(dialog_id);
     CHECK(d != nullptr);
-    if (is_dialog_inited(d) || d->order != DEFAULT_ORDER) {
-      return DialogDate(d->order, dialog_id);
+    auto order = get_dialog_public_order(d);
+    if (is_dialog_inited(d) || order != DEFAULT_ORDER) {
+      return DialogDate(order, dialog_id);
     }
     // if the dialog is not inited yet, we need to assume that server knows better and the dialog needs to be returned
     return DialogDate(fake_order--, dialog_id);
@@ -13650,7 +13712,14 @@ void MessagesManager::get_message_force_from_server(Dialog *d, MessageId message
         // so we try to force channel difference first
 
         // replied message can't be older than already added original message, but pinned message can be
-        CHECK(input_message == nullptr || input_message->get_id() == telegram_api::inputMessagePinned::ID);
+        LOG_CHECK(input_message == nullptr || input_message->get_id() == telegram_api::inputMessagePinned::ID)
+            << to_string(input_message) << " " << d->dialog_id << " " << message_id << " " << d->last_new_message_id
+            << " " << d->last_message_id << " " << d->first_database_message_id << " " << d->last_database_message_id
+            << " " << d->pinned_message_id << " " << d->last_read_all_mentions_message_id << " "
+            << d->max_unavailable_message_id << " " << d->last_clear_history_message_id << " " << d->order << " "
+            << d->deleted_last_message_id << " " << d->max_added_message_id << " " << d->pts << " "
+            << d->last_assigned_message_id << " " << d->debug_last_new_message_id << " "
+            << d->debug_first_database_message_id << " " << d->debug_last_database_message_id;
         postponed_get_message_requests_[d->dialog_id].emplace_back(message_id, std::move(promise),
                                                                    std::move(input_message));
         get_channel_difference(d->dialog_id, d->pts, true, "get_message");
@@ -13717,7 +13786,7 @@ void MessagesManager::get_dialog_info_full(DialogId dialog_id, Promise<Unit> &&p
       td_->contacts_manager_->get_user_full(dialog_id.get_user_id(), std::move(promise));
       return;
     case DialogType::Chat:
-      td_->contacts_manager_->get_chat_full(dialog_id.get_chat_id(), std::move(promise));
+      td_->contacts_manager_->get_chat_full(dialog_id.get_chat_id(), true, std::move(promise));
       return;
     case DialogType::Channel:
       td_->contacts_manager_->get_channel_full(dialog_id.get_channel_id(), std::move(promise));
@@ -14391,6 +14460,9 @@ Status MessagesManager::toggle_dialog_is_pinned(DialogId dialog_id, bool is_pinn
   if (!have_input_peer(dialog_id, AccessRights::Read)) {
     return Status::Error(6, "Can't access the chat");
   }
+  if ((is_removed_from_dialog_list(d) || d->order == DEFAULT_ORDER) && is_pinned) {
+    return Status::Error(6, "The chat can't be pinned");
+  }
 
   bool was_pinned = d->pinned_order != DEFAULT_ORDER;
   if (is_pinned == was_pinned) {
@@ -14413,7 +14485,7 @@ Status MessagesManager::toggle_dialog_is_pinned(DialogId dialog_id, bool is_pinn
   }
 
   set_dialog_is_pinned(d, is_pinned);
-  update_dialog_pos(d, false, "toggle_dialog_is_pinned");
+  update_dialog_pos(d, "toggle_dialog_is_pinned");
 
   toggle_dialog_is_pinned_on_server(dialog_id, is_pinned, 0);
   return Status::OK();
@@ -14930,7 +15002,7 @@ DialogId MessagesManager::migrate_dialog_to_megagroup(DialogId dialog_id, Promis
         d->debug_message_op.emplace_back(Dialog::MessageOp::SetPts, d->pts, "migrate");
       }
     }
-    update_dialog_pos(d, false, "migrate_dialog_to_megagroup");
+    update_dialog_pos(d, "migrate_dialog_to_megagroup");
   }
 
   promise.set_value(Unit());
@@ -14962,6 +15034,8 @@ DialogId MessagesManager::get_my_dialog_id() const {
 }
 
 Status MessagesManager::view_messages(DialogId dialog_id, const vector<MessageId> &message_ids, bool force_read) {
+  CHECK(!td_->auth_manager_->is_bot());
+
   Dialog *d = get_dialog_force(dialog_id);
   if (d == nullptr) {
     return Status::Error(3, "Chat not found");
@@ -15021,18 +15095,28 @@ Status MessagesManager::view_messages(DialogId dialog_id, const vector<MessageId
   if (need_read && max_message_id > d->last_read_inbox_message_id) {
     MessageId last_read_message_id = max_message_id;
     MessageId prev_last_read_inbox_message_id = d->last_read_inbox_message_id;
+    MessageId read_history_on_server_message_id;
     if (dialog_id.get_type() != DialogType::SecretChat) {
       if (last_read_message_id.get_prev_server_message_id().get() >
           prev_last_read_inbox_message_id.get_prev_server_message_id().get()) {
-        read_history_on_server(d, last_read_message_id.get_prev_server_message_id());
+        read_history_on_server_message_id = last_read_message_id.get_prev_server_message_id();
       }
     } else {
       if (last_read_message_id > prev_last_read_inbox_message_id) {
-        read_history_on_server(d, last_read_message_id);
+        read_history_on_server_message_id = last_read_message_id;
       }
     }
-    // read history on server after sending server request to not repair unread_count early
+
+    if (read_history_on_server_message_id.is_valid()) {
+      // add dummy timeout to not try to repair unread_count in read_history_inbox before server request succeeds
+      // the timeout will be overwritten in the read_history_on_server call
+      pending_read_history_timeout_.add_timeout_in(dialog_id.get(), 0);
+    }
     read_history_inbox(d->dialog_id, last_read_message_id, -1, "view_messages");
+    if (read_history_on_server_message_id.is_valid()) {
+      // call read_history_on_server after read_history_inbox to not have delay before request if all messages are read
+      read_history_on_server(d, read_history_on_server_message_id);
+    }
   }
   if (need_read && d->is_marked_as_unread) {
     set_dialog_is_marked_as_unread(d, false);
@@ -15166,7 +15250,7 @@ void MessagesManager::open_dialog(Dialog *d) {
       break;
     case DialogType::Chat:
       td_->contacts_manager_->repair_chat_participants(dialog_id.get_chat_id());
-      repair_dialog_action_bar(dialog_id, "open_dialog");
+      reget_dialog_action_bar(dialog_id, "open_dialog");
       break;
     case DialogType::Channel:
       if (!is_broadcast_channel(dialog_id)) {
@@ -15179,7 +15263,7 @@ void MessagesManager::open_dialog(Dialog *d) {
         }
       }
       get_channel_difference(dialog_id, d->pts, true, "open_dialog");
-      repair_dialog_action_bar(dialog_id, "open_dialog");
+      reget_dialog_action_bar(dialog_id, "open_dialog");
       break;
     case DialogType::SecretChat: {
       // to repair dialog action bar
@@ -15317,7 +15401,10 @@ td_api::object_ptr<td_api::ChatType> MessagesManager::get_chat_type_object(Dialo
   }
 }
 
-td_api::object_ptr<td_api::ChatList> MessagesManager::get_chat_list_object(const Dialog *d) {
+td_api::object_ptr<td_api::ChatList> MessagesManager::get_chat_list_object(const Dialog *d) const {
+  if (is_dialog_sponsored(d)) {
+    return get_chat_list_object(FolderId::main());
+  }
   if (d->order == DEFAULT_ORDER) {
     return nullptr;
   }
@@ -15428,20 +15515,21 @@ td_api::object_ptr<td_api::chat> MessagesManager::get_chat_object(const Dialog *
     }
   }
 
-  bool has_scheduled_messages =
-      d->has_scheduled_server_messages || d->has_scheduled_database_messages || d->scheduled_messages != nullptr;
+  // TODO hide/show draft message when can_send_message(dialog_id) changes
+  auto draft_message = can_send_message(d->dialog_id).is_ok() ? get_draft_message_object(d->draft_message) : nullptr;
+
   return make_tl_object<td_api::chat>(
       d->dialog_id.get(), get_chat_type_object(d->dialog_id), get_chat_list_object(d), get_dialog_title(d->dialog_id),
       get_chat_photo_object(td_->file_manager_.get(), get_dialog_photo(d->dialog_id)),
       get_dialog_permissions(d->dialog_id).get_chat_permissions_object(),
       get_message_object(d->dialog_id, get_message(d, d->last_message_id)), get_dialog_public_order(d),
-      d->pinned_order != DEFAULT_ORDER, d->is_marked_as_unread, d->order == SPONSORED_DIALOG_ORDER,
-      has_scheduled_messages, can_delete_for_self, can_delete_for_all_users, can_report_dialog(d->dialog_id),
-      d->notification_settings.silent_send_message, d->server_unread_count + d->local_unread_count,
-      d->last_read_inbox_message_id.get(), d->last_read_outbox_message_id.get(), d->unread_mention_count,
+      d->pinned_order != DEFAULT_ORDER, d->is_marked_as_unread, is_dialog_sponsored(d),
+      get_dialog_has_scheduled_messages(d), can_delete_for_self, can_delete_for_all_users,
+      can_report_dialog(d->dialog_id), d->notification_settings.silent_send_message,
+      d->server_unread_count + d->local_unread_count, d->last_read_inbox_message_id.get(),
+      d->last_read_outbox_message_id.get(), d->unread_mention_count,
       get_chat_notification_settings_object(&d->notification_settings), get_chat_action_bar_object(d),
-      d->pinned_message_id.get(), d->reply_markup_message_id.get(), get_draft_message_object(d->draft_message),
-      d->client_data);
+      d->pinned_message_id.get(), d->reply_markup_message_id.get(), std::move(draft_message), d->client_data);
 }
 
 tl_object_ptr<td_api::chat> MessagesManager::get_chat_object(DialogId dialog_id) const {
@@ -16015,7 +16103,7 @@ void MessagesManager::read_history_on_server_impl(DialogId dialog_id, MessageId 
       }
     });
   }
-  if (d->need_repair_server_unread_count && d->order != 0) {
+  if (d->need_repair_server_unread_count && need_unread_counter(d->order)) {
     repair_server_unread_count(dialog_id, d->server_unread_count);
   }
 
@@ -17450,13 +17538,15 @@ void MessagesManager::load_messages(DialogId dialog_id, MessageId from_message_i
   get_history(dialog_id, from_message_id, offset, limit, from_database, only_local, std::move(promise));
 }
 
-vector<MessageId> MessagesManager::get_dialog_scheduled_messages(DialogId dialog_id, Promise<Unit> &&promise) {
+vector<MessageId> MessagesManager::get_dialog_scheduled_messages(DialogId dialog_id, bool force, bool ignore_result,
+                                                                 Promise<Unit> &&promise) {
+  LOG(INFO) << "Get scheduled messages in " << dialog_id;
   if (G()->close_flag()) {
     promise.set_error(Status::Error(500, "Request aborted"));
     return {};
   }
 
-  const Dialog *d = get_dialog_force(dialog_id);
+  Dialog *d = get_dialog_force(dialog_id);
   if (d == nullptr) {
     promise.set_error(Status::Error(6, "Chat not found"));
     return {};
@@ -17509,12 +17599,16 @@ vector<MessageId> MessagesManager::get_dialog_scheduled_messages(DialogId dialog
     }
     auto hash = get_vector_hash(numbers);
 
-    if (d->has_scheduled_server_messages ||
-        (d->scheduled_messages_sync_generation == 0 && !G()->parameters().use_message_db)) {
+    if (!force && (d->has_scheduled_server_messages ||
+                   (d->scheduled_messages_sync_generation == 0 && !G()->parameters().use_message_db))) {
       load_dialog_scheduled_messages(dialog_id, false, hash, std::move(promise));
       return {};
     }
     load_dialog_scheduled_messages(dialog_id, false, hash, Promise<Unit>());
+  }
+
+  if (!ignore_result) {
+    d->sent_scheduled_messages = true;
   }
 
   promise.set_value(Unit());
@@ -17571,10 +17665,10 @@ void MessagesManager::on_get_scheduled_messages_from_database(DialogId dialog_id
   }
   resolve_dependencies_force(td_, dependencies);
 
-  for (auto message_id : added_message_ids) {
-    send_update_new_message(d, get_message(d, message_id));
-  }
-  send_update_chat_has_scheduled_messages(d);
+  // for (auto message_id : added_message_ids) {
+  //   send_update_new_message(d, get_message(d, message_id));
+  // }
+  send_update_chat_has_scheduled_messages(d, false);
 
   auto it = load_scheduled_messages_from_database_queries_.find(dialog_id);
   CHECK(it != load_scheduled_messages_from_database_queries_.end());
@@ -17654,20 +17748,13 @@ tl_object_ptr<td_api::message> MessagesManager::get_message_object(DialogId dial
     CHECK(sending_state == nullptr);
   }
 
-  bool can_delete = true;
-  auto dialog_type = dialog_id.get_type();
-  auto is_bot = td_->auth_manager_->is_bot();
-  if (dialog_type == DialogType::Channel) {
-    auto dialog_status = td_->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id());
-    can_delete = can_delete_channel_message(dialog_status, m, is_bot);
-  }
-
+  bool can_delete = can_delete_message(dialog_id, m);
   bool is_scheduled = m->message_id.is_scheduled();
   DialogId my_dialog_id = get_my_dialog_id();
   bool can_delete_for_self = false;
   bool can_delete_for_all_users = can_delete && can_revoke_message(dialog_id, m);
   if (can_delete) {
-    switch (dialog_type) {
+    switch (dialog_id.get_type()) {
       case DialogType::User:
       case DialogType::Chat:
         // TODO allow to delete yet unsent message just for self
@@ -17712,7 +17799,7 @@ tl_object_ptr<td_api::message> MessagesManager::get_message_object(DialogId dial
     ttl = 0;
   }
   auto scheduling_state = is_scheduled ? get_message_scheduling_state_object(m->date) : nullptr;
-  bool can_be_edited = for_event_log ? false : can_edit_message(dialog_id, m, false, is_bot);
+  bool can_be_edited = for_event_log ? false : can_edit_message(dialog_id, m, false, td_->auth_manager_->is_bot());
   bool can_be_forwarded = for_event_log ? false : can_forward_message(dialog_id, m);
   auto media_album_id = for_event_log ? static_cast<int64>(0) : m->media_album_id;
   auto reply_to_message_id = for_event_log ? static_cast<int64>(0) : m->reply_to_message_id.get();
@@ -17789,12 +17876,13 @@ MessagesManager::Message *MessagesManager::get_message_to_send(
   m->is_channel_post = is_channel_post;
   m->is_outgoing = is_scheduled || dialog_id != DialogId(my_id);
   m->from_background = options.from_background;
-  m->views = is_channel_post ? 1 : 0;
+  m->views = is_channel_post && !is_scheduled ? 1 : 0;
   m->content = std::move(content);
   m->forward_info = std::move(forward_info);
   m->is_copy = is_copy || forward_info != nullptr;
 
-  if (td_->auth_manager_->is_bot() || options.disable_notification) {
+  if (td_->auth_manager_->is_bot() || options.disable_notification ||
+      G()->shared_config().get_option_boolean("ignore_default_disable_notification")) {
     m->disable_notification = options.disable_notification;
   } else {
     auto notification_settings = get_dialog_notification_settings(dialog_id, true);
@@ -17830,8 +17918,8 @@ MessagesManager::Message *MessagesManager::get_message_to_send(
   bool need_update = false;
   CHECK(have_input_peer(dialog_id, AccessRights::Read));
   auto result = add_message_to_dialog(d, std::move(m), true, &need_update, need_update_dialog_pos, "send message");
-  CHECK(result != nullptr);
-  send_update_chat_has_scheduled_messages(d);
+  LOG_CHECK(result != nullptr) << message_id << " " << debug_add_message_to_dialog_fail_reason_;
+  send_update_chat_has_scheduled_messages(d, false);
   return result;
 }
 
@@ -17918,6 +18006,9 @@ Status MessagesManager::can_send_message_content(DialogId dialog_id, const Messa
       if (content_type == MessageContentType::Poll) {
         return Status::Error(400, "Polls can't be sent to secret chats");
       }
+      if (content_type == MessageContentType::Dice) {
+        return Status::Error(400, "Dice can't be sent to secret chats");
+      }
       break;
     case DialogType::None:
     default:
@@ -17938,6 +18029,11 @@ Status MessagesManager::can_send_message_content(DialogId dialog_id, const Messa
     case MessageContentType::Contact:
       if (!can_send_messages) {
         return Status::Error(400, "Not enough rights to send contacts to the chat");
+      }
+      break;
+    case MessageContentType::Dice:
+      if (!can_send_messages) {
+        return Status::Error(400, "Not enough rights to send dice to the chat");
       }
       break;
     case MessageContentType::Document:
@@ -18170,7 +18266,8 @@ void MessagesManager::cancel_send_message_query(DialogId dialog_id, Message *m) 
           if (queue.empty()) {
             yet_unsent_media_queues_.erase(queue_it);
           } else {
-            on_yet_unsent_media_queue_updated(dialog_id);
+            // send later, because do_delete_all_dialog_messages can be called right now
+            send_closure_later(actor_id(this), &MessagesManager::on_yet_unsent_media_queue_updated, dialog_id);
           }
         }
       }
@@ -18375,7 +18472,8 @@ Result<InputMessageContent> MessagesManager::process_input_message_content(
       return Status::Error(400, "Can't copy message content");
     }
 
-    return InputMessageContent(std::move(content), copied_message->disable_web_page_preview, false, 0, UserId());
+    return InputMessageContent(std::move(content), get_message_disable_web_page_preview(copied_message), false, 0,
+                               UserId());
   }
 
   TRY_RESULT(content, get_input_message_content(dialog_id, std::move(input_message_content), td_));
@@ -19455,6 +19553,7 @@ bool MessagesManager::can_edit_message(DialogId dialog_id, const Message *m, boo
       return !get_message_content_poll_is_closed(td_, m->content.get());
     }
     case MessageContentType::Contact:
+    case MessageContentType::Dice:
     case MessageContentType::Location:
     case MessageContentType::Sticker:
     case MessageContentType::Venue:
@@ -20144,6 +20243,17 @@ void MessagesManager::edit_message_scheduling_state(
   }
 }
 
+bool MessagesManager::get_message_disable_web_page_preview(const Message *m) {
+  // m->disable_web_page_preview is known only for sent from this client messages
+  if (m->disable_web_page_preview) {
+    return true;
+  }
+  if (m->content->get_type() != MessageContentType::Text) {
+    return false;
+  }
+  return !has_message_content_web_page(m->content.get());
+}
+
 int32 MessagesManager::get_message_flags(const Message *m) {
   int32 flags = 0;
   if (m->reply_to_message_id.is_valid()) {
@@ -20756,7 +20866,7 @@ Result<vector<MessageId>> MessagesManager::forward_messages(DialogId to_dialog_i
     }
 
     if (need_copy) {
-      copied_messages.push_back({std::move(content), forwarded_message->disable_web_page_preview, i});
+      copied_messages.push_back({std::move(content), get_message_disable_web_page_preview(forwarded_message), i});
       continue;
     }
 
@@ -20776,7 +20886,7 @@ Result<vector<MessageId>> MessagesManager::forward_messages(DialogId to_dialog_i
         forward_info->from_dialog_id = saved_from_dialog_id;
         forward_info->from_message_id = saved_from_message_id;
       } else {
-        if (from_dialog_id != DialogId(my_id)) {
+        if (from_dialog_id != DialogId(my_id) || content_type == MessageContentType::Dice) {
           if (forwarded_message->is_channel_post) {
             if (is_broadcast_channel(from_dialog_id)) {
               auto author_signature = forwarded_message->sender_user_id.is_valid()
@@ -20999,6 +21109,7 @@ Result<vector<MessageId>> MessagesManager::resend_messages(DialogId dialog_id, v
       continue;
     }
 
+    being_readded_message_id_ = {dialog_id, message_ids[i]};
     unique_ptr<Message> message = delete_message(d, message_ids[i], true, &need_update_dialog_pos, "resend_messages");
     CHECK(message != nullptr);
     send_update_delete_messages(dialog_id, {message->message_id.get()}, true, false);
@@ -21021,6 +21132,7 @@ Result<vector<MessageId>> MessagesManager::resend_messages(DialogId dialog_id, v
     send_update_new_message(d, m);
 
     result[i] = m->message_id;
+    being_readded_message_id_ = FullMessageId();
   }
 
   if (need_update_dialog_pos) {
@@ -21169,6 +21281,9 @@ Result<MessageId> MessagesManager::add_local_message(
   if (message_content.content->get_type() == MessageContentType::Game) {
     return Status::Error(400, "Can't add local game message");
   }
+  if (message_content.content->get_type() == MessageContentType::Dice) {
+    return Status::Error(400, "Can't add local dice message");
+  }
 
   bool is_channel_post = is_broadcast_channel(dialog_id);
   if (sender_user_id != UserId() && !td_->contacts_manager_->have_user_force(sender_user_id)) {
@@ -21315,19 +21430,11 @@ bool MessagesManager::on_update_scheduled_message_id(int64 random_id, ScheduledS
 }
 
 bool MessagesManager::on_get_dialog_error(DialogId dialog_id, const Status &status, const string &source) {
-  if (status.code() == 401) {
-    // authorization is lost
-    return true;
-  }
-  if (status.code() == 420 || status.code() == 429) {
-    // flood wait
-    return true;
-  }
   if (status.message() == CSlice("BOT_METHOD_INVALID")) {
     LOG(ERROR) << "Receive BOT_METHOD_INVALID from " << source;
     return true;
   }
-  if (G()->close_flag()) {
+  if (G()->is_expected_error(status)) {
     return true;
   }
 
@@ -21418,6 +21525,11 @@ Result<MessagesManager::MessagePushNotificationInfo> MessagesManager::get_messag
     return Status::Error(406, "Ignore notification in unknown chat");
   }
 
+  if (is_from_scheduled && dialog_id != get_my_dialog_id() &&
+      G()->shared_config().get_option_boolean("disable_sent_scheduled_message_notifications")) {
+    return Status::Error("Ignore notification about sent scheduled message");
+  }
+
   bool is_new_pinned = is_pinned && message_id.is_valid() && message_id > d->max_notification_message_id;
   CHECK(!message_id.is_scheduled());
   if (message_id.is_valid()) {
@@ -21432,6 +21544,15 @@ Result<MessagesManager::MessagePushNotificationInfo> MessagesManager::get_messag
     }
     if (message_id <= d->last_read_inbox_message_id) {
       return Status::Error("Ignore notification about read message");
+    }
+    if (message_id <= d->last_clear_history_message_id) {
+      return Status::Error("Ignore notification about message from cleared chat history");
+    }
+    if (d->deleted_message_ids.count(message_id)) {
+      return Status::Error("Ignore notification about deleted message");
+    }
+    if (message_id <= d->max_unavailable_message_id) {
+      return Status::Error("Ignore notification about unavailable message");
     }
   }
   if (random_id != 0) {
@@ -22215,6 +22336,10 @@ bool MessagesManager::is_message_notification_disabled(const Dialog *d, const Me
   if (!has_incoming_notification(d->dialog_id, m) || td_->auth_manager_->is_bot()) {
     return true;
   }
+  if (m->is_from_scheduled && d->dialog_id != get_my_dialog_id() &&
+      G()->shared_config().get_option_boolean("disable_sent_scheduled_message_notifications")) {
+    return true;
+  }
 
   switch (m->content->get_type()) {
     case MessageContentType::ChatDeleteHistory:
@@ -22616,13 +22741,15 @@ void MessagesManager::send_update_chat_draft_message(const Dialog *d) {
   CHECK(d != nullptr);
   LOG_CHECK(d->is_update_new_chat_sent) << "Wrong " << d->dialog_id << " in send_update_chat_draft_message";
   on_dialog_updated(d->dialog_id, "send_update_chat_draft_message");
-  send_closure(G()->td(), &Td::send_update,
-               make_tl_object<td_api::updateChatDraftMessage>(
-                   d->dialog_id.get(), get_draft_message_object(d->draft_message), get_dialog_public_order(d)));
+  if (d->draft_message == nullptr || can_send_message(d->dialog_id).is_ok()) {
+    send_closure(G()->td(), &Td::send_update,
+                 make_tl_object<td_api::updateChatDraftMessage>(
+                     d->dialog_id.get(), get_draft_message_object(d->draft_message), get_dialog_public_order(d)));
+  }
 }
 
 void MessagesManager::send_update_chat_last_message(Dialog *d, const char *source) {
-  update_dialog_pos(d, false, source, false);
+  update_dialog_pos(d, source, false);
   send_update_chat_last_message_impl(d, source);
 }
 
@@ -22668,7 +22795,7 @@ void MessagesManager::send_update_unread_message_count(FolderId folder_id, Dialo
     postponed_unread_message_count_updates_.erase(folder_id);
     LOG(INFO) << "Send updateUnreadMessageCount in " << folder_id << " to " << list.unread_message_total_count_ << '/'
               << unread_unmuted_count << " from " << source << " and " << dialog_id;
-    send_closure(G()->td(), &Td::send_update, get_update_unread_message_count_object(folder_id, list));
+    send_closure(G()->td(), &Td::send_update, get_update_unread_message_count_object(list));
   }
 }
 
@@ -22722,7 +22849,7 @@ void MessagesManager::send_update_unread_chat_count(FolderId folder_id, DialogId
     postponed_unread_chat_count_updates_.insert(folder_id);
   } else {
     postponed_unread_chat_count_updates_.erase(folder_id);
-    send_closure(G()->td(), &Td::send_update, get_update_unread_chat_count_object(folder_id, list));
+    send_closure(G()->td(), &Td::send_update, get_update_unread_chat_count_object(list));
   }
 }
 
@@ -22782,11 +22909,10 @@ void MessagesManager::send_update_chat_is_sponsored(const Dialog *d) const {
 
   CHECK(d != nullptr);
   LOG_CHECK(d->is_update_new_chat_sent) << "Wrong " << d->dialog_id << " in send_update_chat_is_sponsored";
-  bool is_sponsored = d->order == SPONSORED_DIALOG_ORDER;
   LOG(INFO) << "Update chat is sponsored for " << d->dialog_id;
-  send_closure(
-      G()->td(), &Td::send_update,
-      make_tl_object<td_api::updateChatIsSponsored>(d->dialog_id.get(), is_sponsored, get_dialog_public_order(d)));
+  send_closure(G()->td(), &Td::send_update,
+               make_tl_object<td_api::updateChatIsSponsored>(d->dialog_id.get(), is_dialog_sponsored(d),
+                                                             get_dialog_public_order(d)));
 }
 
 void MessagesManager::send_update_chat_online_member_count(DialogId dialog_id, int32 online_member_count) const {
@@ -22805,6 +22931,10 @@ void MessagesManager::send_update_chat_chat_list(const Dialog *d) const {
 }
 
 void MessagesManager::send_update_secret_chats_with_user_action_bar(const Dialog *d) const {
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+
   if (d->dialog_id.get_type() != DialogType::User) {
     return;
   }
@@ -22822,6 +22952,10 @@ void MessagesManager::send_update_secret_chats_with_user_action_bar(const Dialog
 }
 
 void MessagesManager::send_update_chat_action_bar(const Dialog *d) {
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+
   CHECK(d != nullptr);
   LOG_CHECK(d->is_update_new_chat_sent) << "Wrong " << d->dialog_id << " in send_update_chat_action_bar";
   on_dialog_updated(d->dialog_id, "send_update_chat_action_bar");
@@ -22831,13 +22965,35 @@ void MessagesManager::send_update_chat_action_bar(const Dialog *d) {
   send_update_secret_chats_with_user_action_bar(d);
 }
 
-void MessagesManager::send_update_chat_has_scheduled_messages(Dialog *d) {
-  if (d->scheduled_messages == nullptr && d->has_loaded_scheduled_messages_from_database) {
-    set_dialog_has_scheduled_database_messages_impl(d, false);
+void MessagesManager::send_update_chat_has_scheduled_messages(Dialog *d, bool from_deletion) {
+  if (td_->auth_manager_->is_bot()) {
+    return;
   }
 
-  bool has_scheduled_messages =
-      d->has_scheduled_server_messages || d->has_scheduled_database_messages || d->scheduled_messages != nullptr;
+  if (d->scheduled_messages == nullptr) {
+    if (d->has_scheduled_database_messages) {
+      if (d->has_loaded_scheduled_messages_from_database) {
+        set_dialog_has_scheduled_database_messages_impl(d, false);
+      } else {
+        CHECK(G()->parameters().use_message_db);
+        repair_dialog_scheduled_messages(d);
+      }
+    }
+    if (d->has_scheduled_server_messages) {
+      if (from_deletion && d->scheduled_messages_sync_generation > 0) {
+        set_dialog_has_scheduled_server_messages(d, false);
+      } else {
+        d->last_repair_scheduled_messages_generation = 0;
+        repair_dialog_scheduled_messages(d);
+      }
+    }
+  }
+
+  LOG(INFO) << "In " << d->dialog_id << " have scheduled messages on server = " << d->has_scheduled_server_messages
+            << ", in database = " << d->has_scheduled_database_messages
+            << " and in memory = " << (d->scheduled_messages != nullptr)
+            << "; was loaded from database = " << d->has_loaded_scheduled_messages_from_database;
+  bool has_scheduled_messages = get_dialog_has_scheduled_messages(d);
   if (has_scheduled_messages == d->last_sent_has_scheduled_messages) {
     return;
   }
@@ -22872,14 +23028,14 @@ void MessagesManager::check_send_message_result(int64 random_id, DialogId dialog
       *sent_messages_random_ids.begin() != random_id || get_message_dialog_id(*sent_messages[0]) != dialog_id) {
     LOG(ERROR) << "Receive wrong result for sending message with random_id " << random_id << " from " << source
                << " to " << dialog_id << ": " << oneline(to_string(*updates_ptr));
+    Dialog *d = get_dialog(dialog_id);
+    CHECK(d != nullptr);
     if (dialog_id.get_type() == DialogType::Channel) {
-      Dialog *d = get_dialog(dialog_id);
-      CHECK(d != nullptr);
       get_channel_difference(dialog_id, d->pts, true, "check_send_message_result");
     } else {
       td_->updates_manager_->schedule_get_difference("check_send_message_result");
     }
-    repair_dialog_scheduled_messages(dialog_id);
+    repair_dialog_scheduled_messages(d);
   }
 }
 
@@ -22951,12 +23107,14 @@ FullMessageId MessagesManager::on_send_message_success(int64 random_id, MessageI
   CHECK(d != nullptr);
 
   bool need_update_dialog_pos = false;
+  being_readded_message_id_ = {dialog_id, old_message_id};
   unique_ptr<Message> sent_message = delete_message(d, old_message_id, false, &need_update_dialog_pos, source);
   if (sent_message == nullptr) {
     // message has already been deleted by the user or sent to inaccessible channel
     // don't need to send update to the user, because the message has already been deleted
     LOG(INFO) << "Delete already deleted sent " << new_message_id << " from server";
     delete_message_from_server(dialog_id, new_message_id, true);
+    being_readded_message_id_ = FullMessageId();
     return {};
   }
 
@@ -22967,10 +23125,11 @@ FullMessageId MessagesManager::on_send_message_success(int64 random_id, MessageI
 
   // imitation of update_message(d, sent_message.get(), std::move(new_message), &need_update_dialog_pos);
   if (date <= 0) {
-    LOG(ERROR) << "Receive " << new_message_id << " in " << dialog_id << " with wrong date " << date;
+    LOG(ERROR) << "Receive " << new_message_id << " in " << dialog_id << " with wrong date " << date << " from "
+               << source;
   } else {
     LOG_CHECK(sent_message->date > 0) << old_message_id << ' ' << sent_message->message_id << ' ' << new_message_id
-                                      << ' ' << sent_message->date << ' ' << date;
+                                      << ' ' << sent_message->date << ' ' << date << ' ' << source;
     sent_message->date = date;
     CHECK(d->last_message_id != old_message_id);
   }
@@ -23005,6 +23164,7 @@ FullMessageId MessagesManager::on_send_message_success(int64 random_id, MessageI
     send_update_chat_last_message(d, "on_send_message_success");
   }
   try_add_active_live_location(dialog_id, m);
+  being_readded_message_id_ = FullMessageId();
   return {dialog_id, new_message_id};
 }
 
@@ -23303,6 +23463,8 @@ void MessagesManager::on_send_message_fail(int64 random_id, Status error) {
           error_message = "Wrong invoice information specified";
         } else if (content_type == MessageContentType::Poll) {
           error_message = "Wrong poll data specified";
+        } else if (content_type == MessageContentType::Contact) {
+          error_message = "Wrong phone number specified";
         } else {
           error_message = "Wrong file identifier/HTTP URL specified";
         }
@@ -23369,18 +23531,23 @@ MessageId MessagesManager::get_next_local_message_id(Dialog *d) {
   return get_next_message_id(d, MessageType::Local);
 }
 
-MessageId MessagesManager::get_next_yet_unsent_scheduled_message_id(const Dialog *d, int32 date) {
+MessageId MessagesManager::get_next_yet_unsent_scheduled_message_id(Dialog *d, int32 date) {
   CHECK(date > 0);
+
+  MessageId message_id(ScheduledServerMessageId(1), date);
+
   auto it = MessagesConstIterator(d, MessageId(ScheduledServerMessageId(), date + 1, true));
-  int32 prev_date = 0;
-  if (*it != nullptr) {
-    prev_date = (*it)->message_id.get_scheduled_message_date();
+  if (*it != nullptr && (*it)->message_id > message_id) {
+    message_id = (*it)->message_id;
   }
-  if (prev_date < date) {
-    return MessageId(ScheduledServerMessageId(1), date).get_next_message_id(MessageType::YetUnsent);
+
+  auto &last_assigned_message_id = d->last_assigned_scheduled_message_id[date];
+  if (last_assigned_message_id != MessageId() && last_assigned_message_id > message_id) {
+    message_id = last_assigned_message_id;
   }
-  CHECK(*it != nullptr);
-  return (*it)->message_id.get_next_message_id(MessageType::YetUnsent);
+
+  last_assigned_message_id = message_id.get_next_message_id(MessageType::YetUnsent);
+  return last_assigned_message_id;
 }
 
 void MessagesManager::fail_send_message(FullMessageId full_message_id, int error_code, const string &error_message) {
@@ -23392,11 +23559,13 @@ void MessagesManager::fail_send_message(FullMessageId full_message_id, int error
   CHECK(old_message_id.is_yet_unsent());
 
   bool need_update_dialog_pos = false;
+  being_readded_message_id_ = full_message_id;
   unique_ptr<Message> message = delete_message(d, old_message_id, false, &need_update_dialog_pos, "fail send message");
   if (message == nullptr) {
     // message has already been deleted by the user or sent to inaccessible channel
     // don't need to send update to the user, because the message has already been deleted
     // and there is nothing to be deleted from the server
+    being_readded_message_id_ = FullMessageId();
     return;
   }
 
@@ -23458,6 +23627,7 @@ void MessagesManager::fail_send_message(FullMessageId full_message_id, int error
   if (need_update_dialog_pos) {
     send_update_chat_last_message(d, "fail_send_message");
   }
+  being_readded_message_id_ = FullMessageId();
 }
 
 void MessagesManager::fail_send_message(FullMessageId full_message_id, Status error) {
@@ -23512,7 +23682,7 @@ bool MessagesManager::update_dialog_draft_message(Dialog *d, unique_ptr<DraftMes
     if (d->draft_message != nullptr) {
       d->draft_message = nullptr;
       if (need_update_dialog_pos) {
-        update_dialog_pos(d, false, "update_dialog_draft_message", false);
+        update_dialog_pos(d, "update_dialog_draft_message", false);
       }
       send_update_chat_draft_message(d);
       return true;
@@ -23521,17 +23691,18 @@ bool MessagesManager::update_dialog_draft_message(Dialog *d, unique_ptr<DraftMes
     if (d->draft_message != nullptr && d->draft_message->reply_to_message_id == draft_message->reply_to_message_id &&
         d->draft_message->input_message_text == draft_message->input_message_text) {
       if (d->draft_message->date < draft_message->date) {
-        if (need_update_dialog_pos) {
-          update_dialog_pos(d, false, "update_dialog_draft_message 2");
-        }
         d->draft_message->date = draft_message->date;
+        if (need_update_dialog_pos) {
+          update_dialog_pos(d, "update_dialog_draft_message 2", false);
+        }
+        send_update_chat_draft_message(d);
         return true;
       }
     } else {
       if (!from_update || d->draft_message == nullptr || d->draft_message->date <= draft_message->date) {
         d->draft_message = std::move(draft_message);
         if (need_update_dialog_pos) {
-          update_dialog_pos(d, false, "update_dialog_draft_message 3", false);
+          update_dialog_pos(d, "update_dialog_draft_message 3", false);
         }
         send_update_chat_draft_message(d);
         return true;
@@ -23553,13 +23724,16 @@ void MessagesManager::on_update_dialog_is_pinned(FolderId folder_id, DialogId di
     on_update_pinned_dialogs(folder_id);
     return;
   }
+  if (is_removed_from_dialog_list(d) && is_pinned) {
+    return;
+  }
 
   set_dialog_folder_id(d, folder_id);
   if (!is_pinned && d->pinned_order == DEFAULT_ORDER) {
     return;
   }
   set_dialog_is_pinned(d, is_pinned);
-  update_dialog_pos(d, false, "on_update_dialog_is_pinned");
+  update_dialog_pos(d, "on_update_dialog_is_pinned");
 }
 
 void MessagesManager::on_update_pinned_dialogs(FolderId folder_id) {
@@ -23568,8 +23742,8 @@ void MessagesManager::on_update_pinned_dialogs(FolderId folder_id) {
     send_closure(actor_id, &MessagesManager::reload_pinned_dialogs, folder_id, Promise<Unit>());
   });
 
-  // max ordinary pinned dialogs + max pinned secret chats + sponsored proxy
-  size_t needed_dialogs = 2 * get_pinned_dialogs_limit(folder_id) + (folder_id == FolderId::main() ? 1 : 0);
+  // max ordinary pinned dialogs + max pinned secret chats
+  size_t needed_dialogs = 2 * get_pinned_dialogs_limit(folder_id);
   auto &list = get_dialog_list(folder_id);
   if (list.ordered_dialogs_.size() >= needed_dialogs) {
     query_promise.set_value(Unit());
@@ -23669,15 +23843,24 @@ void MessagesManager::set_dialog_pinned_message_id(Dialog *d, MessageId pinned_m
                make_tl_object<td_api::updateChatPinnedMessage>(d->dialog_id.get(), pinned_message_id.get()));
 }
 
-void MessagesManager::repair_dialog_scheduled_messages(DialogId dialog_id) {
-  if (td_->auth_manager_->is_bot() || dialog_id.get_type() == DialogType::SecretChat) {
+void MessagesManager::repair_dialog_scheduled_messages(Dialog *d) {
+  if (td_->auth_manager_->is_bot() || d->dialog_id.get_type() == DialogType::SecretChat) {
     return;
   }
 
+  if (d->last_repair_scheduled_messages_generation == scheduled_messages_sync_generation_) {
+    return;
+  }
+  d->last_repair_scheduled_messages_generation = scheduled_messages_sync_generation_;
+
   // TODO create logevent
-  get_dialog_scheduled_messages(dialog_id, PromiseCreator::lambda([actor_id = actor_id(this), dialog_id](Unit) {
+  auto dialog_id = d->dialog_id;
+  LOG(INFO) << "Repair scheduled messages in " << dialog_id << " with generation "
+            << d->last_repair_scheduled_messages_generation;
+  get_dialog_scheduled_messages(dialog_id, false, true,
+                                PromiseCreator::lambda([actor_id = actor_id(this), dialog_id](Unit) {
                                   send_closure(G()->messages_manager(), &MessagesManager::get_dialog_scheduled_messages,
-                                               dialog_id, Promise<Unit>());
+                                               dialog_id, true, true, Promise<Unit>());
                                 }));
 }
 
@@ -23700,6 +23883,9 @@ void MessagesManager::on_update_dialog_has_scheduled_server_messages(DialogId di
   LOG(INFO) << "Receive has_scheduled_server_messages = " << has_scheduled_server_messages << " in " << dialog_id;
   if (d->has_scheduled_server_messages != has_scheduled_server_messages) {
     set_dialog_has_scheduled_server_messages(d, has_scheduled_server_messages);
+  } else if (has_scheduled_server_messages !=
+             (d->has_scheduled_database_messages || d->scheduled_messages != nullptr)) {
+    repair_dialog_scheduled_messages(d);
   }
 }
 
@@ -23707,12 +23893,12 @@ void MessagesManager::set_dialog_has_scheduled_server_messages(Dialog *d, bool h
   CHECK(d != nullptr);
   CHECK(d->has_scheduled_server_messages != has_scheduled_server_messages);
   d->has_scheduled_server_messages = has_scheduled_server_messages;
-  repair_dialog_scheduled_messages(d->dialog_id);
+  repair_dialog_scheduled_messages(d);
   on_dialog_updated(d->dialog_id, "set_dialog_has_scheduled_server_messages");
 
   LOG(INFO) << "Set " << d->dialog_id << " has_scheduled_server_messages to " << has_scheduled_server_messages;
 
-  send_update_chat_has_scheduled_messages(d);
+  send_update_chat_has_scheduled_messages(d, false);
 }
 
 void MessagesManager::set_dialog_has_scheduled_database_messages(DialogId dialog_id,
@@ -23764,8 +23950,9 @@ void MessagesManager::set_dialog_folder_id(Dialog *d, FolderId folder_id) {
 
   // first remove the dialog from the old chat list
   // this will send updateChatChatList if needed
-  if (d->pinned_order != DEFAULT_ORDER) {
-    set_dialog_is_pinned(d, false);
+  DialogId sponsored_dialog_id = sponsored_dialog_id_;
+  if (d->dialog_id == sponsored_dialog_id_ && d->order != DEFAULT_ORDER) {
+    sponsored_dialog_id_ = DialogId();  // supress updateChatIsSponsored
   }
   set_dialog_order(d, DEFAULT_ORDER, true, false, "set_dialog_folder_id old");
 
@@ -23773,9 +23960,11 @@ void MessagesManager::set_dialog_folder_id(Dialog *d, FolderId folder_id) {
   d->folder_id = folder_id;
   d->is_folder_id_inited = true;
 
+  sponsored_dialog_id_ = sponsored_dialog_id;
+
   // update dialog position in the new folder
   // this will send updateChatChatList if needed
-  update_dialog_pos(d, false, "set_dialog_folder_id new", true, false);
+  update_dialog_pos(d, "set_dialog_folder_id new");
 
   on_dialog_updated(d->dialog_id, "set_dialog_folder_id");
 }
@@ -23895,12 +24084,7 @@ void MessagesManager::on_dialog_user_is_contact_updated(DialogId dialog_id, bool
           send_update_chat_action_bar(d);
         }
       } else {
-        d->know_action_bar = false;
-        if (have_input_peer(dialog_id, AccessRights::Read)) {
-          repair_dialog_action_bar(dialog_id, "on_dialog_user_is_contact_updated");
-        }
-        // there is no need to change action bar
-        on_dialog_updated(dialog_id, "on_dialog_user_is_contact_updated");
+        repair_dialog_action_bar(d, "on_dialog_user_is_contact_updated");
       }
     }
   }
@@ -23920,12 +24104,7 @@ void MessagesManager::on_dialog_user_is_blocked_updated(DialogId dialog_id, bool
           send_update_chat_action_bar(d);
         }
       } else {
-        d->know_action_bar = false;
-        if (have_input_peer(dialog_id, AccessRights::Read)) {
-          repair_dialog_action_bar(dialog_id, "on_dialog_user_is_blocked_updated");
-        }
-        // there is no need to change action bar
-        on_dialog_updated(dialog_id, "on_dialog_user_is_blocked_updated");
+        repair_dialog_action_bar(d, "on_dialog_user_is_blocked_updated");
       }
     }
   }
@@ -23944,12 +24123,7 @@ void MessagesManager::on_dialog_user_is_deleted_updated(DialogId dialog_id, bool
           send_update_chat_action_bar(d);
         }
       } else {
-        d->know_action_bar = false;
-        if (have_input_peer(dialog_id, AccessRights::Read)) {
-          repair_dialog_action_bar(dialog_id, "on_dialog_user_is_deleted_updated");
-        }
-        // there is no need to change action bar
-        on_dialog_updated(dialog_id, "on_dialog_user_is_deleted_updated");
+        repair_dialog_action_bar(d, "on_dialog_user_is_deleted_updated");
       }
     }
   }
@@ -24289,6 +24463,19 @@ RestrictedRights MessagesManager::get_dialog_permissions(DialogId dialog_id) con
       UNREACHABLE();
       return RestrictedRights(false, false, false, false, false, false, false, false, false, false, false);
   }
+}
+
+bool MessagesManager::get_dialog_has_scheduled_messages(const Dialog *d) const {
+  if (!have_input_peer(d->dialog_id, AccessRights::Read)) {
+    return false;
+  }
+  if (is_broadcast_channel(d->dialog_id) &&
+      !td_->contacts_manager_->get_channel_status(d->dialog_id.get_channel_id()).can_post_messages()) {
+    return false;
+  }
+  // TODO send updateChatHasScheduledMessage when can_post_messages changes
+
+  return d->has_scheduled_server_messages || d->has_scheduled_database_messages || d->scheduled_messages != nullptr;
 }
 
 bool MessagesManager::is_dialog_action_unneded(DialogId dialog_id) const {
@@ -24654,6 +24841,12 @@ void MessagesManager::set_dialog_folder_id(DialogId dialog_id, FolderId folder_i
 
   if (d->folder_id == folder_id) {
     return promise.set_value(Unit());
+  }
+
+  if (folder_id == FolderId::archive() &&
+      (dialog_id == get_my_dialog_id() ||
+       dialog_id == DialogId(td_->contacts_manager_->get_service_notifications_user_id()))) {
+    return promise.set_error(Status::Error(400, "Chat can't be archived"));
   }
 
   if (!have_input_peer(dialog_id, AccessRights::Read)) {
@@ -25129,7 +25322,7 @@ std::pair<int32, vector<DialogParticipant>> MessagesManager::search_private_chat
       break;
     case DialogParticipantsFilter::Members:
       user_ids.push_back(my_user_id);
-      if (peer_user_id.is_valid()) {
+      if (peer_user_id.is_valid() && peer_user_id != my_user_id) {
         user_ids.push_back(peer_user_id);
       }
       break;
@@ -25141,7 +25334,7 @@ std::pair<int32, vector<DialogParticipant>> MessagesManager::search_private_chat
       if (td_->auth_manager_->is_bot()) {
         user_ids.push_back(my_user_id);
       }
-      if (peer_user_id.is_valid() && td_->contacts_manager_->is_user_bot(peer_user_id)) {
+      if (peer_user_id.is_valid() && td_->contacts_manager_->is_user_bot(peer_user_id) && peer_user_id != my_user_id) {
         user_ids.push_back(peer_user_id);
       }
       break;
@@ -26600,6 +26793,7 @@ MessagesManager::Message *MessagesManager::add_scheduled_message_to_dialog(Dialo
         change_message_files(dialog_id, m, old_file_ids);
       }
       if (old_message_id != message_id) {
+        being_readded_message_id_ = {dialog_id, old_message_id};
         message = do_delete_scheduled_message(d, old_message_id, false, "add_scheduled_message_to_dialog");
         CHECK(message != nullptr);
         send_update_delete_messages(dialog_id, {message->message_id.get()}, false, false);
@@ -26643,6 +26837,7 @@ MessagesManager::Message *MessagesManager::add_scheduled_message_to_dialog(Dialo
   Message *result_message = treap_insert_message(&d->scheduled_messages, std::move(message));
   CHECK(result_message != nullptr);
   CHECK(d->scheduled_messages != nullptr);
+  being_readded_message_id_ = FullMessageId();
   return result_message;
 }
 
@@ -26805,6 +27000,10 @@ void MessagesManager::delete_message_files(DialogId dialog_id, const Message *m)
 }
 
 bool MessagesManager::need_delete_file(FullMessageId full_message_id, FileId file_id) const {
+  if (being_readded_message_id_ == full_message_id) {
+    return false;
+  }
+
   auto main_file_id = td_->file_manager_->get_file_view(file_id).file_id();
   auto full_message_ids = td_->file_reference_manager_->get_some_message_file_sources(main_file_id);
   LOG(INFO) << "Receive " << full_message_ids << " as sources for file " << main_file_id << "/" << file_id << " from "
@@ -26825,6 +27024,9 @@ bool MessagesManager::need_delete_message_files(DialogId dialog_id, const Messag
 
   auto dialog_type = dialog_id.get_type();
   if (!m->message_id.is_scheduled() && !m->message_id.is_server() && dialog_type != DialogType::SecretChat) {
+    return false;
+  }
+  if (being_readded_message_id_ == FullMessageId{dialog_id, m->message_id}) {
     return false;
   }
 
@@ -27213,7 +27415,8 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
   }
 
   if (old_message->is_from_scheduled != new_message->is_from_scheduled) {
-    old_message->is_from_scheduled = new_message->is_from_scheduled;
+    // is_from_scheduled flag shouldn't be changed, because we are unable to show/hide message notification
+    // old_message->is_from_scheduled = new_message->is_from_scheduled;
   }
 
   if (old_message->edit_date > 0) {
@@ -27239,7 +27442,7 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
         // MessageGame and MessageInvoice reply markup can be generated server side
         // some forwards retain their reply markup
         if (content_type != MessageContentType::Game && content_type != MessageContentType::Invoice &&
-            old_message->forward_info == nullptr && !replace_legacy) {
+            need_message_changed_warning(old_message) && !replace_legacy) {
           LOG(ERROR) << message_id << " in " << dialog_id << " has received reply markup " << *new_message->reply_markup
                      << ", message content type is " << old_message->content->get_type() << '/'
                      << new_message->content->get_type();
@@ -27261,16 +27464,19 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
           old_message->had_reply_markup = false;
           old_message->reply_markup = std::move(new_message->reply_markup);
           need_send_update = true;
-        } else {
+        } else if (need_message_changed_warning(old_message)) {
           LOG_IF(WARNING, *old_message->reply_markup != *new_message->reply_markup)
               << message_id << " in " << dialog_id << " has changed reply_markup from " << *old_message->reply_markup
               << " to " << *new_message->reply_markup;
         }
-      } else if (is_new_available) {  // if the message is not accessible anymore, then we don't need a warning
-        LOG(ERROR) << message_id << " in " << dialog_id << " sent by " << old_message->sender_user_id
-                   << " has lost reply markup " << *old_message->reply_markup
-                   << ". Old message: " << to_string(get_message_object(dialog_id, old_message))
-                   << ". New message: " << to_string(get_message_object(dialog_id, new_message.get()));
+      } else {
+        // if the message is not accessible anymore, then we don't need a warning
+        if (need_message_changed_warning(old_message) && is_new_available) {
+          LOG(ERROR) << message_id << " in " << dialog_id << " sent by " << old_message->sender_user_id
+                     << " has lost reply markup " << *old_message->reply_markup
+                     << ". Old message: " << to_string(get_message_object(dialog_id, old_message))
+                     << ". New message: " << to_string(get_message_object(dialog_id, new_message.get()));
+        }
       }
     }
   }
@@ -27292,7 +27498,7 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
 
   if (update_message_content(dialog_id, old_message, std::move(new_message->content), true,
                              message_id.is_yet_unsent() && new_message->edit_date == 0,
-                             !is_scheduled && get_message(d, message_id) != nullptr)) {
+                             get_message(d, message_id) != nullptr)) {
     need_send_update = true;
   }
 
@@ -27311,7 +27517,8 @@ bool MessagesManager::need_message_changed_warning(const Message *old_message) {
     return false;
   }
   if (old_message->message_id.is_yet_unsent() &&
-      (old_message->forward_info != nullptr || old_message->had_forward_info)) {
+      (old_message->forward_info != nullptr || old_message->had_forward_info ||
+       old_message->real_forward_from_dialog_id.is_valid())) {
     // original message may be edited
     return false;
   }
@@ -27322,10 +27529,6 @@ bool MessagesManager::update_message_content(DialogId dialog_id, Message *old_me
                                              unique_ptr<MessageContent> new_content,
                                              bool need_send_update_message_content, bool need_merge_files,
                                              bool is_message_in_dialog) {
-  if (old_message->message_id.is_scheduled()) {
-    is_message_in_dialog = false;
-  }
-
   bool is_content_changed = false;
   bool need_update = false;
   unique_ptr<MessageContent> &old_content = old_message->content;
@@ -27487,7 +27690,7 @@ void MessagesManager::force_create_dialog(DialogId dialog_id, const char *source
     }
 
     d = add_dialog(dialog_id);
-    update_dialog_pos(d, false, "force_create_dialog");
+    update_dialog_pos(d, "force_create_dialog");
 
     if (dialog_id.get_type() == DialogType::SecretChat && !d->notification_settings.is_synchronized) {
       // secret chat is being created
@@ -27541,7 +27744,7 @@ void MessagesManager::force_create_dialog(DialogId dialog_id, const char *source
       }
     }
   } else if (force_update_dialog_pos) {
-    update_dialog_pos(d, false, "force update dialog pos");
+    update_dialog_pos(d, "force update dialog pos");
   }
 }
 
@@ -27700,7 +27903,7 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_datab
         force_create_dialog(DialogId(user_id), "add chat with user to load/store action_bar");
       }
     } else {
-      repair_dialog_action_bar(dialog_id, "fix_new_dialog");
+      reget_dialog_action_bar(dialog_id, "fix_new_dialog");
     }
   }
 
@@ -27905,11 +28108,11 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_datab
   }
 
   if (need_get_history && !td_->auth_manager_->is_bot() && have_input_peer(dialog_id, AccessRights::Read) &&
-      d->order != DEFAULT_ORDER) {
+      (d->order != DEFAULT_ORDER || is_dialog_sponsored(d))) {
     get_history_from_the_end(dialog_id, true, false, Auto());
   }
 
-  if (d->need_repair_server_unread_count && d->order != 0) {
+  if (d->need_repair_server_unread_count && need_unread_counter(d->order)) {
     CHECK(dialog_type != DialogType::SecretChat);
     repair_server_unread_count(dialog_id, d->server_unread_count);
   }
@@ -27917,7 +28120,11 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_datab
     repair_channel_server_unread_count(d);
   }
 
-  update_dialog_pos(d, false, "fix_new_dialog 7", true, is_loaded_from_database);
+  if (!G()->parameters().use_message_db) {
+    d->has_loaded_scheduled_messages_from_database = true;
+  }
+
+  update_dialog_pos(d, "fix_new_dialog 7", true, is_loaded_from_database);
 
   LOG(INFO) << "Loaded " << dialog_id << " with last new " << d->last_new_message_id << ", first database "
             << d->first_database_message_id << ", last database " << d->last_database_message_id << ", last "
@@ -27961,7 +28168,7 @@ void MessagesManager::add_dialog_last_database_message(Dialog *d, unique_ptr<Mes
     if (d->pending_last_message_date != 0) {
       d->pending_last_message_date = 0;
       d->pending_last_message_id = MessageId();
-      update_dialog_pos(d, false, "add_dialog_last_database_message 1");
+      update_dialog_pos(d, "add_dialog_last_database_message 1");
     }
     return;
   }
@@ -27986,7 +28193,7 @@ void MessagesManager::add_dialog_last_database_message(Dialog *d, unique_ptr<Mes
   }
 
   if (need_update_dialog_pos) {
-    update_dialog_pos(d, false, "add_dialog_last_database_message 5");
+    update_dialog_pos(d, "add_dialog_last_database_message 5");
   }
 }
 
@@ -28015,10 +28222,15 @@ int64 MessagesManager::get_dialog_order(MessageId message_id, int32 message_date
          message_id.get_prev_server_message_id().get_server_message_id().get();
 }
 
+bool MessagesManager::is_dialog_sponsored(const Dialog *d) const {
+  return d->order == DEFAULT_ORDER && d->dialog_id == sponsored_dialog_id_;
+}
+
 int64 MessagesManager::get_dialog_public_order(const Dialog *d) const {
-  DialogDate dialog_date(d->order, d->dialog_id);
+  auto order = is_dialog_sponsored(d) ? SPONSORED_DIALOG_ORDER : d->order;
+  DialogDate dialog_date(order, d->dialog_id);
   auto *list = get_dialog_list(d->folder_id);
-  return list != nullptr && dialog_date <= list->last_dialog_date_ ? d->order : 0;
+  return list != nullptr && dialog_date <= list->last_dialog_date_ ? order : 0;
 }
 
 int64 MessagesManager::get_next_pinned_dialog_order() {
@@ -28038,39 +28250,31 @@ int64 MessagesManager::get_next_pinned_dialog_order() {
   return current_pinned_dialog_order_;
 }
 
-void MessagesManager::update_dialog_pos(Dialog *d, bool remove_from_dialog_list, const char *source,
-                                        bool need_send_update_chat_order, bool is_loaded_from_database) {
-  CHECK(d != nullptr);
-  LOG(INFO) << "Trying to update " << d->dialog_id << " order from " << source;
-  auto dialog_type = d->dialog_id.get_type();
-
-  switch (dialog_type) {
+bool MessagesManager::is_removed_from_dialog_list(const Dialog *d) const {
+  switch (d->dialog_id.get_type()) {
     case DialogType::User:
       break;
-    case DialogType::Chat: {
-      auto chat_id = d->dialog_id.get_chat_id();
-      if (!td_->contacts_manager_->get_chat_is_active(chat_id)) {
-        remove_from_dialog_list = true;
-      }
-      break;
-    }
-    case DialogType::Channel: {
-      auto channel_id = d->dialog_id.get_channel_id();
-      if (!td_->contacts_manager_->get_channel_status(channel_id).is_member()) {
-        remove_from_dialog_list = true;
-      }
-      break;
-    }
+    case DialogType::Chat:
+      return !td_->contacts_manager_->get_chat_is_active(d->dialog_id.get_chat_id());
+    case DialogType::Channel:
+      return !td_->contacts_manager_->get_channel_status(d->dialog_id.get_channel_id()).is_member();
     case DialogType::SecretChat:
       break;
     case DialogType::None:
     default:
       UNREACHABLE();
-      return;
+      break;
   }
+  return false;
+}
+
+void MessagesManager::update_dialog_pos(Dialog *d, const char *source, bool need_send_update_chat_order,
+                                        bool is_loaded_from_database) {
+  CHECK(d != nullptr);
+  LOG(INFO) << "Trying to update " << d->dialog_id << " order from " << source;
 
   int64 new_order = DEFAULT_ORDER;
-  if (!remove_from_dialog_list) {
+  if (!is_removed_from_dialog_list(d)) {
     if (d->pinned_order != DEFAULT_ORDER) {
       LOG(INFO) << "Pin at " << d->pinned_order << " found";
       new_order = d->pinned_order;
@@ -28103,13 +28307,14 @@ void MessagesManager::update_dialog_pos(Dialog *d, bool remove_from_dialog_list,
         new_order = pending_order;
       }
     }
-    if (d->draft_message != nullptr) {
+    if (d->draft_message != nullptr && can_send_message(d->dialog_id).is_ok()) {
       LOG(INFO) << "Draft message at " << d->draft_message->date << " found";
       int64 draft_order = get_dialog_order(MessageId(), d->draft_message->date);
       if (draft_order > new_order) {
         new_order = draft_order;
       }
     }
+    auto dialog_type = d->dialog_id.get_type();
     if (dialog_type == DialogType::Channel) {
       auto date = td_->contacts_manager_->get_channel_date(d->dialog_id.get_channel_id());
       LOG(INFO) << "Join of channel at " << date << " found";
@@ -28131,14 +28336,10 @@ void MessagesManager::update_dialog_pos(Dialog *d, bool remove_from_dialog_list,
         }
       }
     }
-    if (d->dialog_id != sponsored_dialog_id_ && new_order == DEFAULT_ORDER && !d->is_empty) {
-      // if there is no known messages in the dialog, just leave it where it is
-      LOG(INFO) << "There is no known messages in the dialog";
-      return;
+    if (new_order == DEFAULT_ORDER && !d->is_empty) {
+      LOG(INFO) << "There is no known messages in the chat, just leave it where it is";
+      new_order = d->order;
     }
-  }
-  if (new_order == DEFAULT_ORDER && d->dialog_id == sponsored_dialog_id_ && d->folder_id == FolderId::main()) {
-    new_order = SPONSORED_DIALOG_ORDER;
   }
 
   if (set_dialog_order(d, new_order, need_send_update_chat_order, is_loaded_from_database, source)) {
@@ -28154,25 +28355,12 @@ bool MessagesManager::set_dialog_order(Dialog *d, int64 new_order, bool need_sen
   DialogDate new_date(new_order, dialog_id);
 
   auto &list = get_dialog_list(d->folder_id);
-  std::set<DialogDate> *ordered_dialogs_set = nullptr;
-  switch (dialog_id.get_type()) {
-    case DialogType::User:
-    case DialogType::Chat:
-    case DialogType::Channel:
-    case DialogType::SecretChat:
-      ordered_dialogs_set = &list.ordered_server_dialogs_;
-      break;
-    case DialogType::None:
-    default:
-      UNREACHABLE();
-      return false;
-  }
-
   if (old_date == new_date) {
-    if (new_order == DEFAULT_ORDER && ordered_dialogs_set->count(old_date) == 0) {
-      ordered_dialogs_set->insert(new_date);
+    if (new_order == DEFAULT_ORDER) {
+      // first addition of a new left dialog
+      list.ordered_server_dialogs_.insert(new_date);
     }
-    LOG(INFO) << "Dialog order is not changed: " << new_order << " from " << source;
+    LOG(INFO) << "Chat order is not changed: " << new_order << " from " << source;
     return false;
   }
   LOG(INFO) << "Update order of " << dialog_id << " from " << d->order << " to " << new_order << " from " << source;
@@ -28184,11 +28372,12 @@ bool MessagesManager::set_dialog_order(Dialog *d, int64 new_order, bool need_sen
     }
     need_update = true;
   }
-  if (ordered_dialogs_set->erase(old_date) == 0) {
+  if (list.ordered_server_dialogs_.erase(old_date) == 0) {
     LOG_IF(ERROR, d->order != DEFAULT_ORDER) << dialog_id << " not found in the chat list from " << source;
   }
   LOG_IF(ERROR, is_loaded_from_database && d->order != DEFAULT_ORDER)
-      << dialog_id << " has non-default order after loading from database from " << source;
+      << dialog_id << " has order " << new_order << " instead of saved to database order " << d->order
+      << " after loading from " << source;
 
   int64 updated_to = 0;
   if (new_date <= list.last_dialog_date_) {
@@ -28196,11 +28385,10 @@ bool MessagesManager::set_dialog_order(Dialog *d, int64 new_order, bool need_sen
     need_update = true;
     updated_to = new_order;
   }
-  ordered_dialogs_set->insert(new_date);
+  list.ordered_server_dialogs_.insert(new_date);
 
   bool add_to_hints = (d->order == DEFAULT_ORDER);
-  bool was_sponsored = (d->order == SPONSORED_DIALOG_ORDER);
-  bool is_sponsored = (new_order == SPONSORED_DIALOG_ORDER);
+  bool was_sponsored = is_dialog_sponsored(d);
   bool had_unread_counter = need_unread_counter(d->order);
   bool has_unread_counter = need_unread_counter(new_order);
   bool is_removed_from_folder = new_order == DEFAULT_ORDER;
@@ -28222,6 +28410,15 @@ bool MessagesManager::set_dialog_order(Dialog *d, int64 new_order, bool need_sen
       }
     }
   }
+
+  if (new_order == DEFAULT_ORDER && d->pinned_order != DEFAULT_ORDER) {
+    d->pinned_order = DEFAULT_ORDER;
+    send_closure(G()->td(), &Td::send_update, make_tl_object<td_api::updateChatIsPinned>(d->dialog_id.get(), false, 0));
+    need_update = false;
+  }
+
+  d->order = new_order;
+
   bool need_update_unread_chat_count = old_dialog_total_count != get_dialog_total_count(list);
   CHECK(static_cast<int32>(list.ordered_dialogs_.size()) <= list.in_memory_dialog_total_count_);
   CHECK(static_cast<size_t>(list.in_memory_dialog_total_count_) <= list.ordered_server_dialogs_.size());
@@ -28280,19 +28477,36 @@ bool MessagesManager::set_dialog_order(Dialog *d, int64 new_order, bool need_sen
     send_update_unread_chat_count(d->folder_id, dialog_id, true, "changed total_count");
   }
 
-  d->order = new_order;
-
   if (add_to_hints) {
     update_dialogs_hints(d);
   }
   update_dialogs_hints_rating(d);
 
-  if (is_added_to_folder) {
+  if (is_removed_from_folder && d->folder_id != FolderId::main()) {
+    if (need_update) {
+      need_update = false;
+      send_closure(G()->td(), &Td::send_update, make_tl_object<td_api::updateChatOrder>(dialog_id.get(), updated_to));
+    }
+
+    d->folder_id = FolderId::main();
+    d->is_folder_id_inited = true;
+    send_update_chat_chat_list(d);
+    on_dialog_updated(d->dialog_id, "set_dialog_order 5");
+
+    if (is_dialog_sponsored(d)) {
+      auto &main_list = get_dialog_list(d->folder_id);
+      if (main_list.is_dialog_unread_count_inited_) {
+        send_update_unread_chat_count(d->folder_id, DialogId(), true, "set_dialog_order 6");
+      }
+    }
+  }
+
+  if (is_added_to_folder && !(dialog_id == sponsored_dialog_id_ && d->folder_id == FolderId::main())) {
     send_update_chat_chat_list(d);
   }
-  if (was_sponsored != is_sponsored) {
+  if (was_sponsored != is_dialog_sponsored(d)) {
     send_update_chat_is_sponsored(d);
-    if (!is_loaded_from_database && is_sponsored) {
+    if (!is_loaded_from_database && !was_sponsored) {
       // channel is sponsored only if user isn't a channel member
       remove_all_dialog_notifications(d, false, "set_dialog_order 3");
       remove_all_dialog_notifications(d, true, "set_dialog_order 4");
@@ -28302,7 +28516,7 @@ bool MessagesManager::set_dialog_order(Dialog *d, int64 new_order, bool need_sen
   if (need_update && need_send_update_chat_order) {
     send_closure(G()->td(), &Td::send_update, make_tl_object<td_api::updateChatOrder>(dialog_id.get(), updated_to));
   }
-  if (is_removed_from_folder) {
+  if (is_removed_from_folder && !(dialog_id == sponsored_dialog_id_ && d->folder_id == FolderId::main())) {
     send_update_chat_chat_list(d);
   }
   return true;
@@ -28311,7 +28525,7 @@ bool MessagesManager::set_dialog_order(Dialog *d, int64 new_order, bool need_sen
 void MessagesManager::update_last_dialog_date(FolderId folder_id) {
   auto &list = get_dialog_list(folder_id);
   auto old_last_dialog_date = list.last_dialog_date_;
-  list.last_dialog_date_ = list.last_server_dialog_date_;  // std::min
+  list.last_dialog_date_ = list.last_server_dialog_date_;
   CHECK(old_last_dialog_date <= list.last_dialog_date_);
 
   LOG(INFO) << "Update last dialog date in " << folder_id << " from " << old_last_dialog_date << " to "
@@ -28970,7 +29184,7 @@ void MessagesManager::on_get_channel_difference(
 
       on_update_dialog_notify_settings(dialog_id, std::move(dialog->notify_settings_), "on_get_dialogs");
 
-      bool is_pinned = (dialog->flags_ & DIALOG_FLAG_IS_PINNED) != 0;
+      bool is_pinned = !is_removed_from_dialog_list(d) && (dialog->flags_ & DIALOG_FLAG_IS_PINNED) != 0;
       bool was_pinned = d->pinned_order != DEFAULT_ORDER;
       if (is_pinned != was_pinned) {
         set_dialog_is_pinned(d, is_pinned);
@@ -28998,7 +29212,7 @@ void MessagesManager::on_get_channel_difference(
   }
 
   if (need_update_dialog_pos) {
-    update_dialog_pos(d, false, "on_get_channel_difference");
+    update_dialog_pos(d, "on_get_channel_difference");
   }
 
   if (!is_final) {
@@ -29260,7 +29474,7 @@ MessagesManager::Message *MessagesManager::continue_send_message(DialogId dialog
       add_message_to_dialog(d, std::move(m), true, &need_update, &need_update_dialog_pos, "resend message");
   CHECK(result_message != nullptr);
 
-  send_update_chat_has_scheduled_messages(d);
+  send_update_chat_has_scheduled_messages(d, false);
 
   send_update_new_message(d, result_message);
   if (need_update_dialog_pos) {
@@ -29475,7 +29689,7 @@ void MessagesManager::on_binlog_events(vector<BinlogEvent> &&events) {
           send_update_new_message(to_dialog, forwarded_messages.back());
         }
 
-        send_update_chat_has_scheduled_messages(to_dialog);
+        send_update_chat_has_scheduled_messages(to_dialog, false);
 
         if (need_update_dialog_pos) {
           send_update_chat_last_message(to_dialog, "on_reforward_message");
@@ -30316,11 +30530,17 @@ void MessagesManager::set_sponsored_dialog_id(DialogId dialog_id) {
     return;
   }
 
+  bool need_update_total_chat_count = false;
   if (sponsored_dialog_id_.is_valid()) {
     Dialog *d = get_dialog(sponsored_dialog_id_);
     CHECK(d != nullptr);
+    bool is_sponsored = is_dialog_sponsored(d);
     sponsored_dialog_id_ = DialogId();
-    update_dialog_pos(d, false, "delete_sponsored_dialog_id");
+    if (is_sponsored) {
+      send_update_chat_is_sponsored(d);
+      send_update_chat_chat_list(d);
+      need_update_total_chat_count = true;
+    }
   }
 
   if (dialog_id.is_valid()) {
@@ -30329,7 +30549,26 @@ void MessagesManager::set_sponsored_dialog_id(DialogId dialog_id) {
     Dialog *d = get_dialog(dialog_id);
     CHECK(d != nullptr);
     sponsored_dialog_id_ = dialog_id;
-    update_dialog_pos(d, false, "set_sponsored_dialog_id");
+    if (is_dialog_sponsored(d)) {
+      send_update_chat_chat_list(d);
+      auto folder_id = FolderId::main();
+      auto &list = get_dialog_list(folder_id);
+      DialogDate max_dialog_date(SPONSORED_DIALOG_ORDER, d->dialog_id);
+      if (list.last_server_dialog_date_ < max_dialog_date) {
+        list.last_server_dialog_date_ = max_dialog_date;
+        update_last_dialog_date(folder_id);
+      }
+      need_update_total_chat_count = !need_update_total_chat_count;
+      send_update_chat_is_sponsored(d);
+    }
+  }
+
+  if (need_update_total_chat_count) {
+    auto folder_id = FolderId::main();
+    auto &list = get_dialog_list(folder_id);
+    if (list.is_dialog_unread_count_inited_) {
+      send_update_unread_chat_count(FolderId::main(), DialogId(), true, "set_sponsored_dialog_id");
+    }
   }
 
   if (G()->parameters().use_message_db) {
@@ -30343,37 +30582,32 @@ void MessagesManager::set_sponsored_dialog_id(DialogId dialog_id) {
 }
 
 td_api::object_ptr<td_api::updateUnreadMessageCount> MessagesManager::get_update_unread_message_count_object(
-    FolderId folder_id, const DialogList &list) const {
+    const DialogList &list) const {
   CHECK(list.is_message_unread_count_inited_);
   int32 unread_count = list.unread_message_total_count_;
   int32 unread_unmuted_count = list.unread_message_total_count_ - list.unread_message_muted_count_;
 
-  if (!include_sponsored_dialog_to_unread_count_ && sponsored_dialog_id_.is_valid() && folder_id == FolderId::main()) {
+  if (include_sponsored_dialog_to_unread_count_ && sponsored_dialog_id_.is_valid() &&
+      list.folder_id == FolderId::main()) {
     const Dialog *d = get_dialog(sponsored_dialog_id_);
     CHECK(d != nullptr);
     auto sponsored_unread_count = d->server_unread_count + d->local_unread_count;
-    if (sponsored_unread_count != 0) {
-      unread_count -= sponsored_unread_count;
-      if (unread_count < 0) {
-        unread_count = 0;
-      }
+    if (is_dialog_sponsored(d) && sponsored_unread_count != 0) {
+      unread_count += sponsored_unread_count;
       if (!is_dialog_muted(d)) {
-        unread_unmuted_count -= sponsored_unread_count;
-        if (unread_unmuted_count < 0) {
-          unread_unmuted_count = 0;
-        }
+        unread_unmuted_count += sponsored_unread_count;
       }
     }
   }
 
   CHECK(unread_count >= 0);
   CHECK(unread_unmuted_count >= 0);
-  return td_api::make_object<td_api::updateUnreadMessageCount>(get_chat_list_object(folder_id), unread_count,
+  return td_api::make_object<td_api::updateUnreadMessageCount>(get_chat_list_object(list.folder_id), unread_count,
                                                                unread_unmuted_count);
 }
 
 td_api::object_ptr<td_api::updateUnreadChatCount> MessagesManager::get_update_unread_chat_count_object(
-    FolderId folder_id, const DialogList &list) const {
+    const DialogList &list) const {
   CHECK(list.is_dialog_unread_count_inited_);
   int32 unread_count = list.unread_dialog_total_count_;
   int32 unread_unmuted_count = unread_count - list.unread_dialog_muted_count_;
@@ -30384,26 +30618,27 @@ td_api::object_ptr<td_api::updateUnreadChatCount> MessagesManager::get_update_un
   CHECK(unread_marked_count >= 0);
   CHECK(unread_unmuted_marked_count >= 0);
 
-  if (!include_sponsored_dialog_to_unread_count_ && sponsored_dialog_id_.is_valid() && folder_id == FolderId::main()) {
+  if (include_sponsored_dialog_to_unread_count_ && sponsored_dialog_id_.is_valid() &&
+      list.folder_id == FolderId::main()) {
     const Dialog *d = get_dialog(sponsored_dialog_id_);
     CHECK(d != nullptr);
     auto sponsored_unread_count = d->server_unread_count + d->local_unread_count;
-    if (sponsored_unread_count != 0 || d->is_marked_as_unread) {
-      unread_count = td::max(unread_count - 1, 0);
+    if (is_dialog_sponsored(d) && (sponsored_unread_count != 0 || d->is_marked_as_unread)) {
+      unread_count++;
       if (sponsored_unread_count == 0 && d->is_marked_as_unread) {
-        unread_marked_count = td::max(unread_marked_count - 1, 0);
+        unread_marked_count++;
       }
       if (!is_dialog_muted(d)) {
-        unread_unmuted_count = td::max(unread_unmuted_count - 1, 0);
+        unread_unmuted_count++;
         if (sponsored_unread_count == 0 && d->is_marked_as_unread) {
-          unread_unmuted_marked_count = td::max(unread_unmuted_marked_count - 1, 0);
+          unread_unmuted_marked_count++;
         }
       }
     }
   }
 
   return td_api::make_object<td_api::updateUnreadChatCount>(
-      get_chat_list_object(folder_id), get_dialog_total_count(list), unread_count, unread_unmuted_count,
+      get_chat_list_object(list.folder_id), get_dialog_total_count(list), unread_count, unread_unmuted_count,
       unread_marked_count, unread_unmuted_marked_count);
 }
 
@@ -30413,10 +30648,10 @@ void MessagesManager::get_current_state(vector<td_api::object_ptr<td_api::Update
       for (auto &it : dialog_lists_) {
         auto &list = it.second;
         if (list.is_message_unread_count_inited_) {
-          updates.push_back(get_update_unread_message_count_object(it.first, list));
+          updates.push_back(get_update_unread_message_count_object(list));
         }
         if (list.is_dialog_unread_count_inited_) {
-          updates.push_back(get_update_unread_chat_count_object(it.first, list));
+          updates.push_back(get_update_unread_chat_count_object(list));
         }
       }
     }

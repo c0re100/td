@@ -867,7 +867,7 @@ bool FileManager::are_modification_times_equal(int64 old_mtime, int64 new_mtime)
 }
 
 Status FileManager::check_local_location(FullLocalFileLocation &location, int64 &size) {
-  constexpr int64 MAX_THUMBNAIL_SIZE = 200 * (1 << 10) /* 200 kB */;
+  constexpr int64 MAX_THUMBNAIL_SIZE = 200 * (1 << 10) /* 200 KB */;
   constexpr int64 MAX_PHOTO_SIZE = 10 * (1 << 20) /* 10 MB */;
 
   if (location.path_.empty()) {
@@ -1020,6 +1020,7 @@ FileId FileManager::register_empty(FileType type) {
 }
 
 void FileManager::on_file_unlink(const FullLocalFileLocation &location) {
+  // TODO: remove file from the database too
   auto it = local_location_to_file_id_.find(location);
   if (it == local_location_to_file_id_.end()) {
     return;
@@ -1393,9 +1394,11 @@ Result<FileId> FileManager::merge(FileId x_file_id, FileId y_file_id, bool no_sy
 
   if (x_node->remote_.full && y_node->remote_.full && !x_node->remote_.full.value().is_web() &&
       !y_node->remote_.full.value().is_web() && y_node->remote_.is_full_alive &&
+      x_node->remote_.full_source == FileLocationSource::FromServer &&
+      y_node->remote_.full_source == FileLocationSource::FromServer &&
       x_node->remote_.full.value().get_dc_id() != y_node->remote_.full.value().get_dc_id()) {
-    LOG(WARNING) << "File remote location was changed from " << y_node->remote_.full.value() << " to "
-                 << x_node->remote_.full.value();
+    LOG(ERROR) << "File remote location was changed from " << y_node->remote_.full.value() << " to "
+               << x_node->remote_.full.value();
   }
   auto count_local = [](auto &node) {
     return std::accumulate(node->file_ids_.begin(), node->file_ids_.end(), 0,
@@ -2987,11 +2990,11 @@ Result<FileId> FileManager::get_input_thumbnail_file_id(const tl_object_ptr<td_a
 Result<FileId> FileManager::get_input_file_id(FileType type, const tl_object_ptr<td_api::InputFile> &file,
                                               DialogId owner_dialog_id, bool allow_zero, bool is_encrypted,
                                               bool get_by_hash, bool is_secure) {
-  if (!file) {
+  if (file == nullptr) {
     if (allow_zero) {
       return FileId();
     }
-    return Status::Error(6, "InputFile not specified");
+    return Status::Error(6, "InputFile is not specified");
   }
 
   if (is_encrypted || is_secure) {

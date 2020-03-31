@@ -113,6 +113,8 @@ struct FormattedText {
   void parse(ParserT &parser);
 };
 
+StringBuilder &operator<<(StringBuilder &string_builder, const FormattedText &text);
+
 inline bool operator==(const FormattedText &lhs, const FormattedText &rhs) {
   return lhs.text == rhs.text && lhs.entities == rhs.entities;
 }
@@ -124,7 +126,8 @@ inline bool operator!=(const FormattedText &lhs, const FormattedText &rhs) {
 const std::unordered_set<Slice, SliceHash> &get_valid_short_usernames();
 
 Result<vector<MessageEntity>> get_message_entities(const ContactsManager *contacts_manager,
-                                                   vector<tl_object_ptr<td_api::textEntity>> &&input_entities);
+                                                   vector<tl_object_ptr<td_api::textEntity>> &&input_entities,
+                                                   bool allow_all = false);
 
 vector<tl_object_ptr<td_api::textEntity>> get_text_entities_object(const vector<MessageEntity> &entities);
 
@@ -145,6 +148,10 @@ string get_first_url(Slice text, const vector<MessageEntity> &entities);
 Result<vector<MessageEntity>> parse_markdown(string &text);
 
 Result<vector<MessageEntity>> parse_markdown_v2(string &text);
+
+FormattedText parse_markdown_v3(FormattedText text);
+
+FormattedText get_markdown_v3(FormattedText text);
 
 Result<vector<MessageEntity>> parse_html(string &text);
 

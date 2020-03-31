@@ -21,6 +21,7 @@
 #include "td/telegram/files/FileSourceId.h"
 #include "td/telegram/Location.h"
 #include "td/telegram/MessageId.h"
+#include "td/telegram/net/DcId.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/PublicDialogType.h"
 #include "td/telegram/QueryCombiner.h"
@@ -163,6 +164,7 @@ class ContactsManager : public Actor {
   void on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&chat_full, Promise<Unit> &&promise);
 
   void on_update_profile_success(int32 flags, const string &first_name, const string &last_name, const string &about);
+  void on_set_bot_commands_success(vector<std::pair<string, string>> &&commands);
 
   void on_update_user_name(UserId user_id, string &&first_name, string &&last_name, string &&username);
   void on_update_user_phone_number(UserId user_id, string &&phone_number);
@@ -329,6 +331,8 @@ class ContactsManager : public Actor {
 
   void set_username(const string &username, Promise<Unit> &&promise);
 
+  void set_commands(vector<td_api::object_ptr<td_api::botCommand>> &&commands, Promise<Unit> &&promise);
+
   void set_chat_description(ChatId chat_id, const string &description, Promise<Unit> &&promise);
 
   void set_channel_username(ChannelId channel_id, const string &username, Promise<Unit> &&promise);
@@ -430,7 +434,7 @@ class ContactsManager : public Actor {
   bool have_chat_force(ChatId chat_id);
   bool get_chat(ChatId chat_id, int left_tries, Promise<Unit> &&promise);
   void reload_chat(ChatId chat_id, Promise<Unit> &&promise);
-  bool get_chat_full(ChatId chat_id, Promise<Unit> &&promise);
+  bool get_chat_full(ChatId chat_id, bool force, Promise<Unit> &&promise);
 
   bool get_chat_is_active(ChatId chat_id) const;
   DialogParticipantStatus get_chat_status(ChatId chat_id) const;
@@ -771,6 +775,8 @@ class ContactsManager : public Actor {
 
     DialogLocation location;
 
+    DcId stats_dc_id;
+
     int32 slow_mode_delay = 0;
     int32 slow_mode_next_send_date = 0;
 
@@ -783,7 +789,6 @@ class ContactsManager : public Actor {
     bool can_set_username = false;
     bool can_set_sticker_set = false;
     bool can_set_location = false;
-    bool can_view_statistics = false;
     bool is_all_history_available = true;
 
     bool is_slow_mode_next_send_date_changed = true;
@@ -1069,7 +1074,7 @@ class ContactsManager : public Actor {
   void on_update_user_full_common_chat_count(UserFull *user_full, UserId user_id, int32 common_chat_count);
   void on_update_user_full_need_phone_number_privacy_exception(UserFull *user_full, UserId user_id,
                                                                bool need_phone_number_privacy_exception);
-  void drop_user_photos(UserId user_id, bool is_empty);
+  void drop_user_photos(UserId user_id, bool is_empty, const char *source);
   void drop_user_full(UserId user_id);
 
   void on_set_user_is_blocked_failed(UserId user_id, bool is_blocked, Status error);

@@ -10,15 +10,17 @@ class DoxygenTlDocumentationGenerator extends TlDocumentationGenerator
             case 'Bool':
                 return 'bool ';
             case 'int32':
-                return 'std::int32_t ';
+                return 'int32 ';
             case 'int53':
+                return 'int53 ';
             case 'int64':
-                return 'std::int64_t ';
+                return 'int64 ';
             case 'double':
                 return 'double ';
             case 'string':
+                return 'string const &';
             case 'bytes':
-                return 'std::string const &';
+                return 'bytes const &';
 
             default:
                 if (substr($type, 0, 6) === 'vector') {
@@ -67,15 +69,17 @@ class DoxygenTlDocumentationGenerator extends TlDocumentationGenerator
             case 'Bool':
                 return 'bool';
             case 'int32':
-                return 'std::int32_t';
+                return 'int32';
             case 'int53':
+                return 'int53';
             case 'int64':
-                return 'std::int64_t';
+                return 'int64';
             case 'double':
                 return 'double';
             case 'string':
+                return 'string';
             case 'bytes':
-                return 'std::string';
+                return 'bytes';
             case 'bool':
             case 'int':
             case 'long':
@@ -161,6 +165,41 @@ class DoxygenTlDocumentationGenerator extends TlDocumentationGenerator
 /**
  * \\file
  * Contains declarations of all functions and types which represent a public TDLib interface.
+ */
+EOT
+);
+
+        $this->addDocumentation('using int32 = std::int32_t;', <<<EOT
+/**
+ * This type is used to store 32-bit signed integers, which can be represented as Number in JSON.
+ */
+EOT
+);
+
+        $this->addDocumentation('using int53 = std::int64_t;', <<<EOT
+/**
+ * This type is used to store 53-bit signed integers, which can be represented as Number in JSON.
+ */
+EOT
+);
+
+        $this->addDocumentation('using int64 = std::int64_t;', <<<EOT
+/**
+ * This type is used to store 64-bit signed integers, which can't be represented as Number in JSON and are represented as String instead.
+ */
+EOT
+);
+
+        $this->addDocumentation('using string = std::string;', <<<EOT
+/**
+ * This type is used to store UTF-8 strings.
+ */
+EOT
+);
+
+        $this->addDocumentation('using bytes = std::string;', <<<EOT
+/**
+ * This type is used to store arbitrary sequences of bytes. In JSON interface the bytes are base64-encoded.
  */
 EOT
 );

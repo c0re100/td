@@ -104,7 +104,6 @@
 #include "td/mtproto/HandshakeActor.h"
 #include "td/mtproto/RawConnection.h"
 #include "td/mtproto/TransportType.h"
-#include "td/mtproto/utils.h"  // for create_storer, fetch_result, etc, TODO
 
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
@@ -157,8 +156,7 @@ class GetNearestDcQuery : public Td::ResultHandler {
   }
 
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::help_getNearestDc()), DcId::main(),
-                                               NetQuery::Type::Common, NetQuery::AuthFlag::Off));
+    send_query(G()->net_query_creator().create_unauth(telegram_api::help_getNearestDc()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -172,7 +170,9 @@ class GetNearestDcQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    LOG(ERROR) << "GetNearestDc returned " << status;
+    if (!G()->is_expected_error(status) && status.message() != "BOT_METHOD_INVALID") {
+      LOG(ERROR) << "GetNearestDc returned " << status;
+    }
     promise_.set_error(std::move(status));
   }
 };
@@ -185,7 +185,7 @@ class GetRecentMeUrlsQuery : public Td::ResultHandler {
   }
 
   void send(const string &referrer) {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::help_getRecentMeUrls(referrer))));
+    send_query(G()->net_query_creator().create(telegram_api::help_getRecentMeUrls(referrer)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -280,8 +280,8 @@ class SendCustomRequestQuery : public Td::ResultHandler {
   }
 
   void send(const string &method, const string &parameters) {
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::bots_sendCustomRequest(method, make_tl_object<telegram_api::dataJSON>(parameters)))));
+    send_query(G()->net_query_creator().create(
+        telegram_api::bots_sendCustomRequest(method, make_tl_object<telegram_api::dataJSON>(parameters))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -307,8 +307,8 @@ class AnswerCustomQueryQuery : public Td::ResultHandler {
   }
 
   void send(int64 custom_query_id, const string &data) {
-    send_query(G()->net_query_creator().create(create_storer(
-        telegram_api::bots_answerWebhookJSONQuery(custom_query_id, make_tl_object<telegram_api::dataJSON>(data)))));
+    send_query(G()->net_query_creator().create(
+        telegram_api::bots_answerWebhookJSONQuery(custom_query_id, make_tl_object<telegram_api::dataJSON>(data))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -332,8 +332,8 @@ class AnswerCustomQueryQuery : public Td::ResultHandler {
 class SetBotUpdatesStatusQuery : public Td::ResultHandler {
  public:
   void send(int32 pending_update_count, const string &error_message) {
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::help_setBotUpdatesStatus(pending_update_count, error_message))));
+    send_query(
+        G()->net_query_creator().create(telegram_api::help_setBotUpdatesStatus(pending_update_count, error_message)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -347,7 +347,7 @@ class SetBotUpdatesStatusQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(WARNING) << "Receive error for SetBotUpdatesStatus: " << status;
     }
     status.ignore();
@@ -360,7 +360,7 @@ class UpdateStatusQuery : public Td::ResultHandler {
  public:
   NetQueryRef send(bool is_offline) {
     is_offline_ = is_offline;
-    auto net_query = G()->net_query_creator().create(create_storer(telegram_api::account_updateStatus(is_offline)));
+    auto net_query = G()->net_query_creator().create(telegram_api::account_updateStatus(is_offline));
     auto result = net_query.get_weak();
     send_query(std::move(net_query));
     return result;
@@ -378,7 +378,7 @@ class UpdateStatusQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (status.code() != NetQuery::Cancelled && !G()->close_flag()) {
+    if (status.code() != NetQuery::Cancelled && !G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for UpdateStatusQuery: " << status;
     }
     status.ignore();
@@ -393,7 +393,7 @@ class GetInviteTextQuery : public Td::ResultHandler {
   }
 
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::help_getInviteText())));
+    send_query(G()->net_query_creator().create(telegram_api::help_getInviteText()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -432,8 +432,7 @@ class GetDeepLinkInfoQuery : public Td::ResultHandler {
       pos++;
     }
     link.truncate(pos);
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::help_getDeepLinkInfo(link.str())),
-                                               DcId::main(), NetQuery::Type::Common, NetQuery::AuthFlag::Off));
+    send_query(G()->net_query_creator().create_unauth(telegram_api::help_getDeepLinkInfo(link.str())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -485,9 +484,7 @@ class SaveAppLogQuery : public Td::ResultHandler {
     vector<telegram_api::object_ptr<telegram_api::inputAppEvent>> input_app_events;
     input_app_events.push_back(
         make_tl_object<telegram_api::inputAppEvent>(G()->server_time_cached(), type, peer_id, std::move(data)));
-    send_query(
-        G()->net_query_creator().create(create_storer(telegram_api::help_saveAppLog(std::move(input_app_events))),
-                                        DcId::main(), NetQuery::Type::Common, NetQuery::AuthFlag::Off));
+    send_query(G()->net_query_creator().create_unauth(telegram_api::help_saveAppLog(std::move(input_app_events))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -514,8 +511,7 @@ class TestQuery : public Td::ResultHandler {
   }
 
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::help_getConfig()), DcId::main(),
-                                               NetQuery::Type::Common, NetQuery::AuthFlag::Off));
+    send_query(G()->net_query_creator().create_unauth(telegram_api::help_getConfig()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -717,7 +713,7 @@ class GetGroupFullInfoRequest : public RequestActor<> {
   ChatId chat_id_;
 
   void do_run(Promise<Unit> &&promise) override {
-    td->contacts_manager_->get_chat_full(chat_id_, std::move(promise));
+    td->contacts_manager_->get_chat_full(chat_id_, get_tries() < 2, std::move(promise));
   }
 
   void do_send_result() override {
@@ -1616,7 +1612,8 @@ class GetChatScheduledMessagesRequest : public RequestActor<> {
   vector<MessageId> message_ids_;
 
   void do_run(Promise<Unit> &&promise) override {
-    message_ids_ = td->messages_manager_->get_dialog_scheduled_messages(dialog_id_, std::move(promise));
+    message_ids_ =
+        td->messages_manager_->get_dialog_scheduled_messages(dialog_id_, get_tries() < 2, false, std::move(promise));
   }
 
   void do_send_result() override {
@@ -1626,7 +1623,7 @@ class GetChatScheduledMessagesRequest : public RequestActor<> {
  public:
   GetChatScheduledMessagesRequest(ActorShared<Td> td, uint64 request_id, int64 dialog_id)
       : RequestActor(std::move(td), request_id), dialog_id_(dialog_id) {
-    set_tries(3);
+    set_tries(4);
   }
 };
 
@@ -2500,7 +2497,7 @@ class CreateNewStickerSetRequest : public RequestOnceActor {
   string title_;
   string name_;
   bool is_masks_;
-  vector<tl_object_ptr<td_api::inputSticker>> stickers_;
+  vector<tl_object_ptr<td_api::InputSticker>> stickers_;
 
   void do_run(Promise<Unit> &&promise) override {
     td->stickers_manager_->create_new_sticker_set(user_id_, title_, name_, is_masks_, std::move(stickers_),
@@ -2517,7 +2514,7 @@ class CreateNewStickerSetRequest : public RequestOnceActor {
 
  public:
   CreateNewStickerSetRequest(ActorShared<Td> td, uint64 request_id, int32 user_id, string &&title, string &&name,
-                             bool is_masks, vector<tl_object_ptr<td_api::inputSticker>> &&stickers)
+                             bool is_masks, vector<tl_object_ptr<td_api::InputSticker>> &&stickers)
       : RequestOnceActor(std::move(td), request_id)
       , user_id_(user_id)
       , title_(std::move(title))
@@ -2530,7 +2527,7 @@ class CreateNewStickerSetRequest : public RequestOnceActor {
 class AddStickerToSetRequest : public RequestOnceActor {
   UserId user_id_;
   string name_;
-  tl_object_ptr<td_api::inputSticker> sticker_;
+  tl_object_ptr<td_api::InputSticker> sticker_;
 
   void do_run(Promise<Unit> &&promise) override {
     td->stickers_manager_->add_sticker_to_set(user_id_, name_, std::move(sticker_), std::move(promise));
@@ -2546,11 +2543,38 @@ class AddStickerToSetRequest : public RequestOnceActor {
 
  public:
   AddStickerToSetRequest(ActorShared<Td> td, uint64 request_id, int32 user_id, string &&name,
-                         tl_object_ptr<td_api::inputSticker> &&sticker)
+                         tl_object_ptr<td_api::InputSticker> &&sticker)
       : RequestOnceActor(std::move(td), request_id)
       , user_id_(user_id)
       , name_(std::move(name))
       , sticker_(std::move(sticker)) {
+  }
+};
+
+class SetStickerSetThumbnailRequest : public RequestOnceActor {
+  UserId user_id_;
+  string name_;
+  tl_object_ptr<td_api::InputFile> thumbnail_;
+
+  void do_run(Promise<Unit> &&promise) override {
+    td->stickers_manager_->set_sticker_set_thumbnail(user_id_, name_, std::move(thumbnail_), std::move(promise));
+  }
+
+  void do_send_result() override {
+    auto set_id = td->stickers_manager_->search_sticker_set(name_, Auto());
+    if (!set_id.is_valid()) {
+      return send_error(Status::Error(500, "Sticker set not found"));
+    }
+    send_result(td->stickers_manager_->get_sticker_set_object(set_id));
+  }
+
+ public:
+  SetStickerSetThumbnailRequest(ActorShared<Td> td, uint64 request_id, int32 user_id, string &&name,
+                                tl_object_ptr<td_api::InputFile> &&thumbnail)
+      : RequestOnceActor(std::move(td), request_id)
+      , user_id_(user_id)
+      , name_(std::move(name))
+      , thumbnail_(std::move(thumbnail)) {
   }
 };
 
@@ -3079,6 +3103,8 @@ bool Td::is_synchronous_request(int32 id) {
   switch (id) {
     case td_api::getTextEntities::ID:
     case td_api::parseTextEntities::ID:
+    case td_api::parseMarkdown::ID:
+    case td_api::getMarkdownText::ID:
     case td_api::getFileMimeType::ID:
     case td_api::getFileExtension::ID:
     case td_api::cleanFileName::ID:
@@ -3301,6 +3327,8 @@ td_api::object_ptr<td_api::Object> Td::static_request(td_api::object_ptr<td_api:
   bool need_logging = [function_id] {
     switch (function_id) {
       case td_api::parseTextEntities::ID:
+      case td_api::parseMarkdown::ID:
+      case td_api::getMarkdownText::ID:
       case td_api::getFileMimeType::ID:
       case td_api::getFileExtension::ID:
       case td_api::cleanFileName::ID:
@@ -4758,7 +4786,7 @@ void Td::on_request(uint64 id, td_api::processPushNotification &request) {
 void Td::on_request(uint64 id, td_api::registerDevice &request) {
   CHECK_IS_USER();
   if (request.device_token_ == nullptr) {
-    return send_error_raw(id, 400, "Device token should not be empty");
+    return send_error_raw(id, 400, "Device token must be non-empty");
   }
   CREATE_REQUEST_PROMISE();
   send_closure(device_token_manager_, &DeviceTokenManager::register_device, std::move(request.device_token_),
@@ -4794,7 +4822,7 @@ void Td::on_request(uint64 id, const td_api::getAccountTtl &request) {
 void Td::on_request(uint64 id, const td_api::setAccountTtl &request) {
   CHECK_IS_USER();
   if (request.ttl_ == nullptr) {
-    return send_error_raw(id, 400, "New account TTL should not be empty");
+    return send_error_raw(id, 400, "New account TTL must be non-empty");
   }
   CREATE_OK_REQUEST_PROMISE();
   contacts_manager_->set_account_ttl(request.ttl_->days_, std::move(promise));
@@ -4987,7 +5015,7 @@ void Td::on_request(uint64 id, td_api::optimizeStorage &request) {
   std::vector<FileType> file_types;
   for (auto &file_type : request.file_types_) {
     if (file_type == nullptr) {
-      return send_error_raw(id, 400, "File type should not be empty");
+      return send_error_raw(id, 400, "File type must be non-empty");
     }
 
     file_types.push_back(from_td_api(*file_type));
@@ -5020,7 +5048,8 @@ void Td::on_request(uint64 id, td_api::optimizeStorage &request) {
       promise.set_value(result.ok().as_td_api());
     }
   });
-  send_closure(storage_manager_, &StorageManager::run_gc, std::move(parameters), std::move(query_promise));
+  send_closure(storage_manager_, &StorageManager::run_gc, std::move(parameters),
+               request.return_deleted_file_statistics_, std::move(query_promise));
 }
 
 void Td::on_request(uint64 id, td_api::getNetworkStatistics &request) {
@@ -5044,7 +5073,7 @@ void Td::on_request(uint64 id, td_api::resetNetworkStatistics &request) {
 
 void Td::on_request(uint64 id, td_api::addNetworkStatistics &request) {
   if (request.entry_ == nullptr) {
-    return send_error_raw(id, 400, "Network statistics entry should not be empty");
+    return send_error_raw(id, 400, "Network statistics entry must be non-empty");
   }
 
   NetworkStatsEntry entry;
@@ -5119,7 +5148,7 @@ void Td::on_request(uint64 id, td_api::getTopChats &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
   if (request.category_ == nullptr) {
-    return promise.set_error(Status::Error(400, "Top chat category should not be empty"));
+    return promise.set_error(Status::Error(400, "Top chat category must be non-empty"));
   }
   if (request.limit_ <= 0) {
     return promise.set_error(Status::Error(400, "Limit must be positive"));
@@ -5139,7 +5168,7 @@ void Td::on_request(uint64 id, td_api::getTopChats &request) {
 void Td::on_request(uint64 id, const td_api::removeTopChat &request) {
   CHECK_IS_USER();
   if (request.category_ == nullptr) {
-    return send_error_raw(id, 400, "Top chat category should not be empty");
+    return send_error_raw(id, 400, "Top chat category must be non-empty");
   }
 
   DialogId dialog_id(request.chat_id_);
@@ -6170,6 +6199,12 @@ void Td::on_request(uint64 id, td_api::setUsername &request) {
   contacts_manager_->set_username(request.username_, std::move(promise));
 }
 
+void Td::on_request(uint64 id, td_api::setCommands &request) {
+  CHECK_IS_BOT();
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->set_commands(std::move(request.commands_), std::move(promise));
+}
+
 void Td::on_request(uint64 id, const td_api::setLocation &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
@@ -6329,6 +6364,13 @@ void Td::on_request(uint64 id, td_api::addStickerToSet &request) {
   CHECK_IS_BOT();
   CLEAN_INPUT_STRING(request.name_);
   CREATE_REQUEST(AddStickerToSetRequest, request.user_id_, std::move(request.name_), std::move(request.sticker_));
+}
+
+void Td::on_request(uint64 id, td_api::setStickerSetThumbnail &request) {
+  CHECK_IS_BOT();
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST(SetStickerSetThumbnailRequest, request.user_id_, std::move(request.name_),
+                 std::move(request.thumbnail_));
 }
 
 void Td::on_request(uint64 id, td_api::setStickerPositionInSet &request) {
@@ -6701,6 +6743,11 @@ void Td::on_request(uint64 id, td_api::setOption &request) {
 
   bool is_bot = auth_manager_ != nullptr && auth_manager_->is_authorized() && auth_manager_->is_bot();
   switch (request.name_[0]) {
+    case 'a':
+      if (set_boolean_option("always_parse_markdown")) {
+        return;
+      }
+      break;
     case 'c':
       if (!is_bot && set_string_option("connection_parameters", [](Slice value) {
             string value_copy = value.str();
@@ -6717,6 +6764,9 @@ void Td::on_request(uint64 id, td_api::setOption &request) {
       if (!is_bot && set_boolean_option("disable_contact_registered_notifications")) {
         return;
       }
+      if (!is_bot && set_boolean_option("disable_sent_scheduled_message_notifications")) {
+        return;
+      }
       if (!is_bot && set_boolean_option("disable_top_chats")) {
         return;
       }
@@ -6729,6 +6779,9 @@ void Td::on_request(uint64 id, td_api::setOption &request) {
       break;
     case 'i':
       if (set_boolean_option("ignore_background_updates")) {
+        return;
+      }
+      if (set_boolean_option("ignore_default_disable_notification")) {
         return;
       }
       if (set_boolean_option("ignore_inline_thumbnails")) {
@@ -7439,6 +7492,14 @@ void Td::on_request(uint64 id, const td_api::parseTextEntities &request) {
   UNREACHABLE();
 }
 
+void Td::on_request(uint64 id, const td_api::parseMarkdown &request) {
+  UNREACHABLE();
+}
+
+void Td::on_request(uint64 id, const td_api::getMarkdownText &request) {
+  UNREACHABLE();
+}
+
 void Td::on_request(uint64 id, const td_api::getFileMimeType &request) {
   UNREACHABLE();
 }
@@ -7539,6 +7600,44 @@ td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::parseTextEntiti
   }
 
   return make_tl_object<td_api::formattedText>(std::move(request.text_), get_text_entities_object(r_entities.ok()));
+}
+
+td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::parseMarkdown &request) {
+  if (request.text_ == nullptr) {
+    return make_error(400, "Text must be non-empty");
+  }
+
+  auto r_entities = get_message_entities(nullptr, std::move(request.text_->entities_), true);
+  if (r_entities.is_error()) {
+    return make_error(400, r_entities.error().message());
+  }
+  auto entities = r_entities.move_as_ok();
+  auto status = fix_formatted_text(request.text_->text_, entities, true, true, true, true);
+  if (status.is_error()) {
+    return make_error(400, status.error().message());
+  }
+
+  auto parsed_text = parse_markdown_v3({std::move(request.text_->text_), std::move(entities)});
+  fix_formatted_text(parsed_text.text, parsed_text.entities, true, true, true, true).ensure();
+  return get_formatted_text_object(parsed_text);
+}
+
+td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::getMarkdownText &request) {
+  if (request.text_ == nullptr) {
+    return make_error(400, "Text must be non-empty");
+  }
+
+  auto r_entities = get_message_entities(nullptr, std::move(request.text_->entities_));
+  if (r_entities.is_error()) {
+    return make_error(400, r_entities.error().message());
+  }
+  auto entities = r_entities.move_as_ok();
+  auto status = fix_formatted_text(request.text_->text_, entities, true, true, true, true);
+  if (status.is_error()) {
+    return make_error(400, status.error().message());
+  }
+
+  return get_formatted_text_object(get_markdown_v3({std::move(request.text_->text_), std::move(entities)}));
 }
 
 td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getFileMimeType &request) {

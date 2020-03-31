@@ -227,7 +227,7 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.6.1";
+  static constexpr const char *TDLIB_VERSION = "1.6.2";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
@@ -781,6 +781,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::setUsername &request);
 
+  void on_request(uint64 id, td_api::setCommands &request);
+
   void on_request(uint64 id, const td_api::setLocation &request);
 
   void on_request(uint64 id, td_api::setProfilePhoto &request);
@@ -836,6 +838,8 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, td_api::createNewStickerSet &request);
 
   void on_request(uint64 id, td_api::addStickerToSet &request);
+
+  void on_request(uint64 id, td_api::setStickerSetThumbnail &request);
 
   void on_request(uint64 id, td_api::setStickerPositionInSet &request);
 
@@ -1045,6 +1049,10 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::parseTextEntities &request);
 
+  void on_request(uint64 id, const td_api::parseMarkdown &request);
+
+  void on_request(uint64 id, const td_api::getMarkdownText &request);
+
   void on_request(uint64 id, const td_api::getFileMimeType &request);
 
   void on_request(uint64 id, const td_api::getFileExtension &request);
@@ -1096,6 +1104,8 @@ class Td final : public NetQueryCallback {
   }
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getTextEntities &request);
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::parseTextEntities &request);
+  static td_api::object_ptr<td_api::Object> do_static_request(td_api::parseMarkdown &request);
+  static td_api::object_ptr<td_api::Object> do_static_request(td_api::getMarkdownText &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getFileMimeType &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getFileExtension &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::cleanFileName &request);

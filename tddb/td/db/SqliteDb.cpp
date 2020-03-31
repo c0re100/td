@@ -94,9 +94,13 @@ void SqliteDb::trace(bool flag) {
 Status SqliteDb::exec(CSlice cmd) {
   CHECK(!empty());
   char *msg;
-  VLOG(sqlite) << "Start exec " << tag("query", cmd) << tag("database", raw_->db());
+  if (enable_logging_) {
+    VLOG(sqlite) << "Start exec " << tag("query", cmd) << tag("database", raw_->db());
+  }
   auto rc = sqlite3_exec(raw_->db(), cmd.c_str(), nullptr, nullptr, &msg);
-  VLOG(sqlite) << "Finish exec " << tag("query", cmd) << tag("database", raw_->db());
+  if (enable_logging_) {
+    VLOG(sqlite) << "Finish exec " << tag("query", cmd) << tag("database", raw_->db());
+  }
   if (rc != SQLITE_OK) {
     CHECK(msg != nullptr);
     return Status::Error(PSLICE() << tag("query", cmd) << " to database \"" << raw_->path() << "\" failed: " << msg);
@@ -152,7 +156,11 @@ Status SqliteDb::commit_transaction() {
 }
 
 Status SqliteDb::check_encryption() {
-  return exec("SELECT count(*) FROM sqlite_master");
+  auto status = exec("SELECT count(*) FROM sqlite_master");
+  if (status.is_ok()) {
+    enable_logging_ = true;
+  }
+  return status;
 }
 
 Result<SqliteDb> SqliteDb::open_with_key(CSlice path, const DbKey &db_key) {

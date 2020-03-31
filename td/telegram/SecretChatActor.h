@@ -18,6 +18,7 @@
 #include "td/telegram/DhConfig.h"
 #include "td/telegram/logevent/SecretChatEvent.h"
 #include "td/telegram/MessageId.h"
+#include "td/telegram/net/NetQuery.h"
 #include "td/telegram/SecretChatDb.h"
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/UserId.h"
@@ -588,6 +589,9 @@ class SecretChatActor : public NetQueryCallback {
   NetQueryRef read_history_query_;
   int32 last_read_history_date_ = -1;
   Promise<Unit> read_history_promise_;
+
+  template <class T>
+  NetQueryPtr create_net_query(QueryType type, const T &function);
 
   enum SendFlag : int32 {
     None = 0,

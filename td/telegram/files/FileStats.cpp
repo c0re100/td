@@ -31,14 +31,25 @@ void FileStats::add(StatByType &by_type, FileType file_type, int64 size) {
   by_type[pos].cnt++;
 }
 
-void FileStats::add(FullFileInfo &&info) {
+void FileStats::add_impl(const FullFileInfo &info) {
   if (split_by_owner_dialog_id) {
     add(stat_by_owner_dialog_id[info.owner_dialog_id], info.file_type, info.size);
   } else {
     add(stat_by_type, info.file_type, info.size);
   }
+}
+
+void FileStats::add_copy(const FullFileInfo &info) {
+  add_impl(info);
   if (need_all_files) {
-    all_files.emplace_back(std::move(info));
+    all_files.push_back(info);
+  }
+}
+
+void FileStats::add(FullFileInfo &&info) {
+  add_impl(info);
+  if (need_all_files) {
+    all_files.push_back(std::move(info));
   }
 }
 
@@ -52,6 +63,7 @@ FileTypeStat get_nontemp_stat(const FileStats::StatByType &by_type) {
   }
   return stat;
 }
+
 FileTypeStat FileStats::get_total_nontemp_stat() const {
   if (!split_by_owner_dialog_id) {
     return get_nontemp_stat(stat_by_type);
@@ -64,6 +76,7 @@ FileTypeStat FileStats::get_total_nontemp_stat() const {
   }
   return stat;
 }
+
 void FileStats::apply_dialog_limit(int32 limit) {
   if (limit == -1) {
     return;
@@ -244,4 +257,5 @@ StringBuilder &operator<<(StringBuilder &sb, const FileStats &file_stats) {
 
   return sb;
 }
+
 }  // namespace td

@@ -73,8 +73,7 @@ class SetContactSignUpNotificationQuery : public Td::ResultHandler {
   }
 
   void send(bool is_disabled) {
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::account_setContactSignUpNotification(is_disabled))));
+    send_query(G()->net_query_creator().create(telegram_api::account_setContactSignUpNotification(is_disabled)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -87,7 +86,7 @@ class SetContactSignUpNotificationQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for set contact sign up notification: " << status;
     }
     promise_.set_error(std::move(status));
@@ -102,7 +101,7 @@ class GetContactSignUpNotificationQuery : public Td::ResultHandler {
   }
 
   void send() {
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::account_getContactSignUpNotification())));
+    send_query(G()->net_query_creator().create(telegram_api::account_getContactSignUpNotification()));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -116,7 +115,7 @@ class GetContactSignUpNotificationQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag() || 1) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for get contact sign up notification: " << status;
     }
     promise_.set_error(std::move(status));
@@ -818,7 +817,7 @@ int32 NotificationManager::get_notification_delay_ms(DialogId dialog_id, const P
     return MIN_NOTIFICATION_DELAY_MS;
   }
 
-  auto delay_ms = [&]() {
+  auto delay_ms = [&] {
     auto online_info = td_->contacts_manager_->get_my_online_status();
     if (!online_info.is_online_local && online_info.is_online_remote) {
       // If we are offline, but online from some other client, then delay notification
@@ -3592,11 +3591,13 @@ void NotificationManager::add_message_push_notification(
   auto group_id = info.group_id;
   CHECK(group_id.is_valid());
 
+  bool is_outgoing =
+      sender_user_id.is_valid() ? td_->contacts_manager_->get_my_id() == sender_user_id : is_from_scheduled;
   if (logevent_id != 0) {
     VLOG(notifications) << "Register temporary " << notification_id << " with logevent " << logevent_id;
     temporary_notification_logevent_ids_[notification_id] = logevent_id;
     temporary_notifications_[FullMessageId(dialog_id, message_id)] = {group_id, notification_id, sender_user_id,
-                                                                      sender_name};
+                                                                      sender_name, is_outgoing};
     temporary_notification_message_ids_[notification_id] = FullMessageId(dialog_id, message_id);
   }
   push_notification_promises_[notification_id].push_back(std::move(promise));
@@ -3609,11 +3610,11 @@ void NotificationManager::add_message_push_notification(
                       << " and document " << document << " to " << group_id << " of type " << group_type
                       << " with settings from " << settings_dialog_id;
 
-  add_notification(group_id, group_type, dialog_id, date, settings_dialog_id, initial_is_silent, is_silent, 0,
-                   notification_id,
-                   create_new_push_message_notification(sender_user_id, sender_name, message_id, std::move(loc_key),
-                                                        std::move(arg), std::move(photo), std::move(document)),
-                   "add_message_push_notification");
+  add_notification(
+      group_id, group_type, dialog_id, date, settings_dialog_id, initial_is_silent, is_silent, 0, notification_id,
+      create_new_push_message_notification(sender_user_id, sender_name, is_outgoing, message_id, std::move(loc_key),
+                                           std::move(arg), std::move(photo), std::move(document)),
+      "add_message_push_notification");
 }
 
 class NotificationManager::EditMessagePushNotificationLogEvent {
@@ -3706,6 +3707,7 @@ void NotificationManager::edit_message_push_notification(DialogId dialog_id, Mes
   auto notification_id = it->second.notification_id;
   auto sender_user_id = it->second.sender_user_id;
   auto sender_name = it->second.sender_name;
+  auto is_outgoing = it->second.is_outgoing;
   CHECK(group_id.is_valid());
   CHECK(notification_id.is_valid());
 
@@ -3732,8 +3734,8 @@ void NotificationManager::edit_message_push_notification(DialogId dialog_id, Mes
 
   edit_notification(
       group_id, notification_id,
-      create_new_push_message_notification(sender_user_id, std::move(sender_name), message_id, std::move(loc_key),
-                                           std::move(arg), std::move(photo), std::move(document)));
+      create_new_push_message_notification(sender_user_id, std::move(sender_name), is_outgoing, message_id,
+                                           std::move(loc_key), std::move(arg), std::move(photo), std::move(document)));
 }
 
 Result<int64> NotificationManager::get_push_receiver_id(string payload) {

@@ -45,7 +45,7 @@ class GetSavedGifsQuery : public Td::ResultHandler {
   void send(bool is_repair, int32 hash) {
     is_repair_ = is_repair;
     LOG(INFO) << "Send get saved animations request with hash = " << hash;
-    send_query(G()->net_query_creator().create(create_storer(telegram_api::messages_getSavedGifs(hash))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getSavedGifs(hash)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -59,7 +59,7 @@ class GetSavedGifsQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for get saved animations: " << status;
     }
     td->animations_manager_->on_get_saved_animations_failed(is_repair_, std::move(status));
@@ -83,8 +83,7 @@ class SaveGifQuery : public Td::ResultHandler {
     file_id_ = file_id;
     file_reference_ = input_document->file_reference_.as_slice().str();
     unsave_ = unsave;
-    send_query(G()->net_query_creator().create(
-        create_storer(telegram_api::messages_saveGif(std::move(input_document), unsave))));
+    send_query(G()->net_query_creator().create(telegram_api::messages_saveGif(std::move(input_document), unsave)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -119,7 +118,7 @@ class SaveGifQuery : public Td::ResultHandler {
       return;
     }
 
-    if (!G()->close_flag()) {
+    if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for save GIF: " << status;
     }
     td->animations_manager_->reload_saved_animations(true);
@@ -606,7 +605,10 @@ int32 AnimationsManager::get_saved_animations_hash(const char *source) const {
     CHECK(animation != nullptr);
     auto file_view = td_->file_manager_->get_file_view(animation_id);
     CHECK(file_view.has_remote_location());
-    LOG_CHECK(file_view.remote_location().is_document()) << source << " " << file_view.remote_location();
+    if (!file_view.remote_location().is_document()) {
+      LOG(ERROR) << "Saved animation remote location is not document: " << source << " " << file_view.remote_location();
+      continue;
+    }
     auto id = static_cast<uint64>(file_view.remote_location().get_id());
     numbers.push_back(static_cast<uint32>(id >> 32));
     numbers.push_back(static_cast<uint32>(id & 0xFFFFFFFF));

@@ -108,7 +108,9 @@ class StickersManager : public Actor {
   StickerSetId on_get_sticker_set_covered(tl_object_ptr<telegram_api::StickerSetCovered> &&set_ptr, bool is_changed,
                                           const char *source);
 
-  void on_get_animated_emoji_sticker_set(StickerSetId sticker_set_id);
+  enum SpecialStickerSetType : int32 { AnimatedEmoji, AnimatedDice };
+
+  void on_get_special_sticker_set(StickerSetId sticker_set_id, SpecialStickerSetType type);
 
   void on_load_sticker_set_fail(StickerSetId sticker_set_id, const Status &error);
 
@@ -145,10 +147,13 @@ class StickersManager : public Actor {
   FileId upload_sticker_file(UserId user_id, const tl_object_ptr<td_api::InputFile> &sticker, Promise<Unit> &&promise);
 
   void create_new_sticker_set(UserId user_id, string &title, string &short_name, bool is_masks,
-                              vector<tl_object_ptr<td_api::inputSticker>> &&stickers, Promise<Unit> &&promise);
+                              vector<tl_object_ptr<td_api::InputSticker>> &&stickers, Promise<Unit> &&promise);
 
-  void add_sticker_to_set(UserId user_id, string &short_name, tl_object_ptr<td_api::inputSticker> &&sticker,
+  void add_sticker_to_set(UserId user_id, string &short_name, tl_object_ptr<td_api::InputSticker> &&sticker,
                           Promise<Unit> &&promise);
+
+  void set_sticker_set_thumbnail(UserId user_id, string &short_name, tl_object_ptr<td_api::InputFile> &&thumbnail,
+                                 Promise<Unit> &&promise);
 
   void set_sticker_position_in_set(const tl_object_ptr<td_api::InputFile> &sticker, int32 position,
                                    Promise<Unit> &&promise);
@@ -265,10 +270,13 @@ class StickersManager : public Actor {
  private:
   static constexpr int32 MAX_FEATURED_STICKER_SET_VIEW_DELAY = 5;
 
-  static constexpr int32 MAX_FOUND_STICKERS = 100;                 // server side limit
-  static constexpr int64 MAX_STICKER_FILE_SIZE = 1 << 19;          // server side limit
-  static constexpr size_t MAX_STICKER_SET_TITLE_LENGTH = 64;       // server side limit
-  static constexpr size_t MAX_STICKER_SET_SHORT_NAME_LENGTH = 64;  // server side limit
+  static constexpr int32 MAX_FOUND_STICKERS = 100;                    // server side limit
+  static constexpr int64 MAX_STICKER_FILE_SIZE = 1 << 19;             // server side limit
+  static constexpr int64 MAX_THUMBNAIL_FILE_SIZE = 1 << 17;           // server side limit
+  static constexpr int64 MAX_ANIMATED_STICKER_FILE_SIZE = 1 << 16;    // server side limit
+  static constexpr int64 MAX_ANIMATED_THUMBNAIL_FILE_SIZE = 1 << 15;  // server side limit
+  static constexpr size_t MAX_STICKER_SET_TITLE_LENGTH = 64;          // server side limit
+  static constexpr size_t MAX_STICKER_SET_SHORT_NAME_LENGTH = 64;     // server side limit
 
   static constexpr int32 EMOJI_KEYWORDS_UPDATE_DELAY = 3600;
 
@@ -329,16 +337,30 @@ class StickersManager : public Actor {
     string title;
     string short_name;
     bool is_masks;
+    bool is_animated;
     vector<FileId> file_ids;
-    vector<tl_object_ptr<td_api::inputSticker>> stickers;
+    vector<tl_object_ptr<td_api::InputSticker>> stickers;
     Promise<> promise;
   };
 
   struct PendingAddStickerToSet {
     string short_name;
     FileId file_id;
-    tl_object_ptr<td_api::inputSticker> sticker;
+    tl_object_ptr<td_api::InputSticker> sticker;
     Promise<> promise;
+  };
+
+  struct PendingSetStickerSetThumbnail {
+    string short_name;
+    FileId file_id;
+    Promise<> promise;
+  };
+
+  struct SpecialStickerSet {
+    StickerSetId id_;
+    int64 access_hash_ = 0;
+    string name_;
+    string type_;
   };
 
   class StickerListLogEvent;
@@ -463,11 +485,14 @@ class StickersManager : public Actor {
   template <class ParserT>
   void parse_sticker_set(StickerSet *sticker_set, ParserT &parser);
 
-  Result<std::tuple<FileId, bool, bool>> prepare_input_file(const tl_object_ptr<td_api::InputFile> &input_file);
+  static string &get_input_sticker_emojis(td_api::InputSticker *sticker);
 
-  Result<std::tuple<FileId, bool, bool>> prepare_input_sticker(td_api::inputSticker *sticker);
+  Result<std::tuple<FileId, bool, bool, bool>> prepare_input_file(const tl_object_ptr<td_api::InputFile> &input_file,
+                                                                  bool is_animated, bool for_thumbnail);
 
-  tl_object_ptr<telegram_api::inputStickerSetItem> get_input_sticker(td_api::inputSticker *sticker,
+  Result<std::tuple<FileId, bool, bool, bool>> prepare_input_sticker(td_api::InputSticker *sticker);
+
+  tl_object_ptr<telegram_api::inputStickerSetItem> get_input_sticker(td_api::InputSticker *sticker,
                                                                      FileId file_id) const;
 
   void upload_sticker_file(UserId user_id, FileId file_id, Promise<Unit> &&promise);
@@ -483,11 +508,21 @@ class StickersManager : public Actor {
 
   void on_added_sticker_uploaded(int64 random_id, Result<Unit> result);
 
+  void on_sticker_set_thumbnail_uploaded(int64 random_id, Result<Unit> result);
+
+  void do_set_sticker_set_thumbnail(UserId user_id, string short_name, tl_object_ptr<td_api::InputFile> &&thumbnail,
+                                    Promise<Unit> &&promise);
+
   bool update_sticker_set_cache(const StickerSet *sticker_set, Promise<Unit> &promise);
 
   void start_up() override;
 
   void tear_down() override;
+
+  static void init_special_sticker_set(SpecialStickerSet &sticker_set, int64 sticker_set_id, int64 access_hash,
+                                       string name);
+
+  void load_special_sticker_set(SpecialStickerSet &sticker_set);
 
   static void add_sticker_thumbnail(Sticker *s, PhotoSize thumbnail);
 
@@ -589,9 +624,7 @@ class StickersManager : public Actor {
   int32 recent_stickers_limit_ = 200;
   int32 favorite_stickers_limit_ = 5;
 
-  StickerSetId animated_emoji_sticker_set_id_;
-  int64 animated_emoji_sticker_set_access_hash_ = 0;
-  string animated_emoji_sticker_set_name_;
+  SpecialStickerSet special_sticker_sets_[2];
 
   struct StickerSetLoadRequest {
     Promise<Unit> promise;
@@ -605,6 +638,8 @@ class StickersManager : public Actor {
   std::unordered_map<int64, unique_ptr<PendingNewStickerSet>> pending_new_sticker_sets_;
 
   std::unordered_map<int64, unique_ptr<PendingAddStickerToSet>> pending_add_sticker_to_sets_;
+
+  std::unordered_map<int64, unique_ptr<PendingSetStickerSetThumbnail>> pending_set_sticker_set_thumbnails_;
 
   std::shared_ptr<UploadStickerFileCallback> upload_sticker_file_callback_;
 
