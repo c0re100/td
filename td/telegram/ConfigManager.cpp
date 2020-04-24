@@ -57,6 +57,7 @@
 
 #include <functional>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 
 namespace td {
@@ -1093,7 +1094,7 @@ void ConfigManager::on_result(NetQueryPtr res) {
   auto r_config = fetch_result<telegram_api::help_getConfig>(std::move(res));
   if (r_config.is_error()) {
     if (!G()->close_flag()) {
-      LOG(ERROR) << "getConfig failed: " << r_config.error();
+      LOG(WARNING) << "Failed to get config: " << r_config.error();
       expire_time_ = Timestamp::in(60.0);  // try again in a minute
       set_timeout_in(expire_time_.in());
     }
@@ -1261,12 +1262,6 @@ void ConfigManager::process_config(tl_object_ptr<telegram_api::config> config) {
   shared_config.set_option_empty("notify_default_delay_ms");
   shared_config.set_option_empty("large_chat_size");
 
-  if (is_from_main_dc) {
-    for (auto &feature : shared_config.get_options("disabled_")) {
-      shared_config.set_option_empty(feature.first);
-    }
-  }
-
   // TODO implement online status updates
   //  shared_config.set_option_integer("offline_blur_timeout_ms", config->offline_blur_timeout_ms_);
   //  shared_config.set_option_integer("offline_idle_timeout_ms", config->offline_idle_timeout_ms_);
@@ -1291,6 +1286,9 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   string wallet_blockchain_name;
   string wallet_config;
   string ignored_restriction_reasons;
+  vector<string> dice_emojis;
+  std::unordered_map<string, size_t> dice_emoji_index;
+  std::unordered_map<string, string> dice_emoji_success_value;
   if (config->get_id() == telegram_api::jsonObject::ID) {
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
@@ -1318,6 +1316,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         if (value->get_id() == telegram_api::jsonArray::ID) {
           auto reasons = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
           for (auto &reason : reasons) {
+            CHECK(reason != nullptr);
             if (reason->get_id() == telegram_api::jsonString::ID) {
               Slice reason_name = static_cast<telegram_api::jsonString *>(reason.get())->value_;
               if (!reason_name.empty() && reason_name.find(',') == Slice::npos) {
@@ -1334,6 +1333,64 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
           }
         } else {
           LOG(ERROR) << "Receive unexpected ignore_restriction_reasons " << to_string(*value);
+        }
+        continue;
+      }
+      if (key == "emojies_send_dice") {
+        if (value->get_id() == telegram_api::jsonArray::ID) {
+          auto emojis = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
+          for (auto &emoji : emojis) {
+            CHECK(emoji != nullptr);
+            if (emoji->get_id() == telegram_api::jsonString::ID) {
+              Slice emoji_text = static_cast<telegram_api::jsonString *>(emoji.get())->value_;
+              if (!emoji_text.empty()) {
+                dice_emoji_index[emoji_text.str()] = dice_emojis.size();
+                dice_emojis.push_back(emoji_text.str());
+              } else {
+                LOG(ERROR) << "Receive empty dice emoji";
+              }
+            } else {
+              LOG(ERROR) << "Receive unexpected dice emoji " << to_string(emoji);
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected emojies_send_dice " << to_string(*value);
+        }
+        continue;
+      }
+      if (key == "emojies_send_dice_success") {
+        if (value->get_id() == telegram_api::jsonObject::ID) {
+          auto success_values = std::move(static_cast<telegram_api::jsonObject *>(value)->value_);
+          for (auto &success_value : success_values) {
+            CHECK(success_value != nullptr);
+            if (success_value->value_->get_id() == telegram_api::jsonObject::ID) {
+              int32 dice_value = -1;
+              int32 frame_start = -1;
+              for (auto &dice_key_value :
+                   static_cast<telegram_api::jsonObject *>(success_value->value_.get())->value_) {
+                if (dice_key_value->value_->get_id() != telegram_api::jsonNumber::ID) {
+                  continue;
+                }
+                auto current_value =
+                    static_cast<int32>(static_cast<telegram_api::jsonNumber *>(dice_key_value->value_.get())->value_);
+                if (dice_key_value->key_ == "value") {
+                  dice_value = current_value;
+                }
+                if (dice_key_value->key_ == "frame_start") {
+                  frame_start = current_value;
+                }
+              }
+              if (dice_value < 0 || frame_start < 0) {
+                LOG(ERROR) << "Receive unexpected dice success value " << to_string(success_value);
+              } else {
+                dice_emoji_success_value[success_value->key_] = PSTRING() << dice_value << ':' << frame_start;
+              }
+            } else {
+              LOG(ERROR) << "Receive unexpected dice success value " << to_string(success_value);
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected emojies_send_dice_success " << to_string(*value);
         }
         continue;
       }
@@ -1366,6 +1423,19 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     if (!shared_config.get_option_boolean("can_ignore_sensitive_content_restrictions")) {
       get_content_settings(Auto());
     }
+  }
+
+  if (!dice_emojis.empty()) {
+    shared_config.set_option_string("dice_emojis", implode(dice_emojis, '\x01'));
+    vector<string> dice_success_values(dice_emojis.size());
+    for (auto &it : dice_emoji_success_value) {
+      if (dice_emoji_index.find(it.first) == dice_emoji_index.end()) {
+        LOG(ERROR) << "Can't find emoji " << it.first;
+        continue;
+      }
+      dice_success_values[dice_emoji_index[it.first]] = it.second;
+    }
+    shared_config.set_option_string("dice_success_values", implode(dice_success_values, ','));
   }
 }
 

@@ -626,8 +626,22 @@ class CliClient final : public Actor {
   }
 
   void on_result(uint64 generation, uint64 id, td_api::object_ptr<td_api::Object> result) {
+    auto result_str = to_string(result);
+    if (result != nullptr) {
+      switch (result->get_id()) {
+        case td_api::stickerSets::ID: {
+          auto sticker_sets = static_cast<const td_api::stickerSets *>(result.get());
+          result_str = PSTRING() << "StickerSets { total_count = " << sticker_sets->total_count_
+                                 << ", count = " << sticker_sets->sets_.size() << "}";
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
     if (id > 0 && GET_VERBOSITY_LEVEL() < VERBOSITY_NAME(td_requests)) {
-      LOG(ERROR) << "Receive result [" << generation << "][id=" << id << "] " << to_string(result);
+      LOG(ERROR) << "Receive result [" << generation << "][id=" << id << "] " << result_str;
     }
 
     auto as_json_str = json_encode<std::string>(ToJson(result));
@@ -642,7 +656,7 @@ class CliClient final : public Actor {
     // LOG(INFO) << "Receive result [" << generation << "][id=" << id << "] " << as_json_str;
 
     if (generation != generation_) {
-      LOG(INFO) << "Drop received from previous Client " << to_string(result);
+      LOG(INFO) << "Drop received from previous Client " << result_str;
       return;
     }
 
@@ -728,7 +742,7 @@ class CliClient final : public Actor {
         on_get_file(*static_cast<const td_api::updateFile *>(result.get())->file_);
         break;
       case td_api::updateConnectionState::ID:
-        LOG(WARNING) << to_string(result);
+        LOG(WARNING) << result_str;
         break;
     }
   }
@@ -2243,7 +2257,15 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::getArchivedStickerSets>(
           as_bool(is_masks), to_integer<int64>(offset_sticker_set_id), to_integer<int32>(limit)));
     } else if (op == "gtss") {
-      send_request(td_api::make_object<td_api::getTrendingStickerSets>());
+      string offset;
+      string limit;
+
+      std::tie(offset, limit) = split(args);
+      if (limit.empty()) {
+        limit = "1000";
+      }
+      send_request(
+          td_api::make_object<td_api::getTrendingStickerSets>(to_integer<int32>(offset), to_integer<int32>(limit)));
     } else if (op == "gatss") {
       send_request(td_api::make_object<td_api::getAttachedStickerSets>(as_file_id(args)));
     } else if (op == "storage") {
@@ -2383,11 +2405,11 @@ class CliClient final : public Actor {
     } else if (op == "gse") {
       send_request(td_api::make_object<td_api::getStickerEmojis>(as_input_file_id(args)));
     } else if (op == "se") {
-      send_request(td_api::make_object<td_api::searchEmojis>(args, false, ""));
+      send_request(td_api::make_object<td_api::searchEmojis>(args, false, vector<string>()));
     } else if (op == "see") {
-      send_request(td_api::make_object<td_api::searchEmojis>(args, true, ""));
+      send_request(td_api::make_object<td_api::searchEmojis>(args, true, vector<string>()));
     } else if (op == "seru") {
-      send_request(td_api::make_object<td_api::searchEmojis>(args, false, "ru_RU"));
+      send_request(td_api::make_object<td_api::searchEmojis>(args, false, vector<string>{"ru_RU"}));
     } else if (op == "gesu") {
       send_request(td_api::make_object<td_api::getEmojiSuggestionsUrl>(args));
     } else {
@@ -3123,8 +3145,12 @@ class CliClient final : public Actor {
       send_message(chat_id, td_api::make_object<td_api::inputMessageForwarded>(as_chat_id(from_chat_id),
                                                                                as_message_id(from_message_id), true,
                                                                                op == "scopy", Random::fast(0, 1) == 0));
-    } else if (op == "sdice") {
-      send_message(args, td_api::make_object<td_api::inputMessageDice>());
+    } else if (op == "sdice" || op == "sdicecd") {
+      string chat_id;
+      string emoji;
+      std::tie(chat_id, emoji) = split(args);
+
+      send_message(chat_id, td_api::make_object<td_api::inputMessageDice>(emoji, op == "sdicecd"));
     } else if (op == "sd") {
       string chat_id;
       string document_path;
@@ -3227,12 +3253,13 @@ class CliClient final : public Actor {
 
       td_api::object_ptr<td_api::PollType> poll_type;
       if (op == "squiz") {
-        poll_type = td_api::make_object<td_api::pollTypeQuiz>(narrow_cast<int32>(options.size() - 1));
+        poll_type = td_api::make_object<td_api::pollTypeQuiz>(narrow_cast<int32>(options.size() - 1),
+                                                              as_formatted_text("_te*st*_"));
       } else {
         poll_type = td_api::make_object<td_api::pollTypeRegular>(op == "spollm");
       }
       send_message(chat_id, td_api::make_object<td_api::inputMessagePoll>(question, std::move(options), op != "spollp",
-                                                                          std::move(poll_type), false));
+                                                                          std::move(poll_type), 0, 0, false));
     } else if (op == "sp" || op == "spcaption" || op == "spttl") {
       string chat_id;
       string photo_path;
@@ -3869,7 +3896,23 @@ class CliClient final : public Actor {
       std::tie(chat_id, args) = split(args);
       std::tie(parameters, is_dark) = split(args);
 
-      send_request(td_api::make_object<td_api::getChatStatisticsUrl>(as_chat_id(args), parameters, as_bool(is_dark)));
+      send_request(
+          td_api::make_object<td_api::getChatStatisticsUrl>(as_chat_id(chat_id), parameters, as_bool(is_dark)));
+    } else if (op == "gcst") {
+      string chat_id;
+      string is_dark;
+      std::tie(chat_id, is_dark) = split(args);
+
+      send_request(td_api::make_object<td_api::getChatStatistics>(as_chat_id(chat_id), as_bool(is_dark)));
+    } else if (op == "gcstg") {
+      string chat_id;
+      string token;
+      string x;
+      std::tie(chat_id, args) = split(args);
+      std::tie(token, x) = split(args);
+
+      send_request(
+          td_api::make_object<td_api::getChatStatisticsGraph>(as_chat_id(chat_id), token, to_integer<int64>(x)));
     } else if (op == "glui" || op == "glu" || op == "glua") {
       string chat_id;
       string message_id;

@@ -13,13 +13,16 @@
 
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/files/FileSourceId.h"
+#include "td/telegram/FullMessageId.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/SecretInputMedia.h"
+#include "td/telegram/SpecialStickerSetType.h"
 #include "td/telegram/StickerSetId.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/Hints.h"
+#include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 
 #include "td/telegram/td_api.h"
@@ -44,9 +47,15 @@ class StickersManager : public Actor {
 
   StickersManager(Td *td, ActorShared<> parent);
 
+  void init();
+
   tl_object_ptr<td_api::sticker> get_sticker_object(FileId file_id) const;
 
   tl_object_ptr<td_api::stickers> get_stickers_object(const vector<FileId> &sticker_ids) const;
+
+  tl_object_ptr<td_api::sticker> get_dice_sticker_object(const string &emoji, int32 value) const;
+
+  int32 get_dice_success_animation_frame_number(const string &emoji, int32 value) const;
 
   tl_object_ptr<td_api::stickerSet> get_sticker_set_object(StickerSetId sticker_set_id) const;
 
@@ -55,6 +64,10 @@ class StickersManager : public Actor {
                                                              size_t covers_limit) const;
 
   tl_object_ptr<telegram_api::InputStickerSet> get_input_sticker_set(StickerSetId sticker_set_id) const;
+
+  void register_dice(const string &emoji, int32 value, FullMessageId full_message_id, const char *source);
+
+  void unregister_dice(const string &emoji, int32 value, FullMessageId full_message_id, const char *source);
 
   void create_sticker(FileId file_id, PhotoSize thumbnail, Dimensions dimensions,
                       tl_object_ptr<telegram_api::documentAttributeSticker> sticker, bool is_animated,
@@ -108,9 +121,9 @@ class StickersManager : public Actor {
   StickerSetId on_get_sticker_set_covered(tl_object_ptr<telegram_api::StickerSetCovered> &&set_ptr, bool is_changed,
                                           const char *source);
 
-  enum SpecialStickerSetType : int32 { AnimatedEmoji, AnimatedDice };
+  void on_get_special_sticker_set(const SpecialStickerSetType &type, StickerSetId sticker_set_id);
 
-  void on_get_special_sticker_set(StickerSetId sticker_set_id, SpecialStickerSetType type);
+  void on_load_special_sticker_set(const SpecialStickerSetType &type, Status result);
 
   void on_load_sticker_set_fail(StickerSetId sticker_set_id, const Status &error);
 
@@ -118,6 +131,10 @@ class StickersManager : public Actor {
                               tl_object_ptr<telegram_api::messages_StickerSetInstallResult> &&result);
 
   void on_uninstall_sticker_set(StickerSetId set_id);
+
+  void on_update_dice_emojis();
+
+  void on_update_dice_success_values();
 
   void on_update_sticker_sets();
 
@@ -130,11 +147,12 @@ class StickersManager : public Actor {
                                     vector<tl_object_ptr<telegram_api::StickerSetCovered>> &&sticker_sets,
                                     int32 total_count);
 
-  vector<StickerSetId> get_featured_sticker_sets(Promise<Unit> &&promise);
+  std::pair<int32, vector<StickerSetId>> get_featured_sticker_sets(int32 offset, int32 limit, Promise<Unit> &&promise);
 
-  void on_get_featured_sticker_sets(tl_object_ptr<telegram_api::messages_FeaturedStickers> &&sticker_sets_ptr);
+  void on_get_featured_sticker_sets(int32 offset, int32 limit, uint32 generation,
+                                    tl_object_ptr<telegram_api::messages_FeaturedStickers> &&sticker_sets_ptr);
 
-  void on_get_featured_sticker_sets_failed(Status error);
+  void on_get_featured_sticker_sets_failed(int32 offset, int32 limit, uint32 generation, Status error);
 
   vector<StickerSetId> get_attached_sticker_sets(FileId file_id, Promise<Unit> &&promise);
 
@@ -210,8 +228,8 @@ class StickersManager : public Actor {
 
   vector<string> get_sticker_emojis(const tl_object_ptr<td_api::InputFile> &input_file, Promise<Unit> &&promise);
 
-  vector<string> search_emojis(const string &text, bool exact_match, const string &input_language_code, bool force,
-                               Promise<Unit> &&promise);
+  vector<string> search_emojis(const string &text, bool exact_match, const vector<string> &input_language_codes,
+                               bool force, Promise<Unit> &&promise);
 
   int64 get_emoji_suggestions_url(const string &language_code, Promise<Unit> &&promise);
 
@@ -269,6 +287,7 @@ class StickersManager : public Actor {
 
  private:
   static constexpr int32 MAX_FEATURED_STICKER_SET_VIEW_DELAY = 5;
+  static constexpr int32 OLD_FEATURED_STICKER_SET_SLICE_SIZE = 20;
 
   static constexpr int32 MAX_FOUND_STICKERS = 100;                    // server side limit
   static constexpr int64 MAX_STICKER_FILE_SIZE = 1 << 19;             // server side limit
@@ -300,7 +319,7 @@ class StickersManager : public Actor {
 
   class StickerSet {
    public:
-    bool is_inited = false;
+    bool is_inited = false;  // basic information about the set
     bool was_loaded = false;
     bool is_loaded = false;
 
@@ -325,7 +344,9 @@ class StickersManager : public Actor {
     bool is_masks = false;
     bool is_viewed = true;
     bool is_thumbnail_reloaded = false;
-    bool is_changed = true;
+    mutable bool was_update_sent = false;  // does the sticker set is known to the client
+    bool is_changed = true;                // have new changes that need to be sent to the client and database
+    bool need_save_to_database = true;     // have new changes that need only to be saved to the database
 
     vector<uint32> load_requests;
     vector<uint32> load_without_stickers_requests;
@@ -359,8 +380,9 @@ class StickersManager : public Actor {
   struct SpecialStickerSet {
     StickerSetId id_;
     int64 access_hash_ = 0;
-    string name_;
-    string type_;
+    string short_name_;
+    SpecialStickerSetType type_;
+    bool is_being_loaded_ = false;
   };
 
   class StickerListLogEvent;
@@ -431,6 +453,8 @@ class StickersManager : public Actor {
 
   void load_featured_sticker_sets(Promise<Unit> &&promise);
 
+  void load_old_featured_sticker_sets(Promise<Unit> &&promise);
+
   void load_recent_stickers(bool is_attached, Promise<Unit> &&promise);
 
   void on_load_installed_sticker_sets_from_database(bool is_masks, string value);
@@ -442,6 +466,11 @@ class StickersManager : public Actor {
 
   void on_load_featured_sticker_sets_finished(vector<StickerSetId> &&featured_sticker_set_ids);
 
+  void on_load_old_featured_sticker_sets_from_database(uint32 generation, string value);
+
+  void on_load_old_featured_sticker_sets_finished(uint32 generation,
+                                                  vector<StickerSetId> &&old_featured_sticker_set_ids);
+
   void on_load_recent_stickers_from_database(bool is_attached, string value);
 
   void on_load_recent_stickers_finished(bool is_attached, vector<FileId> &&recent_sticker_ids,
@@ -450,6 +479,18 @@ class StickersManager : public Actor {
   td_api::object_ptr<td_api::updateInstalledStickerSets> get_update_installed_sticker_sets_object(int is_mask) const;
 
   void send_update_installed_sticker_sets(bool from_database = false);
+
+  void reload_old_featured_sticker_sets(uint32 generation = 0);
+
+  void on_old_featured_sticker_sets_invalidated();
+
+  void invalidate_old_featured_sticker_sets();
+
+  void set_old_featured_sticker_set_count(int32 count);
+
+  // must be called after every call to set_old_featured_sticker_set_count or
+  // any change of old_featured_sticker_set_ids_ size
+  void fix_old_featured_sticker_set_count();
 
   td_api::object_ptr<td_api::updateTrendingStickerSets> get_update_trending_sticker_sets_object() const;
 
@@ -515,14 +556,24 @@ class StickersManager : public Actor {
 
   bool update_sticker_set_cache(const StickerSet *sticker_set, Promise<Unit> &promise);
 
+  td_api::object_ptr<td_api::updateDiceEmojis> get_update_dice_emojis_object() const;
+
   void start_up() override;
 
   void tear_down() override;
 
+  SpecialStickerSet &add_special_sticker_set(const string &type);
+
   static void init_special_sticker_set(SpecialStickerSet &sticker_set, int64 sticker_set_id, int64 access_hash,
                                        string name);
 
+  void load_special_sticker_set_info_from_binlog(SpecialStickerSet &sticker_set);
+
+  void load_special_sticker_set_by_type(const SpecialStickerSetType &type);
+
   void load_special_sticker_set(SpecialStickerSet &sticker_set);
+
+  void reload_special_sticker_set(SpecialStickerSet &sticker_set);
 
   static void add_sticker_thumbnail(Sticker *s, PhotoSize thumbnail);
 
@@ -540,7 +591,8 @@ class StickersManager : public Actor {
 
   double get_emoji_language_code_last_difference_time(const string &language_code);
 
-  vector<string> get_emoji_language_codes(const string &input_language_code, Promise<Unit> &promise);
+  vector<string> get_emoji_language_codes(const vector<string> &input_language_codes, Slice text,
+                                          Promise<Unit> &promise);
 
   void load_language_codes(vector<string> language_codes, string key, Promise<Unit> &&promise);
 
@@ -572,6 +624,7 @@ class StickersManager : public Actor {
 
   vector<StickerSetId> installed_sticker_set_ids_[2];
   vector<StickerSetId> featured_sticker_set_ids_;
+  vector<StickerSetId> old_featured_sticker_set_ids_;
   vector<FileId> recent_sticker_ids_[2];
   vector<FileId> favorite_sticker_ids_;
 
@@ -584,6 +637,9 @@ class StickersManager : public Actor {
   int32 featured_sticker_sets_hash_ = 0;
   int32 recent_stickers_hash_[2] = {0, 0};
 
+  int32 old_featured_sticker_set_count_ = -1;
+  uint32 old_featured_sticker_set_generation_ = 1;
+
   bool need_update_installed_sticker_sets_[2] = {false, false};
   bool need_update_featured_sticker_sets_ = false;
   bool need_update_recent_stickers_[2] = {false, false};
@@ -593,8 +649,11 @@ class StickersManager : public Actor {
   bool are_recent_stickers_loaded_[2] = {false, false};
   bool are_favorite_stickers_loaded_ = false;
 
+  bool are_old_featured_sticker_sets_invalidated_ = false;
+
   vector<Promise<Unit>> load_installed_sticker_sets_queries_[2];
   vector<Promise<Unit>> load_featured_sticker_sets_queries_;
+  vector<Promise<Unit>> load_old_featured_sticker_sets_queries_;
   vector<Promise<Unit>> load_recent_stickers_queries_[2];
   vector<Promise<Unit>> repair_recent_stickers_queries_[2];
   vector<Promise<Unit>> load_favorite_stickers_queries_;
@@ -624,7 +683,7 @@ class StickersManager : public Actor {
   int32 recent_stickers_limit_ = 200;
   int32 favorite_stickers_limit_ = 5;
 
-  SpecialStickerSet special_sticker_sets_[2];
+  std::unordered_map<string, SpecialStickerSet> special_sticker_sets_;
 
   struct StickerSetLoadRequest {
     Promise<Unit> promise;
@@ -652,6 +711,14 @@ class StickersManager : public Actor {
   std::unordered_map<string, vector<Promise<Unit>>> load_emoji_keywords_queries_;
   std::unordered_map<string, vector<Promise<Unit>>> load_language_codes_queries_;
   std::unordered_map<int64, string> emoji_suggestions_urls_;
+
+  std::unordered_map<string, std::unordered_set<FullMessageId, FullMessageIdHash>> dice_messages_;
+
+  string dice_emojis_str_;
+  vector<string> dice_emojis_;
+
+  string dice_success_values_str_;
+  vector<std::pair<int32, int32>> dice_success_values_;
 };
 
 }  // namespace td

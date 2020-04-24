@@ -2148,7 +2148,7 @@ static vector<MessageEntity> find_splittable_entities_v3(Slice text, const vecto
   }
 
   vector<MessageEntity> result;
-  size_t splittable_entity_offset[SPLITTABLE_ENTITY_TYPE_COUNT] = {};
+  int32 splittable_entity_offset[SPLITTABLE_ENTITY_TYPE_COUNT] = {};
   int32 utf16_offset = 0;
   for (size_t i = 0; i + 1 < text.size(); i++) {
     auto c = static_cast<unsigned char>(text[i]);
@@ -3473,6 +3473,8 @@ static Result<string> clean_input_string_with_entities(const string &text, vecto
                                        << entity->offset + entity->length);
   }
 
+  replace_offending_characters(result);
+
   return result;
 }
 
@@ -3816,6 +3818,9 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
     merge_new_entities(entities, find_entities(text, skip_bot_commands));
   }
 
+  // new whitespace-only entities could be added after splitting of entities
+  remove_invalid_entities(text, entities);
+
   // TODO MAX_MESSAGE_LENGTH and MAX_CAPTION_LENGTH
 
   return Status::OK();
@@ -3897,6 +3902,9 @@ void add_formatted_text_dependencies(Dependencies &dependencies, const Formatted
 }
 
 bool need_skip_bot_commands(const ContactsManager *contacts_manager, DialogId dialog_id, bool is_bot) {
+  if (!dialog_id.is_valid()) {
+    return true;
+  }
   if (is_bot) {
     return false;
   }

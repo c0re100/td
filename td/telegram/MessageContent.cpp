@@ -645,16 +645,32 @@ class MessagePoll : public MessageContent {
 
 class MessageDice : public MessageContent {
  public:
+  string emoji;
   int32 dice_value = 0;
 
+  static constexpr const char *DEFAULT_EMOJI = "🎲";
+
   MessageDice() = default;
-  explicit MessageDice(int32 dice_value) : dice_value(dice_value) {
+  MessageDice(string emoji, int32 dice_value)
+      : emoji(emoji.empty() ? string(DEFAULT_EMOJI) : std::move(emoji)), dice_value(dice_value) {
   }
 
   MessageContentType get_type() const override {
     return MessageContentType::Dice;
   }
+
+  bool is_valid() const {
+    if (dice_value < 0) {
+      return false;
+    }
+    if (emoji == "DEFAULT_EMOJI" || emoji == "🎯") {
+      return dice_value <= 6;
+    }
+    return dice_value <= 1000;
+  }
 };
+
+constexpr const char *MessageDice::DEFAULT_EMOJI;
 
 template <class StorerT>
 static void store(const MessageContent *content, StorerT &storer) {
@@ -915,6 +931,7 @@ static void store(const MessageContent *content, StorerT &storer) {
     }
     case MessageContentType::Dice: {
       auto m = static_cast<const MessageDice *>(content);
+      store(m->emoji, storer);
       store(m->dice_value, storer);
       break;
     }
@@ -1262,8 +1279,13 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
     }
     case MessageContentType::Dice: {
       auto m = make_unique<MessageDice>();
+      if (parser.version() >= static_cast<int32>(Version::AddDiceEmoji)) {
+        parse(m->emoji, parser);
+      } else {
+        m->emoji = MessageDice::DEFAULT_EMOJI;
+      }
       parse(m->dice_value, parser);
-      is_bad = m->dice_value < 0 || m->dice_value > 6;
+      is_bad = !m->is_valid();
       content = std::move(m);
       break;
     }
@@ -1475,9 +1497,15 @@ static Result<InputMessageContent> create_input_message_content(
       content = make_unique<MessageAudio>(file_id, std::move(caption));
       break;
     }
-    case td_api::inputMessageDice::ID:
-      content = make_unique<MessageDice>();
+    case td_api::inputMessageDice::ID: {
+      auto input_dice = static_cast<td_api::inputMessageDice *>(input_message_content.get());
+      if (!clean_input_string(input_dice->emoji_)) {
+        return Status::Error(400, "Dice emoji must be encoded in UTF-8");
+      }
+      content = td::make_unique<MessageDice>(std::move(input_dice->emoji_), 0);
+      clear_draft = input_dice->clear_draft_;
       break;
+    }
     case td_api::inputMessageDocument::ID:
       td->documents_manager_->create_document(file_id, string(), thumbnail, std::move(file_name), std::move(mime_type),
                                               false);
@@ -1612,37 +1640,37 @@ static Result<InputMessageContent> create_input_message_content(
         return Status::Error(400, "Invoices can be sent only by bots");
       }
 
-      auto input_message_invoice = move_tl_object_as<td_api::inputMessageInvoice>(input_message_content);
-      if (!clean_input_string(input_message_invoice->title_)) {
+      auto input_invoice = move_tl_object_as<td_api::inputMessageInvoice>(input_message_content);
+      if (!clean_input_string(input_invoice->title_)) {
         return Status::Error(400, "Invoice title must be encoded in UTF-8");
       }
-      if (!clean_input_string(input_message_invoice->description_)) {
+      if (!clean_input_string(input_invoice->description_)) {
         return Status::Error(400, "Invoice description must be encoded in UTF-8");
       }
-      if (!clean_input_string(input_message_invoice->photo_url_)) {
+      if (!clean_input_string(input_invoice->photo_url_)) {
         return Status::Error(400, "Invoice photo URL must be encoded in UTF-8");
       }
-      if (!clean_input_string(input_message_invoice->start_parameter_)) {
+      if (!clean_input_string(input_invoice->start_parameter_)) {
         return Status::Error(400, "Invoice bot start parameter must be encoded in UTF-8");
       }
-      if (!clean_input_string(input_message_invoice->provider_token_)) {
+      if (!clean_input_string(input_invoice->provider_token_)) {
         return Status::Error(400, "Invoice provider token must be encoded in UTF-8");
       }
-      if (!clean_input_string(input_message_invoice->provider_data_)) {
+      if (!clean_input_string(input_invoice->provider_data_)) {
         return Status::Error(400, "Invoice provider data must be encoded in UTF-8");
       }
-      if (!clean_input_string(input_message_invoice->invoice_->currency_)) {
+      if (!clean_input_string(input_invoice->invoice_->currency_)) {
         return Status::Error(400, "Invoice currency must be encoded in UTF-8");
       }
 
       auto message_invoice = make_unique<MessageInvoice>();
-      message_invoice->title = std::move(input_message_invoice->title_);
-      message_invoice->description = std::move(input_message_invoice->description_);
+      message_invoice->title = std::move(input_invoice->title_);
+      message_invoice->description = std::move(input_invoice->description_);
 
-      auto r_http_url = parse_url(input_message_invoice->photo_url_);
+      auto r_http_url = parse_url(input_invoice->photo_url_);
       if (r_http_url.is_error()) {
-        if (!input_message_invoice->photo_url_.empty()) {
-          LOG(INFO) << "Can't register url " << input_message_invoice->photo_url_;
+        if (!input_invoice->photo_url_.empty()) {
+          LOG(INFO) << "Can't register url " << input_invoice->photo_url_;
         }
         message_invoice->photo.id = -2;
       } else {
@@ -1656,20 +1684,20 @@ static Result<InputMessageContent> create_input_message_content(
 
           PhotoSize s;
           s.type = 'u';
-          s.dimensions = get_dimensions(input_message_invoice->photo_width_, input_message_invoice->photo_height_);
-          s.size = input_message_invoice->photo_size_;  // TODO use invoice_file_id size
+          s.dimensions = get_dimensions(input_invoice->photo_width_, input_invoice->photo_height_);
+          s.size = input_invoice->photo_size_;  // TODO use invoice_file_id size
           s.file_id = invoice_file_id;
 
           message_invoice->photo.photos.push_back(s);
         }
       }
-      message_invoice->start_parameter = std::move(input_message_invoice->start_parameter_);
+      message_invoice->start_parameter = std::move(input_invoice->start_parameter_);
 
-      message_invoice->invoice.currency = std::move(input_message_invoice->invoice_->currency_);
-      message_invoice->invoice.price_parts.reserve(input_message_invoice->invoice_->price_parts_.size());
+      message_invoice->invoice.currency = std::move(input_invoice->invoice_->currency_);
+      message_invoice->invoice.price_parts.reserve(input_invoice->invoice_->price_parts_.size());
       int64 total_amount = 0;
       const int64 MAX_AMOUNT = 9999'9999'9999;
-      for (auto &price : input_message_invoice->invoice_->price_parts_) {
+      for (auto &price : input_invoice->invoice_->price_parts_) {
         if (!clean_input_string(price->label_)) {
           return Status::Error(400, "Invoice price label must be encoded in UTF-8");
         }
@@ -1687,16 +1715,15 @@ static Result<InputMessageContent> create_input_message_content(
       }
       message_invoice->total_amount = total_amount;
 
-      message_invoice->invoice.is_test = input_message_invoice->invoice_->is_test_;
-      message_invoice->invoice.need_name = input_message_invoice->invoice_->need_name_;
-      message_invoice->invoice.need_phone_number = input_message_invoice->invoice_->need_phone_number_;
-      message_invoice->invoice.need_email_address = input_message_invoice->invoice_->need_email_address_;
-      message_invoice->invoice.need_shipping_address = input_message_invoice->invoice_->need_shipping_address_;
-      message_invoice->invoice.send_phone_number_to_provider =
-          input_message_invoice->invoice_->send_phone_number_to_provider_;
+      message_invoice->invoice.is_test = input_invoice->invoice_->is_test_;
+      message_invoice->invoice.need_name = input_invoice->invoice_->need_name_;
+      message_invoice->invoice.need_phone_number = input_invoice->invoice_->need_phone_number_;
+      message_invoice->invoice.need_email_address = input_invoice->invoice_->need_email_address_;
+      message_invoice->invoice.need_shipping_address = input_invoice->invoice_->need_shipping_address_;
+      message_invoice->invoice.send_phone_number_to_provider = input_invoice->invoice_->send_phone_number_to_provider_;
       message_invoice->invoice.send_email_address_to_provider =
-          input_message_invoice->invoice_->send_email_address_to_provider_;
-      message_invoice->invoice.is_flexible = input_message_invoice->invoice_->is_flexible_;
+          input_invoice->invoice_->send_email_address_to_provider_;
+      message_invoice->invoice.is_flexible = input_invoice->invoice_->is_flexible_;
       if (message_invoice->invoice.send_phone_number_to_provider) {
         message_invoice->invoice.need_phone_number = true;
       }
@@ -1707,9 +1734,9 @@ static Result<InputMessageContent> create_input_message_content(
         message_invoice->invoice.need_shipping_address = true;
       }
 
-      message_invoice->payload = std::move(input_message_invoice->payload_);
-      message_invoice->provider_token = std::move(input_message_invoice->provider_token_);
-      message_invoice->provider_data = std::move(input_message_invoice->provider_data_);
+      message_invoice->payload = std::move(input_invoice->payload_);
+      message_invoice->provider_token = std::move(input_invoice->provider_token_);
+      message_invoice->provider_data = std::move(input_invoice->provider_data_);
 
       content = std::move(message_invoice);
       break;
@@ -1749,6 +1776,7 @@ static Result<InputMessageContent> create_input_message_content(
       bool allow_multiple_answers = false;
       bool is_quiz = false;
       int32 correct_option_id = -1;
+      FormattedText explanation;
       if (input_poll->type_ == nullptr) {
         return Status::Error(400, "Poll type must not be empty");
       }
@@ -1765,16 +1793,28 @@ static Result<InputMessageContent> create_input_message_content(
           if (correct_option_id < 0 || correct_option_id >= static_cast<int32>(input_poll->options_.size())) {
             return Status::Error(400, "Wrong correct option ID specified");
           }
+          auto r_explanation =
+              process_input_caption(td->contacts_manager_.get(), dialog_id, std::move(type->explanation_), is_bot);
+          if (r_explanation.is_error()) {
+            return r_explanation.move_as_error();
+          }
+          explanation = r_explanation.move_as_ok();
           break;
         }
         default:
           UNREACHABLE();
       }
 
+      int32 open_period = is_bot ? input_poll->open_period_ : 0;
+      int32 close_date = is_bot ? input_poll->close_date_ : 0;
+      if (open_period != 0) {
+        close_date = 0;
+      }
       bool is_closed = is_bot ? input_poll->is_closed_ : false;
-      content = make_unique<MessagePoll>(td->poll_manager_->create_poll(
-          std::move(input_poll->question_), std::move(input_poll->options_), input_poll->is_anonymous_,
-          allow_multiple_answers, is_quiz, correct_option_id, is_closed));
+      content = make_unique<MessagePoll>(
+          td->poll_manager_->create_poll(std::move(input_poll->question_), std::move(input_poll->options_),
+                                         input_poll->is_anonymous_, allow_multiple_answers, is_quiz, correct_option_id,
+                                         std::move(explanation), open_period, close_date, is_closed));
       break;
     }
     default:
@@ -2143,8 +2183,10 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
       auto m = static_cast<const MessageContact *>(content);
       return m->contact.get_input_media_contact();
     }
-    case MessageContentType::Dice:
-      return make_tl_object<telegram_api::inputMediaDice>();
+    case MessageContentType::Dice: {
+      auto m = static_cast<const MessageDice *>(content);
+      return make_tl_object<telegram_api::inputMediaDice>(m->emoji);
+    }
     case MessageContentType::Document: {
       auto m = static_cast<const MessageDocument *>(content);
       return td->documents_manager_->get_input_media(m->file_id, std::move(input_file), std::move(input_thumbnail));
@@ -3076,7 +3118,7 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
     case MessageContentType::Dice: {
       auto old_ = static_cast<const MessageDice *>(old_content);
       auto new_ = static_cast<const MessageDice *>(new_content);
-      if (old_->dice_value != new_->dice_value) {
+      if (old_->emoji != new_->emoji || old_->dice_value != new_->dice_value) {
         need_update = true;
       }
       break;
@@ -3231,6 +3273,10 @@ void register_message_content(Td *td, const MessageContent *content, FullMessage
     case MessageContentType::Poll:
       return td->poll_manager_->register_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
                                               source);
+    case MessageContentType::Dice: {
+      auto dice = static_cast<const MessageDice *>(content);
+      return td->stickers_manager_->register_dice(dice->emoji, dice->dice_value, full_message_id, source);
+    }
     default:
       return;
   }
@@ -3254,6 +3300,14 @@ void reregister_message_content(Td *td, const MessageContent *old_content, const
           return;
         }
         break;
+      case MessageContentType::Dice:
+        if (static_cast<const MessageDice *>(old_content)->emoji ==
+                static_cast<const MessageDice *>(new_content)->emoji &&
+            static_cast<const MessageDice *>(old_content)->dice_value ==
+                static_cast<const MessageDice *>(new_content)->dice_value) {
+          return;
+        }
+        break;
       default:
         return;
     }
@@ -3271,6 +3325,10 @@ void unregister_message_content(Td *td, const MessageContent *content, FullMessa
     case MessageContentType::Poll:
       return td->poll_manager_->unregister_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
                                                 source);
+    case MessageContentType::Dice: {
+      auto dice = static_cast<const MessageDice *>(content);
+      return td->stickers_manager_->unregister_dice(dice->emoji, dice->dice_value, full_message_id, source);
+    }
     default:
       return;
   }
@@ -3711,8 +3769,8 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
     case telegram_api::messageMediaDice::ID: {
       auto message_dice = move_tl_object_as<telegram_api::messageMediaDice>(media);
 
-      auto m = make_unique<MessageDice>(message_dice->value_);
-      if (m->dice_value < 0 || m->dice_value > 6) {
+      auto m = td::make_unique<MessageDice>(message_dice->emoticon_, message_dice->value_);
+      if (!m->is_valid()) {
         break;
       }
 
@@ -3900,12 +3958,13 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     }
     case MessageContentType::Contact:
       return make_unique<MessageContact>(*static_cast<const MessageContact *>(content));
-    case MessageContentType::Dice:
+    case MessageContentType::Dice: {
+      auto result = td::make_unique<MessageDice>(*static_cast<const MessageDice *>(content));
       if (type != MessageContentDupType::Forward) {
-        return make_unique<MessageDice>();
-      } else {
-        return make_unique<MessageDice>(*static_cast<const MessageDice *>(content));
+        result->dice_value = 0;
       }
+      return std::move(result);
+    }
     case MessageContentType::Document: {
       auto result = make_unique<MessageDocument>(*static_cast<const MessageDocument *>(content));
       if (remove_caption) {
@@ -4437,7 +4496,13 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     }
     case MessageContentType::Dice: {
       const MessageDice *m = static_cast<const MessageDice *>(content);
-      return make_tl_object<td_api::messageDice>(m->dice_value);
+      auto initial_state = td->stickers_manager_->get_dice_sticker_object(m->emoji, 0);
+      auto final_state =
+          m->dice_value == 0 ? nullptr : td->stickers_manager_->get_dice_sticker_object(m->emoji, m->dice_value);
+      auto success_animation_frame_number =
+          td->stickers_manager_->get_dice_success_animation_frame_number(m->emoji, m->dice_value);
+      return make_tl_object<td_api::messageDice>(std::move(initial_state), std::move(final_state), m->emoji,
+                                                 m->dice_value, success_animation_frame_number);
     }
     default:
       UNREACHABLE();
@@ -4778,7 +4843,7 @@ void update_expired_message_content(unique_ptr<MessageContent> &content) {
       content = make_unique<MessageExpiredVideo>();
       break;
     case MessageContentType::Unsupported:
-      // can happen if message content file id is broken
+      // can happen if message content file identifier is broken
       break;
     case MessageContentType::ExpiredPhoto:
     case MessageContentType::ExpiredVideo:

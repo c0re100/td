@@ -357,6 +357,12 @@ class ContactsManager : public Actor {
 
   void delete_channel(ChannelId channel_id, Promise<Unit> &&promise);
 
+  void get_channel_statistics(DialogId dialog_id, bool is_dark,
+                              Promise<td_api::object_ptr<td_api::chatStatistics>> &&promise);
+
+  void load_statistics_graph(DialogId dialog_id, const string &token, int64 x,
+                             Promise<td_api::object_ptr<td_api::StatisticsGraph>> &&promise);
+
   void add_chat_participant(ChatId chat_id, UserId user_id, int32 forward_limit, Promise<Unit> &&promise);
 
   void add_channel_participant(ChannelId channel_id, UserId user_id, Promise<Unit> &&promise,
@@ -422,7 +428,7 @@ class ContactsManager : public Actor {
   UserId get_me(Promise<Unit> &&promise);
   bool get_user(UserId user_id, int left_tries, Promise<Unit> &&promise);
   void reload_user(UserId user_id, Promise<Unit> &&promise);
-  bool get_user_full(UserId user_id, Promise<Unit> &&promise);
+  bool get_user_full(UserId user_id, bool force, Promise<Unit> &&promise);
   void reload_user_full(UserId user_id);
 
   std::pair<int32, vector<const Photo *>> get_user_profile_photos(UserId user_id, int32 offset, int32 limit,
@@ -447,7 +453,7 @@ class ContactsManager : public Actor {
   bool have_channel_force(ChannelId channel_id);
   bool get_channel(ChannelId channel_id, int left_tries, Promise<Unit> &&promise);
   void reload_channel(ChannelId chnanel_id, Promise<Unit> &&promise);
-  bool get_channel_full(ChannelId channel_id, Promise<Unit> &&promise);
+  bool get_channel_full(ChannelId channel_id, bool force, Promise<Unit> &&promise);
 
   bool is_channel_public(ChannelId channel_id) const;
 
@@ -532,6 +538,16 @@ class ContactsManager : public Actor {
   void after_get_difference();
 
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
+
+  static tl_object_ptr<td_api::StatisticsGraph> convert_stats_graph(tl_object_ptr<telegram_api::StatsGraph> obj);
+
+  static double get_percentage_value(double new_value, double old_value);
+
+  static tl_object_ptr<td_api::statisticsValue> convert_stats_absolute_value(
+      const tl_object_ptr<telegram_api::statsAbsValueAndPrev> &obj);
+
+  static tl_object_ptr<td_api::chatStatistics> convert_broadcast_stats(
+      tl_object_ptr<telegram_api::stats_broadcastStats> obj);
 
  private:
   struct User {
@@ -1321,6 +1337,16 @@ class ContactsManager : public Actor {
   void transfer_channel_ownership(ChannelId channel_id, UserId user_id,
                                   tl_object_ptr<telegram_api::InputCheckPasswordSRP> input_check_password,
                                   Promise<Unit> &&promise);
+
+  void get_channel_statistics_dc_id(DialogId dialog_id, Promise<DcId> &&promise);
+
+  void get_channel_statistics_dc_id_impl(ChannelId channel_id, Promise<DcId> &&promise);
+
+  void send_get_broadcast_stats_query(DcId dc_id, ChannelId channel_id, bool is_dark,
+                                      Promise<td_api::object_ptr<td_api::chatStatistics>> &&promise);
+
+  void send_load_async_graph_query(DcId dc_id, string token, int64 x,
+                                   Promise<td_api::object_ptr<td_api::StatisticsGraph>> &&promise);
 
   static void on_user_online_timeout_callback(void *contacts_manager_ptr, int64 user_id_long);
 

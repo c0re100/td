@@ -25,6 +25,7 @@
 #include "td/actor/SleepActor.h"
 
 #include "td/utils/base64.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/format.h"
 #include "td/utils/HttpUrl.h"
 #include "td/utils/logging.h"
@@ -1400,6 +1401,11 @@ Result<FileId> FileManager::merge(FileId x_file_id, FileId y_file_id, bool no_sy
     LOG(ERROR) << "File remote location was changed from " << y_node->remote_.full.value() << " to "
                << x_node->remote_.full.value();
   }
+
+  bool drop_last_successful_force_reupload_time = x_node->last_successful_force_reupload_time_ <= 0 &&
+                                                  x_node->remote_.full &&
+                                                  x_node->remote_.full_source == FileLocationSource::FromServer;
+
   auto count_local = [](auto &node) {
     return std::accumulate(node->file_ids_.begin(), node->file_ids_.end(), 0,
                            [](const auto &x, const auto &y) { return x + (y.get_remote() != 0); });
@@ -1548,7 +1554,9 @@ Result<FileId> FileManager::merge(FileId x_file_id, FileId y_file_id, bool no_sy
   node->need_load_from_pmc_ |= other_node->need_load_from_pmc_;
   node->can_search_locally_ &= other_node->can_search_locally_;
 
-  if (other_node->last_successful_force_reupload_time_ > node->last_successful_force_reupload_time_) {
+  if (drop_last_successful_force_reupload_time) {
+    node->last_successful_force_reupload_time_ = -1e10;
+  } else if (other_node->last_successful_force_reupload_time_ > node->last_successful_force_reupload_time_) {
     node->last_successful_force_reupload_time_ = other_node->last_successful_force_reupload_time_;
   }
 
@@ -1936,7 +1944,7 @@ void FileManager::read_file_part(FileId file_id, int32 offset, int32 count, int 
   }
 
   if (!file_id.is_valid()) {
-    return promise.set_error(Status::Error(400, "File ID is invalid"));
+    return promise.set_error(Status::Error(400, "File identifier is invalid"));
   }
   auto node = get_sync_file_node(file_id);
   if (!node) {
@@ -2113,6 +2121,25 @@ void FileManager::download(FileId file_id, std::shared_ptr<DownloadCallback> cal
 }
 
 void FileManager::run_download(FileNodePtr node) {
+  int8 priority = 0;
+  for (auto id : node->file_ids_) {
+    auto *info = get_file_id_info(id);
+    if (info->download_priority_ > priority) {
+      priority = info->download_priority_;
+    }
+  }
+
+  auto old_priority = node->download_priority_;
+
+  if (priority == 0) {
+    node->set_download_priority(priority);
+    LOG(INFO) << "Cancel downloading of file " << node->main_file_id_;
+    if (old_priority != 0) {
+      do_cancel_download(node);
+    }
+    return;
+  }
+
   if (node->need_load_from_pmc_) {
     LOG(INFO) << "Skip run_download, because file " << node->main_file_id_ << " needs to be loaded from PMC";
     return;
@@ -2126,24 +2153,7 @@ void FileManager::run_download(FileNodePtr node) {
     LOG(INFO) << "Skip run_download, because file " << node->main_file_id_ << " can't be downloaded from server";
     return;
   }
-  int8 priority = 0;
-  for (auto id : node->file_ids_) {
-    auto *info = get_file_id_info(id);
-    if (info->download_priority_ > priority) {
-      priority = info->download_priority_;
-    }
-  }
-
-  auto old_priority = node->download_priority_;
   node->set_download_priority(priority);
-
-  if (priority == 0) {
-    LOG(INFO) << "Cancel downloading of file " << node->main_file_id_;
-    if (old_priority != 0) {
-      do_cancel_download(node);
-    }
-    return;
-  }
   bool need_update_offset = node->is_download_offset_dirty_;
   node->is_download_offset_dirty_ = false;
 
@@ -2348,7 +2358,9 @@ class FileManager::ForceUploadActor : public Actor {
 void FileManager::on_force_reupload_success(FileId file_id) {
   auto node = get_sync_file_node(file_id);
   CHECK(node);
-  node->last_successful_force_reupload_time_ = Time::now();
+  if (!node->remote_.is_full_alive) {  // do not update for multiple simultaneous uploads
+    node->last_successful_force_reupload_time_ = Time::now();
+  }
 }
 
 void FileManager::resume_upload(FileId file_id, std::vector<int> bad_parts, std::shared_ptr<UploadCallback> callback,
@@ -2434,7 +2446,7 @@ void FileManager::resume_upload(FileId file_id, std::vector<int> bad_parts, std:
 bool FileManager::delete_partial_remote_location(FileId file_id) {
   auto node = get_sync_file_node(file_id);
   if (!node) {
-    LOG(INFO) << "Wrong file id " << file_id;
+    LOG(INFO) << "Wrong file identifier " << file_id;
     return false;
   }
   if (node->upload_pause_ == file_id) {
@@ -2470,7 +2482,7 @@ void FileManager::delete_file_reference(FileId file_id, string file_reference) {
                         << tag("reference_base64", base64_encode(file_reference));
   auto node = get_sync_file_node(file_id);
   if (!node) {
-    LOG(ERROR) << "Wrong file id " << file_id;
+    LOG(ERROR) << "Wrong file identifier " << file_id;
     return;
   }
   node->delete_file_reference(file_reference);
@@ -2586,6 +2598,29 @@ void FileManager::run_generate(FileNodePtr node) {
 }
 
 void FileManager::run_upload(FileNodePtr node, std::vector<int> bad_parts) {
+  int8 priority = 0;
+  FileId file_id = node->main_file_id_;
+  for (auto id : node->file_ids_) {
+    auto *info = get_file_id_info(id);
+    if (info->upload_priority_ > priority) {
+      priority = info->upload_priority_;
+      file_id = id;
+    }
+  }
+
+  auto old_priority = node->upload_priority_;
+
+  if (priority == 0) {
+    node->set_upload_priority(priority);
+    if (old_priority != 0) {
+      LOG(INFO) << "Cancel file " << file_id << " uploading";
+      do_cancel_upload(node);
+    } else {
+      LOG(INFO) << "File " << file_id << " upload priority is still 0";
+    }
+    return;
+  }
+
   if (node->need_load_from_pmc_) {
     LOG(INFO) << "File " << node->main_file_id_ << " needs to be loaded from database before upload";
     return;
@@ -2594,6 +2629,7 @@ void FileManager::run_upload(FileNodePtr node, std::vector<int> bad_parts) {
     LOG(INFO) << "File " << node->main_file_id_ << " upload is paused: " << node->upload_pause_;
     return;
   }
+
   FileView file_view(node);
   if (!file_view.has_local_location() && !file_view.has_remote_location()) {
     if (node->get_by_hash_ || node->generate_id_ == 0 || !node->generate_was_update_) {
@@ -2607,28 +2643,8 @@ void FileManager::run_upload(FileNodePtr node, std::vector<int> bad_parts) {
       return;
     }
   }
-  int8 priority = 0;
-  FileId file_id = node->main_file_id_;
-  for (auto id : node->file_ids_) {
-    auto *info = get_file_id_info(id);
-    if (info->upload_priority_ > priority) {
-      priority = info->upload_priority_;
-      file_id = id;
-    }
-  }
 
-  auto old_priority = node->upload_priority_;
   node->set_upload_priority(priority);
-
-  if (priority == 0) {
-    if (old_priority != 0) {
-      LOG(INFO) << "Cancel file " << file_id << " uploading";
-      do_cancel_upload(node);
-    } else {
-      LOG(INFO) << "File " << file_id << " upload priority is still 0";
-    }
-    return;
-  }
 
   // create encryption key if necessary
   if (((file_view.has_generate_location() && file_view.generate_location().file_type_ == FileType::Encrypted) ||
@@ -2749,11 +2765,11 @@ Result<FileId> FileManager::from_persistent_id(CSlice persistent_id, FileType fi
 
   auto r_binary = base64url_decode(persistent_id);
   if (r_binary.is_error()) {
-    return Status::Error(10, PSLICE() << "Wrong remote file id specified: " << r_binary.error().message());
+    return Status::Error(10, PSLICE() << "Wrong remote file identifier specified: " << r_binary.error().message());
   }
   auto binary = r_binary.move_as_ok();
   if (binary.empty()) {
-    return Status::Error(10, "Remote file id can't be empty");
+    return Status::Error(10, "Remote file identifier can't be empty");
   }
   if (binary.back() == PERSISTENT_ID_VERSION_OLD) {
     return from_persistent_id_v2(binary, file_type);
@@ -2764,7 +2780,7 @@ Result<FileId> FileManager::from_persistent_id(CSlice persistent_id, FileType fi
   if (binary.back() == PERSISTENT_ID_VERSION_MAP) {
     return from_persistent_id_map(binary, file_type);
   }
-  return Status::Error(10, "Wrong remote file id specified: can't unserialize it. Wrong last symbol");
+  return Status::Error(10, "Wrong remote file identifier specified: can't unserialize it. Wrong last symbol");
 }
 
 Result<FileId> FileManager::from_persistent_id_map(Slice binary, FileType file_type) {
@@ -2773,7 +2789,7 @@ Result<FileId> FileManager::from_persistent_id_map(Slice binary, FileType file_t
   FullGenerateFileLocation generate_location;
   auto status = unserialize(generate_location, decoded_binary);
   if (status.is_error()) {
-    return Status::Error(10, "Wrong remote file id specified: can't unserialize it");
+    return Status::Error(10, "Wrong remote file identifier specified: can't unserialize it");
   }
   auto real_file_type = generate_location.file_type_;
   if ((real_file_type != file_type && file_type != FileType::Temp) ||
@@ -2790,7 +2806,7 @@ Result<FileId> FileManager::from_persistent_id_map(Slice binary, FileType file_t
 
 Result<FileId> FileManager::from_persistent_id_v23(Slice binary, FileType file_type, int32 version) {
   if (version < 0 || version >= static_cast<int32>(Version::Next)) {
-    return Status::Error("Invalid remote id");
+    return Status::Error("Invalid remote file identifier");
   }
   auto decoded_binary = zero_decode(binary);
   FullRemoteFileLocation remote_location;
@@ -2800,7 +2816,7 @@ Result<FileId> FileManager::from_persistent_id_v23(Slice binary, FileType file_t
   parser.fetch_end();
   auto status = parser.get_status();
   if (status.is_error()) {
-    return Status::Error(10, "Wrong remote file id specified: can't unserialize it");
+    return Status::Error(10, "Wrong remote file identifier specified: can't unserialize it");
   }
   auto &real_file_type = remote_location.file_type_;
   if (is_document_type(real_file_type) && is_document_type(file_type)) {
@@ -2825,7 +2841,7 @@ Result<FileId> FileManager::from_persistent_id_v2(Slice binary, FileType file_ty
 Result<FileId> FileManager::from_persistent_id_v3(Slice binary, FileType file_type) {
   binary.remove_suffix(1);
   if (binary.empty()) {
-    return Status::Error("Invalid remote id");
+    return Status::Error("Invalid remote file identifier");
   }
   int32 version = static_cast<uint8>(binary.back());
   binary.remove_suffix(1);
@@ -3010,7 +3026,25 @@ Result<FileId> FileManager::get_input_file_id(FileType type, const tl_object_ptr
         if (allow_zero && path.empty()) {
           return FileId();
         }
-        return register_local(FullLocalFileLocation(new_type, path, 0), owner_dialog_id, 0, get_by_hash);
+        string hash;
+        if (false && new_type == FileType::Photo) {
+          auto r_stat = stat(path);
+          if (r_stat.is_ok() && r_stat.ok().size_ > 0 && r_stat.ok().size_ < 1000000) {
+            auto r_file_content = read_file_str(path, r_stat.ok().size_);
+            if (r_file_content.is_ok()) {
+              hash = sha256(r_file_content.ok());
+              auto it = file_hash_to_file_id_.find(hash);
+              if (it != file_hash_to_file_id_.end()) {
+                return it->second;
+              }
+            }
+          }
+        }
+        TRY_RESULT(file_id, register_local(FullLocalFileLocation(new_type, path, 0), owner_dialog_id, 0, get_by_hash));
+        if (!hash.empty()) {
+          file_hash_to_file_id_[hash] = file_id;
+        }
+        return file_id;
       }
       case td_api::inputFileId::ID: {
         FileId file_id(static_cast<const td_api::inputFileId *>(file.get())->id_, 0);

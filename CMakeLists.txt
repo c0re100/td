@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 
-project(TDLib VERSION 1.6.2 LANGUAGES CXX C)
+project(TDLib VERSION 1.6.3 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
   set(CMAKE_INSTALL_LIBDIR "lib")
@@ -475,6 +475,7 @@ set(TDLIB_SOURCE
   td/telegram/SecureValue.cpp
   td/telegram/SendCodeHelper.cpp
   td/telegram/SequenceDispatcher.cpp
+  td/telegram/SpecialStickerSetType.cpp
   td/telegram/StateManager.cpp
   td/telegram/StickersManager.cpp
   td/telegram/StorageManager.cpp
@@ -656,6 +657,7 @@ set(TDLIB_SOURCE
   td/telegram/SequenceDispatcher.h
   td/telegram/ServerMessageId.h
   td/telegram/SetWithPosition.h
+  td/telegram/SpecialStickerSetType.h
   td/telegram/StateManager.h
   td/telegram/StickerSetId.h
   td/telegram/StickersManager.h

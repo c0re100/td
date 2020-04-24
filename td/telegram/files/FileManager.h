@@ -57,7 +57,7 @@ struct NewRemoteFileLocation {
   unique_ptr<PartialRemoteFileLocation> partial;
 
   //TODO: use RemoteId
-  // hardest part is to determine wether we should flush this location to db.
+  // hardest part is to determine whether we should flush this location to db.
   // probably, will need some generation in RemoteInfo
   optional<FullRemoteFileLocation> full;
   bool is_full_alive{false};  // if false, then we may try to upload this file
@@ -545,6 +545,8 @@ class FileManager : public FileLoadManager::Callback {
     }
   };
   Enumerator<RemoteInfo> remote_location_info_;
+
+  std::unordered_map<string, FileId> file_hash_to_file_id_;
 
   std::map<FullLocalFileLocation, FileId> local_location_to_file_id_;
   std::map<FullGenerateFileLocation, FileId> generate_location_to_file_id_;

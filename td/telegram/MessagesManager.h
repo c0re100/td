@@ -331,8 +331,6 @@ class MessagesManager : public Actor {
 
   void on_update_delete_scheduled_messages(DialogId dialog_id, vector<ScheduledServerMessageId> &&server_message_ids);
 
-  void on_update_include_sponsored_dialog_to_unread_count();
-
   void on_user_dialog_action(DialogId dialog_id, UserId user_id, tl_object_ptr<td_api::ChatAction> &&action, int32 date,
                              MessageContentType message_content_type = MessageContentType::None);
 
@@ -1462,8 +1460,6 @@ class MessagesManager : public Actor {
 
   static constexpr int32 MAX_RESEND_DELAY = 86400;  // seconds, some resonable limit
 
-  static constexpr int32 MAX_PRELOADED_DIALOGS = 1000;
-
   static constexpr int32 SCHEDULE_WHEN_ONLINE_DATE = 2147483646;
 
   static constexpr double DIALOG_ACTION_TIMEOUT = 5.5;
@@ -1677,6 +1673,8 @@ class MessagesManager : public Actor {
   static void find_unread_mentions(const Message *m, vector<MessageId> &message_ids);
 
   static void find_old_messages(const Message *m, MessageId max_message_id, vector<MessageId> &message_ids);
+
+  static void find_new_messages(const Message *m, MessageId min_message_id, vector<MessageId> &message_ids);
 
   void find_unloadable_messages(const Dialog *d, int32 unload_before_date, const Message *m,
                                 vector<MessageId> &message_ids, int32 &left_to_unload) const;
@@ -2105,7 +2103,7 @@ class MessagesManager : public Actor {
 
   void send_search_public_dialogs_query(const string &query, Promise<Unit> &&promise);
 
-  vector<DialogId> get_pinned_dialogs(FolderId folder_id) const;
+  vector<DialogId> get_pinned_dialog_ids(FolderId folder_id) const;
 
   void reload_pinned_dialogs(FolderId folder_id, Promise<Unit> &&promise);
 
@@ -2264,7 +2262,11 @@ class MessagesManager : public Actor {
 
   bool is_dialog_sponsored(const Dialog *d) const;
 
-  int64 get_dialog_public_order(const Dialog *d) const;
+  int64 get_dialog_public_order(FolderId folder_id, const Dialog *d) const;
+
+  int64 get_dialog_public_order(const DialogList *list, const Dialog *d) const;
+
+  int64 get_dialog_order_object(const Dialog *d) const;
 
   bool update_dialog_draft_message(Dialog *d, unique_ptr<DraftMessage> &&draft_message, bool from_update,
                                    bool need_update_dialog_pos);
@@ -2384,6 +2386,8 @@ class MessagesManager : public Actor {
   void send_edit_dialog_photo_query(DialogId dialog_id, FileId file_id,
                                     tl_object_ptr<telegram_api::InputChatPhoto> &&input_chat_photo,
                                     Promise<Unit> &&promise);
+
+  void add_sponsored_dialog(const Dialog *d);
 
   void set_sponsored_dialog_id(DialogId dialog_id);
 
@@ -2557,8 +2561,7 @@ class MessagesManager : public Actor {
       update_message_ids_;  // new_message_id -> temporary_id
   std::unordered_map<DialogId, std::unordered_map<ScheduledServerMessageId, MessageId, ScheduledServerMessageIdHash>,
                      DialogIdHash>
-      update_scheduled_message_ids_;                               // new_message_id -> temporary_id
-  std::unordered_map<int64, DialogId> debug_being_sent_messages_;  // message_random_id -> dialog_id
+      update_scheduled_message_ids_;  // new_message_id -> temporary_id
 
   const char *debug_add_message_to_dialog_fail_reason_ = "";
 
@@ -2665,8 +2668,6 @@ class MessagesManager : public Actor {
   std::unordered_map<NotificationGroupId, DialogId, NotificationGroupIdHash> notification_group_id_to_dialog_id_;
 
   uint64 current_message_edit_generation_ = 0;
-
-  bool include_sponsored_dialog_to_unread_count_ = false;
 
   std::unordered_set<FolderId, FolderIdHash> postponed_unread_message_count_updates_;
   std::unordered_set<FolderId, FolderIdHash> postponed_unread_chat_count_updates_;

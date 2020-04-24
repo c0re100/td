@@ -815,6 +815,11 @@ TEST(MessageEntities, fix_formatted_text) {
                            "abc", {{td::MessageEntity::Type::Italic, 0, 2}, {td::MessageEntity::Type::Bold, 2, 1}});
   check_fix_formatted_text("abc", {{td::MessageEntity::Type::Italic, 0, 1}, {td::MessageEntity::Type::Bold, 2, 1}},
                            "abc", {{td::MessageEntity::Type::Italic, 0, 1}, {td::MessageEntity::Type::Bold, 2, 1}});
+  check_fix_formatted_text("@tests @tests", {{td::MessageEntity::Type::Italic, 0, 13}}, "@tests @tests",
+                           {{td::MessageEntity::Type::Mention, 0, 6},
+                            {td::MessageEntity::Type::Italic, 0, 6},
+                            {td::MessageEntity::Type::Mention, 7, 6},
+                            {td::MessageEntity::Type::Italic, 7, 6}});
 
   // _a*b*_
   check_fix_formatted_text(
@@ -1006,6 +1011,14 @@ TEST(MessageEntities, fix_formatted_text) {
       }
     }
   }
+
+  check_fix_formatted_text(
+      "\xe2\x80\x8f\xe2\x80\x8f  \xe2\x80\x8e\xe2\x80\x8e\xe2\x80\x8e\xe2\x80\x8c \xe2\x80\x8f\xe2\x80\x8e "
+      "\xe2\x80\x8f",
+      {},
+      "\xe2\x80\x8c\xe2\x80\x8f  \xe2\x80\x8c\xe2\x80\x8c\xe2\x80\x8e\xe2\x80\x8c \xe2\x80\x8c\xe2\x80\x8e "
+      "\xe2\x80\x8f",
+      {});
 }
 
 static void check_parse_html(td::string text, const td::string &result, const td::vector<td::MessageEntity> &entities) {

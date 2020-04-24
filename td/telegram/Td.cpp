@@ -678,7 +678,7 @@ class GetUserFullInfoRequest : public RequestActor<> {
   UserId user_id_;
 
   void do_run(Promise<Unit> &&promise) override {
-    td->contacts_manager_->get_user_full(user_id_, std::move(promise));
+    td->contacts_manager_->get_user_full(user_id_, get_tries() < 2, std::move(promise));
   }
 
   void do_send_result() override {
@@ -748,7 +748,7 @@ class GetSupergroupFullInfoRequest : public RequestActor<> {
   ChannelId channel_id_;
 
   void do_run(Promise<Unit> &&promise) override {
-    td->contacts_manager_->get_channel_full(channel_id_, std::move(promise));
+    td->contacts_manager_->get_channel_full(channel_id_, get_tries() < 2, std::move(promise));
   }
 
   void do_send_result() override {
@@ -2337,18 +2337,22 @@ class GetArchivedStickerSetsRequest : public RequestActor<> {
 };
 
 class GetTrendingStickerSetsRequest : public RequestActor<> {
-  vector<StickerSetId> sticker_set_ids_;
+  std::pair<int32, vector<StickerSetId>> sticker_set_ids_;
+  int32 offset_;
+  int32 limit_;
 
   void do_run(Promise<Unit> &&promise) override {
-    sticker_set_ids_ = td->stickers_manager_->get_featured_sticker_sets(std::move(promise));
+    sticker_set_ids_ = td->stickers_manager_->get_featured_sticker_sets(offset_, limit_, std::move(promise));
   }
 
   void do_send_result() override {
-    send_result(td->stickers_manager_->get_sticker_sets_object(-1, sticker_set_ids_, 5));
+    send_result(td->stickers_manager_->get_sticker_sets_object(sticker_set_ids_.first, sticker_set_ids_.second, 5));
   }
 
  public:
-  GetTrendingStickerSetsRequest(ActorShared<Td> td, uint64 request_id) : RequestActor(std::move(td), request_id) {
+  GetTrendingStickerSetsRequest(ActorShared<Td> td, uint64 request_id, int32 offset, int32 limit)
+      : RequestActor(std::move(td), request_id), offset_(offset), limit_(limit) {
+    set_tries(3);
   }
 };
 
@@ -2710,12 +2714,12 @@ class GetStickerEmojisRequest : public RequestActor<> {
 class SearchEmojisRequest : public RequestActor<> {
   string text_;
   bool exact_match_;
-  string input_language_code_;
+  vector<string> input_language_codes_;
 
   vector<string> emojis_;
 
   void do_run(Promise<Unit> &&promise) override {
-    emojis_ = td->stickers_manager_->search_emojis(text_, exact_match_, input_language_code_, get_tries() < 2,
+    emojis_ = td->stickers_manager_->search_emojis(text_, exact_match_, input_language_codes_, get_tries() < 2,
                                                    std::move(promise));
   }
 
@@ -2725,11 +2729,11 @@ class SearchEmojisRequest : public RequestActor<> {
 
  public:
   SearchEmojisRequest(ActorShared<Td> td, uint64 request_id, string &&text, bool exact_match,
-                      string &&input_language_code)
+                      vector<string> &&input_language_codes)
       : RequestActor(std::move(td), request_id)
       , text_(std::move(text))
       , exact_match_(exact_match)
-      , input_language_code_(std::move(input_language_code)) {
+      , input_language_codes_(std::move(input_language_codes)) {
     set_tries(3);
   }
 };
@@ -3453,7 +3457,7 @@ bool Td::is_internal_config_option(Slice name) {
       return name == "call_ring_timeout_ms" || name == "call_receive_timeout_ms" ||
              name == "channels_read_media_period";
     case 'd':
-      return name == "dc_txt_domain_name";
+      return name == "dc_txt_domain_name" || name == "dice_emojis" || name == "dice_success_values";
     case 'e':
       return name == "edit_time_limit";
     case 'i':
@@ -3490,8 +3494,6 @@ void Td::on_config_option_updated(const string &name) {
     return stickers_manager_->on_update_recent_stickers_limit(G()->shared_config().get_option_integer(name));
   } else if (name == "favorite_stickers_limit") {
     stickers_manager_->on_update_favorite_stickers_limit(G()->shared_config().get_option_integer(name));
-  } else if (name == "include_sponsored_chat_to_unread_count") {
-    messages_manager_->on_update_include_sponsored_dialog_to_unread_count();
   } else if (name == "my_id") {
     G()->set_my_id(G()->shared_config().get_option_integer(name));
   } else if (name == "session_count") {
@@ -3542,6 +3544,10 @@ void Td::on_config_option_updated(const string &name) {
     return send_closure(notification_manager_actor_, &NotificationManager::on_notification_default_delay_changed);
   } else if (name == "ignored_restriction_reasons") {
     return send_closure(contacts_manager_actor_, &ContactsManager::on_ignored_restriction_reasons_changed);
+  } else if (name == "dice_emojis") {
+    return send_closure(stickers_manager_actor_, &StickersManager::on_update_dice_emojis);
+  } else if (name == "dice_success_values") {
+    return send_closure(stickers_manager_actor_, &StickersManager::on_update_dice_success_values);
   } else if (is_internal_config_option(name)) {
     return;
   }
@@ -4337,15 +4343,19 @@ void Td::send_update(tl_object_ptr<td_api::Update> &&object) {
     case td_api::updateUserStatus::ID:
       VLOG(td_requests) << "Sending update: " << oneline(to_string(object));
       break;
-    case td_api::updateTrendingStickerSets::ID:
-      VLOG(td_requests) << "Sending update: updateTrendingStickerSets { ... }";
+    case td_api::updateTrendingStickerSets::ID: {
+      auto sticker_sets = static_cast<const td_api::updateTrendingStickerSets *>(object.get())->sticker_sets_.get();
+      VLOG(td_requests) << "Sending update: updateTrendingStickerSets { total_count = " << sticker_sets->total_count_
+                        << ", count = " << sticker_sets->sets_.size() << " }";
       break;
+    }
     case td_api::updateOption::ID / 2:
     case td_api::updateChatReadInbox::ID / 2:
     case td_api::updateUnreadMessageCount::ID / 2:
     case td_api::updateUnreadChatCount::ID / 2:
     case td_api::updateChatOnlineMemberCount::ID / 2:
     case td_api::updateUserChatAction::ID / 2:
+    case td_api::updateDiceEmojis::ID / 2:
       LOG(ERROR) << "Sending update: " << oneline(to_string(object));
       break;
     default:
@@ -5024,7 +5034,7 @@ void Td::on_request(uint64 id, td_api::optimizeStorage &request) {
   for (auto chat_id : request.chat_ids_) {
     DialogId dialog_id(chat_id);
     if (!dialog_id.is_valid() && dialog_id != DialogId()) {
-      return send_error_raw(id, 400, "Wrong chat id");
+      return send_error_raw(id, 400, "Wrong chat identifier");
     }
     owner_dialog_ids.push_back(dialog_id);
   }
@@ -5032,7 +5042,7 @@ void Td::on_request(uint64 id, td_api::optimizeStorage &request) {
   for (auto chat_id : request.exclude_chat_ids_) {
     DialogId dialog_id(chat_id);
     if (!dialog_id.is_valid() && dialog_id != DialogId()) {
-      return send_error_raw(id, 400, "Wrong chat id");
+      return send_error_raw(id, 400, "Wrong chat identifier");
     }
     exclude_owner_dialog_ids.push_back(dialog_id);
   }
@@ -5840,8 +5850,19 @@ void Td::on_request(uint64 id, const td_api::joinChat &request) {
 
 void Td::on_request(uint64 id, const td_api::leaveChat &request) {
   CREATE_OK_REQUEST_PROMISE();
-  messages_manager_->set_dialog_participant_status(DialogId(request.chat_id_), contacts_manager_->get_my_id(),
-                                                   td_api::make_object<td_api::chatMemberStatusLeft>(),
+  DialogId dialog_id(request.chat_id_);
+  td_api::object_ptr<td_api::ChatMemberStatus> new_status = td_api::make_object<td_api::chatMemberStatusLeft>();
+  if (dialog_id.get_type() == DialogType::Channel && messages_manager_->have_dialog_force(dialog_id)) {
+    auto status = contacts_manager_->get_channel_status(dialog_id.get_channel_id());
+    if (status.is_creator()) {
+      if (!status.is_member()) {
+        return promise.set_value(Unit());
+      }
+
+      new_status = td_api::make_object<td_api::chatMemberStatusCreator>(status.get_rank(), false);
+    }
+  }
+  messages_manager_->set_dialog_participant_status(dialog_id, contacts_manager_->get_my_id(), std::move(new_status),
                                                    std::move(promise));
 }
 
@@ -5950,7 +5971,7 @@ void Td::on_request(uint64 id, const td_api::downloadFile &request) {
   FileId file_id(request.file_id_, 0);
   auto file_view = file_manager_->get_file_view(file_id);
   if (file_view.empty()) {
-    return send_error_raw(id, 400, "Invalid file id");
+    return send_error_raw(id, 400, "Invalid file identifier");
   }
 
   auto info_it = pending_file_downloads_.find(file_id);
@@ -6302,7 +6323,7 @@ void Td::on_request(uint64 id, const td_api::getArchivedStickerSets &request) {
 
 void Td::on_request(uint64 id, const td_api::getTrendingStickerSets &request) {
   CHECK_IS_USER();
-  CREATE_NO_ARGS_REQUEST(GetTrendingStickerSetsRequest);
+  CREATE_REQUEST(GetTrendingStickerSetsRequest, request.offset_, request.limit_);
 }
 
 void Td::on_request(uint64 id, const td_api::getAttachedStickerSets &request) {
@@ -6428,9 +6449,11 @@ void Td::on_request(uint64 id, td_api::getStickerEmojis &request) {
 void Td::on_request(uint64 id, td_api::searchEmojis &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.text_);
-  CLEAN_INPUT_STRING(request.input_language_code_);
+  for (auto &input_language_code : request.input_language_codes_) {
+    CLEAN_INPUT_STRING(input_language_code);
+  }
   CREATE_REQUEST(SearchEmojisRequest, std::move(request.text_), request.exact_match_,
-                 std::move(request.input_language_code_));
+                 std::move(request.input_language_codes_));
 }
 
 void Td::on_request(uint64 id, td_api::getEmojiSuggestionsUrl &request) {
@@ -6492,6 +6515,19 @@ void Td::on_request(uint64 id, td_api::getChatStatisticsUrl &request) {
   CLEAN_INPUT_STRING(request.parameters_);
   messages_manager_->get_dialog_statistics_url(DialogId(request.chat_id_), request.parameters_, request.is_dark_,
                                                std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getChatStatistics &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  contacts_manager_->get_channel_statistics(DialogId(request.chat_id_), request.is_dark_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::getChatStatisticsGraph &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  CLEAN_INPUT_STRING(request.token_);
+  contacts_manager_->load_statistics_graph(DialogId(request.chat_id_), request.token_, request.x_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::setChatNotificationSettings &request) {
@@ -6793,12 +6829,6 @@ void Td::on_request(uint64 id, td_api::setOption &request) {
       if (set_boolean_option("is_emulator")) {
         return;
       }
-      // this option currently can't be set, because unread count doesn't work for channels,
-      // in which user have never been a member
-      if (false && !is_bot && set_boolean_option("include_sponsored_chat_to_unread_count")) {
-        return;
-      }
-
       if (!is_bot && request.name_ == "ignore_sensitive_content_restrictions") {
         if (!G()->shared_config().get_option_boolean("can_ignore_sensitive_content_restrictions")) {
           return send_error_raw(id, 3, "Option \"ignore_sensitive_content_restrictions\" can't be changed by the user");
