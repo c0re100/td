@@ -15,6 +15,7 @@
 #include "td/telegram/TermsOfService.h"
 
 #include "td/telegram/td_api.h"
+#include "td/telegram/telegram_api.h"
 
 #include "td/actor/actor.h"
 #include "td/actor/PromiseFuture.h"
@@ -104,6 +105,8 @@ class Td final : public NetQueryCallback {
   void force_get_difference();
 
   void schedule_get_terms_of_service(int32 expires_in);
+
+  void schedule_get_promo_data(int32 expires_in);
 
   void on_result(NetQueryPtr query) override;
 
@@ -227,11 +230,12 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.6.3";
+  static constexpr const char *TDLIB_VERSION = "1.6.6";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
   static constexpr int64 TERMS_OF_SERVICE_ALARM_ID = -2;
+  static constexpr int64 PROMO_DATA_ALARM_ID = -3;
 
   void on_connection_state_changed(StateManager::State new_state);
 
@@ -304,6 +308,8 @@ class Td final : public NetQueryCallback {
   td_api::object_ptr<td_api::updateTermsOfService> get_update_terms_of_service_object() const;
 
   void on_get_terms_of_service(Result<std::pair<int32, TermsOfService>> result, bool dummy);
+
+  void on_get_promo_data(Result<telegram_api::object_ptr<telegram_api::help_PromoData>> result, bool dummy);
 
   template <class T>
   friend class RequestActor;        // uses send_result/send_error
@@ -667,7 +673,21 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::upgradeBasicGroupChatToSupergroupChat &request);
 
-  void on_request(uint64 id, const td_api::setChatChatList &request);
+  void on_request(uint64 id, const td_api::getChatListsToAddChat &request);
+
+  void on_request(uint64 id, const td_api::addChatToList &request);
+
+  void on_request(uint64 id, const td_api::getChatFilter &request);
+
+  void on_request(uint64 id, const td_api::getRecommendedChatFilters &request);
+
+  void on_request(uint64 id, td_api::createChatFilter &request);
+
+  void on_request(uint64 id, td_api::editChatFilter &request);
+
+  void on_request(uint64 id, const td_api::deleteChatFilter &request);
+
+  void on_request(uint64 id, const td_api::reorderChatFilters &request);
 
   void on_request(uint64 id, td_api::setChatTitle &request);
 
@@ -953,10 +973,6 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::deleteSavedCredentials &request);
 
-  // void on_request(uint64 id, const td_api::sendTonLiteServerRequest &request);
-
-  // void on_request(uint64 id, const td_api::getTonWalletPasswordSalt &request);
-
   void on_request(uint64 id, td_api::getPassportElement &request);
 
   void on_request(uint64 id, td_api::getAllPassportElements &request);
@@ -1067,6 +1083,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::getPushReceiverId &request);
 
+  void on_request(uint64 id, const td_api::getChatFilterDefaultIconName &request);
+
   void on_request(uint64 id, const td_api::getJsonValue &request);
 
   void on_request(uint64 id, const td_api::getJsonString &request);
@@ -1115,6 +1133,7 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::cleanFileName &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getLanguagePackString &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getPushReceiverId &request);
+  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getChatFilterDefaultIconName &request);
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::getJsonValue &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getJsonString &request);
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::setLogStream &request);

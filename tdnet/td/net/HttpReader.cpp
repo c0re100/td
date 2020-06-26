@@ -148,6 +148,7 @@ Result<size_t> HttpReader::read_next(HttpQuery *query) {
             end_p--;
           }
 
+          CHECK(p != nullptr);
           Slice boundary(p, static_cast<size_t>(end_p - p));
           if (boundary.empty() || boundary.size() > MAX_BOUNDARY_LENGTH) {
             return Status::Error(400, "Bad Request: boundary too big or empty");
@@ -662,12 +663,12 @@ Status HttpReader::parse_head(MutableSlice head) {
   parser.skip(' ');
   // GET POST HTTP/1.1
   if (type == "GET") {
-    query_->type_ = HttpQuery::Type::GET;
+    query_->type_ = HttpQuery::Type::Get;
   } else if (type == "POST") {
-    query_->type_ = HttpQuery::Type::POST;
+    query_->type_ = HttpQuery::Type::Post;
   } else if (type.size() >= 4 && type.substr(0, 4) == "HTTP") {
     if (type == "HTTP/1.1" || type == "HTTP/1.0") {
-      query_->type_ = HttpQuery::Type::RESPONSE;
+      query_->type_ = HttpQuery::Type::Response;
     } else {
       LOG(INFO) << "Unsupported HTTP version: " << type;
       return Status::Error(505, "HTTP Version Not Supported");
@@ -679,7 +680,7 @@ Status HttpReader::parse_head(MutableSlice head) {
 
   query_->args_.clear();
 
-  if (query_->type_ == HttpQuery::Type::RESPONSE) {
+  if (query_->type_ == HttpQuery::Type::Response) {
     query_->code_ = to_integer<int32>(parser.read_till(' '));
     parser.skip(' ');
     query_->reason_ = parser.read_till('\r');
@@ -798,7 +799,7 @@ Status HttpReader::save_file_part(BufferSlice &&file_part) {
   auto result_written = temp_file_.write(file_part.as_slice());
   if (result_written.is_error() || result_written.ok() != file_part.size()) {
     clean_temporary_file();
-    return Status::Error(500, "Internal server error: can't upload the file");
+    return Status::Error(500, "Internal Server Error: can't upload the file");
   }
   return Status::OK();
 }

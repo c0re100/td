@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 
-project(TDLib VERSION 1.6.3 LANGUAGES CXX C)
+project(TDLib VERSION 1.6.6 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
   set(CMAKE_INSTALL_LIBDIR "lib")
@@ -189,7 +189,7 @@ elseif (INTEL)
 endif()
 
 if (WIN32)
-  add_definitions(-DNTDDI_VERSION=0x06020000 -DWINVER=0x0602 -D_WIN32_WINNT=0x0602 -DNOMINMAX -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN)
+  add_definitions(-DNTDDI_VERSION=0x06020000 -DWINVER=0x0602 -D_WIN32_WINNT=0x0602 -DPSAPI_VERSION=1 -DNOMINMAX -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN)
 endif()
 if (CYGWIN)
   add_definitions(-D_DEFAULT_SOURCE=1 -DFD_SETSIZE=4096)
@@ -356,7 +356,6 @@ set(TL_DOTNET_SCHEME_SOURCE
 
 set(TDLIB_SOURCE
   td/mtproto/AuthData.cpp
-  td/mtproto/crypto.cpp
   td/mtproto/DhHandshake.cpp
   td/mtproto/Handshake.cpp
   td/mtproto/HandshakeActor.cpp
@@ -367,6 +366,7 @@ set(TDLIB_SOURCE
   td/mtproto/PingConnection.cpp
   td/mtproto/ProxySecret.cpp
   td/mtproto/RawConnection.cpp
+  td/mtproto/RSA.cpp
   td/mtproto/SessionConnection.cpp
   td/mtproto/TcpTransport.cpp
   td/mtproto/TlsInit.cpp
@@ -395,9 +395,11 @@ set(TDLIB_SOURCE
   td/telegram/DhCache.cpp
   td/telegram/DialogAdministrator.cpp
   td/telegram/DialogDb.cpp
+  td/telegram/DialogFilter.cpp
   td/telegram/DialogId.cpp
   td/telegram/DialogLocation.cpp
   td/telegram/DialogParticipant.cpp
+  td/telegram/DialogSource.cpp
   td/telegram/Document.cpp
   td/telegram/DocumentsManager.cpp
   td/telegram/DraftMessage.cpp
@@ -424,6 +426,7 @@ set(TDLIB_SOURCE
   td/telegram/Global.cpp
   td/telegram/HashtagHints.cpp
   td/telegram/InlineQueriesManager.cpp
+  td/telegram/InputDialogId.cpp
   td/telegram/InputMessageText.cpp
   td/telegram/JsonValue.cpp
   td/telegram/LanguagePackManager.cpp
@@ -493,7 +496,6 @@ set(TDLIB_SOURCE
 
   td/mtproto/AuthData.h
   td/mtproto/AuthKey.h
-  td/mtproto/crypto.h
   td/mtproto/CryptoStorer.h
   td/mtproto/DhHandshake.h
   td/mtproto/Handshake.h
@@ -510,6 +512,7 @@ set(TDLIB_SOURCE
   td/mtproto/ProxySecret.h
   td/mtproto/Query.h
   td/mtproto/RawConnection.h
+  td/mtproto/RSA.h
   td/mtproto/SessionConnection.h
   td/mtproto/TcpTransport.h
   td/mtproto/TlsInit.h
@@ -546,9 +549,13 @@ set(TDLIB_SOURCE
   td/telegram/DialogAdministrator.h
   td/telegram/DialogDate.h
   td/telegram/DialogDb.h
+  td/telegram/DialogFilter.h
+  td/telegram/DialogFilterId.h
   td/telegram/DialogId.h
+  td/telegram/DialogListId.h
   td/telegram/DialogLocation.h
   td/telegram/DialogParticipant.h
+  td/telegram/DialogSource.h
   td/telegram/Document.h
   td/telegram/DocumentsManager.h
   td/telegram/DraftMessage.h
@@ -585,6 +592,7 @@ set(TDLIB_SOURCE
   td/telegram/Global.h
   td/telegram/HashtagHints.h
   td/telegram/InlineQueriesManager.h
+  td/telegram/InputDialogId.h
   td/telegram/InputMessageText.h
   td/telegram/JsonValue.h
   td/telegram/LanguagePackManager.h
@@ -685,6 +693,7 @@ set(TDLIB_SOURCE
   td/telegram/AudiosManager.hpp
   td/telegram/AuthManager.hpp
   td/telegram/BackgroundType.hpp
+  td/telegram/DialogFilter.hpp
   td/telegram/Document.hpp
   td/telegram/DocumentsManager.hpp
   td/telegram/DraftMessage.hpp

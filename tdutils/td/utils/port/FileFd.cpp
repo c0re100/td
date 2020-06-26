@@ -15,6 +15,7 @@
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/port/detail/PollableFd.h"
+#include "td/utils/port/detail/skip_eintr.h"
 #include "td/utils/port/PollFlags.h"
 #include "td/utils/port/sleep.h"
 #include "td/utils/ScopeGuard.h"
@@ -26,6 +27,8 @@
 #include <utility>
 
 #if TD_PORT_POSIX
+#include <cerrno>
+
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/types.h>

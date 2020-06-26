@@ -870,7 +870,7 @@ class UpdateProfilePhotoQuery : public Td::ResultHandler {
   }
 
   void on_error(uint64 id, Status status) override {
-    if (FileReferenceManager::is_file_reference_error(status)) {
+    if (!td->auth_manager_->is_bot() && FileReferenceManager::is_file_reference_error(status)) {
       if (file_id_.is_valid()) {
         VLOG(file_references) << "Receive " << status << " for " << file_id_;
         td->file_manager_->delete_file_reference(file_id_, file_reference_);
@@ -4718,6 +4718,10 @@ void ContactsManager::load_imported_contacts(Promise<Unit> &&promise) {
 }
 
 void ContactsManager::on_load_imported_contacts_from_database(string value) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   CHECK(!are_imported_contacts_loaded_);
   if (need_clear_imported_contacts_) {
     need_clear_imported_contacts_ = false;
@@ -5739,7 +5743,7 @@ void ContactsManager::get_channel_statistics_dc_id(DialogId dialog_id, Promise<D
     return promise.set_error(Status::Error(400, "Chat is not a channel"));
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "get_channel_statistics_dc_id");
   if (channel_full == nullptr || !channel_full->stats_dc_id.is_exact()) {
     auto input_channel = get_input_channel(channel_id);
     CHECK(input_channel != nullptr);
@@ -6387,7 +6391,7 @@ void ContactsManager::restrict_channel_participant(ChannelId channel_id, UserId 
   if (c == nullptr) {
     return promise.set_error(Status::Error(3, "Chat info not found"));
   }
-  if (!c->status.is_member()) {
+  if (!c->status.is_member() && !c->status.is_creator()) {
     if (user_id == get_my_id()) {
       if (status.is_member()) {
         return promise.set_error(Status::Error(3, "Can't unrestrict self"));
@@ -6673,6 +6677,9 @@ void ContactsManager::on_deleted_contacts(const vector<UserId> &deleted_contact_
 }
 
 void ContactsManager::save_next_contacts_sync_date() {
+  if (G()->close_flag()) {
+    return;
+  }
   if (!G()->parameters().use_chat_info_db) {
     return;
   }
@@ -6769,6 +6776,9 @@ void ContactsManager::on_get_contacts_failed(Status error) {
 }
 
 void ContactsManager::on_load_contacts_from_database(string value) {
+  if (G()->close_flag()) {
+    return;
+  }
   if (value.empty()) {
     reload_contacts(true);
     return;
@@ -6821,6 +6831,14 @@ void ContactsManager::on_get_contacts_statuses(vector<tl_object_ptr<telegram_api
 
 void ContactsManager::on_update_online_status_privacy() {
   td_->create_handler<GetContactsStatusesQuery>()->send();
+}
+
+void ContactsManager::on_update_phone_number_privacy() {
+  // all UserFull.need_phone_number_privacy_exception can be outdated now,
+  // so mark all of them as expired
+  for (auto &it : users_full_) {
+    it.second->expires_at = 0.0;
+  }
 }
 
 UserId ContactsManager::get_user_id(const tl_object_ptr<telegram_api::User> &user) {
@@ -6900,7 +6918,6 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   bool is_bot = (flags & USER_FLAG_IS_BOT) != 0;
   if (flags & USER_FLAG_IS_ME) {
     set_my_id(user_id);
-    td_->auth_manager_->set_is_bot(is_bot);
     if (!is_bot) {
       G()->shared_config().set_option_string("my_phone_number", user->phone_);
     }
@@ -7043,6 +7060,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
     u->cache_version = User::CACHE_VERSION;
     u->need_save_to_database = true;
   }
+  u->is_received_from_server = true;
   update_user(u, user_id);
 }
 
@@ -7153,6 +7171,10 @@ void ContactsManager::save_user_to_database_impl(User *u, UserId user_id, string
 }
 
 void ContactsManager::on_save_user_to_database(UserId user_id, bool success) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   User *u = get_user(user_id);
   CHECK(u != nullptr);
   LOG_CHECK(u->is_being_saved) << user_id << " " << u->is_saved << " " << u->is_status_saved << " "
@@ -7205,6 +7227,10 @@ void ContactsManager::load_user_from_database_impl(UserId user_id, Promise<Unit>
 }
 
 void ContactsManager::on_load_user_from_database(UserId user_id, string value) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   if (!loaded_from_database_users_.insert(user_id).second) {
     return;
   }
@@ -7419,6 +7445,10 @@ void ContactsManager::save_chat_to_database_impl(Chat *c, ChatId chat_id, string
 }
 
 void ContactsManager::on_save_chat_to_database(ChatId chat_id, bool success) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   Chat *c = get_chat(chat_id);
   CHECK(c != nullptr);
   CHECK(c->is_being_saved);
@@ -7465,6 +7495,10 @@ void ContactsManager::load_chat_from_database_impl(ChatId chat_id, Promise<Unit>
 }
 
 void ContactsManager::on_load_chat_from_database(ChatId chat_id, string value) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   if (!loaded_from_database_chats_.insert(chat_id).second) {
     return;
   }
@@ -7648,6 +7682,10 @@ void ContactsManager::save_channel_to_database_impl(Channel *c, ChannelId channe
 }
 
 void ContactsManager::on_save_channel_to_database(ChannelId channel_id, bool success) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   Channel *c = get_channel(channel_id);
   CHECK(c != nullptr);
   CHECK(c->is_being_saved);
@@ -7694,6 +7732,10 @@ void ContactsManager::load_channel_from_database_impl(ChannelId channel_id, Prom
 }
 
 void ContactsManager::on_load_channel_from_database(ChannelId channel_id, string value) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   if (!loaded_from_database_channels_.insert(channel_id).second) {
     return;
   }
@@ -7880,6 +7922,10 @@ void ContactsManager::save_secret_chat_to_database_impl(SecretChat *c, SecretCha
 }
 
 void ContactsManager::on_save_secret_chat_to_database(SecretChatId secret_chat_id, bool success) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   SecretChat *c = get_secret_chat(secret_chat_id);
   CHECK(c != nullptr);
   CHECK(c->is_being_saved);
@@ -7927,6 +7973,10 @@ void ContactsManager::load_secret_chat_from_database_impl(SecretChatId secret_ch
 }
 
 void ContactsManager::on_load_secret_chat_from_database(SecretChatId secret_chat_id, string value) {
+  if (G()->close_flag()) {
+    return;
+  }
+
   if (!loaded_from_database_secret_chats_.insert(secret_chat_id).second) {
     return;
   }
@@ -8301,12 +8351,12 @@ void ContactsManager::on_load_channel_full_from_database(ChannelId channel_id, s
   update_channel_full(channel_full, channel_id, true);
 }
 
-ContactsManager::ChannelFull *ContactsManager::get_channel_full_force(ChannelId channel_id) {
+ContactsManager::ChannelFull *ContactsManager::get_channel_full_force(ChannelId channel_id, const char *source) {
   if (!have_channel_force(channel_id)) {
     return nullptr;
   }
 
-  ChannelFull *channel_full = get_channel_full(channel_id, "get_channel_full_force");
+  ChannelFull *channel_full = get_channel_full(channel_id, source);
   if (channel_full != nullptr) {
     return channel_full;
   }
@@ -8317,10 +8367,10 @@ ContactsManager::ChannelFull *ContactsManager::get_channel_full_force(ChannelId 
     return nullptr;
   }
 
-  LOG(INFO) << "Trying to load full " << channel_id << " from database";
+  LOG(INFO) << "Trying to load full " << channel_id << " from database from " << source;
   on_load_channel_full_from_database(
       channel_id, G()->td_db()->get_sqlite_sync_pmc()->get(get_channel_full_database_key(channel_id)));
-  return get_channel_full(channel_id, "get_channel_full_force");
+  return get_channel_full(channel_id, source);
 }
 
 void ContactsManager::for_each_secret_chat_with_user(UserId user_id, std::function<void(SecretChatId)> f) {
@@ -8835,12 +8885,14 @@ void ContactsManager::on_get_user_full(tl_object_ptr<telegram_api::userFull> &&u
 void ContactsManager::on_get_user_photos(UserId user_id, int32 offset, int32 limit, int32 total_count,
                                          vector<tl_object_ptr<telegram_api::Photo>> photos) {
   int32 photo_count = narrow_cast<int32>(photos.size());
-  if (total_count < 0 || total_count < photo_count) {
-    LOG(ERROR) << "Wrong photos total_count " << total_count << ". Receive " << photo_count << " photos";
-    total_count = photo_count;
+  int32 min_total_count = (offset >= 0 && photo_count > 0 ? offset : 0) + photo_count;
+  if (total_count < min_total_count) {
+    LOG(ERROR) << "Wrong photos total_count " << total_count << ". Receive " << photo_count << " photos with offset "
+               << offset;
+    total_count = min_total_count;
   }
   LOG_IF(ERROR, limit < photo_count) << "Requested not more than " << limit << " photos, but " << photo_count
-                                     << " returned";
+                                     << " received";
 
   User *u = get_user(user_id);
   if (u == nullptr) {
@@ -8903,6 +8955,15 @@ void ContactsManager::on_get_user_photos(UserId user_id, int32 offset, int32 lim
 
     user_photos->photos.push_back(std::move(user_photo));
     add_user_photo_id(u, user_id, user_photos->photos.back().id, photo_get_file_ids(user_photos->photos.back()));
+  }
+  if (user_photos->offset > user_photos->count) {
+    user_photos->offset = user_photos->count;
+    user_photos->photos.clear();
+  }
+
+  auto known_photo_count = narrow_cast<int32>(user_photos->photos.size());
+  if (user_photos->offset + known_photo_count > user_photos->count) {
+    user_photos->photos.resize(user_photos->count - user_photos->offset);
   }
 }
 
@@ -9952,7 +10013,7 @@ bool ContactsManager::on_get_channel_error(ChannelId channel_id, const Status &s
       telegram_api::channelForbidden update(flags, false /*ignored*/, false /*ignored*/, channel_id.get(),
                                             c->access_hash, c->title, 0);
       on_chat_update(update, "CHANNEL_PRIVATE");
-    } else {
+    } else if (!c->status.is_banned()) {
       if (!c->username.empty()) {
         LOG(INFO) << "Drop username of " << channel_id;
         on_update_channel_username(c, channel_id, "");
@@ -10068,7 +10129,7 @@ void ContactsManager::on_get_channel_participants_success(
   }
 
   if (participant_count != -1 || administrator_count != -1) {
-    auto channel_full = get_channel_full_force(channel_id);
+    auto channel_full = get_channel_full_force(channel_id, "on_get_channel_participants_success");
     if (channel_full != nullptr) {
       if (participant_count != -1 && channel_full->participant_count != participant_count) {
         channel_full->participant_count = participant_count;
@@ -10119,7 +10180,7 @@ bool ContactsManager::speculative_add_count(int32 &count, int32 new_count) {
 void ContactsManager::speculative_add_channel_participants(ChannelId channel_id, const vector<UserId> &added_user_ids,
                                                            UserId inviter_user_id, int32 date, bool by_me) {
   auto it = cached_channel_participants_.find(channel_id);
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "speculative_add_channel_participants");
   bool is_participants_cache_changed = false;
 
   int32 new_participant_count = 0;
@@ -10181,7 +10242,7 @@ void ContactsManager::speculative_delete_channel_participant(ChannelId channel_i
   }
 
   if (is_user_bot(deleted_user_id)) {
-    auto channel_full = get_channel_full_force(channel_id);
+    auto channel_full = get_channel_full_force(channel_id, "speculative_delete_channel_participant");
     if (channel_full != nullptr && td::remove(channel_full->bot_user_ids, deleted_user_id)) {
       channel_full->need_save_to_database = true;
       update_channel_full(channel_full, channel_id);
@@ -10205,7 +10266,7 @@ void ContactsManager::speculative_add_channel_participants(ChannelId channel_id,
     update_channel(c, channel_id);
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "speculative_add_channel_participants");
   if (channel_full == nullptr) {
     return;
   }
@@ -10287,7 +10348,7 @@ void ContactsManager::speculative_add_channel_user(ChannelId channel_id, UserId 
     }
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "speculative_add_channel_user");
   if (channel_full == nullptr) {
     return;
   }
@@ -10324,7 +10385,7 @@ void ContactsManager::speculative_add_channel_user(ChannelId channel_id, UserId 
 void ContactsManager::invalidate_channel_full(ChannelId channel_id, bool drop_invite_link, bool drop_slow_mode_delay) {
   LOG(INFO) << "Invalidate supergroup full for " << channel_id;
   // drop channel full cache
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "invalidate_channel_full");
   if (channel_full != nullptr) {
     channel_full->expires_at = 0.0;
     if (drop_invite_link) {
@@ -10378,7 +10439,7 @@ void ContactsManager::on_get_channel_invite_link(ChannelId channel_id,
     return;
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_get_channel_invite_link");
   if (channel_full == nullptr) {
     update_invite_link(channel_invite_links_[channel_id], std::move(invite_link_ptr));
     return;
@@ -10441,7 +10502,8 @@ void ContactsManager::on_update_channel_full_linked_channel_id(ChannelFull *chan
         update_channel(linked_channel, channel_full->linked_channel_id);
         reload_channel(channel_full->linked_channel_id, Auto());
       }
-      auto linked_channel_full = get_channel_full_force(channel_full->linked_channel_id);
+      auto linked_channel_full =
+          get_channel_full_force(channel_full->linked_channel_id, "on_update_channel_full_linked_channel_id 1");
       if (linked_channel_full != nullptr && linked_channel_full->linked_channel_id == channel_id) {
         linked_channel_full->linked_channel_id = ChannelId();
         linked_channel_full->is_changed = true;
@@ -10461,7 +10523,8 @@ void ContactsManager::on_update_channel_full_linked_channel_id(ChannelFull *chan
         update_channel(linked_channel, channel_full->linked_channel_id);
         reload_channel(channel_full->linked_channel_id, Auto());
       }
-      auto linked_channel_full = get_channel_full_force(channel_full->linked_channel_id);
+      auto linked_channel_full =
+          get_channel_full_force(channel_full->linked_channel_id, "on_update_channel_full_linked_channel_id 2");
       if (linked_channel_full != nullptr && linked_channel_full->linked_channel_id != channel_id) {
         linked_channel_full->linked_channel_id = channel_id;
         linked_channel_full->is_changed = true;
@@ -11282,7 +11345,7 @@ void ContactsManager::on_update_channel_description(ChannelId channel_id, string
     return;
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_description");
   if (channel_full == nullptr) {
     return;
   }
@@ -11299,7 +11362,7 @@ void ContactsManager::on_update_channel_sticker_set(ChannelId channel_id, Sticke
     return;
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_sticker_set");
   if (channel_full == nullptr) {
     return;
   }
@@ -11312,14 +11375,14 @@ void ContactsManager::on_update_channel_sticker_set(ChannelId channel_id, Sticke
 
 void ContactsManager::on_update_channel_linked_channel_id(ChannelId channel_id, ChannelId group_channel_id) {
   if (channel_id.is_valid()) {
-    auto channel_full = get_channel_full_force(channel_id);
+    auto channel_full = get_channel_full_force(channel_id, "on_update_channel_linked_channel_id 1");
     on_update_channel_full_linked_channel_id(channel_full, channel_id, group_channel_id);
     if (channel_full != nullptr) {
       update_channel_full(channel_full, channel_id);
     }
   }
   if (group_channel_id.is_valid()) {
-    auto channel_full = get_channel_full_force(group_channel_id);
+    auto channel_full = get_channel_full_force(group_channel_id, "on_update_channel_linked_channel_id 2");
     on_update_channel_full_linked_channel_id(channel_full, group_channel_id, channel_id);
     if (channel_full != nullptr) {
       update_channel_full(channel_full, group_channel_id);
@@ -11328,7 +11391,7 @@ void ContactsManager::on_update_channel_linked_channel_id(ChannelId channel_id, 
 }
 
 void ContactsManager::on_update_channel_location(ChannelId channel_id, const DialogLocation &location) {
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_location");
   if (channel_full != nullptr) {
     on_update_channel_full_location(channel_full, channel_id, location);
     update_channel_full(channel_full, channel_id);
@@ -11336,7 +11399,7 @@ void ContactsManager::on_update_channel_location(ChannelId channel_id, const Dia
 }
 
 void ContactsManager::on_update_channel_slow_mode_delay(ChannelId channel_id, int32 slow_mode_delay) {
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_slow_mode_delay");
   if (channel_full != nullptr) {
     on_update_channel_full_slow_mode_delay(channel_full, channel_id, slow_mode_delay, 0);
     update_channel_full(channel_full, channel_id);
@@ -11344,7 +11407,7 @@ void ContactsManager::on_update_channel_slow_mode_delay(ChannelId channel_id, in
 }
 
 void ContactsManager::on_update_channel_slow_mode_next_send_date(ChannelId channel_id, int32 slow_mode_next_send_date) {
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_slow_mode_next_send_date");
   if (channel_full != nullptr) {
     on_update_channel_full_slow_mode_next_send_date(channel_full, slow_mode_next_send_date);
     update_channel_full(channel_full, channel_id);
@@ -11358,7 +11421,7 @@ void ContactsManager::on_update_channel_bot_user_ids(ChannelId channel_id, vecto
     return;
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_bot_user_ids");
   if (channel_full == nullptr) {
     td_->messages_manager_->on_dialog_bots_updated(DialogId(channel_id), std::move(bot_user_ids));
     return;
@@ -11383,7 +11446,7 @@ void ContactsManager::on_update_channel_is_all_history_available(ChannelId chann
     return;
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_is_all_history_available");
   if (channel_full == nullptr) {
     return;
   }
@@ -11513,6 +11576,25 @@ ContactsManager::User *ContactsManager::get_user(UserId user_id) {
     return nullptr;
   } else {
     return p->second.get();
+  }
+}
+
+bool ContactsManager::is_dialog_info_received_from_server(DialogId dialog_id) const {
+  switch (dialog_id.get_type()) {
+    case DialogType::User: {
+      auto u = get_user(dialog_id.get_user_id());
+      return u != nullptr && u->is_received_from_server;
+    }
+    case DialogType::Chat: {
+      auto c = get_chat(dialog_id.get_chat_id());
+      return c != nullptr && c->is_received_from_server;
+    }
+    case DialogType::Channel: {
+      auto c = get_channel(dialog_id.get_channel_id());
+      return c != nullptr && c->is_received_from_server;
+    }
+    default:
+      return false;
   }
 }
 
@@ -11934,6 +12016,7 @@ bool ContactsManager::is_chat_full_outdated(const ChatFull *chat_full, const Cha
     }
   }
 
+  LOG(INFO) << "Full " << chat_id << " is up-to-date with version " << chat_full->version;
   return false;
 }
 
@@ -12122,7 +12205,7 @@ FileSourceId ContactsManager::get_channel_photo_file_source_id(ChannelId channel
 }
 
 int32 ContactsManager::get_channel_slow_mode_delay(ChannelId channel_id) {
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, ":get_channel_slow_mode_delay");
   if (channel_full == nullptr) {
     return 0;
   }
@@ -12247,7 +12330,7 @@ ContactsManager::ChannelFull *ContactsManager::add_channel_full(ChannelId channe
 }
 
 bool ContactsManager::get_channel_full(ChannelId channel_id, bool force, Promise<Unit> &&promise) {
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "get_channel_full");
   if (channel_full == nullptr) {
     auto input_channel = get_input_channel(channel_id);
     if (input_channel == nullptr) {
@@ -12596,7 +12679,7 @@ std::pair<int32, vector<DialogParticipant>> ContactsManager::get_channel_partici
     return result;
   }
 
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "get_channel_participants");
   if (channel_full == nullptr || (!force && channel_full->is_expired())) {
     if (force) {
       LOG(ERROR) << "Can't find cached ChannelFull";
@@ -12685,7 +12768,7 @@ void ContactsManager::load_dialog_administrators(DialogId dialog_id, Promise<Uni
 
 void ContactsManager::on_load_dialog_administrators_from_database(DialogId dialog_id, string value,
                                                                   Promise<Unit> &&promise) {
-  if (value.empty()) {
+  if (value.empty() || G()->close_flag()) {
     promise.set_value(Unit());
     return;
   }
@@ -12722,7 +12805,7 @@ void ContactsManager::on_load_administrator_users_finished(DialogId dialog_id,
 }
 
 void ContactsManager::on_update_channel_administrator_count(ChannelId channel_id, int32 administrator_count) {
-  auto channel_full = get_channel_full_force(channel_id);
+  auto channel_full = get_channel_full_force(channel_id, "on_update_channel_administrator_count");
   if (channel_full != nullptr && channel_full->administrator_count != administrator_count) {
     channel_full->administrator_count = administrator_count;
     channel_full->is_changed = true;
@@ -12879,6 +12962,7 @@ void ContactsManager::on_chat_update(telegram_api::chat &chat, const char *sourc
     c->cache_version = Chat::CACHE_VERSION;
     c->need_save_to_database = true;
   }
+  c->is_received_from_server = true;
   update_chat(c, chat_id);
 }
 
@@ -12909,6 +12993,7 @@ void ContactsManager::on_chat_update(telegram_api::chatForbidden &chat, const ch
     c->cache_version = Chat::CACHE_VERSION;
     c->need_save_to_database = true;
   }
+  c->is_received_from_server = true;
   update_chat(c, chat_id);
 }
 
@@ -13055,6 +13140,7 @@ void ContactsManager::on_chat_update(telegram_api::channel &channel, const char 
     c->cache_version = Channel::CACHE_VERSION;
     c->need_save_to_database = true;
   }
+  c->is_received_from_server = true;
   update_channel(c, channel_id);
 }
 
@@ -13091,12 +13177,10 @@ void ContactsManager::on_chat_update(telegram_api::channelForbidden &channel, co
   }
   int32 unban_date = (channel.flags_ & CHANNEL_FLAG_HAS_UNBAN_DATE) != 0 ? channel.until_date_ : 0;
   on_update_channel_status(c, channel_id, DialogParticipantStatus::Banned(unban_date));
-  on_update_channel_username(c, channel_id, "");  // don't know if channel username is empty, but update it anyway
+  // on_update_channel_username(c, channel_id, "");  // don't know if channel username is empty, so don't update it
   tl_object_ptr<telegram_api::chatBannedRights> banned_rights;  // == nullptr
   on_update_channel_default_permissions(c, channel_id, get_restricted_rights(banned_rights));
 
-  bool has_linked_channel = false;
-  bool has_location = false;
   bool sign_messages = false;
   bool is_slow_mode_enabled = false;
   bool is_megagroup = (channel.flags_ & CHANNEL_FLAG_IS_MEGAGROUP) != 0;
@@ -13119,12 +13203,11 @@ void ContactsManager::on_chat_update(telegram_api::channelForbidden &channel, co
     c->is_changed = true;
   }
 
-  if (c->has_linked_channel != has_linked_channel || c->has_location != has_location ||
-      c->sign_messages != sign_messages || c->is_slow_mode_enabled != is_slow_mode_enabled ||
+  if (c->sign_messages != sign_messages || c->is_slow_mode_enabled != is_slow_mode_enabled ||
       c->is_megagroup != is_megagroup || c->is_verified != is_verified || !c->restriction_reasons.empty() ||
       c->is_scam != is_scam) {
-    c->has_linked_channel = has_linked_channel;
-    c->has_location = has_location;
+    // c->has_linked_channel = has_linked_channel;
+    // c->has_location = has_location;
     c->sign_messages = sign_messages;
     c->is_slow_mode_enabled = is_slow_mode_enabled;
     c->is_megagroup = is_megagroup;
@@ -13140,6 +13223,7 @@ void ContactsManager::on_chat_update(telegram_api::channelForbidden &channel, co
     c->cache_version = Channel::CACHE_VERSION;
     c->need_save_to_database = true;
   }
+  c->is_received_from_server = true;
   update_channel(c, channel_id);
 }
 

@@ -12,7 +12,7 @@
 
 #include "td/telegram/telegram_api.h"
 
-#include "td/mtproto/crypto.h"
+#include "td/mtproto/RSA.h"
 
 #include "td/utils/logging.h"
 #include "td/utils/Time.h"
@@ -69,7 +69,7 @@ void PublicRsaKeyWatchdog::loop() {
   flood_control_.add_event(static_cast<int32>(Time::now_cached()));
   has_query_ = true;
   auto query = G()->net_query_creator().create(telegram_api::help_getCdnConfig());
-  query->total_timeout_limit = 60 * 60 * 24;
+  query->total_timeout_limit_ = 60 * 60 * 24;
   G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this));
 }
 

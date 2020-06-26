@@ -8,12 +8,12 @@
 
 #if !TD_EMSCRIPTEN
 #include "td/utils/common.h"
+#include "td/utils/crypto.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/port/IPAddress.h"
 #include "td/utils/port/wstring_convert.h"
-#include "td/utils/StackAllocator.h"
 #include "td/utils/Status.h"
-#include "td/utils/StringBuilder.h"
 #include "td/utils/Time.h"
 
 #include <openssl/err.h>
@@ -141,42 +141,14 @@ int verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   return preverify_ok;
 }
 
-Status create_openssl_error(int code, Slice message) {
-  const int max_result_size = 1 << 12;
-  auto result = StackAllocator::alloc(max_result_size);
-  StringBuilder sb(result.as_slice());
-
-  sb << message;
-  while (unsigned long error_code = ERR_get_error()) {
-    char error_buf[1024];
-    ERR_error_string_n(error_code, error_buf, sizeof(error_buf));
-    Slice error(error_buf, std::strlen(error_buf));
-    sb << "{" << error << "}";
-  }
-  LOG_IF(ERROR, sb.is_error()) << "OpenSSL error buffer overflow";
-  LOG(DEBUG) << sb.as_cslice();
-  return Status::Error(code, sb.as_cslice());
-}
-
-void openssl_clear_errors(Slice from) {
-  if (ERR_peek_error() != 0) {
-    LOG(ERROR) << from << ": " << create_openssl_error(0, "Unprocessed OPENSSL_ERROR");
-  }
-#if TD_PORT_WINDOWS  // TODO move to utils
-  WSASetLastError(0);
-#else
-  errno = 0;
-#endif
-}
-
 void do_ssl_shutdown(SSL *ssl_handle) {
   if (!SSL_is_init_finished(ssl_handle)) {
     return;
   }
-  openssl_clear_errors("Before SSL_shutdown");
+  clear_openssl_errors("Before SSL_shutdown");
   SSL_set_quiet_shutdown(ssl_handle, 1);
   SSL_shutdown(ssl_handle);
-  openssl_clear_errors("After SSL_shutdown");
+  clear_openssl_errors("After SSL_shutdown");
 }
 
 }  // namespace
@@ -208,7 +180,7 @@ class SslStreamImpl {
     }();
     CHECK(init_openssl);
 
-    openssl_clear_errors("Before SslFd::init");
+    clear_openssl_errors("Before SslFd::init");
 
     auto ssl_method =
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
@@ -235,6 +207,9 @@ class SslStreamImpl {
     options |= SSL_OP_NO_SSLv3;
 #endif
     SSL_CTX_set_options(ssl_ctx, options);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_VERSION);
+#endif
     SSL_CTX_set_mode(ssl_ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
 
     if (cert_file.empty()) {
@@ -318,12 +293,18 @@ class SslStreamImpl {
       SSL_free(ssl_handle);
     };
 
+    auto r_ip_address = IPAddress::get_ip_address(host);
+
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
     X509_VERIFY_PARAM *param = SSL_get0_param(ssl_handle);
-    /* Enable automatic hostname checks */
-    // TODO: X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS
     X509_VERIFY_PARAM_set_hostflags(param, 0);
-    X509_VERIFY_PARAM_set1_host(param, host.c_str(), 0);
+    if (r_ip_address.is_ok()) {
+      LOG(DEBUG) << "Set verification IP address to " << r_ip_address.ok().get_ip_str();
+      X509_VERIFY_PARAM_set1_ip_asc(param, r_ip_address.ok().get_ip_str().c_str());
+    } else {
+      LOG(DEBUG) << "Set verification host to " << host;
+      X509_VERIFY_PARAM_set1_host(param, host.c_str(), 0);
+    }
 #else
 #warning DANGEROUS! HTTPS HOST WILL NOT BE CHECKED. INSTALL OPENSSL >= 1.0.2 OR IMPLEMENT HTTPS HOST CHECK MANUALLY
 #endif
@@ -333,8 +314,11 @@ class SslStreamImpl {
     SSL_set_bio(ssl_handle, bio, bio);
 
 #if OPENSSL_VERSION_NUMBER >= 0x0090806fL && !defined(OPENSSL_NO_TLSEXT)
-    auto host_str = host.str();
-    SSL_set_tlsext_host_name(ssl_handle, MutableCSlice(host_str).begin());
+    if (r_ip_address.is_error()) {  // IP address must not be send as SNI
+      LOG(DEBUG) << "Set SNI host name to " << host;
+      auto host_str = host.str();
+      SSL_set_tlsext_host_name(ssl_handle, MutableCSlice(host_str).begin());
+    }
 #endif
     SSL_set_connect_state(ssl_handle);
 
@@ -372,7 +356,7 @@ class SslStreamImpl {
   friend class SslWriteByteFlow;
 
   Result<size_t> write(Slice slice) {
-    openssl_clear_errors("Before SslFd::write");
+    clear_openssl_errors("Before SslFd::write");
     auto size = SSL_write(ssl_handle_, slice.data(), static_cast<int>(slice.size()));
     if (size <= 0) {
       return process_ssl_error(size);
@@ -381,7 +365,7 @@ class SslStreamImpl {
   }
 
   Result<size_t> read(MutableSlice slice) {
-    openssl_clear_errors("Before SslFd::read");
+    clear_openssl_errors("Before SslFd::read");
     auto size = SSL_read(ssl_handle_, slice.data(), static_cast<int>(slice.size()));
     if (size <= 0) {
       return process_ssl_error(size);
@@ -466,25 +450,26 @@ class SslStreamImpl {
         LOG(ERROR) << "SSL_get_error returned no error";
         return 0;
       case SSL_ERROR_ZERO_RETURN:
-        LOG(DEBUG) << "SSL_ERROR_ZERO_RETURN";
+        LOG(DEBUG) << "SSL_ZERO_RETURN";
         return 0;
       case SSL_ERROR_WANT_READ:
-        LOG(DEBUG) << "SSL_ERROR_WANT_READ";
+        LOG(DEBUG) << "SSL_WANT_READ";
         return 0;
       case SSL_ERROR_WANT_WRITE:
-        LOG(DEBUG) << "SSL_ERROR_WANT_WRITE";
+        LOG(DEBUG) << "SSL_WANT_WRITE";
         return 0;
       case SSL_ERROR_WANT_CONNECT:
       case SSL_ERROR_WANT_ACCEPT:
       case SSL_ERROR_WANT_X509_LOOKUP:
-        LOG(DEBUG) << "SSL_ERROR: CONNECT ACCEPT LOOKUP";
+        LOG(DEBUG) << "SSL: CONNECT ACCEPT LOOKUP";
         return 0;
       case SSL_ERROR_SYSCALL:
-        LOG(DEBUG) << "SSL_ERROR_SYSCALL";
         if (ERR_peek_error() == 0) {
           if (os_error.code() != 0) {
+            LOG(DEBUG) << "SSL_ERROR_SYSCALL";
             return std::move(os_error);
           } else {
+            LOG(DEBUG) << "SSL_SYSCALL";
             return 0;
           }
         }
@@ -501,6 +486,7 @@ int strm_read(BIO *b, char *buf, int len) {
   auto *stream = static_cast<SslStreamImpl *>(BIO_get_data(b));
   CHECK(stream != nullptr);
   BIO_clear_retry_flags(b);
+  CHECK(buf != nullptr);
   int res = narrow_cast<int>(stream->flow_read(MutableSlice(buf, len)));
   if (res == 0) {
     BIO_set_retry_read(b);
@@ -512,6 +498,7 @@ int strm_write(BIO *b, const char *buf, int len) {
   auto *stream = static_cast<SslStreamImpl *>(BIO_get_data(b));
   CHECK(stream != nullptr);
   BIO_clear_retry_flags(b);
+  CHECK(buf != nullptr);
   return narrow_cast<int>(stream->flow_write(Slice(buf, len)));
 }
 }  // namespace

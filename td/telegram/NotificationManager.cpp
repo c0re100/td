@@ -3073,7 +3073,9 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     dialog_id = DialogId(secret_chat_id);
   }
   if (!dialog_id.is_valid()) {
-    // TODO if (loc_key == "ENCRYPTED_MESSAGE") ?
+    if (loc_key == "ENCRYPTED_MESSAGE" || loc_key == "MESSAGE_MUTED") {
+      return Status::Error(406, "Force loading data from the server");
+    }
     return Status::Error("Can't find dialog_id");
   }
 
@@ -3903,8 +3905,9 @@ void NotificationManager::before_get_chat_difference(NotificationGroupId group_i
 
   VLOG(notifications) << "Before get chat difference in " << group_id;
   CHECK(group_id.is_valid());
-  running_get_chat_difference_.insert(group_id.get());
-  on_unreceived_notification_update_count_changed(1, group_id.get(), "before_get_chat_difference");
+  if (running_get_chat_difference_.insert(group_id.get()).second) {
+    on_unreceived_notification_update_count_changed(1, group_id.get(), "before_get_chat_difference");
+  }
 }
 
 void NotificationManager::after_get_chat_difference(NotificationGroupId group_id) {

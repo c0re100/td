@@ -663,7 +663,7 @@ class MessageDice : public MessageContent {
     if (dice_value < 0) {
       return false;
     }
-    if (emoji == "DEFAULT_EMOJI" || emoji == "🎯") {
+    if (emoji == DEFAULT_EMOJI || emoji == "🎯") {
       return dice_value <= 6;
     }
     return dice_value <= 1000;
@@ -1473,8 +1473,10 @@ static Result<InputMessageContent> create_input_message_content(
     case td_api::inputMessageAnimation::ID: {
       auto input_animation = static_cast<td_api::inputMessageAnimation *>(input_message_content.get());
 
+      bool has_stickers = !sticker_file_ids.empty();
       td->animations_manager_->create_animation(
-          file_id, string(), thumbnail, std::move(file_name), std::move(mime_type), input_animation->duration_,
+          file_id, string(), thumbnail, PhotoSize(), has_stickers, std::move(sticker_file_ids), std::move(file_name),
+          std::move(mime_type), input_animation->duration_,
           get_dimensions(input_animation->width_, input_animation->height_), false);
 
       content = make_unique<MessageAnimation>(file_id, std::move(caption));
@@ -1562,9 +1564,8 @@ static Result<InputMessageContent> create_input_message_content(
     }
     case td_api::inputMessageSticker::ID: {
       auto input_sticker = static_cast<td_api::inputMessageSticker *>(input_message_content.get());
-      td->stickers_manager_->create_sticker(file_id, thumbnail,
-                                            get_dimensions(input_sticker->width_, input_sticker->height_), nullptr,
-                                            mime_type == "application/x-tgsticker", nullptr);
+      td->stickers_manager_->create_sticker(
+          file_id, thumbnail, get_dimensions(input_sticker->width_, input_sticker->height_), nullptr, false, nullptr);
 
       content = make_unique<MessageSticker>(file_id);
       break;
@@ -1575,10 +1576,10 @@ static Result<InputMessageContent> create_input_message_content(
       ttl = input_video->ttl_;
 
       bool has_stickers = !sticker_file_ids.empty();
-      td->videos_manager_->create_video(file_id, string(), thumbnail, has_stickers, std::move(sticker_file_ids),
-                                        std::move(file_name), std::move(mime_type), input_video->duration_,
-                                        get_dimensions(input_video->width_, input_video->height_),
-                                        input_video->supports_streaming_, false);
+      td->videos_manager_->create_video(
+          file_id, string(), thumbnail, PhotoSize(), has_stickers, std::move(sticker_file_ids), std::move(file_name),
+          std::move(mime_type), input_video->duration_, get_dimensions(input_video->width_, input_video->height_),
+          input_video->supports_streaming_, false);
 
       content = make_unique<MessageVideo>(file_id, std::move(caption));
       break;
@@ -1778,7 +1779,7 @@ static Result<InputMessageContent> create_input_message_content(
       int32 correct_option_id = -1;
       FormattedText explanation;
       if (input_poll->type_ == nullptr) {
-        return Status::Error(400, "Poll type must not be empty");
+        return Status::Error(400, "Poll type must be non-empty");
       }
       switch (input_poll->type_->get_id()) {
         case td_api::pollTypeRegular::ID: {
@@ -1840,6 +1841,9 @@ Result<InputMessageContent> get_input_message_content(
       r_file_id = td->file_manager_->get_input_file_id(FileType::Animation, input_message->animation_, dialog_id, false,
                                                        is_secret, true);
       input_thumbnail = std::move(input_message->thumbnail_);
+      if (!input_message->added_sticker_file_ids_.empty()) {
+        sticker_file_ids = td->stickers_manager_->get_attached_sticker_file_ids(input_message->added_sticker_file_ids_);
+      }
       break;
     }
     case td_api::inputMessageAudio::ID: {
@@ -2295,8 +2299,12 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
   }
   if (!was_uploaded) {
     auto file_reference = FileManager::extract_file_reference(input_media);
-    if (file_reference == FileReferenceView::invalid_file_reference() && !force) {
-      return nullptr;
+    if (file_reference == FileReferenceView::invalid_file_reference()) {
+      if (!force) {
+        LOG(INFO) << "File " << file_id << " has invalid file reference";
+        return nullptr;
+      }
+      LOG(ERROR) << "File " << file_id << " has invalid file reference, but we forced to use it";
     }
   }
   return input_media;
@@ -2305,8 +2313,13 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
 tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td, int32 ttl, bool force) {
   auto input_media = get_input_media_impl(content, td, nullptr, nullptr, ttl);
   auto file_reference = FileManager::extract_file_reference(input_media);
-  if (file_reference == FileReferenceView::invalid_file_reference() && !force) {
-    return nullptr;
+  if (file_reference == FileReferenceView::invalid_file_reference()) {
+    auto file_id = get_message_content_any_file_id(content);
+    if (!force) {
+      LOG(INFO) << "File " << file_id << " has invalid file reference";
+      return nullptr;
+    }
+    LOG(ERROR) << "File " << file_id << " has invalid file reference, but we forced to use it";
   }
   return input_media;
 }
@@ -3390,9 +3403,11 @@ static auto secret_to_telegram(secret_api::documentAttributeSticker23 &sticker) 
   return make_tl_object<telegram_api::documentAttributeSticker>(
       0, false /*ignored*/, "", make_tl_object<telegram_api::inputStickerSetEmpty>(), nullptr);
 }
+
 static auto secret_to_telegram(secret_api::inputStickerSetEmpty &sticker_set) {
   return make_tl_object<telegram_api::inputStickerSetEmpty>();
 }
+
 static auto secret_to_telegram(secret_api::inputStickerSetShortName &sticker_set) {
   if (!clean_input_string(sticker_set.short_name_)) {
     sticker_set.short_name_.clear();
@@ -3496,7 +3511,7 @@ static auto secret_to_telegram_document(secret_api::decryptedMessageMediaExterna
   thumbnails.push_back(secret_to_telegram<telegram_api::PhotoSize>(*from.thumb_));
   return make_tl_object<telegram_api::document>(
       telegram_api::document::THUMBS_MASK, from.id_, from.access_hash_, BufferSlice(), from.date_, from.mime_type_,
-      from.size_, std::move(thumbnails), from.dc_id_, secret_to_telegram(from.attributes_));
+      from.size_, std::move(thumbnails), Auto(), from.dc_id_, secret_to_telegram(from.attributes_));
 }
 
 template <class ToT, class FromT>
@@ -3718,6 +3733,17 @@ unique_ptr<MessageContent> get_secret_message_content(
         message_document->mime_type_.clear();
       }
       auto attributes = secret_to_telegram(message_document->attributes_);
+      for (auto &attribute : attributes) {
+        CHECK(attribute != nullptr);
+        if (attribute->get_id() == telegram_api::documentAttributeSticker::ID) {
+          auto attribute_sticker = static_cast<telegram_api::documentAttributeSticker *>(attribute.get());
+          CHECK(attribute_sticker->stickerset_ != nullptr);
+          if (attribute_sticker->stickerset_->get_id() != telegram_api::inputStickerSetEmpty::ID) {
+            attribute_sticker->stickerset_ = make_tl_object<telegram_api::inputStickerSetEmpty>();
+          }
+        }
+      }
+
       message_document->attributes_.clear();
       auto document = td->documents_manager_->on_get_document(
           {std::move(file), std::move(message_document), std::move(attributes)}, owner_dialog_id);
@@ -3998,6 +4024,12 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       CHECK(!result->photo.photos.empty());
       if ((result->photo.photos.size() > 2 || result->photo.photos.back().type != 'i') && !to_secret) {
         // already sent photo
+        // having remote location is not enough to have InputMedia, because the file may not have valid file_reference
+        // also file_id needs to be duped, because upload can be called to repair the file_reference and every upload
+        // request must have unique file_id
+        if (!td->auth_manager_->is_bot()) {
+          result->photo.photos.back().file_id = fix_file_id(result->photo.photos.back().file_id);
+        }
         return std::move(result);
       }
 
@@ -4039,7 +4071,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       photo.type = 'i';
       result->photo.photos.push_back(std::move(photo));
 
-      if (photo_has_input_media(td->file_manager_.get(), result->photo, to_secret)) {
+      if (photo_has_input_media(td->file_manager_.get(), result->photo, to_secret, td->auth_manager_->is_bot())) {
         return std::move(result);
       }
 
@@ -4334,8 +4366,9 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     }
     case MessageContentType::Document: {
       const MessageDocument *m = static_cast<const MessageDocument *>(content);
-      return make_tl_object<td_api::messageDocument>(td->documents_manager_->get_document_object(m->file_id),
-                                                     get_formatted_text_object(m->caption));
+      return make_tl_object<td_api::messageDocument>(
+          td->documents_manager_->get_document_object(m->file_id, PhotoFormat::Jpeg),
+          get_formatted_text_object(m->caption));
     }
     case MessageContentType::Game: {
       const MessageGame *m = static_cast<const MessageGame *>(content);
@@ -4672,6 +4705,20 @@ FileId get_message_content_thumbnail_file_id(const MessageContent *content, cons
   return FileId();
 }
 
+FileId get_message_content_animated_thumbnail_file_id(const MessageContent *content, const Td *td) {
+  switch (content->get_type()) {
+    case MessageContentType::Animation:
+      return td->animations_manager_->get_animation_animated_thumbnail_file_id(
+          static_cast<const MessageAnimation *>(content)->file_id);
+    case MessageContentType::Video:
+      return td->videos_manager_->get_video_animated_thumbnail_file_id(
+          static_cast<const MessageVideo *>(content)->file_id);
+    default:
+      break;
+  }
+  return FileId();
+}
+
 vector<FileId> get_message_content_file_ids(const MessageContent *content, const Td *td) {
   switch (content->get_type()) {
     case MessageContentType::Photo:
@@ -4691,6 +4738,10 @@ vector<FileId> get_message_content_file_ids(const MessageContent *content, const
       FileId thumbnail_file_id = get_message_content_thumbnail_file_id(content, td);
       if (thumbnail_file_id.is_valid()) {
         result.push_back(thumbnail_file_id);
+      }
+      FileId animated_thumbnail_file_id = get_message_content_animated_thumbnail_file_id(content, td);
+      if (animated_thumbnail_file_id.is_valid()) {
+        result.push_back(animated_thumbnail_file_id);
       }
       return result;
     }

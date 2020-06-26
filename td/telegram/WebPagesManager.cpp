@@ -457,7 +457,8 @@ WebPageId WebPagesManager::on_get_web_page(tl_object_ptr<telegram_api::WebPage> 
       }
 
       auto web_page_date = web_page->date_;
-      LOG(INFO) << "Got pending " << web_page_id << ", date = " << web_page_date << ", now = " << G()->server_time();
+      LOG(INFO) << "Got pending " << web_page_id << ", force_get_date = " << web_page_date
+                << ", now = " << G()->server_time();
 
       pending_web_pages_timeout_.add_timeout_in(web_page_id.get(), max(web_page_date - G()->server_time(), 1.0));
       return web_page_id;
@@ -919,6 +920,9 @@ void WebPagesManager::reload_web_page_instant_view(WebPageId web_page_id) {
 }
 
 void WebPagesManager::on_load_web_page_instant_view_from_database(WebPageId web_page_id, string value) {
+  if (G()->close_flag()) {
+    return;
+  }
   CHECK(G()->parameters().use_message_db);
   LOG(INFO) << "Successfully loaded " << web_page_id << " instant view of size " << value.size() << " from database";
   //  G()->td_db()->get_sqlite_pmc()->erase(get_web_page_instant_view_database_key(web_page_id), Auto());
@@ -1072,6 +1076,9 @@ void WebPagesManager::load_web_page_by_url(const string &url, Promise<Unit> &&pr
 
 void WebPagesManager::on_load_web_page_id_by_url_from_database(const string &url, string value,
                                                                Promise<Unit> &&promise) {
+  if (G()->close_flag()) {
+    return;
+  }
   LOG(INFO) << "Successfully loaded url \"" << url << "\" of size " << value.size() << " from database";
   //  G()->td_db()->get_sqlite_pmc()->erase(get_web_page_url_database_key(web_page_id), Auto());
   //  return;
@@ -1257,7 +1264,7 @@ tl_object_ptr<td_api::webPage> WebPagesManager::get_web_page_object(WebPageId we
           ? td_->audios_manager_->get_audio_object(web_page->document.file_id)
           : nullptr,
       web_page->document.type == Document::Type::General
-          ? td_->documents_manager_->get_document_object(web_page->document.file_id)
+          ? td_->documents_manager_->get_document_object(web_page->document.file_id, PhotoFormat::Jpeg)
           : nullptr,
       web_page->document.type == Document::Type::Sticker
           ? td_->stickers_manager_->get_sticker_object(web_page->document.file_id)
@@ -1545,6 +1552,9 @@ string WebPagesManager::get_web_page_database_key(WebPageId web_page_id) {
 }
 
 void WebPagesManager::on_save_web_page_to_database(WebPageId web_page_id, bool success) {
+  if (G()->close_flag()) {
+    return;
+  }
   const WebPage *web_page = get_web_page(web_page_id);
   if (web_page == nullptr) {
     LOG(ERROR) << "Can't find " << (success ? "saved " : "failed to save ") << web_page_id;
@@ -1583,6 +1593,9 @@ void WebPagesManager::load_web_page_from_database(WebPageId web_page_id, Promise
 }
 
 void WebPagesManager::on_load_web_page_from_database(WebPageId web_page_id, string value) {
+  if (G()->close_flag()) {
+    return;
+  }
   if (!loaded_from_database_web_pages_.insert(web_page_id).second) {
     return;
   }

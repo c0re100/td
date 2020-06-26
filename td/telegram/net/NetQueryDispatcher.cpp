@@ -41,7 +41,7 @@ void NetQueryDispatcher::complete_net_query(NetQueryPtr net_query) {
 }
 
 void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
-  net_query->debug("dispatch");
+  // net_query->debug("dispatch");
   if (stop_flag_.load(std::memory_order_relaxed)) {
     if (net_query->id() != 0) {
       net_query->set_error(Status::Error(500, "Request aborted"));
@@ -72,7 +72,7 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
   }
 
   if (!net_query->is_ready()) {
-    if (net_query->dispatch_ttl == 0) {
+    if (net_query->dispatch_ttl_ == 0) {
       net_query->set_error(Status::Error("DispatchTtlError"));
     }
   }
@@ -89,8 +89,8 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
     return complete_net_query(std::move(net_query));
   }
 
-  if (net_query->dispatch_ttl > 0) {
-    net_query->dispatch_ttl--;
+  if (net_query->dispatch_ttl_ > 0) {
+    net_query->dispatch_ttl_--;
   }
 
   size_t dc_pos = static_cast<size_t>(dest_dc_id.get_raw_id() - 1);

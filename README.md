@@ -52,7 +52,6 @@ for a list of all available `TDLib` [methods](https://core.telegram.org/tdlib/do
 * gperf (build only)
 * CMake (3.0.2+, build only)
 * PHP (optional, for documentation generation)
-* Doxygen (optional, for documentation generation)
 
 <a name="building"></a>
 ## Building
@@ -146,7 +145,7 @@ target_link_libraries(YourTarget PRIVATE Td::TdStatic)
 
 Or you could install `TDLib` and then reference it in your CMakeLists.txt like this:
 ```
-find_package(Td 1.6.3 REQUIRED)
+find_package(Td 1.6.6 REQUIRED)
 target_link_libraries(YourTarget PRIVATE Td::TdStatic)
 ```
 See [example/cpp/CMakeLists.txt](https://github.com/tdlib/td/tree/master/example/cpp/CMakeLists.txt).

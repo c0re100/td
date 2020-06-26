@@ -10,10 +10,12 @@
 
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
+#include "td/utils/port/detail/skip_eintr.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/PollFlags.h"
 
 #if TD_PORT_POSIX
+#include <cerrno>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -22,7 +24,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-
 #endif
 
 #if TD_PORT_WINDOWS

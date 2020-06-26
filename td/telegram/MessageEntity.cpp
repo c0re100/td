@@ -422,7 +422,7 @@ static vector<Slice> match_bank_card_numbers(Slice str) {
   const unsigned char *end = str.uend();
   const unsigned char *ptr = begin;
 
-  // '/[\d- ]{13,}/'
+  // '/(?<=^|[^+_\pL\d-.,])[\d -]{13,}([^_\pL\d-]|$)/'
 
   while (true) {
     while (ptr != end && !is_digit(*ptr)) {
@@ -430,6 +430,18 @@ static vector<Slice> match_bank_card_numbers(Slice str) {
     }
     if (ptr == end) {
       break;
+    }
+    if (ptr != begin) {
+      uint32 prev;
+      next_utf8_unsafe(prev_utf8_unsafe(ptr), &prev, "match_bank_card_numbers");
+
+      if (prev == '.' || prev == ',' || prev == '+' || prev == '-' || prev == '_' ||
+          get_unicode_simple_category(prev) == UnicodeSimpleCategory::Letter) {
+        while (ptr != end && (is_digit(*ptr) || *ptr == ' ' || *ptr == '-')) {
+          ptr++;
+        }
+        continue;
+      }
     }
 
     auto card_number_begin = ptr;
@@ -454,6 +466,13 @@ static vector<Slice> match_bank_card_numbers(Slice str) {
     auto card_number_size = static_cast<size_t>(card_number_end - card_number_begin);
     if (card_number_size > 2 * digit_count - 1) {
       continue;
+    }
+    if (card_number_end != end) {
+      uint32 next;
+      next_utf8_unsafe(card_number_end, &next, "match_bank_card_numbers 2");
+      if (next == '-' || next == '_' || get_unicode_simple_category(next) == UnicodeSimpleCategory::Letter) {
+        continue;
+      }
     }
 
     result.emplace_back(card_number_begin, card_number_end);
@@ -1946,9 +1965,11 @@ static vector<Slice> find_text_url_entities_v3(Slice text) {
 }
 
 // entities must be valid for the text
-static FormattedText parse_text_url_entities_v3(Slice text, vector<MessageEntity> entities) {
+static FormattedText parse_text_url_entities_v3(Slice text, const vector<MessageEntity> &entities) {
   // continuous entities can't intersect TextUrl entities,
   // so try to find new TextUrl entities only between the predetermined continuous entities
+
+  Slice debug_initial_text = text;
 
   FormattedText result;
   int32 result_text_utf16_length = 0;
@@ -2090,7 +2111,7 @@ static FormattedText parse_text_url_entities_v3(Slice text, vector<MessageEntity
         splittable_entities.clear();
       } else {
         CHECK(pos == splittable_entities.size() - 1);
-        CHECK(!text.empty());
+        LOG_CHECK(!text.empty()) << '"' << debug_initial_text << "\" " << entities;
         splittable_entities[0] = std::move(splittable_entities.back());
         splittable_entities.resize(1);
       }
@@ -2099,7 +2120,7 @@ static FormattedText parse_text_url_entities_v3(Slice text, vector<MessageEntity
     part_begin = part_end;
   };
 
-  for (auto &entity : entities) {
+  for (const auto &entity : entities) {
     if (is_splittable_entity(entity.type)) {
       auto index = get_splittable_entity_type_index(entity.type);
       part_splittable_entities[index].push_back(entity);
@@ -2188,7 +2209,7 @@ static FormattedText parse_markdown_v3_without_pre(Slice text, vector<MessageEnt
 
   FormattedText parsed_text_url_text;
   if (text.find('[') != string::npos) {
-    parsed_text_url_text = parse_text_url_entities_v3(text, std::move(entities));
+    parsed_text_url_text = parse_text_url_entities_v3(text, entities);
     text = parsed_text_url_text.text;
     entities = std::move(parsed_text_url_text.entities);
   }
@@ -3522,6 +3543,25 @@ static std::pair<size_t, int32> remove_invalid_entities(const string &text, vect
 
     if (pos == text.size()) {
       break;
+    }
+
+    if (!nested_entities_stack.empty() && nested_entities_stack.back()->offset == utf16_offset &&
+        (text[pos] == '\n' || text[pos] == ' ')) {
+      // entities was fixed, so there can't be more than one splittable entity of each type, one blockquote and
+      // one continuous entity for the given offset
+      for (size_t i = nested_entities_stack.size(); i > 0; i--) {
+        auto *entity = nested_entities_stack[i - 1];
+        if (entity->offset != utf16_offset || entity->type == MessageEntity::Type::TextUrl ||
+            entity->type == MessageEntity::Type::MentionName || is_pre_entity(entity->type)) {
+          break;
+        }
+        entity->offset++;
+        entity->length--;
+        if (entity->length == 0) {
+          CHECK(i == nested_entities_stack.size());
+          nested_entities_stack.pop_back();
+        }
+      }
     }
 
     auto c = static_cast<unsigned char>(text[pos]);
