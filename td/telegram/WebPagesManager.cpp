@@ -239,7 +239,7 @@ class WebPagesManager::WebPage {
     bool has_site_name = !site_name.empty();
     bool has_title = !title.empty();
     bool has_description = !description.empty();
-    bool has_photo = photo.id != -2;
+    bool has_photo = !photo.is_empty();
     bool has_embed = !embed_url.empty();
     bool has_embed_dimensions = has_embed && embed_dimensions != Dimensions();
     bool has_duration = duration > 0;
@@ -358,8 +358,6 @@ class WebPagesManager::WebPage {
     }
     if (has_photo) {
       parse(photo, parser);
-    } else {
-      photo.id = -2;
     }
     if (has_embed) {
       parse(embed_url, parser);
@@ -1254,7 +1252,7 @@ tl_object_ptr<td_api::webPage> WebPagesManager::get_web_page_object(WebPageId we
 
   return make_tl_object<td_api::webPage>(
       web_page->url, web_page->display_url, web_page->type, web_page->site_name, web_page->title,
-      get_formatted_text_object(description), get_photo_object(td_->file_manager_.get(), &web_page->photo),
+      get_formatted_text_object(description), get_photo_object(td_->file_manager_.get(), web_page->photo),
       web_page->embed_url, web_page->embed_type, web_page->embed_dimensions.width, web_page->embed_dimensions.height,
       web_page->duration, web_page->author,
       web_page->document.type == Document::Type::Animation
@@ -1393,15 +1391,15 @@ void WebPagesManager::on_get_web_page_instant_view(WebPage *web_page, tl_object_
   std::unordered_map<int64, Photo> photos;
   for (auto &photo_ptr : page->photos_) {
     Photo photo = get_photo(td_->file_manager_.get(), std::move(photo_ptr), owner_dialog_id);
-    if (photo.id == -2 || photo.id == 0) {
+    if (photo.is_empty() || photo.id.get() == 0) {
       LOG(ERROR) << "Receive empty photo in web page instant view for " << web_page->url;
     } else {
-      auto photo_id = photo.id;
+      auto photo_id = photo.id.get();
       photos.emplace(photo_id, std::move(photo));
     }
   }
-  if (web_page->photo.id != -2 && web_page->photo.id != 0) {
-    photos.emplace(web_page->photo.id, web_page->photo);
+  if (!web_page->photo.is_empty() && web_page->photo.id.get() != 0) {
+    photos.emplace(web_page->photo.id.get(), web_page->photo);
   }
 
   std::unordered_map<int64, FileId> animations;
