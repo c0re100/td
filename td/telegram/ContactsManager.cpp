@@ -13942,7 +13942,7 @@ td_api::object_ptr<td_api::UserStatus> ContactsManager::get_user_status_object(U
 
 td_api::object_ptr<td_api::updateUser> ContactsManager::get_update_unknown_user_object(UserId user_id) {
   return td_api::make_object<td_api::updateUser>(td_api::make_object<td_api::user>(
-      user_id.get(), "", "", "", "", td_api::make_object<td_api::userStatusEmpty>(), nullptr, false, false, false,
+      user_id.get(), -1, "", "", "", "", td_api::make_object<td_api::userStatusEmpty>(), nullptr, false, false, false,
       false, "", false, false, td_api::make_object<td_api::userTypeUnknown>(), ""));
 }
 
@@ -14009,7 +14009,7 @@ tl_object_ptr<td_api::userFullInfo> ContactsManager::get_user_full_info_object(U
 
 td_api::object_ptr<td_api::updateBasicGroup> ContactsManager::get_update_unknown_basic_group_object(ChatId chat_id) {
   return td_api::make_object<td_api::updateBasicGroup>(td_api::make_object<td_api::basicGroup>(
-      chat_id.get(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0));
+      chat_id.get(), -1, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0));
 }
 
 int32 ContactsManager::get_basic_group_id_object(ChatId chat_id, const char *source) const {
@@ -14059,7 +14059,7 @@ tl_object_ptr<td_api::basicGroupFullInfo> ContactsManager::get_basic_group_full_
 td_api::object_ptr<td_api::updateSupergroup> ContactsManager::get_update_unknown_supergroup_object(
     ChannelId channel_id) {
   return td_api::make_object<td_api::updateSupergroup>(td_api::make_object<td_api::supergroup>(
-      channel_id.get(), string(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, false,
+      channel_id.get(), -1, string(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, false,
       false, false, false, true, false, "", false));
 }
 
