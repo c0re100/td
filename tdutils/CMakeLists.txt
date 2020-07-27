@@ -301,10 +301,15 @@ set(TDUTILS_TEST_SOURCE
 #LIBRARIES
 add_library(tdutils STATIC ${TDUTILS_SOURCE})
 if (WIN32)
+  # find_library for system libraries doesn't work for UWP builds
   # find_library(WS2_32_LIBRARY ws2_32)
   # find_library(MSWSOCK_LIBRARY Mswsock)
   # target_link_libraries(tdutils PRIVATE ${WS2_32_LIBRARY} ${MSWSOCK_LIBRARY})
-  target_link_libraries(tdutils PRIVATE ws2_32 Mswsock Normaliz psapi)
+  if (MINGW)
+    target_link_libraries(tdutils PRIVATE ws2_32 mswsock normaliz psapi)
+  else()
+    target_link_libraries(tdutils PRIVATE ws2_32 Mswsock Normaliz psapi)
+  endif()
 endif()
 if (NOT CMAKE_CROSSCOMPILING AND TDUTILS_MIME_TYPE)
   add_dependencies(tdutils tdmime_auto)
