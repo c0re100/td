@@ -452,10 +452,10 @@ set(TDLIB_SOURCE
   td/telegram/net/MtprotoHeader.cpp
   td/telegram/net/NetActor.cpp
   td/telegram/net/NetQuery.cpp
-  td/telegram/net/NetQueryCounter.cpp
   td/telegram/net/NetQueryCreator.cpp
   td/telegram/net/NetQueryDelayer.cpp
   td/telegram/net/NetQueryDispatcher.cpp
+  td/telegram/net/NetQueryStats.cpp
   td/telegram/net/NetStatsManager.cpp
   td/telegram/net/Proxy.cpp
   td/telegram/net/PublicRsaKeyShared.cpp
@@ -628,6 +628,7 @@ set(TDLIB_SOURCE
   td/telegram/net/NetQueryCreator.h
   td/telegram/net/NetQueryDelayer.h
   td/telegram/net/NetQueryDispatcher.h
+  td/telegram/net/NetQueryStats.h
   td/telegram/net/NetStatsManager.h
   td/telegram/net/NetType.h
   td/telegram/net/Proxy.h
@@ -792,6 +793,13 @@ add_library(tdcore STATIC ${TDLIB_SOURCE})
 target_include_directories(tdcore PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}> $<BUILD_INTERFACE:${TL_TD_AUTO_INCLUDE_DIR}>)
 target_include_directories(tdcore SYSTEM PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(tdcore PUBLIC tdapi tdactor tdutils tdnet tddb PRIVATE ${OPENSSL_CRYPTO_LIBRARY} ${CMAKE_DL_LIBS} ${ZLIB_LIBRARIES})
+if (WIN32)
+  if (MINGW)
+    target_link_libraries(tdcore PRIVATE ws2_32 mswsock)
+  else()
+    target_link_libraries(tdcore PRIVATE ws2_32 Mswsock)
+  endif()
+endif()
 
 if (NOT CMAKE_CROSSCOMPILING)
   add_dependencies(tdcore tl_generate_common)
