@@ -385,6 +385,7 @@ inputChatPhotoAnimation animation:InputFile main_frame_timestamp:double = InputC
 
 //@description Represents a user
 //@id User identifier
+//@access_hash User access hash
 //@first_name First name of the user
 //@last_name Last name of the user
 //@username Username of the user
