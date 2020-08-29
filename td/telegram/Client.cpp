@@ -37,18 +37,9 @@ class MultiTd : public Actor {
     CHECK(td.empty());
 
     string name = "Td";
-    class TdActorContext : public ActorContext {
-     public:
-      explicit TdActorContext(string tag) : tag_(std::move(tag)) {
-      }
-      int32 get_id() const override {
-        return 0x172ae58d;
-      }
-      string tag_;
-    };
-    auto context = std::make_shared<TdActorContext>(to_string(td_id));
+    auto context = std::make_shared<td::ActorContext>();
     auto old_context = set_context(context);
-    auto old_tag = set_tag(context->tag_);
+    auto old_tag = set_tag(to_string(td_id));
     td = create_actor<Td>("Td", std::move(callback), options_);
     set_context(old_context);
     set_tag(old_tag);
@@ -76,7 +67,7 @@ class TdReceiver {
   MultiClient::Response receive(double timeout) {
     if (!responses_.empty()) {
       auto result = std::move(responses_.front());
-      responses_.pop_front();
+      responses_.pop();
       return result;
     }
     return {0, 0, nullptr};
@@ -88,17 +79,17 @@ class TdReceiver {
       Callback(MultiClient::ClientId client_id, TdReceiver *impl) : client_id_(client_id), impl_(impl) {
       }
       void on_result(uint64 id, td_api::object_ptr<td_api::Object> result) override {
-        impl_->responses_.push_back({client_id_, id, std::move(result)});
+        impl_->responses_.push({client_id_, id, std::move(result)});
       }
       void on_error(uint64 id, td_api::object_ptr<td_api::error> error) override {
-        impl_->responses_.push_back({client_id_, id, std::move(error)});
+        impl_->responses_.push({client_id_, id, std::move(error)});
       }
       Callback(const Callback &) = delete;
       Callback &operator=(const Callback &) = delete;
       Callback(Callback &&) = delete;
       Callback &operator=(Callback &&) = delete;
       ~Callback() override {
-        impl_->responses_.push_back({client_id_, 0, nullptr});
+        impl_->responses_.push({client_id_, 0, nullptr});
       }
 
      private:
@@ -162,7 +153,6 @@ class MultiClient::Impl final {
     return response;
   }
 
-  Impl() = default;
   Impl(const Impl &) = delete;
   Impl &operator=(const Impl &) = delete;
   Impl(Impl &&) = delete;
