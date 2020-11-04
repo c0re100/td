@@ -77,6 +77,7 @@ class WebPagesManager;
 namespace td {
 
 extern int VERBOSITY_NAME(td_init);
+extern int VERBOSITY_NAME(td_requests);
 
 // Td may start closing after explicit "close" or "destroy" query.
 // Or it may start closing by itself, because authorization is lost.
@@ -96,7 +97,7 @@ class Td final : public NetQueryCallback {
   ~Td() override;
 
   struct Options {
-    std::shared_ptr<td::NetQueryStats> net_query_stats;
+    std::shared_ptr<NetQueryStats> net_query_stats;
   };
 
   Td(unique_ptr<TdCallback> callback, Options options);
@@ -231,7 +232,7 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.6.9";
+  static constexpr const char *TDLIB_VERSION = "1.6.10";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
@@ -259,12 +260,12 @@ class Td final : public NetQueryCallback {
 
   void dec_stop_cnt();
 
+  unique_ptr<TdCallback> callback_;
+  Options td_options_;
+
   MtprotoHeader::Options options_;
 
   TdParameters parameters_;
-
-  unique_ptr<TdCallback> callback_;
-  Options td_options_;
 
   StateManager::State connection_state_;
 
@@ -492,6 +493,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::getChatPinnedMessage &request);
 
+  void on_request(uint64 id, const td_api::getCallbackQueryMessage &request);
+
   void on_request(uint64 id, const td_api::getMessageThread &request);
 
   void on_request(uint64 id, const td_api::getMessages &request);
@@ -716,7 +719,7 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::toggleChatIsMarkedAsUnread &request);
 
-  void on_request(uint64 id, const td_api::toggleChatIsBlocked &request);
+  void on_request(uint64 id, const td_api::toggleMessageSenderIsBlocked &request);
 
   void on_request(uint64 id, const td_api::toggleChatDefaultDisableNotification &request);
 
@@ -735,6 +738,8 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, const td_api::pinChatMessage &request);
 
   void on_request(uint64 id, const td_api::unpinChatMessage &request);
+
+  void on_request(uint64 id, const td_api::unpinAllChatMessages &request);
 
   void on_request(uint64 id, const td_api::joinChat &request);
 
@@ -786,9 +791,9 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::deleteFile &request);
 
-  void on_request(uint64 id, const td_api::blockChatFromReplies &request);
+  void on_request(uint64 id, const td_api::blockMessageSenderFromReplies &request);
 
-  void on_request(uint64 id, const td_api::getBlockedChats &request);
+  void on_request(uint64 id, const td_api::getBlockedMessageSenders &request);
 
   void on_request(uint64 id, td_api::addContact &request);
 

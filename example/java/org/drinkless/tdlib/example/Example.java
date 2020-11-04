@@ -29,7 +29,8 @@ public final class Example {
 
     private static TdApi.AuthorizationState authorizationState = null;
     private static volatile boolean haveAuthorization = false;
-    private static volatile boolean quiting = false;
+    private static volatile boolean needQuit = false;
+    private static volatile boolean canQuit = false;
 
     private static final Client.ResultHandler defaultHandler = new DefaultHandler();
 
@@ -160,8 +161,10 @@ public final class Example {
                 break;
             case TdApi.AuthorizationStateClosed.CONSTRUCTOR:
                 print("Closed");
-                if (!quiting) {
-                    client = Client.create(new UpdatesHandler(), null, null); // recreate client after previous has closed
+                if (!needQuit) {
+                    client = Client.create(new UpdateHandler(), null, null); // recreate client after previous has closed
+                } else {
+                    canQuit = true;
                 }
                 break;
             default:
@@ -230,7 +233,7 @@ public final class Example {
                     client.send(new TdApi.LogOut(), defaultHandler);
                     break;
                 case "q":
-                    quiting = true;
+                    needQuit = true;
                     haveAuthorization = false;
                     client.send(new TdApi.Close(), defaultHandler);
                     break;
@@ -305,18 +308,18 @@ public final class Example {
     public static void main(String[] args) throws InterruptedException {
         // disable TDLib log
         Client.execute(new TdApi.SetLogVerbosityLevel(0));
-        if (Client.execute(new TdApi.SetLogStream(new TdApi.LogStreamFile("tdlib.log", 1 << 27))) instanceof TdApi.Error) {
+        if (Client.execute(new TdApi.SetLogStream(new TdApi.LogStreamFile("tdlib.log", 1 << 27, false))) instanceof TdApi.Error) {
             throw new IOError(new IOException("Write access to the current directory is required"));
         }
 
         // create client
-        client = Client.create(new UpdatesHandler(), null, null);
+        client = Client.create(new UpdateHandler(), null, null);
 
         // test Client.execute
         defaultHandler.onResult(Client.execute(new TdApi.GetTextEntities("@telegram /test_command https://telegram.org telegram.me @gif @test")));
 
         // main loop
-        while (!quiting) {
+        while (!needQuit) {
             // await authorization
             authorizationLock.lock();
             try {
@@ -330,6 +333,9 @@ public final class Example {
             while (haveAuthorization) {
                 getCommand();
             }
+        }
+        while (!canQuit) {
+            Thread.sleep(1);
         }
     }
 
@@ -367,7 +373,7 @@ public final class Example {
         }
     }
 
-    private static class UpdatesHandler implements Client.ResultHandler {
+    private static class UpdateHandler implements Client.ResultHandler {
         @Override
         public void onResult(TdApi.Object object) {
             switch (object.getConstructor()) {
@@ -546,6 +552,14 @@ public final class Example {
                     TdApi.Chat chat = chats.get(update.chatId);
                     synchronized (chat) {
                         chat.isMarkedAsUnread = update.isMarkedAsUnread;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatIsBlocked.CONSTRUCTOR: {
+                    TdApi.UpdateChatIsBlocked update = (TdApi.UpdateChatIsBlocked) object;
+                    TdApi.Chat chat = chats.get(update.chatId);
+                    synchronized (chat) {
+                        chat.isBlocked = update.isBlocked;
                     }
                     break;
                 }

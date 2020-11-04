@@ -10,7 +10,6 @@
 #include "td/telegram/ChatId.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/PtsManager.h"
-#include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
 
@@ -136,9 +135,6 @@ class UpdatesManager : public Actor {
 
   int32 get_short_update_date() const;
 
-  static tl_object_ptr<td_api::ChatAction> convert_send_message_action(
-      tl_object_ptr<telegram_api::SendMessageAction> action);
-
   void process_get_difference_updates(vector<tl_object_ptr<telegram_api::Message>> &&new_messages,
                                       vector<tl_object_ptr<telegram_api::EncryptedMessage>> &&new_encrypted_messages,
                                       vector<tl_object_ptr<telegram_api::Update>> &&other_updates);
@@ -254,9 +250,8 @@ class UpdatesManager : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateReadChannelDiscussionInbox> update, bool /*force_apply*/);
   void on_update(tl_object_ptr<telegram_api::updateReadChannelDiscussionOutbox> update, bool /*force_apply*/);
 
-  void on_update(tl_object_ptr<telegram_api::updateUserPinnedMessage> update, bool /*force_apply*/);
-  void on_update(tl_object_ptr<telegram_api::updateChatPinnedMessage> update, bool /*force_apply*/);
-  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedMessage> update, bool /*force_apply*/);
+  void on_update(tl_object_ptr<telegram_api::updatePinnedMessages> update, bool force_apply);
+  void on_update(tl_object_ptr<telegram_api::updatePinnedChannelMessages> update, bool force_apply);
 
   void on_update(tl_object_ptr<telegram_api::updateDraftMessage> update, bool /*force_apply*/);
 

@@ -27,6 +27,8 @@
 
 namespace td {
 
+int VERBOSITY_NAME(actor) = VERBOSITY_NAME(DEBUG) + 10;
+
 TD_THREAD_LOCAL Scheduler *Scheduler::scheduler_;   // static zero-initialized
 TD_THREAD_LOCAL ActorContext *Scheduler::context_;  // static zero-initialized
 
@@ -109,6 +111,7 @@ void Scheduler::ServiceActor::tear_down() {
 /*** SchedlerGuard ***/
 SchedulerGuard::SchedulerGuard(Scheduler *scheduler, bool lock) : scheduler_(scheduler) {
   if (lock) {
+    // the next check can fail if OS killed the scheduler's thread without releasing the guard
     CHECK(!scheduler_->has_guard_);
     scheduler_->has_guard_ = true;
   }

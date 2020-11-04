@@ -269,7 +269,11 @@ T trim(T str) {
   return T(begin, end);
 }
 
-string lpad0(string str, size_t size);
+string lpad(string str, size_t size, char c);
+
+string lpad0(const string str, size_t size);
+
+string rpad(string str, size_t size, char c);
 
 string oneline(Slice str);
 

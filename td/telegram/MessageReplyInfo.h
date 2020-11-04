@@ -9,6 +9,7 @@
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/MessageId.h"
+#include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 
 #include "td/utils/common.h"
@@ -16,6 +17,9 @@
 #include "td/utils/tl_helpers.h"
 
 namespace td {
+
+class ContactsManager;
+class MessagesManager;
 
 struct MessageReplyInfo {
   int32 reply_count = -1;
@@ -42,7 +46,10 @@ struct MessageReplyInfo {
 
   bool update_max_message_ids(const MessageReplyInfo &other);
 
-  void add_reply(DialogId replier_dialog_id, MessageId reply_message_id);
+  bool add_reply(DialogId replier_dialog_id, MessageId reply_message_id, int diff);
+
+  td_api::object_ptr<td_api::messageReplyInfo> get_message_reply_info_object(
+      ContactsManager *contacts_manager, const MessagesManager *messages_manager) const;
 
   template <class StorerT>
   void store(StorerT &storer) const {

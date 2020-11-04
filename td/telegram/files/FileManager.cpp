@@ -943,11 +943,11 @@ Status FileManager::check_local_location(FullLocalFileLocation &location, int64 
     size = stat.size_;
   }
   if (location.mtime_nsec_ == 0) {
-    VLOG(files) << "Set file \"" << location.path_ << "\" modification time to " << stat.mtime_nsec_;
+    VLOG(file_loader) << "Set file \"" << location.path_ << "\" modification time to " << stat.mtime_nsec_;
     location.mtime_nsec_ = stat.mtime_nsec_;
   } else if (!are_modification_times_equal(location.mtime_nsec_, stat.mtime_nsec_)) {
-    VLOG(files) << "File \"" << location.path_ << "\" was modified: old mtime = " << location.mtime_nsec_
-                << ", new mtime = " << stat.mtime_nsec_;
+    VLOG(file_loader) << "File \"" << location.path_ << "\" was modified: old mtime = " << location.mtime_nsec_
+                      << ", new mtime = " << stat.mtime_nsec_;
     return Status::Error(PSLICE() << "File \"" << location.path_ << "\" was modified");
   }
   if (skip_file_size_checks) {
@@ -2360,7 +2360,7 @@ class FileManager::ForceUploadActor : public Actor {
       if (callback_.empty()) {
         return;
       }
-      send_closure(std::move(callback_), &ForceUploadActor::on_upload_error, td::Status::Error("Cancelled"));
+      send_closure(std::move(callback_), &ForceUploadActor::on_upload_error, Status::Error("Cancelled"));
     }
 
    private:
@@ -3079,7 +3079,7 @@ Result<FileId> FileManager::get_input_file_id(FileType type, const tl_object_ptr
           return FileId();
         }
         string hash;
-        if (false && new_type == FileType::Photo) {
+        if (G()->shared_config().get_option_boolean("reuse_uploaded_photos_by_hash") && new_type == FileType::Photo) {
           auto r_stat = stat(path);
           if (r_stat.is_ok() && r_stat.ok().size_ > 0 && r_stat.ok().size_ < 5000000) {
             auto r_file_content = read_file_str(path, r_stat.ok().size_);
