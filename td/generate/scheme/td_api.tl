@@ -152,11 +152,12 @@ remoteFile id:string unique_id:string is_uploading_active:Bool is_uploading_comp
 
 //@description Represents a file
 //@id Unique file identifier
+//@dc_id File data center location
 //@size File size; 0 if unknown
 //@expected_size Expected file size in case the exact file size is unknown, but an approximate size is known. Can be used to show download/upload progress
 //@local Information about the local copy of the file
 //@remote Information about the remote copy of the file
-file id:int32 size:int32 expected_size:int32 local:localFile remote:remoteFile = File;
+file id:int32 dc_id:int32 size:int32 expected_size:int32 local:localFile remote:remoteFile = File;
 
 
 //@class InputFile @description Points to a file
@@ -431,13 +432,15 @@ chatAdministrators administrators:vector<chatAdministrator> = ChatAdministrators
 //@can_send_messages True, if the user can send text messages, contacts, locations, and venues
 //@can_send_media_messages True, if the user can send audio files, documents, photos, videos, video notes, and voice notes. Implies can_send_messages permissions
 //@can_send_polls True, if the user can send polls. Implies can_send_messages permissions
-//@can_send_other_messages True, if the user can send animations, games, stickers, and dice and use inline bots. Implies can_send_messages permissions
+//@can_send_stickers True, if the user can send stickers. Implies can_send_messages permissions
+//@can_send_animations True, if the user can send animations. Implies can_send_messages permissions
+//@can_send_games True, if the user can send games. Implies can_send_messages permissions
+//@can_use_inline_bots True, if the user can use inline bots. Implies can_send_messages permissions
 //@can_add_web_page_previews True, if the user may add a web page preview to their messages. Implies can_send_messages permissions
 //@can_change_info True, if the user can change the chat title, photo, and other settings
 //@can_invite_users True, if the user can invite new users to the chat
 //@can_pin_messages True, if the user can pin messages
-chatPermissions can_send_messages:Bool can_send_media_messages:Bool can_send_polls:Bool can_send_other_messages:Bool can_add_web_page_previews:Bool can_change_info:Bool can_invite_users:Bool can_pin_messages:Bool = ChatPermissions;
-
+chatPermissions can_send_messages:Bool can_send_media_messages:Bool can_send_polls:Bool can_send_stickers:Bool can_send_animations:Bool can_send_games:Bool can_use_inline_bots:Bool can_add_web_page_previews:Bool can_change_info:Bool can_invite_users:Bool can_pin_messages:Bool = ChatPermissions;
 
 //@class ChatMemberStatus @description Provides information about the status of a member in a chat
 
