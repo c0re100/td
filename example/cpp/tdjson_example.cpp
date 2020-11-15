@@ -15,8 +15,11 @@ int main() {
   // disable TDLib logging
   td_execute("{\"@type\":\"setLogVerbosityLevel\", \"new_verbosity_level\":0}");
 
-  int client_id = td_create_client();
+  int client_id = td_create_client_id();
   // somehow share the client_id with other threads, which will be able to send requests via td_send
+
+  // start the client by sending request to it
+  td_send(client_id, "{\"@type\":\"getOption\", \"name\":\"version\"}");
 
   const bool test_incorrect_queries = false;
   if (test_incorrect_queries) {
