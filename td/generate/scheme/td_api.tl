@@ -791,7 +791,7 @@ chatTypeSecret secret_chat_id:int32 user_id:int32 = ChatType;
 //@pinned_chat_ids The chat identifiers of pinned chats in the filtered chat list
 //@included_chat_ids The chat identifiers of always included chats in the filtered chat list
 //@excluded_chat_ids The chat identifiers of always excluded chats in the filtered chat list
-//@exclude_muted True, if the muted chats need to be excluded
+//@exclude_muted True, if muted chats need to be excluded
 //@exclude_read True, if read chats need to be excluded
 //@exclude_archived True, if archived chats need to be excluded
 //@include_contacts True, if contacts need to be included
@@ -1059,14 +1059,14 @@ richTextPhoneNumber text:RichText phone_number:string = RichText;
 //@height Height of a bounding box in which the image should be shown; 0 if unknown
 richTextIcon document:document width:int32 height:int32 = RichText;
 
-//@description A rich text reference of a text on the same web page @text The text @reference_text The text to show on click @url An HTTP URL, opening the reference
-richTextReference text:RichText reference_text:RichText url:string = RichText;
+//@description A reference to a richTexts object on the same web page @text The text @anchor_name The name of a richTextAnchor object, which is the first element of the target richTexts object @url An HTTP URL, opening the reference
+richTextReference text:RichText anchor_name:string url:string = RichText;
 
 //@description An anchor @name Anchor name
 richTextAnchor name:string = RichText;
 
-//@description A link to an anchor on the same web page @text The link text @name The anchor name. If the name is empty, the link should bring back to top @url An HTTP URL, opening the anchor
-richTextAnchorLink text:RichText name:string url:string = RichText;
+//@description A link to an anchor on the same web page @text The link text @anchor_name The anchor name. If the name is empty, the link should bring back to top @url An HTTP URL, opening the anchor
+richTextAnchorLink text:RichText anchor_name:string url:string = RichText;
 
 //@description A concatenation of rich texts @texts Texts
 richTexts texts:vector<RichText> = RichText;
@@ -1513,7 +1513,7 @@ passportSuitableElement type:PassportElementType is_selfie_required:Bool is_tran
 passportRequiredElement suitable_elements:vector<passportSuitableElement> = PassportRequiredElement;
 
 //@description Contains information about a Telegram Passport authorization form that was requested @id Unique identifier of the authorization form
-//@required_elements Information about the Telegram Passport elements that need to be provided to complete the form
+//@required_elements Information about the Telegram Passport elements that must be provided to complete the form
 //@privacy_policy_url URL for the privacy policy of the service; may be empty
 passportAuthorizationForm id:int32 required_elements:vector<passportRequiredElement> privacy_policy_url:string = PassportAuthorizationForm;
 
@@ -2614,7 +2614,7 @@ notificationTypeNewCall call_id:int32 = NotificationType;
 //@description New message was received through a push notification
 //@message_id The message identifier. The message will not be available in the chat history, but the ID can be used in viewMessages, or as reply_to_message_id
 //@sender The sender of the message. Corresponding user or chat may be inaccessible
-//@sender_name Name of the sender; can be different from the name of the sender user
+//@sender_name Name of the sender
 //@is_outgoing True, if the message is outgoing
 //@content Push message content
 notificationTypeNewPushMessage message_id:int53 sender:MessageSender sender_name:string is_outgoing:Bool content:PushMessageContent = NotificationType;
@@ -3372,7 +3372,7 @@ updateSelectedBackground for_dark_theme:Bool background:background = Update;
 //@description Some language pack strings have been updated @localization_target Localization target to which the language pack belongs @language_pack_id Identifier of the updated language pack @strings List of changed language pack strings
 updateLanguagePackStrings localization_target:string language_pack_id:string strings:vector<languagePackString> = Update;
 
-//@description The connection state has changed. This update must be used only to show the user a human-readable description of the connection state @state The new connection state
+//@description The connection state has changed. This update must be used only to show a human-readable description of the connection state @state The new connection state
 updateConnectionState state:ConnectionState = Update;
 
 //@description New terms of service must be accepted by the user. If the terms of service are declined, then the deleteAccount method should be called with the reason "Decline ToS update" @terms_of_service_id Identifier of the terms of service @terms_of_service The new terms of service
@@ -3796,7 +3796,7 @@ getMessageLinkInfo url:string = MessageLinkInfo;
 //@reply_markup Markup for replying to the message; for bots only @input_message_content The content of the message to be sent
 sendMessage chat_id:int53 message_thread_id:int53 reply_to_message_id:int53 options:messageSendOptions reply_markup:ReplyMarkup input_message_content:InputMessageContent = Message;
 
-//@description Sends messages grouped together into an album. Currently only photo and video messages can be grouped into an album. Returns sent messages
+//@description Sends messages grouped together into an album. Currently only audio, document, photo and video messages can be grouped into an album. Documents and audio files can be only grouped in an album with messages of the same type. Returns sent messages
 //@chat_id Target chat
 //@message_thread_id If not 0, a message thread identifier in which the messages will be sent
 //@reply_to_message_id Identifier of a message to reply to or 0
@@ -4115,7 +4115,7 @@ setChatClientData chat_id:int53 client_data:string = Ok;
 setChatDescription chat_id:int53 description:string = Ok;
 
 //@description Changes the discussion group of a channel chat; requires can_change_info rights in the channel if it is specified @chat_id Identifier of the channel chat. Pass 0 to remove a link from the supergroup passed in the second argument to a linked channel chat (requires can_pin_messages rights in the supergroup) @discussion_chat_id Identifier of a new channel's discussion group. Use 0 to remove the discussion group.
-//-Use the method getSuitableDiscussionChats to find all suitable groups. Basic group chats need to be first upgraded to supergroup chats. If new chat members don't have access to old messages in the supergroup, then toggleSupergroupIsAllHistoryAvailable must be used first to change that
+//-Use the method getSuitableDiscussionChats to find all suitable groups. Basic group chats must be first upgraded to supergroup chats. If new chat members don't have access to old messages in the supergroup, then toggleSupergroupIsAllHistoryAvailable must be used first to change that
 setChatDiscussionGroup chat_id:int53 discussion_chat_id:int53 = Ok;
 
 //@description Changes the location of a chat. Available only for some location-based supergroups, use supergroupFullInfo.can_set_location to check whether the method is allowed to use @chat_id Chat identifier @location New location for the chat; must be valid and not null
@@ -4495,7 +4495,7 @@ toggleSupergroupIsAllHistoryAvailable supergroup_id:int32 is_all_history_availab
 reportSupergroupSpam supergroup_id:int32 user_id:int32 message_ids:vector<int53> = Ok;
 
 //@description Returns information about members or banned users in a supergroup or channel. Can be used only if SupergroupFullInfo.can_get_members == true; additionally, administrator privileges may be required for some filters @supergroup_id Identifier of the supergroup or channel
-//@filter The type of users to return. By default, supergroupMembersRecent @offset Number of users to skip @limit The maximum number of users be returned; up to 200
+//@filter The type of users to return. By default, supergroupMembersFilterRecent @offset Number of users to skip @limit The maximum number of users be returned; up to 200
 getSupergroupMembers supergroup_id:int32 filter:SupergroupMembersFilter offset:int32 limit:int32 = ChatMembers;
 
 //@description Deletes a supergroup or channel along with all messages in the corresponding chat. This will release the supergroup or channel username and remove all members; requires owner privileges in the supergroup or channel. Chats with more than 1000 members can't be deleted using this method @supergroup_id Identifier of the supergroup or channel
@@ -4539,7 +4539,7 @@ deleteSavedCredentials = Ok;
 getSupportUser = User;
 
 
-//@description Returns backgrounds installed by the user @for_dark_theme True, if the backgrounds need to be ordered for dark theme
+//@description Returns backgrounds installed by the user @for_dark_theme True, if the backgrounds must be ordered for dark theme
 getBackgrounds for_dark_theme:Bool = Backgrounds;
 
 //@description Constructs a persistent HTTP URL for a background @name Background name @type Background type
@@ -4570,7 +4570,7 @@ getLanguagePackInfo language_pack_id:string = LanguagePackInfo;
 //@description Returns strings from a language pack in the current localization target by their keys. Can be called before authorization @language_pack_id Language pack identifier of the strings to be returned @keys Language pack keys of the strings to be returned; leave empty to request all available strings
 getLanguagePackStrings language_pack_id:string keys:vector<string> = LanguagePackStrings;
 
-//@description Fetches the latest versions of all strings from a language pack in the current localization target from the server. This method doesn't need to be called explicitly for the current used/base language packs. Can be called before authorization @language_pack_id Language pack identifier
+//@description Fetches the latest versions of all strings from a language pack in the current localization target from the server. This method shouldn't be called explicitly for the current used/base language packs. Can be called before authorization @language_pack_id Language pack identifier
 synchronizeLanguagePack language_pack_id:string = Ok;
 
 //@description Adds a custom server language pack to the list of installed language packs in current localization target. Can be called before authorization @language_pack_id Identifier of a language pack to be added; may be different from a name that is used in an "https://t.me/setlanguage/" link
@@ -4667,7 +4667,7 @@ getDatabaseStatistics = DatabaseStatistics;
 //@file_types If not empty, only files with the given type(s) are considered. By default, all types except thumbnails, profile photos, stickers and wallpapers are deleted
 //@chat_ids If not empty, only files from the given chats are considered. Use 0 as chat identifier to delete files not belonging to any chat (e.g., profile photos)
 //@exclude_chat_ids If not empty, files from the given chats are excluded. Use 0 as chat identifier to exclude all files not belonging to any chat (e.g., profile photos)
-//@return_deleted_file_statistics Pass true if deleted file statistics need to be returned instead of the whole storage usage statistics. Affects only returned statistics
+//@return_deleted_file_statistics Pass true if deleted file statistics must be returned instead of the whole storage usage statistics. Affects only returned statistics
 //@chat_limit Same as in getStorageStatistics. Affects only returned statistics
 optimizeStorage size:int53 ttl:int32 count:int32 immunity_delay:int32 file_types:vector<FileType> chat_ids:vector<int53> exclude_chat_ids:vector<int53> return_deleted_file_statistics:Bool chat_limit:int32 = StorageStatistics;
 
@@ -4743,7 +4743,7 @@ getPassportAuthorizationForm bot_user_id:int32 scope:string public_key:string no
 //@description Returns already available Telegram Passport elements suitable for completing a Telegram Passport authorization form. Result can be received only once for each authorization form @autorization_form_id Authorization form identifier @password Password of the current user
 getPassportAuthorizationFormAvailableElements autorization_form_id:int32 password:string = PassportElementsWithErrors;
 
-//@description Sends a Telegram Passport authorization form, effectively sharing data with the service. This method must be called after getPassportAuthorizationFormAvailableElements if some previously available elements need to be used
+//@description Sends a Telegram Passport authorization form, effectively sharing data with the service. This method must be called after getPassportAuthorizationFormAvailableElements if some previously available elements are going to be reused
 //@autorization_form_id Authorization form identifier @types Types of Telegram Passport elements chosen by user to complete the authorization form
 sendPassportAuthorizationForm autorization_form_id:int32 types:vector<PassportElementType> = Ok;
 
