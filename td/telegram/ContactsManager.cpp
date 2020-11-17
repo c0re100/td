@@ -7186,7 +7186,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
     auto access_hash = user->access_hash_;
     bool is_min_access_hash = !is_received && !((flags & USER_FLAG_HAS_PHONE_NUMBER) != 0 && user->phone_.empty());
     if (u->access_hash != access_hash && (!is_min_access_hash || u->is_min_access_hash || u->access_hash == -1)) {
-      LOG(ERROR) << "Access hash has changed for " << user_id << " from " << u->access_hash << "/"
+      LOG(DEBUG) << "Access hash has changed for " << user_id << " from " << u->access_hash << "/"
                  << u->is_min_access_hash << " to " << access_hash << "/" << is_min_access_hash;
       u->access_hash = access_hash;
       u->is_min_access_hash = is_min_access_hash;
