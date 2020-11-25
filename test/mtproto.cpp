@@ -27,6 +27,7 @@
 #include "td/net/TransparentProxy.h"
 
 #include "td/actor/actor.h"
+#include "td/actor/ConcurrentScheduler.h"
 #include "td/actor/PromiseFuture.h"
 
 #include "td/utils/base64.h"
@@ -71,7 +72,7 @@ TEST(Mtproto, GetHostByNameActor) {
         }
       });
       cnt++;
-      send_closure(actor_id, &GetHostByNameActor::run, host, 443, prefer_ipv6, std::move(promise));
+      send_closure_later(actor_id, &GetHostByNameActor::run, host, 443, prefer_ipv6, std::move(promise));
     };
 
     std::vector<std::string> hosts = {"127.0.0.2",
@@ -177,11 +178,13 @@ TEST(Mtproto, config) {
     run(get_simple_config_firebase_firestore, false);
   }
   cnt--;
-  sched.start();
-  while (sched.run_main(10)) {
-    // empty;
+  if (cnt != 0) {
+    sched.start();
+    while (sched.run_main(10)) {
+      // empty;
+    }
+    sched.finish();
   }
-  sched.finish();
 }
 
 TEST(Mtproto, encrypted_config) {
