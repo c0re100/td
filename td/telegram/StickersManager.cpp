@@ -1872,10 +1872,10 @@ void StickersManager::reload_featured_sticker_sets(bool force) {
     return;
   }
 
-  if (!td_->auth_manager_->is_bot() && next_featured_sticker_sets_load_time_ >= 0 &&
-      (next_featured_sticker_sets_load_time_ < Time::now() || force)) {
+  auto &next_load_time = next_featured_sticker_sets_load_time_;
+  if (!td_->auth_manager_->is_bot() && next_load_time >= 0 && (next_load_time < Time::now() || force)) {
     LOG_IF(INFO, force) << "Reload trending sticker sets";
-    next_featured_sticker_sets_load_time_ = -1;
+    next_load_time = -1;
     td_->create_handler<GetFeaturedStickerSetsQuery>()->send(featured_sticker_sets_hash_);
   }
 }
@@ -5405,10 +5405,10 @@ void StickersManager::reload_favorite_stickers(bool force) {
     return;
   }
 
-  if (!td_->auth_manager_->is_bot() && next_favorite_stickers_load_time_ >= 0 &&
-      (next_favorite_stickers_load_time_ < Time::now() || force)) {
+  auto &next_load_time = next_favorite_stickers_load_time_;
+  if (!td_->auth_manager_->is_bot() && next_load_time >= 0 && (next_load_time < Time::now() || force)) {
     LOG_IF(INFO, force) << "Reload favorite stickers";
-    next_favorite_stickers_load_time_ = -1;
+    next_load_time = -1;
     td_->create_handler<GetFavedStickersQuery>()->send(false, get_favorite_stickers_hash());
   }
 }

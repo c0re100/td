@@ -10,6 +10,7 @@
 #include "td/telegram/TdCallback.h"
 
 #include "td/actor/actor.h"
+#include "td/actor/ConcurrentScheduler.h"
 
 #include "td/utils/common.h"
 #include "td/utils/crypto.h"
@@ -22,10 +23,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace td {
 
@@ -183,9 +186,7 @@ class ClientManager::Impl final {
     while (!tds_.empty() && !ExitGuard::is_exited()) {
       receive(0.1);
     }
-    if (!ExitGuard::is_exited()) {  // prevent closing of schedulers from already killed by OS threads
-      concurrent_scheduler_->finish();
-    }
+    concurrent_scheduler_->finish();
   }
 
  private:
@@ -392,10 +393,12 @@ class MultiImpl {
       multi_td_.reset();
       Scheduler::instance()->finish();
     }
-    scheduler_thread_.join();
-    if (!ExitGuard::is_exited()) {  // prevent closing of schedulers from already killed by OS threads
-      concurrent_scheduler_->finish();
+    if (!ExitGuard::is_exited()) {
+      scheduler_thread_.join();
+    } else {
+      scheduler_thread_.detach();
     }
+    concurrent_scheduler_->finish();
   }
 
  private:
@@ -415,7 +418,7 @@ class MultiImplPool {
     if (impls_.empty()) {
       init_openssl_threads();
 
-      impls_.resize(clamp(thread::hardware_concurrency(), 8u, 1000u) * 5 / 4);
+      impls_.resize(clamp(thread::hardware_concurrency(), 8u, 24u) * 5 / 4);
 
       net_query_stats_ = std::make_shared<NetQueryStats>();
     }

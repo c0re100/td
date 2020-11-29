@@ -232,7 +232,7 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.6.10";
+  static constexpr const char *TDLIB_VERSION = "1.7.0";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
@@ -931,7 +931,7 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::getMessageStatistics &request);
 
-  void on_request(uint64 id, td_api::getStatisticsGraph &request);
+  void on_request(uint64 id, td_api::getStatisticalGraph &request);
 
   void on_request(uint64 id, const td_api::getMapThumbnailFile &request);
 

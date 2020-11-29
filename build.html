@@ -33,6 +33,9 @@ select.large { font-size: large; }
       <option>PHP</option>
       <option>Lua</option>
       <option>Ruby</option>
+      <option>Crystal</option>
+      <option>Haskell</option>
+      <option>Nim</option>
       <option>Clojure</option>
       <option>D</option>
       <option>Elixir</option>
@@ -197,6 +200,9 @@ function getExampleAnchor(language) {
     case 'PHP':
     case 'Lua':
     case 'Ruby':
+    case 'Crystal':
+    case 'Haskell':
+    case 'Nim':
     case 'Clojure':
     case 'D':
     case 'Elixir':
@@ -492,7 +498,7 @@ function onOptionsChanged() {
     if (target !== 'C++/CLI' && target !== 'C++/CX') {
       pre_text.push('Note that Windows Subsystem for Linux (WSL) and Cygwin are not Windows environments, so you need to use instructions for Linux for them instead.');
     }
-    pre_text.push('Download and install <a href="https://visualstudio.microsoft.com/ru/vs/community/">Microsoft Visual Studio</a>. Enable C++' + win10_sdk + ' support while installing.');
+    pre_text.push('Download and install <a href="https://visualstudio.microsoft.com/vs/community/">Microsoft Visual Studio</a>. Enable C++' + win10_sdk + ' support while installing.');
     pre_text.push('Download and install <a href="https://cmake.org/download/">CMake</a>; choose "Add CMake to the system PATH" option while installing.');
     pre_text.push('Download and install <a href="https://git-scm.com/download/win">Git</a>.');
     pre_text.push('Download and install <a href="https://sourceforge.net/projects/gnuwin32/files/gperf/3.0.1/">gperf</a>. Add the path to gperf.exe to the PATH environment variable.');
@@ -594,10 +600,10 @@ function onOptionsChanged() {
   var cmake = 'cmake';
   if (os_mac) {
     commands.push('xcode-select --install');
-    commands.push('/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"');
+    commands.push('/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"');
     commands.push('brew install gperf cmake openssl' + (target === 'JNI' ? ' coreutils' : ''));
     if (target === 'JNI') {
-      commands.push('brew cask install java');
+      commands.push('brew install openjdk');
     }
   } else if (os_linux && linux_distro !== 'Other') {
     switch (linux_distro) {
@@ -709,7 +715,7 @@ function onOptionsChanged() {
   commands.push('git clone https://github.com/tdlib/td.git');
 
   commands.push('cd td');
-  // commands.push('git checkout v1.6.0');
+  commands.push('git checkout v1.7.0');
 
   if (use_vcpkg) {
     commands.push('git clone https://github.com/Microsoft/vcpkg.git');
@@ -737,6 +743,17 @@ function onOptionsChanged() {
         options.push('-A x64');
       } else {
         options.push('-A Win32');
+      }
+    }
+    if (target === 'JNI') {
+      if (os_linux && linux_distro === 'Alpine') {
+        options.push('-DJAVA_HOME=/usr/lib/jvm/java-1.8-openjdk/');
+      }
+      if (os_freebsd) {
+        options.push('-DJAVA_HOME=/usr/local/openjdk7/');
+      }
+      if (os_mac) {
+        options.push('-DJAVA_HOME=/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home/');
       }
     }
     return options;
@@ -774,12 +791,6 @@ function onOptionsChanged() {
     }
     if (target === 'JNI') {
       cmake_init_options.push('-DTD_ENABLE_JNI=ON');
-      if (linux_distro === 'Alpine') {
-        cmake_init_options.push('-DJAVA_HOME=/usr/lib/jvm/java-1.8-openjdk/');
-      }
-      if (os_freebsd) {
-        cmake_init_options.push('-DJAVA_HOME=/usr/local/openjdk7/');
-      }
     }
     if (target === 'C++/CX' || target === 'C++/CLI') {
       cmake_init_options.push('-DTD_ENABLE_DOTNET=ON');
@@ -852,12 +863,6 @@ function onOptionsChanged() {
         cmake_init_options.push('-DCMAKE_TOOLCHAIN_FILE:FILEPATH=../../../vcpkg/scripts/buildsystems/vcpkg.cmake');
       }
       var is_alpine = os_linux && linux_distro === 'Alpine';
-      if (is_alpine) {
-        cmake_init_options.push('-DJAVA_HOME=/usr/lib/jvm/java-1.8-openjdk/');
-      }
-      if (os_freebsd) {
-        cmake_init_options.push('-DJAVA_HOME=/usr/local/openjdk7/');
-      }
       var resolve_path = use_powershell ? 'Resolve-Path' : (os_mac ? 'greadlink -e' : (is_alpine || os_freebsd || os_openbsd || os_netbsd ? 'readlink -f' : 'readlink -e'));
       var resolved_path = resolve_path + ' ../td/lib/cmake/Td';
       if (use_csh) {

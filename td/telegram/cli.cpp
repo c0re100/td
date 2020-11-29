@@ -5,6 +5,7 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #include "td/actor/actor.h"
+#include "td/actor/ConcurrentScheduler.h"
 
 #include "memprof/memprof.h"
 
@@ -4194,7 +4195,7 @@ class CliClient final : public Actor {
       std::tie(chat_id, args) = split(args);
       std::tie(token, x) = split(args);
 
-      send_request(td_api::make_object<td_api::getStatisticsGraph>(as_chat_id(chat_id), token, to_integer<int64>(x)));
+      send_request(td_api::make_object<td_api::getStatisticalGraph>(as_chat_id(chat_id), token, to_integer<int64>(x)));
     } else if (op == "hsa" || op == "glu" || op == "glua") {
       send_request(td_api::make_object<td_api::hideSuggestedAction>(as_suggested_action(args)));
     } else if (op == "glui" || op == "glu" || op == "glua") {
