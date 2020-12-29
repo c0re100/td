@@ -196,9 +196,10 @@ class ContactsManager : public Actor {
   void on_update_channel_sticker_set(ChannelId channel_id, StickerSetId sticker_set_id);
   void on_update_channel_linked_channel_id(ChannelId channel_id, ChannelId group_channel_id);
   void on_update_channel_location(ChannelId channel_id, const DialogLocation &location);
-  void on_update_channel_slow_mode_delay(ChannelId channel_id, int32 slow_mode_delay);
+  void on_update_channel_slow_mode_delay(ChannelId channel_id, int32 slow_mode_delay, Promise<Unit> &&promise);
   void on_update_channel_slow_mode_next_send_date(ChannelId channel_id, int32 slow_mode_next_send_date);
-  void on_update_channel_is_all_history_available(ChannelId channel_id, bool is_all_history_available);
+  void on_update_channel_is_all_history_available(ChannelId channel_id, bool is_all_history_available,
+                                                  Promise<Unit> &&promise);
   void on_update_channel_default_permissions(ChannelId channel_id, RestrictedRights default_permissions);
   void on_update_channel_administrator_count(ChannelId channel_id, int32 administrator_count);
   void on_update_channel_participant(ChannelId channel_id, UserId user_id, int32 date,
@@ -215,7 +216,7 @@ class ContactsManager : public Actor {
 
   void speculative_delete_channel_participant(ChannelId channel_id, UserId deleted_user_id, bool by_me);
 
-  void invalidate_channel_full(ChannelId channel_id, bool drop_invite_link, bool drop_slow_mode_delay);
+  void invalidate_channel_full(ChannelId channel_id, bool need_drop_invite_link, bool need_drop_slow_mode_delay);
 
   bool on_get_channel_error(ChannelId channel_id, const Status &status, const string &source);
 
@@ -509,8 +510,8 @@ class ContactsManager : public Actor {
 
   std::pair<int32, vector<DialogParticipant>> get_channel_participants(
       ChannelId channel_id, const tl_object_ptr<td_api::SupergroupMembersFilter> &filter,
-      const string &additional_query, int32 offset, int32 limit, int32 additional_limit, int64 &random_id, bool force,
-      Promise<Unit> &&promise);
+      const string &additional_query, int32 offset, int32 limit, int32 additional_limit, int64 &random_id,
+      bool without_bot_info, bool force, Promise<Unit> &&promise);
 
   void send_get_channel_participants_query(ChannelId channel_id, ChannelParticipantsFilter filter, int32 offset,
                                            int32 limit, int64 random_id, Promise<Unit> &&promise);
@@ -717,7 +718,7 @@ class ContactsManager : public Actor {
     DialogParticipantStatus status = DialogParticipantStatus::Banned(0);
     RestrictedRights default_permissions{false, false, false, false, false, false, false, false, false, false, false};
 
-    static constexpr uint32 CACHE_VERSION = 2;
+    static constexpr uint32 CACHE_VERSION = 3;
     uint32 cache_version = 0;
 
     bool is_active = false;
@@ -784,7 +785,7 @@ class ContactsManager : public Actor {
     int32 date = 0;
     int32 participant_count = 0;
 
-    static constexpr uint32 CACHE_VERSION = 5;
+    static constexpr uint32 CACHE_VERSION = 6;
     uint32 cache_version = 0;
 
     bool has_linked_channel = false;
@@ -993,10 +994,13 @@ class ContactsManager : public Actor {
   // static constexpr int32 CHAT_FLAG_IS_ADMINISTRATOR = 1 << 4;
   static constexpr int32 CHAT_FLAG_IS_DEACTIVATED = 1 << 5;
   static constexpr int32 CHAT_FLAG_WAS_MIGRATED = 1 << 6;
+  static constexpr int32 CHAT_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 23;
+  static constexpr int32 CHAT_FLAG_IS_GROUP_CALL_NON_EMPTY = 1 << 24;
 
   static constexpr int32 CHAT_FULL_FLAG_HAS_PINNED_MESSAGE = 1 << 6;
   static constexpr int32 CHAT_FULL_FLAG_HAS_SCHEDULED_MESSAGES = 1 << 8;
   static constexpr int32 CHAT_FULL_FLAG_HAS_FOLDER_ID = 1 << 11;
+  static constexpr int32 CHAT_FULL_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 12;
 
   static constexpr int32 CHANNEL_FLAG_USER_IS_CREATOR = 1 << 0;
   static constexpr int32 CHANNEL_FLAG_USER_HAS_LEFT = 1 << 2;
@@ -1017,6 +1021,8 @@ class ContactsManager : public Actor {
   static constexpr int32 CHANNEL_FLAG_HAS_LINKED_CHAT = 1 << 20;
   static constexpr int32 CHANNEL_FLAG_HAS_LOCATION = 1 << 21;
   static constexpr int32 CHANNEL_FLAG_IS_SLOW_MODE_ENABLED = 1 << 22;
+  static constexpr int32 CHANNEL_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 23;
+  static constexpr int32 CHANNEL_FLAG_IS_GROUP_CALL_NON_EMPTY = 1 << 24;
 
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_PARTICIPANT_COUNT = 1 << 0;
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_ADMINISTRATOR_COUNT = 1 << 1;
@@ -1039,6 +1045,7 @@ class ContactsManager : public Actor {
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_SLOW_MODE_NEXT_SEND_DATE = 1 << 18;
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_SCHEDULED_MESSAGES = 1 << 19;
   static constexpr int32 CHANNEL_FULL_FLAG_CAN_VIEW_STATISTICS = 1 << 20;
+  static constexpr int32 CHANNEL_FULL_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 21;
   static constexpr int32 CHANNEL_FULL_FLAG_IS_BLOCKED = 1 << 22;
 
   static constexpr int32 CHAT_INVITE_FLAG_IS_CHANNEL = 1 << 0;
@@ -1398,7 +1405,8 @@ class ContactsManager : public Actor {
 
   tl_object_ptr<td_api::supergroup> get_supergroup_object(ChannelId channel_id, const Channel *c) const;
 
-  tl_object_ptr<td_api::supergroupFullInfo> get_supergroup_full_info_object(const ChannelFull *channel_full) const;
+  tl_object_ptr<td_api::supergroupFullInfo> get_supergroup_full_info_object(const ChannelFull *channel_full,
+                                                                            ChannelId channel_id) const;
 
   static tl_object_ptr<td_api::SecretChatState> get_secret_chat_state_object(SecretChatState state);
 

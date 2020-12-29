@@ -30,7 +30,8 @@ class DialogAction {
     ChoosingContact,
     StartPlayingGame,
     RecordingVideoNote,
-    UploadingVideoNote
+    UploadingVideoNote,
+    SpeakingInVoiceChat
   };
   Type type_ = Type::Cancel;
   int32 progress_ = 0;
@@ -59,6 +60,8 @@ class DialogAction {
   static DialogAction get_uploading_action(MessageContentType message_content_type, int32 progress);
 
   static DialogAction get_typing_action();
+
+  static DialogAction get_speaking_action();
 
   friend bool operator==(const DialogAction &lhs, const DialogAction &rhs) {
     return lhs.type_ == rhs.type_ && lhs.progress_ == rhs.progress_;

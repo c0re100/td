@@ -51,6 +51,7 @@ class DeviceTokenManager;
 class DocumentsManager;
 class FileManager;
 class FileReferenceManager;
+class GroupCallManager;
 class InlineQueriesManager;
 class HashtagHints;
 class LanguagePackManager;
@@ -157,6 +158,8 @@ class Td final : public NetQueryCallback {
   ActorOwn<FileManager> file_manager_actor_;
   unique_ptr<FileReferenceManager> file_reference_manager_;
   ActorOwn<FileReferenceManager> file_reference_manager_actor_;
+  unique_ptr<GroupCallManager> group_call_manager_;
+  ActorOwn<GroupCallManager> group_call_manager_actor_;
   unique_ptr<InlineQueriesManager> inline_queries_manager_;
   ActorOwn<InlineQueriesManager> inline_queries_manager_actor_;
   unique_ptr<MessagesManager> messages_manager_;
@@ -688,6 +691,26 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, td_api::sendCallRating &request);
 
   void on_request(uint64 id, td_api::sendCallDebugInformation &request);
+
+  void on_request(uint64 id, const td_api::createVoiceChat &request);
+
+  void on_request(uint64 id, const td_api::getGroupCall &request);
+
+  void on_request(uint64 id, td_api::joinGroupCall &request);
+
+  void on_request(uint64 id, const td_api::toggleGroupCallMuteNewParticipants &request);
+
+  void on_request(uint64 id, const td_api::inviteGroupCallParticipants &request);
+
+  void on_request(uint64 id, const td_api::setGroupCallParticipantIsSpeaking &request);
+
+  void on_request(uint64 id, const td_api::toggleGroupCallParticipantIsMuted &request);
+
+  void on_request(uint64 id, const td_api::loadGroupCallParticipants &request);
+
+  void on_request(uint64 id, const td_api::leaveGroupCall &request);
+
+  void on_request(uint64 id, const td_api::discardGroupCall &request);
 
   void on_request(uint64 id, const td_api::upgradeBasicGroupChatToSupergroupChat &request);
 
