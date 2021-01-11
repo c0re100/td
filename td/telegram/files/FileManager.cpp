@@ -2961,7 +2961,7 @@ td_api::object_ptr<td_api::file> FileManager::get_file_object(FileId file_id, bo
                     << (with_main_file_id ? file_view.file_id() : result_file_id);
 
   return td_api::make_object<td_api::file>(
-      result_file_id.get(), file_view.has_remote_location() ? file_view.remote_location().get_dc_id().get_value() : 0, size, expected_size,
+      result_file_id.get(), file_view.has_remote_location() ? file_view.remote_location().is_web() ? 0 : file_view.remote_location().get_dc_id().get_value() : 0, size, expected_size,
       td_api::make_object<td_api::localFile>(std::move(path), can_be_downloaded, can_be_deleted,
                                              file_view.is_downloading(), file_view.has_local_location(),
                                              download_offset, local_prefix_size, local_total_size),
