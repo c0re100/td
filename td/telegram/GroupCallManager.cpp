@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -18,8 +18,10 @@
 #include "td/telegram/Td.h"
 #include "td/telegram/UpdatesManager.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/JsonBuilder.h"
+#include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/Random.h"
 
@@ -58,11 +60,17 @@ class CreateGroupCallQuery : public Td::ResultHandler {
     LOG(INFO) << "Receive result for CreateGroupCallQuery: " << to_string(ptr);
 
     auto group_call_ids = td->updates_manager_->get_update_new_group_call_ids(ptr.get());
-    if (group_call_ids.size() != 1) {
+    if (group_call_ids.empty()) {
       LOG(ERROR) << "Receive wrong CreateGroupCallQuery response " << to_string(ptr);
       return on_error(id, Status::Error(500, "Receive wrong response"));
     }
     auto group_call_id = group_call_ids[0];
+    for (auto other_group_call_id : group_call_ids) {
+      if (group_call_id != other_group_call_id) {
+        LOG(ERROR) << "Receive wrong CreateGroupCallQuery response " << to_string(ptr);
+        return on_error(id, Status::Error(500, "Receive wrong response"));
+      }
+    }
 
     td->updates_manager_->on_get_updates(
         std::move(ptr), PromiseCreator::lambda([promise = std::move(promise_), group_call_id](Unit) mutable {
@@ -327,7 +335,7 @@ class CheckGroupCallQuery : public Td::ResultHandler {
     if (success) {
       promise_.set_value(Unit());
     } else {
-      promise_.set_error(Status::Error(400, "GROUP_CALL_JOIN_MISSING"));
+      promise_.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
     }
   }
 
@@ -488,7 +496,7 @@ void GroupCallManager::on_check_group_call_is_joined_timeout(GroupCallId group_c
   auto source = group_call->source;
   auto promise =
       PromiseCreator::lambda([actor_id = actor_id(this), input_group_call_id, source](Result<Unit> &&result) mutable {
-        if (result.is_error() && result.error().message() == "GROUP_CALL_JOIN_MISSING") {
+        if (result.is_error() && result.error().message() == "GROUPCALL_JOIN_MISSING") {
           send_closure(actor_id, &GroupCallManager::on_group_call_left, input_group_call_id, source, true);
           result = Unit();
         }
@@ -1771,7 +1779,7 @@ void GroupCallManager::toggle_group_call_participant_is_muted(GroupCallId group_
 
   auto *group_call = get_group_call(input_group_call_id);
   if (group_call == nullptr || !group_call->is_inited || !group_call->is_active || !group_call->is_joined) {
-    return promise.set_error(Status::Error(400, "GROUP_CALL_JOIN_MISSING"));
+    return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!td_->contacts_manager_->have_input_user(user_id)) {
     return promise.set_error(Status::Error(400, "Have no access to the user"));
@@ -1819,7 +1827,7 @@ void GroupCallManager::leave_group_call(GroupCallId group_call_id, Promise<Unit>
 
   auto *group_call = get_group_call(input_group_call_id);
   if (group_call == nullptr || !group_call->is_inited || !group_call->is_active || !group_call->is_joined) {
-    return promise.set_error(Status::Error(400, "GROUP_CALL_JOIN_MISSING"));
+    return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   auto source = group_call->source;
   group_call->is_being_left = true;
@@ -2068,7 +2076,8 @@ void GroupCallManager::on_receive_group_call_version(InputGroupCallId input_grou
 
 void GroupCallManager::on_participant_speaking_in_group_call(InputGroupCallId input_group_call_id,
                                                              const GroupCallParticipant &participant) {
-  if (participant.active_date < G()->unix_time() - RECENT_SPEAKER_TIMEOUT) {
+  auto active_date = td::max(participant.active_date, participant.joined_date - 60);
+  if (active_date < G()->unix_time() - RECENT_SPEAKER_TIMEOUT) {
     return;
   }
 
@@ -2077,7 +2086,7 @@ void GroupCallManager::on_participant_speaking_in_group_call(InputGroupCallId in
     return;
   }
 
-  on_user_speaking_in_group_call(group_call->group_call_id, participant.user_id, participant.active_date, true);
+  on_user_speaking_in_group_call(group_call->group_call_id, participant.user_id, active_date, true);
 }
 
 void GroupCallManager::on_user_speaking_in_group_call(GroupCallId group_call_id, UserId user_id, int32 date,

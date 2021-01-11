@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -133,6 +133,9 @@ class UpdatesManager : public Actor {
 
   bool running_get_difference_ = false;
   int32 last_get_difference_pts_ = 0;
+  int32 last_get_difference_qts_ = 0;
+  int32 min_postponed_update_pts_ = 0;
+  int32 min_postponed_update_qts_ = 0;
 
   void tear_down() override;
 
@@ -184,11 +187,19 @@ class UpdatesManager : public Actor {
 
   void set_qts_gap_timeout(double timeout);
 
+  void run_get_difference(bool is_recursive, const char *source);
+
   void on_failed_get_difference();
 
   void before_get_difference(bool is_initial);
 
   void after_get_difference();
+
+  static bool have_update_pts_changed(const vector<tl_object_ptr<telegram_api::Update>> &updates);
+
+  static int32 get_update_pts(const telegram_api::Update *update);
+
+  static int32 get_update_qts(const telegram_api::Update *update);
 
   static const vector<tl_object_ptr<telegram_api::Update>> *get_updates(const telegram_api::Updates *updates_ptr);
 

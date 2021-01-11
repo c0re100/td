@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -47,6 +47,7 @@
 #include "td/db/SqliteKeyValue.h"
 #include "td/db/SqliteKeyValueAsync.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
 #include "td/utils/format.h"
@@ -10750,10 +10751,10 @@ void ContactsManager::on_get_channel_participants_fail(ChannelId channel_id, Cha
   }
 }
 
-bool ContactsManager::speculative_add_count(int32 &count, int32 new_count) {
-  new_count += count;
-  if (new_count < 0) {
-    new_count = 0;
+bool ContactsManager::speculative_add_count(int32 &count, int32 delta_count, int32 min_count) {
+  auto new_count = count + delta_count;
+  if (new_count < min_count) {
+    new_count = min_count;
   }
   if (new_count == count) {
     return false;
@@ -10769,13 +10770,13 @@ void ContactsManager::speculative_add_channel_participants(ChannelId channel_id,
   auto channel_full = get_channel_full_force(channel_id, "speculative_add_channel_participants");
   bool is_participants_cache_changed = false;
 
-  int32 new_participant_count = 0;
+  int32 delta_participant_count = 0;
   for (auto user_id : added_user_ids) {
     if (!user_id.is_valid()) {
       continue;
     }
 
-    new_participant_count++;
+    delta_participant_count++;
 
     if (it != cached_channel_participants_.end()) {
       auto &participants = it->second;
@@ -10803,11 +10804,11 @@ void ContactsManager::speculative_add_channel_participants(ChannelId channel_id,
   if (channel_full != nullptr) {
     update_channel_full(channel_full, channel_id);
   }
-  if (new_participant_count == 0) {
+  if (delta_participant_count == 0) {
     return;
   }
 
-  speculative_add_channel_participants(channel_id, new_participant_count, by_me);
+  speculative_add_channel_participants(channel_id, delta_participant_count, by_me);
 }
 
 void ContactsManager::speculative_delete_channel_participant(ChannelId channel_id, UserId deleted_user_id, bool by_me) {
@@ -10838,7 +10839,7 @@ void ContactsManager::speculative_delete_channel_participant(ChannelId channel_i
   speculative_add_channel_participants(channel_id, -1, by_me);
 }
 
-void ContactsManager::speculative_add_channel_participants(ChannelId channel_id, int32 new_participant_count,
+void ContactsManager::speculative_add_channel_participants(ChannelId channel_id, int32 delta_participant_count,
                                                            bool by_me) {
   if (by_me) {
     // Currently ignore all changes made by the current user, because they may be already counted
@@ -10846,18 +10847,22 @@ void ContactsManager::speculative_add_channel_participants(ChannelId channel_id,
     return;
   }
 
+  auto channel_full = get_channel_full_force(channel_id, "speculative_add_channel_participants");
+  auto min_count = channel_full == nullptr ? 0 : channel_full->administrator_count;
+
   auto c = get_channel_force(channel_id);
-  if (c != nullptr && c->participant_count != 0 && speculative_add_count(c->participant_count, new_participant_count)) {
+  if (c != nullptr && c->participant_count != 0 &&
+      speculative_add_count(c->participant_count, delta_participant_count, min_count)) {
     c->is_changed = true;
     update_channel(c, channel_id);
   }
 
-  auto channel_full = get_channel_full_force(channel_id, "speculative_add_channel_participants");
   if (channel_full == nullptr) {
     return;
   }
 
-  channel_full->is_changed |= speculative_add_count(channel_full->participant_count, new_participant_count);
+  channel_full->is_changed |=
+      speculative_add_count(channel_full->participant_count, delta_participant_count, min_count);
 
   if (channel_full->is_changed) {
     channel_full->speculative_version++;
@@ -10939,10 +10944,11 @@ void ContactsManager::speculative_add_channel_user(ChannelId channel_id, UserId 
     return;
   }
 
-  channel_full->is_changed |=
-      speculative_add_count(channel_full->participant_count, new_status.is_member() - old_status.is_member());
   channel_full->is_changed |= speculative_add_count(channel_full->administrator_count,
                                                     new_status.is_administrator() - old_status.is_administrator());
+  channel_full->is_changed |=
+      speculative_add_count(channel_full->participant_count, new_status.is_member() - old_status.is_member(),
+                            channel_full->administrator_count);
   channel_full->is_changed |=
       speculative_add_count(channel_full->restricted_count, new_status.is_restricted() - old_status.is_restricted());
   channel_full->is_changed |=
@@ -13413,7 +13419,7 @@ std::pair<int32, vector<DialogParticipant>> ContactsManager::search_chat_partici
     return {};
   }
 
-  auto is_dialog_participant_suitable = [this](const DialogParticipant &participant, DialogParticipantsFilter filter) {
+  auto is_dialog_participant_suitable = [this, filter](const DialogParticipant &participant) {
     switch (filter.type) {
       case DialogParticipantsFilter::Type::Contacts:
         return is_user_contact(participant.user_id);
@@ -13437,7 +13443,7 @@ std::pair<int32, vector<DialogParticipant>> ContactsManager::search_chat_partici
 
   vector<UserId> user_ids;
   for (const auto &participant : chat_full->participants) {
-    if (is_dialog_participant_suitable(participant, filter)) {
+    if (is_dialog_participant_suitable(participant)) {
       user_ids.push_back(participant.user_id);
     }
   }
@@ -13916,10 +13922,10 @@ void ContactsManager::on_chat_update(telegram_api::channel &channel, const char 
   bool is_verified = (channel.flags_ & CHANNEL_FLAG_IS_VERIFIED) != 0;
   auto restriction_reasons = get_restriction_reasons(std::move(channel.restriction_reason_));
   bool is_scam = (channel.flags_ & CHANNEL_FLAG_IS_SCAM) != 0;
-  int32 participant_count =
-      (channel.flags_ & CHANNEL_FLAG_HAS_PARTICIPANT_COUNT) != 0 ? channel.participants_count_ : 0;
+  bool have_participant_count = (channel.flags_ & CHANNEL_FLAG_HAS_PARTICIPANT_COUNT) != 0;
+  int32 participant_count = have_participant_count ? channel.participants_count_ : 0;
 
-  if (participant_count != 0) {
+  if (have_participant_count) {
     auto channel_full = get_channel_full_const(channel_id);
     if (channel_full != nullptr && channel_full->administrator_count > participant_count) {
       participant_count = channel_full->administrator_count;
@@ -14014,16 +14020,10 @@ void ContactsManager::on_chat_update(telegram_api::channel &channel, const char 
   on_update_channel_default_permissions(c, channel_id,
                                         get_restricted_rights(std::move(channel.default_banned_rights_)));
 
-  if (participant_count != 0 && participant_count != c->participant_count) {
+  bool need_update_participant_count = have_participant_count && participant_count != c->participant_count;
+  if (need_update_participant_count) {
     c->participant_count = participant_count;
     c->is_changed = true;
-
-    auto channel_full = get_channel_full(channel_id, "on_chat_update");
-    if (channel_full != nullptr && channel_full->participant_count != participant_count) {
-      channel_full->participant_count = participant_count;
-      channel_full->is_changed = true;
-      update_channel_full(channel_full, channel_id);
-    }
   }
 
   bool need_invalidate_channel_full = false;
@@ -14053,6 +14053,15 @@ void ContactsManager::on_chat_update(telegram_api::channel &channel, const char 
   }
   c->is_received_from_server = true;
   update_channel(c, channel_id);
+
+  if (need_update_participant_count) {
+    auto channel_full = get_channel_full(channel_id, "on_chat_update");
+    if (channel_full != nullptr && channel_full->participant_count != participant_count) {
+      channel_full->participant_count = participant_count;
+      channel_full->is_changed = true;
+      update_channel_full(channel_full, channel_id);
+    }
+  }
 
   if (need_invalidate_channel_full) {
     invalidate_channel_full(channel_id, false, !c->is_slow_mode_enabled);
@@ -14139,17 +14148,10 @@ void ContactsManager::on_chat_update(telegram_api::channelForbidden &channel, co
     c->is_changed = true;
   }
 
-  if (c->participant_count != 0) {
+  bool need_drop_participant_count = c->participant_count != 0;
+  if (need_drop_participant_count) {
     c->participant_count = 0;
     c->is_changed = true;
-
-    auto channel_full = get_channel_full(channel_id, "on_chat_update");
-    if (channel_full != nullptr && channel_full->participant_count != 0) {
-      channel_full->participant_count = 0;
-      channel_full->administrator_count = 0;
-      channel_full->is_changed = true;
-      update_channel_full(channel_full, channel_id);
-    }
   }
 
   if (c->cache_version != Channel::CACHE_VERSION) {
@@ -14159,6 +14161,15 @@ void ContactsManager::on_chat_update(telegram_api::channelForbidden &channel, co
   c->is_received_from_server = true;
   update_channel(c, channel_id);
 
+  if (need_drop_participant_count) {
+    auto channel_full = get_channel_full(channel_id, "on_chat_update");
+    if (channel_full != nullptr && channel_full->participant_count != 0) {
+      channel_full->participant_count = 0;
+      channel_full->administrator_count = 0;
+      channel_full->is_changed = true;
+      update_channel_full(channel_full, channel_id);
+    }
+  }
   if (need_invalidate_channel_full) {
     invalidate_channel_full(channel_id, false, !c->is_slow_mode_enabled);
   }
