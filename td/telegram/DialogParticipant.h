@@ -17,6 +17,8 @@
 
 namespace td {
 
+class Td;
+
 class RestrictedRights {
   static constexpr uint32 CAN_SEND_MESSAGES = 1 << 16;
   static constexpr uint32 CAN_SEND_MEDIA = 1 << 17;
@@ -409,6 +411,18 @@ struct DialogParticipant {
 
 StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipant &dialog_participant);
 
+struct DialogParticipants {
+  int32 total_count_ = 0;
+  vector<DialogParticipant> participants_;
+
+  DialogParticipants() = default;
+  DialogParticipants(int32 total_count, vector<DialogParticipant> &&participants)
+      : total_count_(total_count), participants_(std::move(participants)) {
+  }
+
+  td_api::object_ptr<td_api::chatMembers> get_chat_members_object(Td *td) const;
+};
+
 class ChannelParticipantsFilter {
   enum class Type : int32 { Recent, Contacts, Administrators, Search, Mention, Restricted, Banned, Bots } type;
   string query;
@@ -462,6 +476,8 @@ class DialogParticipantsFilter {
       : type(type), top_thread_message_id(top_thread_message_id) {
   }
 };
+
+StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipantsFilter &filter);
 
 DialogParticipantsFilter get_dialog_participants_filter(const tl_object_ptr<td_api::ChatMembersFilter> &filter);
 

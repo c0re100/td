@@ -100,9 +100,9 @@ class SearchStickersQuery : public Td::ResultHandler {
   string emoji_;
 
  public:
-  void send(string emoji) {
+  void send(string emoji, int32 hash) {
     emoji_ = std::move(emoji);
-    send_query(G()->net_query_creator().create(telegram_api::messages_getStickers(emoji_, 0)));
+    send_query(G()->net_query_creator().create(telegram_api::messages_getStickers(emoji_, hash)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1855,7 +1855,7 @@ std::pair<int64, FileId> StickersManager::on_get_sticker_document(
     switch (attribute->get_id()) {
       case telegram_api::documentAttributeImageSize::ID: {
         auto image_size = move_tl_object_as<telegram_api::documentAttributeImageSize>(attribute);
-        dimensions = get_dimensions(image_size->w_, image_size->h_);
+        dimensions = get_dimensions(image_size->w_, image_size->h_, "sticker documentAttributeImageSize");
         break;
       }
       case telegram_api::documentAttributeSticker::ID:
@@ -3055,16 +3055,21 @@ vector<FileId> StickersManager::search_stickers(string emoji, int32 limit, Promi
   }
 
   auto it = found_stickers_.find(emoji);
-  if (it != found_stickers_.end()) {
+  if (it != found_stickers_.end() && Time::now() < it->second.next_reload_time_) {
     promise.set_value(Unit());
-    auto result_size = min(static_cast<size_t>(limit), it->second.size());
-    return vector<FileId>(it->second.begin(), it->second.begin() + result_size);
+    const auto &sticker_ids = it->second.sticker_ids_;
+    auto result_size = min(static_cast<size_t>(limit), sticker_ids.size());
+    return vector<FileId>(sticker_ids.begin(), sticker_ids.begin() + result_size);
   }
 
   auto &promises = search_stickers_queries_[emoji];
   promises.push_back(std::move(promise));
   if (promises.size() == 1u) {
-    td_->create_handler<SearchStickersQuery>()->send(std::move(emoji));
+    int32 hash = 0;
+    if (it != found_stickers_.end()) {
+      hash = get_recent_stickers_hash(it->second.sticker_ids_);
+    }
+    td_->create_handler<SearchStickersQuery>()->send(std::move(emoji), hash);
   }
 
   return {};
@@ -3074,17 +3079,27 @@ void StickersManager::on_find_stickers_success(const string &emoji,
                                                tl_object_ptr<telegram_api::messages_Stickers> &&stickers) {
   CHECK(stickers != nullptr);
   switch (stickers->get_id()) {
-    case telegram_api::messages_stickersNotModified::ID:
-      return on_find_stickers_fail(emoji, Status::Error(500, "Receive messages.stickerNotModified"));
+    case telegram_api::messages_stickersNotModified::ID: {
+      auto it = found_stickers_.find(emoji);
+      if (it == found_stickers_.end()) {
+        return on_find_stickers_fail(emoji, Status::Error(500, "Receive messages.stickerNotModified"));
+      }
+      auto &found_stickers = it->second;
+      found_stickers.next_reload_time_ = Time::now() + found_stickers.cache_time_;
+      break;
+    }
     case telegram_api::messages_stickers::ID: {
-      auto found_stickers = move_tl_object_as<telegram_api::messages_stickers>(stickers);
-      vector<FileId> &sticker_ids = found_stickers_[emoji];
-      CHECK(sticker_ids.empty());
+      auto received_stickers = move_tl_object_as<telegram_api::messages_stickers>(stickers);
 
-      for (auto &sticker : found_stickers->stickers_) {
+      auto &found_stickers = found_stickers_[emoji];
+      found_stickers.cache_time_ = 300;
+      found_stickers.next_reload_time_ = Time::now() + found_stickers.cache_time_;
+      found_stickers.sticker_ids_.clear();
+
+      for (auto &sticker : received_stickers->stickers_) {
         FileId sticker_id = on_get_sticker_document(std::move(sticker)).second;
         if (sticker_id.is_valid()) {
-          sticker_ids.push_back(sticker_id);
+          found_stickers.sticker_ids_.push_back(sticker_id);
         }
       }
       break;
@@ -3105,7 +3120,10 @@ void StickersManager::on_find_stickers_success(const string &emoji,
 }
 
 void StickersManager::on_find_stickers_fail(const string &emoji, Status &&error) {
-  CHECK(found_stickers_.count(emoji) == 0);
+  if (found_stickers_.count(emoji) != 0) {
+    found_stickers_[emoji].cache_time_ = Random::fast(40, 80);
+    return on_find_stickers_success(emoji, make_tl_object<telegram_api::messages_stickersNotModified>());
+  }
 
   auto it = search_stickers_queries_.find(emoji);
   CHECK(it != search_stickers_queries_.end());
@@ -4555,7 +4573,8 @@ Result<std::tuple<FileId, bool, bool, bool>> StickersManager::prepare_input_file
 
   if (is_animated) {
     int32 width = for_thumbnail ? 100 : 512;
-    create_sticker(file_id, string(), PhotoSize(), get_dimensions(width, width), nullptr, true, nullptr);
+    create_sticker(file_id, string(), PhotoSize(), get_dimensions(width, width, "prepare_input_file"), nullptr, true,
+                   nullptr);
   } else {
     td_->documents_manager_->create_document(file_id, string(), PhotoSize(), "sticker.png", "image/png", false);
   }

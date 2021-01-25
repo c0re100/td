@@ -67,7 +67,6 @@
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
-#include "td/utils/tl_storers.h"
 
 #include <array>
 #include <functional>
@@ -93,56 +92,6 @@ class MessageContent;
 class MultiSequenceDispatcher;
 
 class Td;
-
-class dummyUpdate : public telegram_api::Update {
- public:
-  static constexpr int32 ID = 1234567891;
-  int32 get_id() const override {
-    return ID;
-  }
-
-  void store(TlStorerUnsafe &s) const override {
-    UNREACHABLE();
-  }
-
-  void store(TlStorerCalcLength &s) const override {
-    UNREACHABLE();
-  }
-
-  void store(TlStorerToString &s, const char *field_name) const override;
-};
-
-class updateSentMessage : public telegram_api::Update {
- public:
-  int64 random_id_;
-  MessageId message_id_;
-  int32 date_;
-
-  updateSentMessage(int64 random_id, MessageId message_id, int32 date)
-      : random_id_(random_id), message_id_(message_id), date_(date) {
-  }
-
-  static constexpr int32 ID = 1234567890;
-  int32 get_id() const override {
-    return ID;
-  }
-
-  void store(TlStorerUnsafe &s) const override {
-    UNREACHABLE();
-  }
-
-  void store(TlStorerCalcLength &s) const override {
-    UNREACHABLE();
-  }
-
-  void store(TlStorerToString &s, const char *field_name) const override {
-    s.store_class_begin(field_name, "updateSentMessage");
-    s.store_field("random_id", random_id_);
-    s.store_field("message_id", message_id_.get());
-    s.store_field("date", date_);
-    s.store_class_end();
-  }
-};
 
 class MessagesManager : public Actor {
  public:
@@ -528,10 +477,8 @@ class MessagesManager : public Actor {
   DialogParticipant get_dialog_participant(DialogId dialog_id, UserId user_id, int64 &random_id, bool force,
                                            Promise<Unit> &&promise);
 
-  std::pair<int32, vector<DialogParticipant>> search_dialog_participants(DialogId dialog_id, const string &query,
-                                                                         int32 limit, DialogParticipantsFilter filter,
-                                                                         int64 &random_id, bool without_bot_info,
-                                                                         bool force, Promise<Unit> &&promise);
+  void search_dialog_participants(DialogId dialog_id, const string &query, int32 limit, DialogParticipantsFilter filter,
+                                  bool without_bot_info, Promise<DialogParticipants> &&promise);
 
   vector<DialogAdministrator> get_dialog_administrators(DialogId dialog_id, int left_tries, Promise<Unit> &&promise);
 
@@ -788,10 +735,10 @@ class MessagesManager : public Actor {
   tl_object_ptr<td_api::messages> get_messages_object(int32 total_count, const vector<FullMessageId> &full_message_ids,
                                                       bool skip_not_found);
 
-  int32 get_min_pending_pts() const;
+  void process_pts_update(tl_object_ptr<telegram_api::Update> &&update);
 
-  void add_pending_update(tl_object_ptr<telegram_api::Update> &&update, int32 new_pts, int32 pts_count,
-                          bool force_apply, Promise<Unit> &&promise, const char *source);
+  void skip_old_pending_pts_update(tl_object_ptr<telegram_api::Update> &&update, int32 new_pts, int32 old_pts,
+                                   int32 pts_count, const char *source);
 
   void add_pending_channel_update(DialogId dialog_id, tl_object_ptr<telegram_api::Update> &&update, int32 new_pts,
                                   int32 pts_count, Promise<Unit> &&promise, const char *source,
@@ -801,7 +748,7 @@ class MessagesManager : public Actor {
 
   bool is_update_about_username_change_received(DialogId dialog_id) const;
 
-  void on_dialog_bots_updated(DialogId dialog_id, vector<UserId> bot_user_ids);
+  void on_dialog_bots_updated(DialogId dialog_id, vector<UserId> bot_user_ids, bool from_database);
 
   void on_dialog_photo_updated(DialogId dialog_id);
   void on_dialog_title_updated(DialogId dialog_id);
@@ -1728,7 +1675,7 @@ class MessagesManager : public Actor {
 
   static constexpr const char *DELETE_MESSAGE_USER_REQUEST_SOURCE = "user request";
 
-  static constexpr bool DROP_UPDATES = false;
+  static constexpr bool DROP_SEND_MESSAGE_UPDATES = false;
 
   static FullMessageId get_full_message_id(const tl_object_ptr<telegram_api::Message> &message_ptr, bool is_scheduled);
 
@@ -1754,6 +1701,9 @@ class MessagesManager : public Actor {
 
   DialogId get_my_dialog_id() const;
 
+  void on_resolve_secret_chat_message_via_bot_username(const string &via_bot_username, MessageInfo *message_info_ptr,
+                                                       Promise<Unit> &&promise);
+
   void add_secret_message(unique_ptr<PendingSecretMessage> pending_secret_message, Promise<Unit> lock_promise = Auto());
 
   void finish_add_secret_message(unique_ptr<PendingSecretMessage> pending_secret_message);
@@ -1768,6 +1718,8 @@ class MessagesManager : public Actor {
   std::pair<DialogId, unique_ptr<Message>> create_message(MessageInfo &&message_info, bool is_channel_message);
 
   MessageId find_old_message_id(DialogId dialog_id, MessageId message_id) const;
+
+  void delete_update_message_id(DialogId dialog_id, MessageId message_id);
 
   FullMessageId on_get_message(MessageInfo &&message_info, bool from_update, bool is_channel_message,
                                bool have_previous, bool have_next, const char *source);
@@ -1825,10 +1777,6 @@ class MessagesManager : public Actor {
                                              MessageId &reply_to_message_id);
 
   bool can_set_game_score(DialogId dialog_id, const Message *m) const;
-
-  bool check_update_dialog_id(const tl_object_ptr<telegram_api::Update> &update, DialogId dialog_id);
-
-  void process_update(tl_object_ptr<telegram_api::Update> &&update);
 
   void process_channel_update(tl_object_ptr<telegram_api::Update> &&update);
 
@@ -2062,7 +2010,7 @@ class MessagesManager : public Actor {
 
   static void set_message_id(unique_ptr<Message> &message, MessageId message_id);
 
-  bool is_allowed_useless_update(const tl_object_ptr<telegram_api::Update> &update) const;
+  static bool is_allowed_useless_update(const tl_object_ptr<telegram_api::Update> &update);
 
   bool is_message_auto_read(DialogId dialog_id, bool is_outgoing) const;
 
@@ -2565,9 +2513,8 @@ class MessagesManager : public Actor {
   DialogFolder *get_dialog_folder(FolderId folder_id);
   const DialogFolder *get_dialog_folder(FolderId folder_id) const;
 
-  std::pair<int32, vector<DialogParticipant>> search_private_chat_participants(UserId my_user_id, UserId peer_user_id,
-                                                                               const string &query, int32 limit,
-                                                                               DialogParticipantsFilter filter) const;
+  DialogParticipants search_private_chat_participants(UserId my_user_id, UserId peer_user_id, const string &query,
+                                                      int32 limit, DialogParticipantsFilter filter) const;
 
   static unique_ptr<Message> *treap_find_message(unique_ptr<Message> *v, MessageId message_id);
   static const unique_ptr<Message> *treap_find_message(const unique_ptr<Message> *v, MessageId message_id);
@@ -2789,18 +2736,6 @@ class MessagesManager : public Actor {
 
   void load_notification_settings();
 
-  void set_get_difference_timeout(double timeout);
-
-  void skip_old_pending_update(tl_object_ptr<telegram_api::Update> &&update, int32 new_pts, int32 old_pts,
-                               int32 pts_count, const char *source);
-
-  void process_pending_updates();
-
-  void drop_pending_updates();
-
-  void postpone_pts_update(tl_object_ptr<telegram_api::Update> &&update, int32 pts, int32 pts_count,
-                           Promise<Unit> &&promise);
-
   static string get_channel_pts_key(DialogId dialog_id);
 
   int32 load_channel_pts(DialogId dialog_id) const;
@@ -3013,10 +2948,7 @@ class MessagesManager : public Actor {
   std::shared_ptr<UploadThumbnailCallback> upload_thumbnail_callback_;
   std::shared_ptr<UploadDialogPhotoCallback> upload_dialog_photo_callback_;
 
-  int32 accumulated_pts_count_ = 0;
-  int32 accumulated_pts_ = -1;
-  Timeout pts_gap_timeout_;
-  double last_pts_jump_warning_time_ = 0;
+  double last_channel_pts_jump_warning_time_ = 0;
 
   std::unordered_map<FileId, std::pair<FullMessageId, FileId>, FileIdHash>
       being_uploaded_files_;  // file_id -> message, thumbnail_file_id
@@ -3115,8 +3047,6 @@ class MessagesManager : public Actor {
   bool running_get_difference_ = false;  // true after before_get_difference and false after after_get_difference
 
   std::unordered_map<DialogId, unique_ptr<Dialog>, DialogIdHash> dialogs_;
-  std::multimap<int32, PendingPtsUpdate> pending_pts_updates_;
-  std::multimap<int32, PendingPtsUpdate> postponed_pts_updates_;
 
   std::unordered_set<DialogId, DialogIdHash>
       loaded_dialogs_;  // dialogs loaded from database, but not added to dialogs_

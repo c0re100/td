@@ -732,7 +732,7 @@ class GetGroupFullInfoRequest : public RequestActor<> {
   ChatId chat_id_;
 
   void do_run(Promise<Unit> &&promise) override {
-    td->contacts_manager_->load_chat_full(chat_id_, get_tries() < 2, std::move(promise));
+    td->contacts_manager_->load_chat_full(chat_id_, get_tries() < 2, std::move(promise), "getBasicGroupFullInfo");
   }
 
   void do_send_result() override {
@@ -1961,43 +1961,6 @@ class GetChatMemberRequest : public RequestActor<> {
   }
 };
 
-class SearchChatMembersRequest : public RequestActor<> {
-  DialogId dialog_id_;
-  string query_;
-  int32 limit_;
-  DialogParticipantsFilter filter_;
-  int64 random_id_ = 0;
-
-  std::pair<int32, vector<DialogParticipant>> participants_;
-
-  void do_run(Promise<Unit> &&promise) override {
-    participants_ = td->messages_manager_->search_dialog_participants(dialog_id_, query_, limit_, filter_, random_id_,
-                                                                      false, get_tries() < 3, std::move(promise));
-  }
-
-  void do_send_result() override {
-    // TODO create function get_chat_members_object
-    vector<tl_object_ptr<td_api::chatMember>> result;
-    result.reserve(participants_.second.size());
-    for (auto participant : participants_.second) {
-      result.push_back(td->contacts_manager_->get_chat_member_object(participant));
-    }
-
-    send_result(make_tl_object<td_api::chatMembers>(participants_.first, std::move(result)));
-  }
-
- public:
-  SearchChatMembersRequest(ActorShared<Td> td, uint64 request_id, int64 dialog_id, string &&query, int32 limit,
-                           DialogParticipantsFilter filter)
-      : RequestActor(std::move(td), request_id)
-      , dialog_id_(dialog_id)
-      , query_(std::move(query))
-      , limit_(limit)
-      , filter_(filter) {
-    set_tries(3);
-  }
-};
-
 class GetChatAdministratorsRequest : public RequestActor<> {
   DialogId dialog_id_;
 
@@ -2275,43 +2238,6 @@ class GetRecentInlineBotsRequest : public RequestActor<> {
 
  public:
   GetRecentInlineBotsRequest(ActorShared<Td> td, uint64 request_id) : RequestActor(std::move(td), request_id) {
-  }
-};
-
-class GetSupergroupMembersRequest : public RequestActor<> {
-  ChannelId channel_id_;
-  tl_object_ptr<td_api::SupergroupMembersFilter> filter_;
-  int32 offset_;
-  int32 limit_;
-  int64 random_id_ = 0;
-
-  std::pair<int32, vector<DialogParticipant>> participants_;
-
-  void do_run(Promise<Unit> &&promise) override {
-    participants_ = td->contacts_manager_->get_channel_participants(
-        channel_id_, filter_, string(), offset_, limit_, -1, random_id_, false, get_tries() < 3, std::move(promise));
-  }
-
-  void do_send_result() override {
-    // TODO create function get_chat_members_object
-    vector<tl_object_ptr<td_api::chatMember>> result;
-    result.reserve(participants_.second.size());
-    for (auto participant : participants_.second) {
-      result.push_back(td->contacts_manager_->get_chat_member_object(participant));
-    }
-
-    send_result(make_tl_object<td_api::chatMembers>(participants_.first, std::move(result)));
-  }
-
- public:
-  GetSupergroupMembersRequest(ActorShared<Td> td, uint64 request_id, int32 channel_id,
-                              tl_object_ptr<td_api::SupergroupMembersFilter> &&filter, int32 offset, int32 limit)
-      : RequestActor(std::move(td), request_id)
-      , channel_id_(channel_id)
-      , filter_(std::move(filter))
-      , offset_(offset)
-      , limit_(limit) {
-    set_tries(3);
   }
 };
 
@@ -3260,7 +3186,7 @@ void Td::on_get_promo_data(Result<telegram_api::object_ptr<telegram_api::help_Pr
 }
 
 void Td::schedule_get_promo_data(int32 expires_in) {
-  expires_in = clamp(expires_in, 60, 86400);
+  expires_in = expires_in <= 0 ? 0 : clamp(expires_in, 60, 86400);
   if (!close_flag_ && auth_manager_->is_authorized() && !auth_manager_->is_bot()) {
     LOG(INFO) << "Schedule getPromoData in " << expires_in;
     alarm_timeout_.set_timeout_in(PROMO_DATA_ALARM_ID, expires_in);
@@ -4261,10 +4187,10 @@ Status Td::init(DbKey key) {
   }
 
   if (is_online_) {
-    if (auth_manager_->is_bot()) {
-      send_closure(G()->state_manager(), &StateManager::on_online, false);
-    }
     on_online_updated(true, true);
+  }
+  if (auth_manager_->is_bot()) {
+    send_closure(G()->state_manager(), &StateManager::on_online, true);
   }
 
   // Send binlog events to managers
@@ -6341,8 +6267,18 @@ void Td::on_request(uint64 id, const td_api::getChatMember &request) {
 
 void Td::on_request(uint64 id, td_api::searchChatMembers &request) {
   CLEAN_INPUT_STRING(request.query_);
-  CREATE_REQUEST(SearchChatMembersRequest, request.chat_id_, std::move(request.query_), request.limit_,
-                 get_dialog_participants_filter(request.filter_));
+  CREATE_REQUEST_PROMISE();
+  auto query_promise =
+      PromiseCreator::lambda([promise = std::move(promise), td = this](Result<DialogParticipants> result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+        } else {
+          promise.set_value(result.ok().get_chat_members_object(td));
+        }
+      });
+  messages_manager_->search_dialog_participants(DialogId(request.chat_id_), request.query_, request.limit_,
+                                                get_dialog_participants_filter(request.filter_), false,
+                                                std::move(query_promise));
 }
 
 void Td::on_request(uint64 id, td_api::getChatAdministrators &request) {
@@ -6705,8 +6641,17 @@ void Td::on_request(uint64 id, const td_api::reportSupergroupSpam &request) {
 }
 
 void Td::on_request(uint64 id, td_api::getSupergroupMembers &request) {
-  CREATE_REQUEST(GetSupergroupMembersRequest, request.supergroup_id_, std::move(request.filter_), request.offset_,
-                 request.limit_);
+  CREATE_REQUEST_PROMISE();
+  auto query_promise =
+      PromiseCreator::lambda([promise = std::move(promise), td = this](Result<DialogParticipants> result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+        } else {
+          promise.set_value(result.ok().get_chat_members_object(td));
+        }
+      });
+  contacts_manager_->get_channel_participants(ChannelId(request.supergroup_id_), std::move(request.filter_), string(),
+                                              request.offset_, request.limit_, -1, false, std::move(query_promise));
 }
 
 void Td::on_request(uint64 id, const td_api::deleteSupergroup &request) {

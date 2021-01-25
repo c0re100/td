@@ -6,8 +6,10 @@
 //
 #include "td/telegram/DialogParticipant.h"
 
+#include "td/telegram/ContactsManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/misc.h"
+#include "td/telegram/Td.h"
 
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
@@ -713,6 +715,16 @@ StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipant
                         << ']';
 }
 
+td_api::object_ptr<td_api::chatMembers> DialogParticipants::get_chat_members_object(Td *td) const {
+  vector<tl_object_ptr<td_api::chatMember>> chat_members;
+  chat_members.reserve(participants_.size());
+  for (auto &participant : participants_) {
+    chat_members.push_back(td->contacts_manager_->get_chat_member_object(participant));
+  }
+
+  return td_api::make_object<td_api::chatMembers>(total_count_, std::move(chat_members));
+}
+
 tl_object_ptr<telegram_api::ChannelParticipantsFilter>
 ChannelParticipantsFilter::get_input_channel_participants_filter() const {
   switch (type) {
@@ -811,6 +823,28 @@ StringBuilder &operator<<(StringBuilder &string_builder, const ChannelParticipan
     case ChannelParticipantsFilter::Type::Banned:
       return string_builder << "Banned \"" << filter.query << '"';
     case ChannelParticipantsFilter::Type::Bots:
+      return string_builder << "Bots";
+    default:
+      UNREACHABLE();
+      return string_builder;
+  }
+}
+
+StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipantsFilter &filter) {
+  switch (filter.type) {
+    case DialogParticipantsFilter::Type::Contacts:
+      return string_builder << "Contacts";
+    case DialogParticipantsFilter::Type::Administrators:
+      return string_builder << "Administrators";
+    case DialogParticipantsFilter::Type::Members:
+      return string_builder << "Members";
+    case DialogParticipantsFilter::Type::Restricted:
+      return string_builder << "Restricted";
+    case DialogParticipantsFilter::Type::Banned:
+      return string_builder << "Banned";
+    case DialogParticipantsFilter::Type::Mention:
+      return string_builder << "Mention";
+    case DialogParticipantsFilter::Type::Bots:
       return string_builder << "Bots";
     default:
       UNREACHABLE();
