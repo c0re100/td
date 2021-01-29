@@ -106,10 +106,10 @@ void SecretChatsManager::create_chat(int32 user_id, int64 user_access_hash, Prom
   send_closure(actor, &SecretChatActor::create_chat, user_id, user_access_hash, random_id, std::move(promise));
 }
 
-void SecretChatsManager::cancel_chat(SecretChatId secret_chat_id, Promise<> promise) {
+void SecretChatsManager::cancel_chat(SecretChatId secret_chat_id, bool delete_history, Promise<> promise) {
   auto actor = get_chat_actor(secret_chat_id.get());
   auto safe_promise = SafePromise<>(std::move(promise), Unit());
-  send_closure(actor, &SecretChatActor::cancel_chat, std::move(safe_promise));
+  send_closure(actor, &SecretChatActor::cancel_chat, delete_history, false, std::move(safe_promise));
 }
 
 void SecretChatsManager::send_message(SecretChatId secret_chat_id, tl_object_ptr<secret_api::decryptedMessage> message,
@@ -235,8 +235,9 @@ void SecretChatsManager::replay_binlog_event(BinlogEvent &&binlog_event) {
     case log_event::SecretChatEvent::Type::CreateSecretChat:
       return replay_create_chat(
           unique_ptr<log_event::CreateSecretChat>(static_cast<log_event::CreateSecretChat *>(message.release())));
+    default:
+      LOG(FATAL) << "Unknown log event type " << tag("type", format::as_hex(static_cast<int32>(message->get_type())));
   }
-  LOG(FATAL) << "Unknown log event type " << tag("type", format::as_hex(static_cast<int32>(message->get_type())));
 }
 
 void SecretChatsManager::binlog_replay_finish() {
@@ -372,9 +373,9 @@ unique_ptr<SecretChatActor::Context> SecretChatsManager::make_secret_chat_contex
       send_closure(G()->messages_manager(), &MessagesManager::delete_secret_messages, secret_chat_id_,
                    std::move(random_ids), std::move(promise));
     }
-    void on_flush_history(MessageId message_id, Promise<> promise) override {
-      send_closure(G()->messages_manager(), &MessagesManager::delete_secret_chat_history, secret_chat_id_, message_id,
-                   std::move(promise));
+    void on_flush_history(bool remove_from_dialog_list, MessageId message_id, Promise<> promise) override {
+      send_closure(G()->messages_manager(), &MessagesManager::delete_secret_chat_history, secret_chat_id_,
+                   remove_from_dialog_list, message_id, std::move(promise));
     }
     void on_read_message(int64 random_id, Promise<> promise) override {
       send_closure(G()->messages_manager(), &MessagesManager::open_secret_message, secret_chat_id_, random_id,

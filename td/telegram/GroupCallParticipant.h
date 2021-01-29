@@ -19,19 +19,26 @@ class ContactsManager;
 
 struct GroupCallParticipant {
   UserId user_id;
-  int32 source = 0;
+  int32 audio_source = 0;
   int32 joined_date = 0;
   int32 active_date = 0;
+  int32 volume_level = 10000;
   bool is_muted = false;
   bool can_self_unmute = false;
+  bool is_muted_only_for_self = false;
 
-  bool can_be_muted = false;
-  bool can_be_unmuted = false;
+  bool can_be_muted_for_all_users = false;
+  bool can_be_unmuted_for_all_users = false;
+  bool can_be_muted_only_for_self = false;
+  bool can_be_unmuted_only_for_self = false;
 
   bool is_just_joined = false;
   bool is_speaking = false;
   int32 local_active_date = 0;
   int64 order = 0;
+
+  static constexpr int32 MIN_VOLUME_LEVEL = 1;
+  static constexpr int32 MAX_VOLUME_LEVEL = 20000;
 
   GroupCallParticipant() = default;
 

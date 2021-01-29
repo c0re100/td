@@ -462,7 +462,7 @@ void FileNode::on_info_flushed() {
   info_changed_flag_ = false;
 }
 
-string FileNode::suggested_name() const {
+string FileNode::suggested_path() const {
   if (!remote_name_.empty()) {
     return remote_name_;
   }
@@ -681,8 +681,8 @@ const string &FileView::remote_name() const {
   return node_->remote_name_;
 }
 
-string FileView::suggested_name() const {
-  return node_->suggested_name();
+string FileView::suggested_path() const {
+  return node_->suggested_path();
 }
 
 DialogId FileView::owner_dialog_id() const {
@@ -860,7 +860,7 @@ string FileManager::get_file_name(FileType file_type, Slice path) {
       break;
     case FileType::VoiceNote:
       if (extension != "ogg" && extension != "oga" && extension != "mp3" && extension != "mpeg3" &&
-          extension != "m4a") {
+          extension != "m4a" && extension != "opus") {
         return fix_file_extension(file_name, "voice", "oga");
       }
       break;
@@ -1605,6 +1605,7 @@ Result<FileId> FileManager::merge(FileId x_file_id, FileId y_file_id, bool no_sy
   }
   node->need_load_from_pmc_ |= other_node->need_load_from_pmc_;
   node->can_search_locally_ &= other_node->can_search_locally_;
+  node->upload_prefer_small_ |= other_node->upload_prefer_small_;
 
   if (drop_last_successful_force_reupload_time) {
     node->last_successful_force_reupload_time_ = -1e10;
@@ -1984,7 +1985,7 @@ bool FileManager::set_content(FileId file_id, BufferSlice bytes) {
   node->download_id_ = id;
   node->is_download_started_ = true;
   send_closure(file_load_manager_, &FileLoadManager::from_bytes, id, node->remote_.full.value().file_type_,
-               std::move(bytes), node->suggested_name());
+               std::move(bytes), node->suggested_path());
   return true;
 }
 
@@ -2301,7 +2302,7 @@ void FileManager::run_download(FileNodePtr node, bool force_update_priority) {
   node->download_id_ = id;
   node->is_download_started_ = false;
   LOG(INFO) << "Run download of file " << file_id << " of size " << node->size_ << " from "
-            << node->remote_.full.value() << " with suggested name " << node->suggested_name() << " and encyption key "
+            << node->remote_.full.value() << " with suggested name " << node->suggested_path() << " and encyption key "
             << node->encryption_key_;
   auto download_offset = node->download_offset_;
   auto download_limit = node->download_limit_;
@@ -2312,19 +2313,20 @@ void FileManager::run_download(FileNodePtr node, bool force_update_priority) {
     download_offset = 0;
   }
   send_closure(file_load_manager_, &FileLoadManager::download, id, node->remote_.full.value(), node->local_,
-               node->size_, node->suggested_name(), node->encryption_key_, node->can_search_locally_, download_offset,
+               node->size_, node->suggested_path(), node->encryption_key_, node->can_search_locally_, download_offset,
                download_limit, priority);
 }
 
 class FileManager::ForceUploadActor : public Actor {
  public:
   ForceUploadActor(FileManager *file_manager, FileId file_id, std::shared_ptr<FileManager::UploadCallback> callback,
-                   int32 new_priority, uint64 upload_order, ActorShared<> parent)
+                   int32 new_priority, uint64 upload_order, bool prefer_small, ActorShared<> parent)
       : file_manager_(file_manager)
       , file_id_(file_id)
       , callback_(std::move(callback))
       , new_priority_(new_priority)
       , upload_order_(upload_order)
+      , prefer_small_(prefer_small)
       , parent_(std::move(parent)) {
   }
 
@@ -2334,9 +2336,11 @@ class FileManager::ForceUploadActor : public Actor {
   std::shared_ptr<FileManager::UploadCallback> callback_;
   int32 new_priority_;
   uint64 upload_order_;
+  bool prefer_small_;
   ActorShared<> parent_;
   bool is_active_{false};
   int attempt_{0};
+
   class UploadCallback : public FileManager::UploadCallback {
    public:
     explicit UploadCallback(ActorId<ForceUploadActor> callback) : callback_(std::move(callback)) {
@@ -2433,7 +2437,7 @@ class FileManager::ForceUploadActor : public Actor {
     is_active_ = true;
     attempt_++;
     send_closure(G()->file_manager(), &FileManager::resume_upload, file_id_, std::vector<int>(), create_callback(),
-                 new_priority_, upload_order_, attempt_ == 2);
+                 new_priority_, upload_order_, attempt_ == 2, prefer_small_);
   }
 
   void tear_down() override {
@@ -2452,7 +2456,7 @@ void FileManager::on_force_reupload_success(FileId file_id) {
 }
 
 void FileManager::resume_upload(FileId file_id, std::vector<int> bad_parts, std::shared_ptr<UploadCallback> callback,
-                                int32 new_priority, uint64 upload_order, bool force) {
+                                int32 new_priority, uint64 upload_order, bool force, bool prefer_small) {
   auto node = get_sync_file_node(file_id);
   if (!node) {
     LOG(INFO) << "File " << file_id << " not found";
@@ -2472,7 +2476,7 @@ void FileManager::resume_upload(FileId file_id, std::vector<int> bad_parts, std:
     }
 
     create_actor<ForceUploadActor>("ForceUploadActor", this, file_id, std::move(callback), new_priority, upload_order,
-                                   context_->create_reference())
+                                   prefer_small, context_->create_reference())
         .release();
     return;
   }
@@ -2480,6 +2484,9 @@ void FileManager::resume_upload(FileId file_id, std::vector<int> bad_parts, std:
 
   if (force) {
     node->remote_.is_full_alive = false;
+  }
+  if (prefer_small) {
+    node->upload_prefer_small_ = true;
   }
   if (node->upload_pause_ == file_id) {
     node->set_upload_pause(FileId());
@@ -2660,7 +2667,7 @@ void FileManager::run_generate(FileNodePtr node) {
   QueryId id = queries_container_.create(Query{file_id, Query::Type::Generate});
   node->generate_id_ = id;
   send_closure(file_generate_manager_, &FileGenerateManager::generate_file, id, *node->generate_, node->local_,
-               node->suggested_name(), [file_manager = this, id] {
+               node->suggested_path(), [file_manager = this, id] {
                  class Callback : public FileGenerateCallback {
                    ActorId<FileManager> actor_;
                    uint64 query_id_;
@@ -2790,10 +2797,15 @@ void FileManager::run_upload(FileNodePtr node, std::vector<int> bad_parts) {
   auto new_priority = narrow_cast<int8>(bad_parts.empty() ? -priority : priority);
   td::remove_if(bad_parts, [](auto part_id) { return part_id < 0; });
 
+  auto expected_size = file_view.expected_size(true);
+  if (node->upload_prefer_small_ && (10 << 20) < expected_size && expected_size < (30 << 20)) {
+    expected_size = 10 << 20;
+  }
+
   QueryId id = queries_container_.create(Query{file_id, Query::Type::Upload});
   node->upload_id_ = id;
   send_closure(file_load_manager_, &FileLoadManager::upload, id, node->local_, node->remote_.partial_or_empty(),
-               file_view.expected_size(true), node->encryption_key_, new_priority, std::move(bad_parts));
+               expected_size, node->encryption_key_, new_priority, std::move(bad_parts));
 
   LOG(INFO) << "File " << file_id << " upload request has sent to FileLoadManager";
 }
@@ -3162,6 +3174,70 @@ Result<FileId> FileManager::get_map_thumbnail_file_id(Location location, int32 z
       FileLocationSource::FromUser, string(), std::move(conversion), owner_dialog_id, 0);
 }
 
+FileType FileManager::guess_file_type(const tl_object_ptr<td_api::InputFile> &file) {
+  if (file == nullptr) {
+    return FileType::Temp;
+  }
+
+  auto guess_file_type_by_path = [](const string &file_path) {
+    PathView path_view(file_path);
+    auto file_name = path_view.file_name();
+    auto extension = path_view.extension();
+    if (extension == "jpg" || extension == "jpeg") {
+      return FileType::Photo;
+    }
+    if (extension == "ogg" || extension == "oga" || extension == "opus") {
+      return FileType::VoiceNote;
+    }
+    if (extension == "3gp" || extension == "mov") {
+      return FileType::Video;
+    }
+    if (extension == "mp3" || extension == "mpeg3" || extension == "m4a") {
+      return FileType::Audio;
+    }
+    if (extension == "webp" || extension == "tgs") {
+      return FileType::Sticker;
+    }
+    if (extension == "gif") {
+      return FileType::Animation;
+    }
+    if (extension == "mp4" || extension == "mpeg4") {
+      return to_lower(file_name).find("-gif-") != string::npos ? FileType::Animation : FileType::Video;
+    }
+    return FileType::Document;
+  };
+
+  switch (file->get_id()) {
+    case td_api::inputFileLocal::ID:
+      return guess_file_type_by_path(static_cast<const td_api::inputFileLocal *>(file.get())->path_);
+    case td_api::inputFileId::ID: {
+      FileId file_id(static_cast<const td_api::inputFileId *>(file.get())->id_, 0);
+      auto file_view = get_file_view(file_id);
+      if (file_view.empty()) {
+        return FileType::Temp;
+      }
+      return file_view.get_type();
+    }
+    case td_api::inputFileRemote::ID: {
+      const string &file_persistent_id = static_cast<const td_api::inputFileRemote *>(file.get())->id_;
+      Result<FileId> r_file_id = from_persistent_id(file_persistent_id, FileType::Temp);
+      if (r_file_id.is_error()) {
+        return FileType::Temp;
+      }
+      auto file_view = get_file_view(r_file_id.ok());
+      if (file_view.empty()) {
+        return FileType::Temp;
+      }
+      return file_view.get_type();
+    }
+    case td_api::inputFileGenerated::ID:
+      return guess_file_type_by_path(static_cast<const td_api::inputFileGenerated *>(file.get())->original_path_);
+    default:
+      UNREACHABLE();
+      return FileType::Temp;
+  }
+}
+
 vector<tl_object_ptr<telegram_api::InputDocument>> FileManager::get_input_documents(const vector<FileId> &file_ids) {
   vector<tl_object_ptr<telegram_api::InputDocument>> result;
   result.reserve(file_ids.size());
@@ -3414,7 +3490,7 @@ void FileManager::on_upload_ok(QueryId query_id, FileType file_type, const Parti
   file_info->download_priority_ = 0;
 
   FileView file_view(file_node);
-  string file_name = get_file_name(file_type, file_view.suggested_name());
+  string file_name = get_file_name(file_type, file_view.suggested_path());
 
   if (file_view.is_encrypted_secret()) {
     tl_object_ptr<telegram_api::InputEncryptedFile> input_file;

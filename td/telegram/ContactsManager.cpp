@@ -14,6 +14,8 @@
 #include "td/telegram/ConfigShared.h"
 #include "td/telegram/Dependencies.h"
 #include "td/telegram/DeviceTokenManager.h"
+#include "td/telegram/DialogInviteLink.h"
+#include "td/telegram/DialogLocation.h"
 #include "td/telegram/FileReferenceManager.h"
 #include "td/telegram/files/FileManager.h"
 #include "td/telegram/files/FileType.h"
@@ -30,7 +32,9 @@
 #include "td/telegram/PasswordManager.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/Photo.hpp"
+#include "td/telegram/RestrictionReason.h"
 #include "td/telegram/SecretChatActor.h"
+#include "td/telegram/SecretChatsManager.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/StickerSetId.hpp"
 #include "td/telegram/StickersManager.h"
@@ -1438,6 +1442,34 @@ class ReportChannelSpamQuery : public Td::ResultHandler {
   }
 };
 
+class DeleteChatQuery : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit DeleteChatQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(ChatId chat_id) {
+    send_query(G()->net_query_creator().create(telegram_api::messages_deleteChat(chat_id.get())));
+  }
+
+  void on_result(uint64 id, BufferSlice packet) override {
+    auto result_ptr = fetch_result<telegram_api::messages_deleteChat>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(id, result_ptr.move_as_error());
+    }
+
+    LOG(INFO) << "Receive result for DeleteChatQuery: " << result_ptr.ok();
+    td->updates_manager_->get_difference("DeleteChatQuery");
+    td->updates_manager_->on_get_updates(make_tl_object<telegram_api::updates>(Auto(), Auto(), Auto(), 0, 0),
+                                         std::move(promise_));
+  }
+
+  void on_error(uint64 id, Status status) override {
+    promise_.set_error(std::move(status));
+  }
+};
+
 class DeleteChannelQuery : public Td::ResultHandler {
   Promise<Unit> promise_;
   ChannelId channel_id_;
@@ -1536,20 +1568,38 @@ class EditChatAdminQuery : public Td::ResultHandler {
 };
 
 class ExportChatInviteLinkQuery : public Td::ResultHandler {
-  Promise<Unit> promise_;
-  ChatId chat_id_;
+  Promise<td_api::object_ptr<td_api::chatInviteLink>> promise_;
+  DialogId dialog_id_;
 
  public:
-  explicit ExportChatInviteLinkQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  explicit ExportChatInviteLinkQuery(Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise)
+      : promise_(std::move(promise)) {
   }
 
-  void send(ChatId chat_id) {
-    chat_id_ = chat_id;
-    auto input_peer = td->messages_manager_->get_input_peer(DialogId(chat_id), AccessRights::Read);
+  void send(DialogId dialog_id, int32 expire_date, int32 usage_limit, bool is_permanent) {
+    dialog_id_ = dialog_id;
+    auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
     if (input_peer == nullptr) {
       return on_error(0, Status::Error(400, "Can't access the chat"));
     }
+    CHECK(is_permanent);
+
+    /*
+    int32 flags = 0;
+    if (expire_date > 0) {
+      flags |= telegram_api::messages_exportChatInvite::EXPIRE_DATE_MASK;
+    }
+    if (usage_limit > 0) {
+      flags |= telegram_api::messages_exportChatInvite::USAGE_LIMIT_MASK;
+    }
+    if (is_permanent) {
+      flags |= telegram_api::messages_exportChatInvite::LEGACY_REVOKE_PERMANENT_MASK;
+    }
+    */
+
     send_query(G()->net_query_creator().create(telegram_api::messages_exportChatInvite(std::move(input_peer))));
+    // send_query(G()->net_query_creator().create(telegram_api::messages_exportChatInvite(
+    //     flags, false /*ignored*/, std::move(input_peer), expire_date, usage_limit)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1561,53 +1611,273 @@ class ExportChatInviteLinkQuery : public Td::ResultHandler {
     auto ptr = result_ptr.move_as_ok();
     LOG(INFO) << "Receive result for ExportChatInviteQuery: " << to_string(ptr);
 
-    td->contacts_manager_->on_get_chat_invite_link(chat_id_, std::move(ptr));
-    promise_.set_value(Unit());
+    DialogInviteLink invite_link(std::move(ptr));
+    if (!invite_link.is_valid()) {
+      return on_error(id, Status::Error(500, "Receive invalid invite link"));
+    }
+    if (invite_link.get_administrator_user_id() != td->contacts_manager_->get_my_id()) {
+      return on_error(id, Status::Error(500, "Receive invalid invite link creator"));
+    }
+    if (invite_link.is_permanent()) {
+      td->contacts_manager_->on_get_permanent_dialog_invite_link(dialog_id_, invite_link);
+    }
+    promise_.set_value(invite_link.get_chat_invite_link_object(td->contacts_manager_.get()));
   }
 
   void on_error(uint64 id, Status status) override {
+    td->messages_manager_->on_get_dialog_error(dialog_id_, status, "ExportChatInviteLinkQuery");
     promise_.set_error(std::move(status));
-    td->updates_manager_->get_difference("ExportChatInviteLinkQuery");
   }
 };
-
-class ExportChannelInviteLinkQuery : public Td::ResultHandler {
-  Promise<Unit> promise_;
-  ChannelId channel_id_;
+/*
+class EditChatInviteLinkQuery : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::chatInviteLink>> promise_;
+  DialogId dialog_id_;
 
  public:
-  explicit ExportChannelInviteLinkQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  explicit EditChatInviteLinkQuery(Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise)
+      : promise_(std::move(promise)) {
   }
 
-  void send(ChannelId channel_id) {
-    channel_id_ = channel_id;
-    auto input_peer = td->messages_manager_->get_input_peer(DialogId(channel_id), AccessRights::Read);
+  void send(DialogId dialog_id, const string &invite_link, int32 expire_date, int32 usage_limit, bool is_revoked) {
+    dialog_id_ = dialog_id;
+    auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
     if (input_peer == nullptr) {
       return on_error(0, Status::Error(400, "Can't access the chat"));
     }
-    send_query(G()->net_query_creator().create(telegram_api::messages_exportChatInvite(std::move(input_peer))));
+
+    int32 flags = telegram_api::messages_editExportedChatInvite::EXPIRE_DATE_MASK |
+                  telegram_api::messages_editExportedChatInvite::USAGE_LIMIT_MASK;
+    if (is_revoked) {
+      flags |= telegram_api::messages_editExportedChatInvite::REVOKED_MASK;
+    }
+    send_query(G()->net_query_creator().create(telegram_api::messages_editExportedChatInvite(
+        flags, false / *ignored* /, std::move(input_peer), invite_link, expire_date, usage_limit)));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
-    auto result_ptr = fetch_result<telegram_api::messages_exportChatInvite>(packet);
+    auto result_ptr = fetch_result<telegram_api::messages_editExportedChatInvite>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
     }
 
-    auto ptr = result_ptr.move_as_ok();
-    LOG(INFO) << "Receive result for ExportChannelInviteQuery: " << to_string(ptr);
+    auto result = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for ExportChatInviteQuery: " << to_string(result);
 
-    td->contacts_manager_->on_get_channel_invite_link(channel_id_, std::move(ptr));
+    td->contacts_manager_->on_get_users(std::move(result->users_), "EditChatInviteLinkQuery");
+
+    DialogInviteLink invite_link(std::move(result->invite_));
+    if (!invite_link.is_valid()) {
+      return on_error(id, Status::Error(500, "Receive invalid invite link"));
+    }
+    promise_.set_value(invite_link.get_chat_invite_link_object(td->contacts_manager_.get()));
+  }
+
+  void on_error(uint64 id, Status status) override {
+    td->messages_manager_->on_get_dialog_error(dialog_id_, status, "EditChatInviteLinkQuery");
+    promise_.set_error(std::move(status));
+  }
+};
+
+class GetExportedChatInvitesQuery : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::chatInviteLinks>> promise_;
+  DialogId dialog_id_;
+
+ public:
+  explicit GetExportedChatInvitesQuery(Promise<td_api::object_ptr<td_api::chatInviteLinks>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send(DialogId dialog_id, UserId administrator_user_id, bool is_revoked, int32 offset_date,
+            const string &offset_invite_link, int32 limit) {
+    dialog_id_ = dialog_id;
+    auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    if (input_peer == nullptr) {
+      return on_error(0, Status::Error(400, "Can't access the chat"));
+    }
+
+    auto input_user = td->contacts_manager_->get_input_user(administrator_user_id);
+
+    int32 flags = 0;
+    if (input_user != nullptr) {
+      flags |= telegram_api::messages_getExportedChatInvites::ADMIN_ID_MASK;
+    }
+    if (!offset_invite_link.empty() || offset_date != 0) {
+      flags |= telegram_api::messages_getExportedChatInvites::OFFSET_DATE_MASK;
+      flags |= telegram_api::messages_getExportedChatInvites::OFFSET_LINK_MASK;
+    }
+    if (is_revoked) {
+      flags |= telegram_api::messages_getExportedChatInvites::REVOKED_MASK;
+    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_getExportedChatInvites(flags, false / *ignored* /, std::move(input_peer),
+                                                      std::move(input_user), offset_date, offset_invite_link, limit)));
+  }
+
+  void on_result(uint64 id, BufferSlice packet) override {
+    auto result_ptr = fetch_result<telegram_api::messages_getExportedChatInvites>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(id, result_ptr.move_as_error());
+    }
+
+    auto result = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for GetExportedChatInvitesQuery: " << to_string(result);
+
+    td->contacts_manager_->on_get_users(std::move(result->users_), "GetExportedChatInvitesQuery");
+
+    int32 total_count = result->count_;
+    if (total_count < static_cast<int32>(result->invites_.size())) {
+      LOG(ERROR) << "Receive wrong total count of invite links " << total_count << " in " << dialog_id_;
+      total_count = static_cast<int32>(result->invites_.size());
+    }
+    vector<td_api::object_ptr<td_api::chatInviteLink>> invite_links;
+    for (auto &invite : result->invites_) {
+      DialogInviteLink invite_link(std::move(invite));
+      if (!invite_link.is_valid()) {
+        LOG(ERROR) << "Receive invalid invite link in " << dialog_id_;
+        total_count--;
+        continue;
+      }
+      invite_links.push_back(invite_link.get_chat_invite_link_object(td->contacts_manager_.get()));
+    }
+    promise_.set_value(td_api::make_object<td_api::chatInviteLinks>(total_count, std::move(invite_links)));
+  }
+
+  void on_error(uint64 id, Status status) override {
+    td->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetExportedChatInvitesQuery");
+    promise_.set_error(std::move(status));
+  }
+};
+
+class GetChatInviteImportersQuery : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::chatInviteLinkMembers>> promise_;
+  DialogId dialog_id_;
+
+ public:
+  explicit GetChatInviteImportersQuery(Promise<td_api::object_ptr<td_api::chatInviteLinkMembers>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send(DialogId dialog_id, const string &invite_link, int32 offset_date, UserId offset_user_id, int32 limit) {
+    dialog_id_ = dialog_id;
+    auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    if (input_peer == nullptr) {
+      return on_error(0, Status::Error(400, "Can't access the chat"));
+    }
+
+    auto input_user = td->contacts_manager_->get_input_user(offset_user_id);
+    if (input_user == nullptr) {
+      input_user = make_tl_object<telegram_api::inputUserEmpty>();
+    }
+
+    send_query(G()->net_query_creator().create(telegram_api::messages_getChatInviteImporters(
+        std::move(input_peer), invite_link, offset_date, std::move(input_user), limit)));
+  }
+
+  void on_result(uint64 id, BufferSlice packet) override {
+    auto result_ptr = fetch_result<telegram_api::messages_getChatInviteImporters>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(id, result_ptr.move_as_error());
+    }
+
+    auto result = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for GetChatInviteImportersQuery: " << to_string(result);
+
+    td->contacts_manager_->on_get_users(std::move(result->users_), "GetChatInviteImportersQuery");
+
+    int32 total_count = result->count_;
+    if (total_count < static_cast<int32>(result->importers_.size())) {
+      LOG(ERROR) << "Receive wrong total count of invite link users " << total_count << " in " << dialog_id_;
+      total_count = static_cast<int32>(result->importers_.size());
+    }
+    vector<td_api::object_ptr<td_api::chatInviteLinkMember>> invite_link_members;
+    for (auto &importer : result->importers_) {
+      UserId user_id(importer->user_id_);
+      if (!user_id.is_valid()) {
+        LOG(ERROR) << "Receive invalid invite link " << user_id << " in " << dialog_id_;
+        total_count--;
+        continue;
+      }
+      invite_link_members.push_back(td_api::make_object<td_api::chatInviteLinkMember>(
+          td->contacts_manager_->get_user_id_object(user_id, "chatInviteLinkMember"), importer->date_));
+    }
+    promise_.set_value(td_api::make_object<td_api::chatInviteLinkMembers>(total_count, std::move(invite_link_members)));
+  }
+
+  void on_error(uint64 id, Status status) override {
+    td->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetChatInviteImportersQuery");
+    promise_.set_error(std::move(status));
+  }
+};
+
+class DeleteExportedChatInviteQuery : public Td::ResultHandler {
+  Promise<Unit> promise_;
+  DialogId dialog_id_;
+
+ public:
+  explicit DeleteExportedChatInviteQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(DialogId dialog_id, const string &invite_link) {
+    dialog_id_ = dialog_id;
+    auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    if (input_peer == nullptr) {
+      return on_error(0, Status::Error(400, "Can't access the chat"));
+    }
+
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_deleteExportedChatInvite(std::move(input_peer), invite_link)));
+  }
+
+  void on_result(uint64 id, BufferSlice packet) override {
+    auto result_ptr = fetch_result<telegram_api::messages_deleteExportedChatInvite>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(id, result_ptr.move_as_error());
+    }
+
     promise_.set_value(Unit());
   }
 
   void on_error(uint64 id, Status status) override {
-    td->contacts_manager_->on_get_channel_error(channel_id_, status, "ExportChannelInviteLinkQuery");
+    td->messages_manager_->on_get_dialog_error(dialog_id_, status, "DeleteExportedChatInviteQuery");
     promise_.set_error(std::move(status));
-    td->updates_manager_->get_difference("ExportChannelInviteLinkQuery");
   }
 };
 
+class DeleteRevokedExportedChatInvitesQuery : public Td::ResultHandler {
+  Promise<Unit> promise_;
+  DialogId dialog_id_;
+
+ public:
+  explicit DeleteRevokedExportedChatInvitesQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(DialogId dialog_id) {
+    dialog_id_ = dialog_id;
+    auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    if (input_peer == nullptr) {
+      return on_error(0, Status::Error(400, "Can't access the chat"));
+    }
+
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_deleteRevokedExportedChatInvites(std::move(input_peer))));
+  }
+
+  void on_result(uint64 id, BufferSlice packet) override {
+    auto result_ptr = fetch_result<telegram_api::messages_deleteRevokedExportedChatInvites>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(id, result_ptr.move_as_error());
+    }
+
+    promise_.set_value(Unit());
+  }
+
+  void on_error(uint64 id, Status status) override {
+    td->messages_manager_->on_get_dialog_error(dialog_id_, status, "DeleteRevokedExportedChatInvitesQuery");
+    promise_.set_error(std::move(status));
+  }
+};
+*/
 class CheckDialogInviteLinkQuery : public Td::ResultHandler {
   Promise<Unit> promise_;
   string invite_link_;
@@ -1619,7 +1889,7 @@ class CheckDialogInviteLinkQuery : public Td::ResultHandler {
   void send(const string &invite_link) {
     invite_link_ = invite_link;
     send_query(G()->net_query_creator().create(
-        telegram_api::messages_checkChatInvite(ContactsManager::get_dialog_invite_link_hash(invite_link_).str())));
+        telegram_api::messages_checkChatInvite(DialogInviteLink::get_dialog_invite_link_hash(invite_link_).str())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1651,7 +1921,7 @@ class ImportDialogInviteLinkQuery : public Td::ResultHandler {
   void send(const string &invite_link) {
     invite_link_ = invite_link;
     send_query(G()->net_query_creator().create(
-        telegram_api::messages_importChatInvite(ContactsManager::get_dialog_invite_link_hash(invite_link).str())));
+        telegram_api::messages_importChatInvite(DialogInviteLink::get_dialog_invite_link_hash(invite_link).str())));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -1690,9 +1960,13 @@ class DeleteChatUserQuery : public Td::ResultHandler {
   explicit DeleteChatUserQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(ChatId chat_id, tl_object_ptr<telegram_api::InputUser> &&input_user) {
-    send_query(
-        G()->net_query_creator().create(telegram_api::messages_deleteChatUser(chat_id.get(), std::move(input_user))));
+  void send(ChatId chat_id, tl_object_ptr<telegram_api::InputUser> &&input_user, bool revoke_messages) {
+    int32 flags = 0;
+    if (revoke_messages) {
+      flags |= telegram_api::messages_deleteChatUser::REVOKE_HISTORY_MASK;
+    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_deleteChatUser(flags, false /*ignored*/, chat_id.get(), std::move(input_user))));
   }
 
   void on_result(uint64 id, BufferSlice packet) override {
@@ -2844,14 +3118,6 @@ class LoadAsyncGraphQuery : public Td::ResultHandler {
   }
 };
 
-bool ContactsManager::UserFull::is_expired() const {
-  return expires_at < Time::now();
-}
-
-bool ContactsManager::ChannelFull::is_expired() const {
-  return expires_at < Time::now();
-}
-
 class ContactsManager::UploadProfilePhotoCallback : public FileManager::UploadCallback {
  public:
   void on_upload_ok(FileId file_id, tl_object_ptr<telegram_api::InputFile> input_file) override {
@@ -2870,8 +3136,345 @@ class ContactsManager::UploadProfilePhotoCallback : public FileManager::UploadCa
   }
 };
 
-const CSlice ContactsManager::INVITE_LINK_URLS[3] = {"t.me/joinchat/", "telegram.me/joinchat/",
-                                                     "telegram.dog/joinchat/"};
+struct ContactsManager::User {
+  string first_name;
+  string last_name;
+  string username;
+  string phone_number;
+  int64 access_hash = -1;
+
+  ProfilePhoto photo;
+
+  vector<RestrictionReason> restriction_reasons;
+  string inline_query_placeholder;
+  int32 bot_info_version = -1;
+
+  int32 was_online = 0;
+  int32 local_was_online = 0;
+
+  string language_code;
+
+  std::unordered_set<int64> photo_ids;
+
+  std::unordered_map<DialogId, int32, DialogIdHash> online_member_dialogs;  // id -> time
+
+  static constexpr uint32 CACHE_VERSION = 4;
+  uint32 cache_version = 0;
+
+  bool is_min_access_hash = true;
+  bool is_received = false;
+  bool is_verified = false;
+  bool is_support = false;
+  bool is_deleted = true;
+  bool is_bot = true;
+  bool can_join_groups = true;
+  bool can_read_all_group_messages = true;
+  bool is_inline_bot = false;
+  bool need_location_bot = false;
+  bool is_scam = false;
+  bool is_fake = false;
+  bool is_contact = false;
+  bool is_mutual_contact = false;
+  bool need_apply_min_photo = false;
+
+  bool is_photo_inited = false;
+
+  bool is_repaired = false;  // whether cached value is rechecked
+
+  bool is_name_changed = true;
+  bool is_username_changed = true;
+  bool is_photo_changed = true;
+  bool is_is_contact_changed = true;
+  bool is_is_deleted_changed = true;
+  bool is_default_permissions_changed = true;
+  bool is_changed = true;             // have new changes that need to be sent to the client and database
+  bool need_save_to_database = true;  // have new changes that need only to be saved to the database
+  bool is_status_changed = true;
+  bool is_online_status_changed = true;  // whether online/offline has changed
+  bool is_update_user_sent = false;
+
+  bool is_saved = false;         // is current user version being saved/is saved to the database
+  bool is_being_saved = false;   // is current user being saved to the database
+  bool is_status_saved = false;  // is current user status being saved/is saved to the database
+
+  bool is_received_from_server = false;  // true, if the user was received from the server and not the database
+
+  uint64 log_event_id = 0;
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+struct ContactsManager::BotInfo {
+  int32 version = -1;
+  string description;
+  vector<std::pair<string, string>> commands;
+  bool is_changed = true;
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+// do not forget to update drop_user_full and on_get_user_full
+struct ContactsManager::UserFull {
+  Photo photo;
+
+  string about;
+
+  int32 common_chat_count = 0;
+
+  bool is_blocked = false;
+  bool can_be_called = false;
+  bool supports_video_calls = false;
+  bool has_private_calls = false;
+  bool can_pin_messages = true;
+  bool need_phone_number_privacy_exception = false;
+
+  bool is_common_chat_count_changed = true;
+  bool is_changed = true;             // have new changes that need to be sent to the client and database
+  bool need_send_update = true;       // have new changes that need only to be sent to the client
+  bool need_save_to_database = true;  // have new changes that need only to be saved to the database
+
+  double expires_at = 0.0;
+
+  bool is_expired() const {
+    return expires_at < Time::now();
+  }
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+struct ContactsManager::Chat {
+  string title;
+  DialogPhoto photo;
+  int32 participant_count = 0;
+  int32 date = 0;
+  int32 version = -1;
+  int32 default_permissions_version = -1;
+  int32 pinned_message_version = -1;
+  ChannelId migrated_to_channel_id;
+
+  DialogParticipantStatus status = DialogParticipantStatus::Banned(0);
+  RestrictedRights default_permissions{false, false, false, false, false, false, false, false, false, false, false};
+
+  static constexpr uint32 CACHE_VERSION = 3;
+  uint32 cache_version = 0;
+
+  bool is_active = false;
+
+  bool is_title_changed = true;
+  bool is_photo_changed = true;
+  bool is_default_permissions_changed = true;
+  bool is_is_active_changed = true;
+  bool is_changed = true;             // have new changes that need to be sent to the client and database
+  bool need_save_to_database = true;  // have new changes that need only to be saved to the database
+  bool is_update_basic_group_sent = false;
+
+  bool is_repaired = false;  // whether cached value is rechecked
+
+  bool is_saved = false;        // is current chat version being saved/is saved to the database
+  bool is_being_saved = false;  // is current chat being saved to the database
+
+  bool is_received_from_server = false;  // true, if the chat was received from the server and not the database
+
+  uint64 log_event_id = 0;
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+// do not forget to update drop_chat_full and on_get_chat_full
+struct ContactsManager::ChatFull {
+  int32 version = -1;
+  UserId creator_user_id;
+  vector<DialogParticipant> participants;
+
+  Photo photo;
+  vector<FileId> registered_photo_file_ids;
+  FileSourceId file_source_id;
+
+  string description;
+
+  DialogInviteLink invite_link;
+
+  bool can_set_username = false;
+
+  bool is_changed = true;             // have new changes that need to be sent to the client and database
+  bool need_send_update = true;       // have new changes that need only to be sent to the client
+  bool need_save_to_database = true;  // have new changes that need only to be saved to the database
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+struct ContactsManager::Channel {
+  int64 access_hash = 0;
+  string title;
+  DialogPhoto photo;
+  string username;
+  vector<RestrictionReason> restriction_reasons;
+  DialogParticipantStatus status = DialogParticipantStatus::Banned(0);
+  RestrictedRights default_permissions{false, false, false, false, false, false, false, false, false, false, false};
+  int32 date = 0;
+  int32 participant_count = 0;
+
+  static constexpr uint32 CACHE_VERSION = 7;
+  uint32 cache_version = 0;
+
+  bool has_linked_channel = false;
+  bool has_location = false;
+  bool sign_messages = false;
+  bool is_slow_mode_enabled = false;
+
+  bool is_megagroup = false;
+  bool is_verified = false;
+  bool is_scam = false;
+  bool is_fake = false;
+
+  bool is_title_changed = true;
+  bool is_username_changed = true;
+  bool is_photo_changed = true;
+  bool is_default_permissions_changed = true;
+  bool is_status_changed = true;
+  bool had_read_access = true;
+  bool was_member = false;
+  bool is_changed = true;             // have new changes that need to be sent to the client and database
+  bool need_save_to_database = true;  // have new changes that need only to be saved to the database
+  bool is_update_supergroup_sent = false;
+
+  bool is_repaired = false;  // whether cached value is rechecked
+
+  bool is_saved = false;        // is current channel version being saved/is saved to the database
+  bool is_being_saved = false;  // is current channel being saved to the database
+
+  bool is_received_from_server = false;  // true, if the channel was received from the server and not the database
+
+  uint64 log_event_id = 0;
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+// do not forget to update invalidate_channel_full and on_get_chat_full
+struct ContactsManager::ChannelFull {
+  Photo photo;
+  vector<FileId> registered_photo_file_ids;
+  FileSourceId file_source_id;
+
+  string description;
+  int32 participant_count = 0;
+  int32 administrator_count = 0;
+  int32 restricted_count = 0;
+  int32 banned_count = 0;
+
+  DialogInviteLink invite_link;
+
+  uint32 speculative_version = 1;
+  uint32 repair_request_version = 0;
+
+  StickerSetId sticker_set_id;
+
+  ChannelId linked_channel_id;
+
+  DialogLocation location;
+
+  DcId stats_dc_id;
+
+  int32 slow_mode_delay = 0;
+  int32 slow_mode_next_send_date = 0;
+
+  MessageId migrated_from_max_message_id;
+  ChatId migrated_from_chat_id;
+
+  vector<UserId> bot_user_ids;
+
+  bool can_get_participants = false;
+  bool can_set_username = false;
+  bool can_set_sticker_set = false;
+  bool can_set_location = false;
+  bool can_view_statistics = false;
+  bool is_can_view_statistics_inited = false;
+  bool is_all_history_available = true;
+
+  bool is_slow_mode_next_send_date_changed = true;
+  bool is_changed = true;             // have new changes that need to be sent to the client and database
+  bool need_send_update = true;       // have new changes that need only to be sent to the client
+  bool need_save_to_database = true;  // have new changes that need only to be saved to the database
+
+  double expires_at = 0.0;
+
+  bool is_expired() const {
+    return expires_at < Time::now();
+  }
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+struct ContactsManager::SecretChat {
+  int64 access_hash = 0;
+  UserId user_id;
+  SecretChatState state;
+  string key_hash;
+  int32 ttl = 0;
+  int32 date = 0;
+  int32 layer = 0;
+  FolderId initial_folder_id;
+
+  bool is_outbound = false;
+
+  bool is_state_changed = true;
+  bool is_changed = true;             // have new changes that need to be sent to the client and database
+  bool need_save_to_database = true;  // have new changes that need only to be saved to the database
+
+  bool is_saved = false;        // is current secret chat version being saved/is saved to the database
+  bool is_being_saved = false;  // is current secret chat being saved to the database
+
+  uint64 log_event_id = 0;
+
+  template <class StorerT>
+  void store(StorerT &storer) const;
+
+  template <class ParserT>
+  void parse(ParserT &parser);
+};
+
+struct ContactsManager::InviteLinkInfo {
+  // known dialog
+  DialogId dialog_id;
+
+  // unknown dialog
+  string title;
+  Photo photo;
+  int32 participant_count = 0;
+  vector<UserId> participant_user_ids;
+  bool is_chat = false;
+  bool is_channel = false;
+  bool is_public = false;
+  bool is_megagroup = false;
+};
 
 ContactsManager::ContactsManager(Td *td, ActorShared<> parent) : td_(td), parent_(std::move(parent)) {
   upload_profile_photo_callback_ = std::make_shared<UploadProfilePhotoCallback>();
@@ -2935,6 +3538,8 @@ ContactsManager::ContactsManager(Td *td, ActorShared<> parent) : td_(td), parent
   invite_link_info_expire_timeout_.set_callback(on_invite_link_info_expire_timeout_callback);
   invite_link_info_expire_timeout_.set_callback_data(static_cast<void *>(this));
 }
+
+ContactsManager::~ContactsManager() = default;
 
 void ContactsManager::tear_down() {
   parent_.reset();
@@ -3155,6 +3760,7 @@ void ContactsManager::User::store(StorerT &storer) const {
   STORE_FLAG(is_mutual_contact);
   STORE_FLAG(has_restriction_reasons);
   STORE_FLAG(need_apply_min_photo);
+  STORE_FLAG(is_fake);
   END_STORE_FLAGS();
   store(first_name, storer);
   if (has_last_name) {
@@ -3224,6 +3830,7 @@ void ContactsManager::User::parse(ParserT &parser) {
   PARSE_FLAG(is_mutual_contact);
   PARSE_FLAG(has_restriction_reasons);
   PARSE_FLAG(need_apply_min_photo);
+  PARSE_FLAG(is_fake);
   END_PARSE_FLAGS();
   parse(first_name, parser);
   if (has_last_name) {
@@ -3458,13 +4065,15 @@ template <class StorerT>
 void ContactsManager::ChatFull::store(StorerT &storer) const {
   using td::store;
   bool has_description = !description.empty();
-  bool has_invite_link = !invite_link.empty();
+  bool has_legacy_invite_link = false;
   bool has_photo = !photo.is_empty();
+  bool has_invite_link = invite_link.is_valid();
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_description);
-  STORE_FLAG(has_invite_link);
+  STORE_FLAG(has_legacy_invite_link);
   STORE_FLAG(can_set_username);
   STORE_FLAG(has_photo);
+  STORE_FLAG(has_invite_link);
   END_STORE_FLAGS();
   store(version, storer);
   store(creator_user_id, storer);
@@ -3472,11 +4081,11 @@ void ContactsManager::ChatFull::store(StorerT &storer) const {
   if (has_description) {
     store(description, storer);
   }
-  if (has_invite_link) {
-    store(invite_link, storer);
-  }
   if (has_photo) {
     store(photo, storer);
+  }
+  if (has_invite_link) {
+    store(invite_link, storer);
   }
 }
 
@@ -3484,13 +4093,15 @@ template <class ParserT>
 void ContactsManager::ChatFull::parse(ParserT &parser) {
   using td::parse;
   bool has_description;
-  bool has_invite_link;
+  bool legacy_has_invite_link;
   bool has_photo;
+  bool has_invite_link;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_description);
-  PARSE_FLAG(has_invite_link);
+  PARSE_FLAG(legacy_has_invite_link);
   PARSE_FLAG(can_set_username);
   PARSE_FLAG(has_photo);
+  PARSE_FLAG(has_invite_link);
   END_PARSE_FLAGS();
   parse(version, parser);
   parse(creator_user_id, parser);
@@ -3498,11 +4109,15 @@ void ContactsManager::ChatFull::parse(ParserT &parser) {
   if (has_description) {
     parse(description, parser);
   }
-  if (has_invite_link) {
-    parse(invite_link, parser);
+  if (legacy_has_invite_link) {
+    string legacy_invite_link;
+    parse(legacy_invite_link, parser);
   }
   if (has_photo) {
     parse(photo, parser);
+  }
+  if (has_invite_link) {
+    parse(invite_link, parser);
   }
 }
 
@@ -3540,6 +4155,7 @@ void ContactsManager::Channel::store(StorerT &storer) const {
   STORE_FLAG(is_slow_mode_enabled);
   STORE_FLAG(has_restriction_reasons);
   STORE_FLAG(legacy_has_active_group_call);
+  STORE_FLAG(is_fake);
   END_STORE_FLAGS();
 
   store(status, storer);
@@ -3607,6 +4223,7 @@ void ContactsManager::Channel::parse(ParserT &parser) {
   PARSE_FLAG(is_slow_mode_enabled);
   PARSE_FLAG(has_restriction_reasons);
   PARSE_FLAG(legacy_has_active_group_call);
+  PARSE_FLAG(is_fake);
   END_PARSE_FLAGS();
 
   if (use_new_rights) {
@@ -3666,7 +4283,7 @@ void ContactsManager::ChannelFull::store(StorerT &storer) const {
   bool has_administrator_count = administrator_count != 0;
   bool has_restricted_count = restricted_count != 0;
   bool has_banned_count = banned_count != 0;
-  bool has_invite_link = !invite_link.empty();
+  bool legacy_has_invite_link = false;
   bool has_sticker_set = sticker_set_id.is_valid();
   bool has_linked_channel_id = linked_channel_id.is_valid();
   bool has_migrated_from_max_message_id = migrated_from_max_message_id.is_valid();
@@ -3678,12 +4295,13 @@ void ContactsManager::ChannelFull::store(StorerT &storer) const {
   bool has_stats_dc_id = stats_dc_id.is_exact();
   bool has_photo = !photo.is_empty();
   bool legacy_has_active_group_call_id = false;
+  bool has_invite_link = invite_link.is_valid();
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_description);
   STORE_FLAG(has_administrator_count);
   STORE_FLAG(has_restricted_count);
   STORE_FLAG(has_banned_count);
-  STORE_FLAG(has_invite_link);
+  STORE_FLAG(legacy_has_invite_link);
   STORE_FLAG(has_sticker_set);
   STORE_FLAG(has_linked_channel_id);
   STORE_FLAG(has_migrated_from_max_message_id);
@@ -3703,6 +4321,7 @@ void ContactsManager::ChannelFull::store(StorerT &storer) const {
   STORE_FLAG(is_can_view_statistics_inited);
   STORE_FLAG(can_view_statistics);
   STORE_FLAG(legacy_has_active_group_call_id);
+  STORE_FLAG(has_invite_link);
   END_STORE_FLAGS();
   if (has_description) {
     store(description, storer);
@@ -3716,9 +4335,6 @@ void ContactsManager::ChannelFull::store(StorerT &storer) const {
   }
   if (has_banned_count) {
     store(banned_count, storer);
-  }
-  if (has_invite_link) {
-    store(invite_link, storer);
   }
   if (has_sticker_set) {
     store(sticker_set_id, storer);
@@ -3751,6 +4367,9 @@ void ContactsManager::ChannelFull::store(StorerT &storer) const {
   if (has_photo) {
     store(photo, storer);
   }
+  if (has_invite_link) {
+    store(invite_link, storer);
+  }
 }
 
 template <class ParserT>
@@ -3760,7 +4379,7 @@ void ContactsManager::ChannelFull::parse(ParserT &parser) {
   bool has_administrator_count;
   bool has_restricted_count;
   bool has_banned_count;
-  bool has_invite_link;
+  bool legacy_has_invite_link;
   bool has_sticker_set;
   bool has_linked_channel_id;
   bool has_migrated_from_max_message_id;
@@ -3773,12 +4392,13 @@ void ContactsManager::ChannelFull::parse(ParserT &parser) {
   bool has_stats_dc_id;
   bool has_photo;
   bool legacy_has_active_group_call_id;
+  bool has_invite_link;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_description);
   PARSE_FLAG(has_administrator_count);
   PARSE_FLAG(has_restricted_count);
   PARSE_FLAG(has_banned_count);
-  PARSE_FLAG(has_invite_link);
+  PARSE_FLAG(legacy_has_invite_link);
   PARSE_FLAG(has_sticker_set);
   PARSE_FLAG(has_linked_channel_id);
   PARSE_FLAG(has_migrated_from_max_message_id);
@@ -3798,6 +4418,7 @@ void ContactsManager::ChannelFull::parse(ParserT &parser) {
   PARSE_FLAG(is_can_view_statistics_inited);
   PARSE_FLAG(can_view_statistics);
   PARSE_FLAG(legacy_has_active_group_call_id);
+  PARSE_FLAG(has_invite_link);
   END_PARSE_FLAGS();
   if (has_description) {
     parse(description, parser);
@@ -3812,8 +4433,9 @@ void ContactsManager::ChannelFull::parse(ParserT &parser) {
   if (has_banned_count) {
     parse(banned_count, parser);
   }
-  if (has_invite_link) {
-    parse(invite_link, parser);
+  if (legacy_has_invite_link) {
+    string legacy_invite_link;
+    parse(legacy_invite_link, parser);
   }
   if (has_sticker_set) {
     parse(sticker_set_id, parser);
@@ -3849,6 +4471,9 @@ void ContactsManager::ChannelFull::parse(ParserT &parser) {
   if (legacy_has_active_group_call_id) {
     InputGroupCallId input_group_call_id;
     parse(input_group_call_id, parser);
+  }
+  if (has_invite_link) {
+    parse(invite_link, parser);
   }
 
   if (legacy_can_view_statistics) {
@@ -6093,16 +6718,52 @@ void ContactsManager::report_channel_spam(ChannelId channel_id, UserId user_id, 
   td_->create_handler<ReportChannelSpamQuery>(std::move(promise))->send(channel_id, user_id, server_message_ids);
 }
 
+void ContactsManager::delete_chat(ChatId chat_id, Promise<Unit> &&promise) {
+  auto c = get_chat(chat_id);
+  if (c == nullptr) {
+    return promise.set_error(Status::Error(400, "Chat info not found"));
+  }
+  if (!get_chat_status(c).is_creator()) {
+    return promise.set_error(Status::Error(400, "Not enough rights to delete the chat"));
+  }
+  if (!c->is_active) {
+    return promise.set_error(Status::Error(400, "Chat is already deactivated"));
+  }
+
+  td_->create_handler<DeleteChatQuery>(std::move(promise))->send(chat_id);
+}
+
 void ContactsManager::delete_channel(ChannelId channel_id, Promise<Unit> &&promise) {
   auto c = get_channel(channel_id);
   if (c == nullptr) {
-    return promise.set_error(Status::Error(6, "Supergroup not found"));
+    return promise.set_error(Status::Error(400, "Chat info not found"));
   }
   if (!get_channel_status(c).is_creator()) {
-    return promise.set_error(Status::Error(6, "Not enough rights to delete the supergroup"));
+    return promise.set_error(Status::Error(400, "Not enough rights to delete the chat"));
   }
 
   td_->create_handler<DeleteChannelQuery>(std::move(promise))->send(channel_id);
+}
+
+void ContactsManager::delete_dialog(DialogId dialog_id, Promise<Unit> &&promise) {
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    return promise.set_error(Status::Error(3, "Chat not found"));
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      return td_->messages_manager_->delete_dialog_history(dialog_id, true, true, std::move(promise));
+    case DialogType::Chat:
+      return delete_chat(dialog_id.get_chat_id(), std::move(promise));
+    case DialogType::Channel:
+      return delete_channel(dialog_id.get_channel_id(), std::move(promise));
+    case DialogType::SecretChat:
+      send_closure(td_->secret_chats_manager_, &SecretChatsManager::cancel_chat, dialog_id.get_secret_chat_id(), true,
+                   std::move(promise));
+      return;
+    default:
+      UNREACHABLE();
+  }
 }
 
 void ContactsManager::add_chat_participant(ChatId chat_id, UserId user_id, int32 forward_limit,
@@ -6357,7 +7018,7 @@ void ContactsManager::promote_channel_participant(ChannelId channel_id, UserId u
 void ContactsManager::change_chat_participant_status(ChatId chat_id, UserId user_id, DialogParticipantStatus status,
                                                      Promise<Unit> &&promise) {
   if (!status.is_member()) {
-    return delete_chat_participant(chat_id, user_id, std::move(promise));
+    return delete_chat_participant(chat_id, user_id, false, std::move(promise));
   }
 
   auto c = get_chat(chat_id);
@@ -6494,75 +7155,158 @@ void ContactsManager::transfer_channel_ownership(
       ->send(channel_id, user_id, std::move(input_check_password));
 }
 
-void ContactsManager::export_chat_invite_link(ChatId chat_id, Promise<Unit> &&promise) {
-  const Chat *c = get_chat(chat_id);
-  if (c == nullptr) {
-    return promise.set_error(Status::Error(3, "Chat info not found"));
-  }
-  if (!c->is_active) {
-    return promise.set_error(Status::Error(3, "Chat is deactivated"));
+Status ContactsManager::can_manage_dialog_invite_links(DialogId dialog_id) {
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    return Status::Error(3, "Chat not found");
   }
 
-  if (!get_chat_status(c).is_administrator() || !get_chat_status(c).can_invite_users()) {
-    return promise.set_error(Status::Error(3, "Not enough rights to export chat invite link"));
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      return Status::Error(3, "Can't invite members to a private chat");
+    case DialogType::Chat: {
+      const Chat *c = get_chat(dialog_id.get_chat_id());
+      if (c == nullptr) {
+        return Status::Error(3, "Chat info not found");
+      }
+      if (!c->is_active) {
+        return Status::Error(3, "Chat is deactivated");
+      }
+      if (!get_chat_status(c).is_administrator() || !get_chat_status(c).can_invite_users()) {
+        return Status::Error(3, "Not enough rights to manage chat invite link");
+      }
+      break;
+    }
+    case DialogType::Channel: {
+      const Channel *c = get_channel(dialog_id.get_channel_id());
+      if (c == nullptr) {
+        return Status::Error(3, "Chat info not found");
+      }
+      if (!get_channel_status(c).is_administrator() || !get_channel_status(c).can_invite_users()) {
+        return Status::Error(3, "Not enough rights to manage chat invite link");
+      }
+      break;
+    }
+    case DialogType::SecretChat:
+      return Status::Error(3, "Can't invite members to a secret chat");
+    case DialogType::None:
+    default:
+      UNREACHABLE();
   }
-
-  td_->create_handler<ExportChatInviteLinkQuery>(std::move(promise))->send(chat_id);
+  return Status::OK();
 }
 
-void ContactsManager::export_channel_invite_link(ChannelId channel_id, Promise<Unit> &&promise) {
-  const Channel *c = get_channel(channel_id);
-  if (c == nullptr) {
-    return promise.set_error(Status::Error(3, "Chat info not found"));
-  }
-
-  if (!get_channel_status(c).is_administrator() || !get_channel_status(c).can_invite_users()) {
-    return promise.set_error(Status::Error(3, "Not enough rights to export chat invite link"));
-  }
-
-  td_->create_handler<ExportChannelInviteLinkQuery>(std::move(promise))->send(channel_id);
+void ContactsManager::export_dialog_invite_link(DialogId dialog_id, int32 expire_date, int32 usage_limit,
+                                                bool is_permanent,
+                                                Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise) {
+  get_me(PromiseCreator::lambda([actor_id = actor_id(this), dialog_id, expire_date, usage_limit, is_permanent,
+                                 promise = std::move(promise)](Result<Unit> &&result) mutable {
+    if (result.is_error()) {
+      promise.set_error(result.move_as_error());
+    } else {
+      send_closure(actor_id, &ContactsManager::export_dialog_invite_link_impl, dialog_id, expire_date, usage_limit,
+                   is_permanent, std::move(promise));
+    }
+  }));
 }
 
+void ContactsManager::export_dialog_invite_link_impl(DialogId dialog_id, int32 expire_date, int32 usage_limit,
+                                                     bool is_permanent,
+                                                     Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise) {
+  if (G()->close_flag()) {
+    return promise.set_error(Status::Error(500, "Request aborted"));
+  }
+
+  TRY_STATUS_PROMISE(promise, can_manage_dialog_invite_links(dialog_id));
+
+  td_->create_handler<ExportChatInviteLinkQuery>(std::move(promise))
+      ->send(dialog_id, expire_date, usage_limit, is_permanent);
+}
+/*
+void ContactsManager::edit_dialog_invite_link(DialogId dialog_id, const string &invite_link, int32 expire_date,
+                                              int32 usage_limit, bool is_revoked,
+                                              Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise) {
+  TRY_STATUS_PROMISE(promise, can_manage_dialog_invite_links(dialog_id));
+
+  // if (!DialogInviteLink::is_valid_invite_link(invite_link)) {
+  //   return promise.set_error(Status::Error(400, "Wrong invite link"));
+  // }
+
+  td_->create_handler<EditChatInviteLinkQuery>(std::move(promise))
+      ->send(dialog_id, invite_link, expire_date, usage_limit, is_revoked);
+}
+
+void ContactsManager::get_dialog_invite_links(DialogId dialog_id, UserId administrator_user_id, bool is_revoked,
+                                              int32 offset_date, const string &offset_invite_link, int32 limit,
+                                              Promise<td_api::object_ptr<td_api::chatInviteLinks>> &&promise) {
+  TRY_STATUS_PROMISE(promise, can_manage_dialog_invite_links(dialog_id));
+
+  if (administrator_user_id != UserId() && !have_input_user(administrator_user_id)) {
+    return promise.set_error(Status::Error(400, "Administrator user not found"));
+  }
+
+  if (limit <= 0) {
+    return promise.set_error(Status::Error(400, "Parameter limit must be positive"));
+  }
+
+  td_->create_handler<GetExportedChatInvitesQuery>(std::move(promise))
+      ->send(dialog_id, administrator_user_id, is_revoked, offset_date, offset_invite_link, limit);
+}
+
+void ContactsManager::get_dialog_invite_link_users(
+    DialogId dialog_id, const string &invite_link, td_api::object_ptr<td_api::chatInviteLinkMember> offset_member,
+    int32 limit, Promise<td_api::object_ptr<td_api::chatInviteLinkMembers>> &&promise) {
+  TRY_STATUS_PROMISE(promise, can_manage_dialog_invite_links(dialog_id));
+
+  if (limit <= 0) {
+    return promise.set_error(Status::Error(400, "Parameter limit must be positive"));
+  }
+
+  UserId offset_user_id;
+  int32 offset_date = 0;
+  if (offset_member != nullptr) {
+    offset_user_id = UserId(offset_member->user_id_);
+    offset_date = offset_member->joined_chat_date_;
+  }
+
+  td_->create_handler<GetChatInviteImportersQuery>(std::move(promise))
+      ->send(dialog_id, invite_link, offset_date, offset_user_id, limit);
+}
+
+void ContactsManager::delete_revoked_dialog_invite_link(DialogId dialog_id, const string &invite_link,
+                                                        Promise<Unit> &&promise) {
+  TRY_STATUS_PROMISE(promise, can_manage_dialog_invite_links(dialog_id));
+
+  td_->create_handler<DeleteExportedChatInviteQuery>(std::move(promise))->send(dialog_id, invite_link);
+}
+
+void ContactsManager::delete_all_revoked_dialog_invite_links(DialogId dialog_id, Promise<Unit> &&promise) {
+  TRY_STATUS_PROMISE(promise, can_manage_dialog_invite_links(dialog_id));
+
+  td_->create_handler<DeleteRevokedExportedChatInvitesQuery>(std::move(promise))->send(dialog_id);
+}
+*/
 void ContactsManager::check_dialog_invite_link(const string &invite_link, Promise<Unit> &&promise) const {
   if (invite_link_infos_.count(invite_link) > 0) {
     return promise.set_value(Unit());
   }
 
-  if (!is_valid_invite_link(invite_link)) {
-    return promise.set_error(Status::Error(3, "Wrong invite link"));
+  if (!DialogInviteLink::is_valid_invite_link(invite_link)) {
+    return promise.set_error(Status::Error(400, "Wrong invite link"));
   }
 
   td_->create_handler<CheckDialogInviteLinkQuery>(std::move(promise))->send(invite_link);
 }
 
 void ContactsManager::import_dialog_invite_link(const string &invite_link, Promise<DialogId> &&promise) {
-  if (!is_valid_invite_link(invite_link)) {
-    return promise.set_error(Status::Error(3, "Wrong invite link"));
+  if (!DialogInviteLink::is_valid_invite_link(invite_link)) {
+    return promise.set_error(Status::Error(400, "Wrong invite link"));
   }
 
   td_->create_handler<ImportDialogInviteLinkQuery>(std::move(promise))->send(invite_link);
 }
 
-string ContactsManager::get_chat_invite_link(ChatId chat_id) const {
-  auto chat_full = get_chat_full(chat_id);
-  if (chat_full == nullptr) {
-    auto it = dialog_invite_links_.find(DialogId(chat_id));
-    return it == dialog_invite_links_.end() ? string() : it->second;
-  }
-  return chat_full->invite_link;
-}
-
-string ContactsManager::get_channel_invite_link(
-    ChannelId channel_id) {  // should be non-const to update ChannelFull cache
-  auto channel_full = get_channel_full(channel_id, "get_channel_invite_link");
-  if (channel_full == nullptr) {
-    auto it = dialog_invite_links_.find(DialogId(channel_id));
-    return it == dialog_invite_links_.end() ? string() : it->second;
-  }
-  return channel_full->invite_link;
-}
-
-void ContactsManager::delete_chat_participant(ChatId chat_id, UserId user_id, Promise<Unit> &&promise) {
+void ContactsManager::delete_chat_participant(ChatId chat_id, UserId user_id, bool revoke_messages,
+                                              Promise<Unit> &&promise) {
   const Chat *c = get_chat(chat_id);
   if (c == nullptr) {
     return promise.set_error(Status::Error(3, "Chat info not found"));
@@ -6573,6 +7317,7 @@ void ContactsManager::delete_chat_participant(ChatId chat_id, UserId user_id, Pr
   auto my_id = get_my_id();
   if (c->status.is_left()) {
     if (user_id == my_id) {
+      td_->messages_manager_->delete_dialog(DialogId(chat_id));
       return promise.set_value(Unit());
     } else {
       return promise.set_error(Status::Error(3, "Not in the chat"));
@@ -6611,7 +7356,7 @@ void ContactsManager::delete_chat_participant(ChatId chat_id, UserId user_id, Pr
   }
 
   // TODO invoke after
-  td_->create_handler<DeleteChatUserQuery>(std::move(promise))->send(chat_id, std::move(input_user));
+  td_->create_handler<DeleteChatUserQuery>(std::move(promise))->send(chat_id, std::move(input_user), revoke_messages);
 }
 
 void ContactsManager::restrict_channel_participant(ChannelId channel_id, UserId user_id, DialogParticipantStatus status,
@@ -7219,6 +7964,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   bool need_location_bot = (flags & USER_FLAG_NEED_LOCATION_BOT) != 0;
   bool has_bot_info_version = (flags & USER_FLAG_HAS_BOT_INFO_VERSION) != 0;
   bool need_apply_min_photo = (flags & USER_FLAG_NEED_APPLY_MIN_PHOTO) != 0;
+  bool is_fake = (flags & USER_FLAG_IS_FAKE) != 0;
 
   LOG_IF(ERROR, !is_support && expect_support) << "Receive non-support " << user_id << ", but expected a support user";
   LOG_IF(ERROR, !can_join_groups && !is_bot)
@@ -7249,8 +7995,9 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   int32 bot_info_version = has_bot_info_version ? user->bot_info_version_ : -1;
   if (is_verified != u->is_verified || is_support != u->is_support || is_bot != u->is_bot ||
       can_join_groups != u->can_join_groups || can_read_all_group_messages != u->can_read_all_group_messages ||
-      restriction_reasons != u->restriction_reasons || is_scam != u->is_scam || is_inline_bot != u->is_inline_bot ||
-      inline_query_placeholder != u->inline_query_placeholder || need_location_bot != u->need_location_bot) {
+      restriction_reasons != u->restriction_reasons || is_scam != u->is_scam || is_fake != u->is_fake ||
+      is_inline_bot != u->is_inline_bot || inline_query_placeholder != u->inline_query_placeholder ||
+      need_location_bot != u->need_location_bot) {
     LOG_IF(ERROR, is_bot != u->is_bot && !is_deleted && !u->is_deleted && u->is_received)
         << "User.is_bot has changed for " << user_id << "/" << u->username << " from " << source << " from "
         << u->is_bot << " to " << is_bot;
@@ -7261,6 +8008,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
     u->can_read_all_group_messages = can_read_all_group_messages;
     u->restriction_reasons = std::move(restriction_reasons);
     u->is_scam = is_scam;
+    u->is_fake = is_fake;
     u->is_inline_bot = is_inline_bot;
     u->inline_query_placeholder = std::move(inline_query_placeholder);
     u->need_location_bot = need_location_bot;
@@ -7604,9 +8352,9 @@ ContactsManager::User *ContactsManager::get_user_force(UserId user_id) {
     auto user = telegram_api::make_object<telegram_api::user>(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, user_id.get(), 1, first_name,
-        string(), username, phone_number, std::move(profile_photo), nullptr, bot_info_version, Auto(), string(),
-        string());
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, user_id.get(), 1,
+        first_name, string(), username, phone_number, std::move(profile_photo), nullptr, bot_info_version, Auto(),
+        string(), string());
     on_get_user(std::move(user), "get_user_force");
     u = get_user(user_id);
     CHECK(u != nullptr && u->is_received);
@@ -8587,6 +9335,7 @@ void ContactsManager::on_load_chat_full_from_database(ChatId chat_id, string val
     dependencies.user_ids.insert(participant.user_id);
     dependencies.user_ids.insert(participant.inviter_user_id);
   }
+  dependencies.user_ids.insert(chat_full->invite_link.get_administrator_user_id());
   resolve_dependencies_force(td_, dependencies, "chat_full");
 
   for (auto &participant : chat_full->participants) {
@@ -8595,6 +9344,13 @@ void ContactsManager::on_load_chat_full_from_database(ChatId chat_id, string val
 
   Chat *c = get_chat(chat_id);
   CHECK(c != nullptr);
+
+  // ignore ChatFull without invite link
+  if (c->is_active && c->status.is_administrator() && !chat_full->invite_link.is_valid()) {
+    chats_full_.erase(chat_id);
+    return;
+  }
+
   if (td_->file_manager_->get_file_view(c->photo.small_file_id).get_unique_file_id() !=
       td_->file_manager_->get_file_view(as_fake_dialog_photo(chat_full->photo).small_file_id).get_unique_file_id()) {
     chat_full->photo = Photo();
@@ -8674,6 +9430,7 @@ void ContactsManager::on_load_channel_full_from_database(ChannelId channel_id, s
   add_dialog_and_dependencies(dependencies, DialogId(channel_full->linked_channel_id));
   dependencies.chat_ids.insert(channel_full->migrated_from_chat_id);
   dependencies.user_ids.insert(channel_full->bot_user_ids.begin(), channel_full->bot_user_ids.end());
+  dependencies.user_ids.insert(channel_full->invite_link.get_administrator_user_id());
   resolve_dependencies_force(td_, dependencies, "channel_full");
 
   for (auto &user_id : channel_full->bot_user_ids) {
@@ -8682,6 +9439,13 @@ void ContactsManager::on_load_channel_full_from_database(ChannelId channel_id, s
 
   Channel *c = get_channel(channel_id);
   CHECK(c != nullptr);
+
+  // ignore ChannelFull without invite link
+  if (c->status.is_administrator() && c->status.can_invite_users() && !channel_full->invite_link.is_valid()) {
+    channels_full_.erase(channel_id);
+    return;
+  }
+
   if (td_->file_manager_->get_file_view(c->photo.small_file_id).get_unique_file_id() !=
       td_->file_manager_->get_file_view(as_fake_dialog_photo(channel_full->photo).small_file_id).get_unique_file_id()) {
     channel_full->photo = Photo();
@@ -11017,11 +11781,6 @@ void ContactsManager::invalidate_channel_full(ChannelId channel_id, bool need_dr
   }
   if (need_drop_invite_link) {
     remove_dialog_access_by_invite_link(DialogId(channel_id));
-
-    auto it = dialog_invite_links_.find(DialogId(channel_id));
-    if (it != dialog_invite_links_.end()) {
-      invalidate_invite_link_info(it->second);
-    }
   }
 }
 
@@ -11099,52 +11858,46 @@ void ContactsManager::on_update_channel_full_photo(ChannelFull *channel_full, Ch
   }
 }
 
-void ContactsManager::on_get_chat_invite_link(ChatId chat_id,
-                                              tl_object_ptr<telegram_api::ExportedChatInvite> &&invite_link_ptr) {
-  CHECK(chat_id.is_valid());
-  if (!have_chat_force(chat_id)) {
-    LOG(ERROR) << chat_id << " not found";
-    return;
+void ContactsManager::on_get_permanent_dialog_invite_link(DialogId dialog_id, const DialogInviteLink &invite_link) {
+  switch (dialog_id.get_type()) {
+    case DialogType::Chat: {
+      auto chat_id = dialog_id.get_chat_id();
+      auto chat_full = get_chat_full_force(chat_id, "on_get_permanent_dialog_invite_link");
+      if (chat_full != nullptr && update_permanent_invite_link(chat_full->invite_link, invite_link)) {
+        chat_full->is_changed = true;
+        update_chat_full(chat_full, chat_id);
+      }
+      break;
+    }
+    case DialogType::Channel: {
+      auto channel_id = dialog_id.get_channel_id();
+      auto channel_full = get_channel_full_force(channel_id, "on_get_permanent_dialog_invite_link");
+      if (channel_full != nullptr && update_permanent_invite_link(channel_full->invite_link, invite_link)) {
+        channel_full->is_changed = true;
+        update_channel_full(channel_full, channel_id);
+      }
+      break;
+    }
+    case DialogType::User:
+    case DialogType::SecretChat:
+    case DialogType::None:
+    default:
+      UNREACHABLE();
   }
-
-  auto chat_full = get_chat_full_force(chat_id, "on_get_chat_invite_link");
-  if (chat_full == nullptr) {
-    update_invite_link(dialog_invite_links_[DialogId(chat_id)], std::move(invite_link_ptr));
-    return;
-  }
-  on_update_chat_full_invite_link(chat_full, std::move(invite_link_ptr));
-  update_chat_full(chat_full, chat_id);
 }
 
-void ContactsManager::on_update_chat_full_invite_link(
-    ChatFull *chat_full, tl_object_ptr<telegram_api::ExportedChatInvite> &&invite_link_ptr) {
+void ContactsManager::on_update_chat_full_invite_link(ChatFull *chat_full,
+                                                      tl_object_ptr<telegram_api::chatInviteExported> &&invite_link) {
   CHECK(chat_full != nullptr);
-  if (update_invite_link(chat_full->invite_link, std::move(invite_link_ptr))) {
+  if (update_permanent_invite_link(chat_full->invite_link, DialogInviteLink(std::move(invite_link)))) {
     chat_full->is_changed = true;
   }
 }
 
-void ContactsManager::on_get_channel_invite_link(ChannelId channel_id,
-                                                 tl_object_ptr<telegram_api::ExportedChatInvite> &&invite_link_ptr) {
-  CHECK(channel_id.is_valid());
-  if (!have_channel(channel_id)) {
-    LOG(ERROR) << channel_id << " not found";
-    return;
-  }
-
-  auto channel_full = get_channel_full_force(channel_id, "on_get_channel_invite_link");
-  if (channel_full == nullptr) {
-    update_invite_link(dialog_invite_links_[DialogId(channel_id)], std::move(invite_link_ptr));
-    return;
-  }
-  on_update_channel_full_invite_link(channel_full, std::move(invite_link_ptr));
-  update_channel_full(channel_full, channel_id);
-}
-
 void ContactsManager::on_update_channel_full_invite_link(
-    ChannelFull *channel_full, tl_object_ptr<telegram_api::ExportedChatInvite> &&invite_link_ptr) {
+    ChannelFull *channel_full, tl_object_ptr<telegram_api::chatInviteExported> &&invite_link) {
   CHECK(channel_full != nullptr);
-  if (update_invite_link(channel_full->invite_link, std::move(invite_link_ptr))) {
+  if (update_permanent_invite_link(channel_full->invite_link, DialogInviteLink(std::move(invite_link)))) {
     channel_full->is_changed = true;
   }
 }
@@ -11387,13 +12140,6 @@ void ContactsManager::on_get_dialog_invite_link_info(const string &invite_link,
           invite_link_info_expire_timeout_.set_timeout_in(dialog_id.get(), expires_in);
         }
       }
-
-      if (chat_id.is_valid()) {
-        on_get_chat_invite_link(chat_id, make_tl_object<telegram_api::chatInviteExported>(invite_link));
-      }
-      if (channel_id.is_valid()) {
-        on_get_channel_invite_link(channel_id, make_tl_object<telegram_api::chatInviteExported>(invite_link));
-      }
       break;
     }
     case telegram_api::chatInvite::ID: {
@@ -11459,56 +12205,12 @@ void ContactsManager::remove_dialog_access_by_invite_link(DialogId dialog_id) {
   invite_link_info_expire_timeout_.cancel_timeout(dialog_id.get());
 }
 
-bool ContactsManager::is_valid_invite_link(const string &invite_link) {
-  return !get_dialog_invite_link_hash(invite_link).empty();
-}
-
-Slice ContactsManager::get_dialog_invite_link_hash(const string &invite_link) {
-  auto lower_cased_invite_link_str = to_lower(invite_link);
-  Slice lower_cased_invite_link = lower_cased_invite_link_str;
-  size_t offset = 0;
-  if (begins_with(lower_cased_invite_link, "https://")) {
-    offset = 8;
-  } else if (begins_with(lower_cased_invite_link, "http://")) {
-    offset = 7;
-  }
-  lower_cased_invite_link.remove_prefix(offset);
-
-  for (auto &url : INVITE_LINK_URLS) {
-    if (begins_with(lower_cased_invite_link, url)) {
-      Slice hash = Slice(invite_link).substr(url.size() + offset);
-      hash.truncate(hash.find('#'));
-      hash.truncate(hash.find('?'));
-      return hash;
-    }
-  }
-  return Slice();
-}
-
-bool ContactsManager::update_invite_link(string &invite_link,
-                                         tl_object_ptr<telegram_api::ExportedChatInvite> &&invite_link_ptr) {
-  string new_invite_link;
-  if (invite_link_ptr != nullptr) {
-    switch (invite_link_ptr->get_id()) {
-      case telegram_api::chatInviteEmpty::ID:
-        // link is empty
-        break;
-      case telegram_api::chatInviteExported::ID: {
-        auto chat_invite_exported = move_tl_object_as<telegram_api::chatInviteExported>(invite_link_ptr);
-        new_invite_link = std::move(chat_invite_exported->link_);
-        break;
-      }
-      default:
-        UNREACHABLE();
-    }
-  }
-
+bool ContactsManager::update_permanent_invite_link(DialogInviteLink &invite_link, DialogInviteLink new_invite_link) {
   if (new_invite_link != invite_link) {
-    if (!invite_link.empty()) {
-      invite_link_infos_.erase(invite_link);
+    if (invite_link.is_valid() && invite_link.get_invite_link() != new_invite_link.get_invite_link()) {
+      // old link was invalidated
+      invite_link_infos_.erase(invite_link.get_invite_link());
     }
-    LOG_IF(ERROR, !new_invite_link.empty() && !is_valid_invite_link(new_invite_link))
-        << "Unsupported invite link " << new_invite_link;
 
     invite_link = std::move(new_invite_link);
     return true;
@@ -11723,7 +12425,6 @@ void ContactsManager::on_update_chat_delete_user(ChatId chat_id, UserId user_id,
 void ContactsManager::on_update_chat_status(Chat *c, ChatId chat_id, DialogParticipantStatus status) {
   if (c->status != status) {
     LOG(INFO) << "Update " << chat_id << " status from " << c->status << " to " << status;
-    bool need_drop_invite_link = c->status.is_left() != status.is_left();
     bool need_reload_group_call = c->status.can_manage_calls() != status.can_manage_calls();
 
     c->status = status;
@@ -11735,12 +12436,6 @@ void ContactsManager::on_update_chat_status(Chat *c, ChatId chat_id, DialogParti
       c->pinned_message_version = -1;
 
       drop_chat_full(chat_id);
-    }
-    if (need_drop_invite_link) {
-      auto it = dialog_invite_links_.find(DialogId(chat_id));
-      if (it != dialog_invite_links_.end()) {
-        invalidate_invite_link_info(it->second);
-      }
     }
     if (need_reload_group_call) {
       send_closure_later(G()->messages_manager(), &MessagesManager::on_update_dialog_group_call_rights,
@@ -12015,11 +12710,6 @@ void ContactsManager::drop_chat_full(ChatId chat_id) {
   ChatFull *chat_full = get_chat_full_force(chat_id, "drop_chat_full");
   if (chat_full == nullptr) {
     drop_chat_photos(chat_id, false, false, "drop_chat_full");
-
-    auto it = dialog_invite_links_.find(DialogId(chat_id));
-    if (it != dialog_invite_links_.end()) {
-      invalidate_invite_link_info(it->second);
-    }
     return;
   }
 
@@ -12028,7 +12718,7 @@ void ContactsManager::drop_chat_full(ChatId chat_id) {
   // chat_full->creator_user_id = UserId();
   chat_full->participants.clear();
   chat_full->version = -1;
-  update_invite_link(chat_full->invite_link, nullptr);
+  on_update_chat_full_invite_link(chat_full, nullptr);
   update_chat_online_member_count(chat_full, chat_id, true);
   chat_full->is_changed = true;
   update_chat_full(chat_full, chat_id);
@@ -12876,12 +13566,18 @@ bool ContactsManager::is_chat_full_outdated(const ChatFull *chat_full, const Cha
   for (const auto &participant : chat_full->participants) {
     auto u = get_user(participant.user_id);
     if (u != nullptr && is_bot_info_expired(participant.user_id, u->bot_info_version)) {
-      LOG(INFO) << "Have outdated botInfo for " << participant.user_id << ", expected version " << u->bot_info_version;
+      LOG(INFO) << "Have outdated botInfo for " << participant.user_id << " in " << chat_id << "; expected version "
+                << u->bot_info_version;
       return true;
     }
   }
 
-  LOG(INFO) << "Full " << chat_id << " is up-to-date with version " << chat_full->version;
+  if (c->is_active && c->status.is_administrator() && !chat_full->invite_link.is_valid()) {
+    LOG(INFO) << "Have outdated invite link in " << chat_id;
+    return true;
+  }
+
+  LOG(DEBUG) << "Full " << chat_id << " is up-to-date with version " << chat_full->version;
   return false;
 }
 
@@ -13368,7 +14064,7 @@ void ContactsManager::on_update_secret_chat(SecretChatId secret_chat_id, int64 a
 }
 
 std::pair<int32, vector<UserId>> ContactsManager::search_among_users(const vector<UserId> &user_ids,
-                                                                     const string &query, int32 limit) {
+                                                                     const string &query, int32 limit) const {
   Hints hints;  // TODO cache Hints
 
   for (auto user_id : user_ids) {
@@ -13387,6 +14083,272 @@ std::pair<int32, vector<UserId>> ContactsManager::search_among_users(const vecto
   auto result = hints.search(query, limit, true);
   return {narrow_cast<int32>(result.first),
           transform(result.second, [](int64 key) { return UserId(narrow_cast<int32>(key)); })};
+}
+
+void ContactsManager::add_dialog_participant(DialogId dialog_id, UserId user_id, int32 forward_limit,
+                                             Promise<Unit> &&promise) {
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    return promise.set_error(Status::Error(3, "Chat not found"));
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      return promise.set_error(Status::Error(3, "Can't add members to a private chat"));
+    case DialogType::Chat:
+      return add_chat_participant(dialog_id.get_chat_id(), user_id, forward_limit, std::move(promise));
+    case DialogType::Channel:
+      return add_channel_participant(dialog_id.get_channel_id(), user_id, std::move(promise));
+    case DialogType::SecretChat:
+      return promise.set_error(Status::Error(3, "Can't add members to a secret chat"));
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+  }
+}
+
+void ContactsManager::add_dialog_participants(DialogId dialog_id, const vector<UserId> &user_ids,
+                                              Promise<Unit> &&promise) {
+  if (td_->auth_manager_->is_bot()) {
+    return promise.set_error(Status::Error(3, "Method is not available for bots"));
+  }
+
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    return promise.set_error(Status::Error(3, "Chat not found"));
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      return promise.set_error(Status::Error(3, "Can't add members to a private chat"));
+    case DialogType::Chat:
+      return promise.set_error(Status::Error(3, "Can't add many members at once to a basic group chat"));
+    case DialogType::Channel:
+      return add_channel_participants(dialog_id.get_channel_id(), user_ids, std::move(promise));
+    case DialogType::SecretChat:
+      return promise.set_error(Status::Error(3, "Can't add members to a secret chat"));
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+  }
+}
+
+void ContactsManager::set_dialog_participant_status(DialogId dialog_id, UserId user_id,
+                                                    const tl_object_ptr<td_api::ChatMemberStatus> &chat_member_status,
+                                                    Promise<Unit> &&promise) {
+  auto status = get_dialog_participant_status(chat_member_status);
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    return promise.set_error(Status::Error(3, "Chat not found"));
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      return promise.set_error(Status::Error(3, "Chat member status can't be changed in private chats"));
+    case DialogType::Chat:
+      return change_chat_participant_status(dialog_id.get_chat_id(), user_id, status, std::move(promise));
+    case DialogType::Channel:
+      return change_channel_participant_status(dialog_id.get_channel_id(), user_id, status, std::move(promise));
+    case DialogType::SecretChat:
+      return promise.set_error(Status::Error(3, "Chat member status can't be changed in secret chats"));
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+  }
+}
+
+void ContactsManager::ban_dialog_participant(DialogId dialog_id, UserId user_id, int32 banned_until_date,
+                                             bool revoke_messages, Promise<Unit> &&promise) {
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    return promise.set_error(Status::Error(3, "Chat not found"));
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      return promise.set_error(Status::Error(3, "Can't ban members in a private chat"));
+    case DialogType::Chat:
+      return delete_chat_participant(dialog_id.get_chat_id(), user_id, revoke_messages, std::move(promise));
+    case DialogType::Channel:
+      return change_channel_participant_status(dialog_id.get_channel_id(), user_id,
+                                               DialogParticipantStatus::Banned(banned_until_date), std::move(promise));
+    case DialogType::SecretChat:
+      return promise.set_error(Status::Error(3, "Can't ban members in a secret chat"));
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+  }
+}
+
+DialogParticipant ContactsManager::get_dialog_participant(DialogId dialog_id, UserId user_id, int64 &random_id,
+                                                          bool force, Promise<Unit> &&promise) {
+  LOG(INFO) << "Receive GetChatMember request to get " << user_id << " in " << dialog_id << " with random_id "
+            << random_id;
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    promise.set_error(Status::Error(3, "Chat not found"));
+    return DialogParticipant();
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User: {
+      auto peer_user_id = dialog_id.get_user_id();
+      if (user_id == get_my_id()) {
+        promise.set_value(Unit());
+        return {user_id, peer_user_id, 0, DialogParticipantStatus::Member()};
+      }
+      if (user_id == peer_user_id) {
+        promise.set_value(Unit());
+        return {peer_user_id, user_id, 0, DialogParticipantStatus::Member()};
+      }
+
+      promise.set_error(Status::Error(3, "User is not a member of the private chat"));
+      break;
+    }
+    case DialogType::Chat:
+      return get_chat_participant(dialog_id.get_chat_id(), user_id, force, std::move(promise));
+    case DialogType::Channel:
+      return get_channel_participant(dialog_id.get_channel_id(), user_id, random_id, force, std::move(promise));
+    case DialogType::SecretChat: {
+      auto peer_user_id = get_secret_chat_user_id(dialog_id.get_secret_chat_id());
+      if (user_id == get_my_id()) {
+        promise.set_value(Unit());
+        return {user_id, peer_user_id.is_valid() ? peer_user_id : user_id, 0, DialogParticipantStatus::Member()};
+      }
+      if (peer_user_id.is_valid() && user_id == peer_user_id) {
+        promise.set_value(Unit());
+        return {peer_user_id, user_id, 0, DialogParticipantStatus::Member()};
+      }
+
+      promise.set_error(Status::Error(3, "User is not a member of the secret chat"));
+      break;
+    }
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+      promise.set_error(Status::Error(500, "Wrong chat type"));
+  }
+  return DialogParticipant();
+}
+
+DialogParticipants ContactsManager::search_private_chat_participants(UserId my_user_id, UserId peer_user_id,
+                                                                     const string &query, int32 limit,
+                                                                     DialogParticipantsFilter filter) const {
+  vector<UserId> user_ids;
+  switch (filter.type) {
+    case DialogParticipantsFilter::Type::Contacts:
+      if (peer_user_id.is_valid() && is_user_contact(peer_user_id)) {
+        user_ids.push_back(peer_user_id);
+      }
+      break;
+    case DialogParticipantsFilter::Type::Administrators:
+      break;
+    case DialogParticipantsFilter::Type::Members:
+    case DialogParticipantsFilter::Type::Mention:
+      user_ids.push_back(my_user_id);
+      if (peer_user_id.is_valid() && peer_user_id != my_user_id) {
+        user_ids.push_back(peer_user_id);
+      }
+      break;
+    case DialogParticipantsFilter::Type::Restricted:
+      break;
+    case DialogParticipantsFilter::Type::Banned:
+      break;
+    case DialogParticipantsFilter::Type::Bots:
+      if (td_->auth_manager_->is_bot()) {
+        user_ids.push_back(my_user_id);
+      }
+      if (peer_user_id.is_valid() && is_user_bot(peer_user_id) && peer_user_id != my_user_id) {
+        user_ids.push_back(peer_user_id);
+      }
+      break;
+    default:
+      UNREACHABLE();
+  }
+
+  auto result = search_among_users(user_ids, query, limit);
+  return {result.first, transform(result.second, [&](UserId user_id) {
+            return DialogParticipant(user_id,
+                                     user_id == my_user_id && peer_user_id.is_valid() ? peer_user_id : my_user_id, 0,
+                                     DialogParticipantStatus::Member());
+          })};
+}
+
+void ContactsManager::search_dialog_participants(DialogId dialog_id, const string &query, int32 limit,
+                                                 DialogParticipantsFilter filter, bool without_bot_info,
+                                                 Promise<DialogParticipants> &&promise) {
+  LOG(INFO) << "Receive searchChatMembers request to search for \"" << query << "\" in " << dialog_id << " with filter "
+            << filter;
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    return promise.set_error(Status::Error(3, "Chat not found"));
+  }
+  if (limit < 0) {
+    return promise.set_error(Status::Error(3, "Parameter limit must be non-negative"));
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      promise.set_value(search_private_chat_participants(get_my_id(), dialog_id.get_user_id(), query, limit, filter));
+      return;
+    case DialogType::Chat:
+      return search_chat_participants(dialog_id.get_chat_id(), query, limit, filter, std::move(promise));
+    case DialogType::Channel: {
+      td_api::object_ptr<td_api::SupergroupMembersFilter> request_filter;
+      string additional_query;
+      int32 additional_limit = 0;
+      switch (filter.type) {
+        case DialogParticipantsFilter::Type::Contacts:
+          request_filter = td_api::make_object<td_api::supergroupMembersFilterContacts>();
+          break;
+        case DialogParticipantsFilter::Type::Administrators:
+          request_filter = td_api::make_object<td_api::supergroupMembersFilterAdministrators>();
+          break;
+        case DialogParticipantsFilter::Type::Members:
+          request_filter = td_api::make_object<td_api::supergroupMembersFilterSearch>(query);
+          break;
+        case DialogParticipantsFilter::Type::Restricted:
+          request_filter = td_api::make_object<td_api::supergroupMembersFilterRestricted>(query);
+          break;
+        case DialogParticipantsFilter::Type::Banned:
+          request_filter = td_api::make_object<td_api::supergroupMembersFilterBanned>(query);
+          break;
+        case DialogParticipantsFilter::Type::Mention:
+          request_filter =
+              td_api::make_object<td_api::supergroupMembersFilterMention>(query, filter.top_thread_message_id.get());
+          break;
+        case DialogParticipantsFilter::Type::Bots:
+          request_filter = td_api::make_object<td_api::supergroupMembersFilterBots>();
+          break;
+        default:
+          UNREACHABLE();
+      }
+      switch (filter.type) {
+        case DialogParticipantsFilter::Type::Contacts:
+        case DialogParticipantsFilter::Type::Administrators:
+        case DialogParticipantsFilter::Type::Bots:
+          additional_query = query;
+          additional_limit = limit;
+          limit = 100;
+          break;
+        case DialogParticipantsFilter::Type::Members:
+        case DialogParticipantsFilter::Type::Restricted:
+        case DialogParticipantsFilter::Type::Banned:
+        case DialogParticipantsFilter::Type::Mention:
+          // query is passed to the server request
+          break;
+        default:
+          UNREACHABLE();
+      }
+
+      return get_channel_participants(dialog_id.get_channel_id(), std::move(request_filter),
+                                      std::move(additional_query), 0, limit, additional_limit, without_bot_info,
+                                      std::move(promise));
+    }
+    case DialogType::SecretChat: {
+      auto peer_user_id = get_secret_chat_user_id(dialog_id.get_secret_chat_id());
+      promise.set_value(search_private_chat_participants(get_my_id(), peer_user_id, query, limit, filter));
+      return;
+    }
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+      promise.set_error(Status::Error(500, "Wrong chat type"));
+  }
 }
 
 DialogParticipant ContactsManager::get_chat_participant(ChatId chat_id, UserId user_id, bool force,
@@ -13601,6 +14563,26 @@ void ContactsManager::do_get_channel_participants(ChannelId channel_id, ChannelP
 
 vector<DialogAdministrator> ContactsManager::get_dialog_administrators(DialogId dialog_id, int left_tries,
                                                                        Promise<Unit> &&promise) {
+  LOG(INFO) << "Receive GetChatAdministrators request in " << dialog_id << " with " << left_tries << " left tries";
+  if (!td_->messages_manager_->have_dialog_force(dialog_id)) {
+    promise.set_error(Status::Error(3, "Chat not found"));
+    return {};
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+    case DialogType::SecretChat:
+      promise.set_value(Unit());
+      return {};
+    case DialogType::Chat:
+    case DialogType::Channel:
+      break;
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+      return {};
+  }
+
   auto it = dialog_administrators_.find(dialog_id);
   if (it != dialog_administrators_.end()) {
     promise.set_value(Unit());
@@ -13849,7 +14831,7 @@ void ContactsManager::on_chat_update(telegram_api::chat &chat, const char *sourc
   on_update_chat_photo(c, chat_id, std::move(chat.photo_));
   on_update_chat_active(c, chat_id, is_active);
   on_update_chat_migrated_to_channel_id(c, chat_id, migrated_to_channel_id);
-  LOG_IF(INFO, !is_active && !migrated_to_channel_id.is_valid()) << chat_id << " is deactivated in " << debug_str;
+  LOG_IF(INFO, !is_active && !migrated_to_channel_id.is_valid()) << chat_id << " is deactivated" << debug_str;
   if (c->cache_version != Chat::CACHE_VERSION) {
     c->cache_version = Chat::CACHE_VERSION;
     c->need_save_to_database = true;
@@ -13923,6 +14905,7 @@ void ContactsManager::on_chat_update(telegram_api::channel &channel, const char 
   bool is_verified = (channel.flags_ & CHANNEL_FLAG_IS_VERIFIED) != 0;
   auto restriction_reasons = get_restriction_reasons(std::move(channel.restriction_reason_));
   bool is_scam = (channel.flags_ & CHANNEL_FLAG_IS_SCAM) != 0;
+  bool is_fake = (channel.flags_ & CHANNEL_FLAG_IS_FAKE) != 0;
   bool have_participant_count = (channel.flags_ & CHANNEL_FLAG_HAS_PARTICIPANT_COUNT) != 0;
   int32 participant_count = have_participant_count ? channel.participants_count_ : 0;
 
@@ -14030,13 +15013,14 @@ void ContactsManager::on_chat_update(telegram_api::channel &channel, const char 
   bool need_invalidate_channel_full = false;
   if (c->has_linked_channel != has_linked_channel || c->has_location != has_location ||
       c->is_slow_mode_enabled != is_slow_mode_enabled || c->is_megagroup != is_megagroup ||
-      c->restriction_reasons != restriction_reasons || c->is_scam != is_scam) {
+      c->restriction_reasons != restriction_reasons || c->is_scam != is_scam || c->is_fake != is_fake) {
     c->has_linked_channel = has_linked_channel;
     c->has_location = has_location;
     c->is_slow_mode_enabled = is_slow_mode_enabled;
     c->is_megagroup = is_megagroup;
     c->restriction_reasons = std::move(restriction_reasons);
     c->is_scam = is_scam;
+    c->is_fake = is_fake;
 
     c->is_changed = true;
     need_invalidate_channel_full = true;
@@ -14117,6 +15101,7 @@ void ContactsManager::on_chat_update(telegram_api::channelForbidden &channel, co
   bool is_megagroup = (channel.flags_ & CHANNEL_FLAG_IS_MEGAGROUP) != 0;
   bool is_verified = false;
   bool is_scam = false;
+  bool is_fake = false;
 
   {
     bool is_broadcast = (channel.flags_ & CHANNEL_FLAG_IS_BROADCAST) != 0;
@@ -14131,13 +15116,14 @@ void ContactsManager::on_chat_update(telegram_api::channelForbidden &channel, co
 
   bool need_invalidate_channel_full = false;
   if (c->is_slow_mode_enabled != is_slow_mode_enabled || c->is_megagroup != is_megagroup ||
-      !c->restriction_reasons.empty() || c->is_scam != is_scam) {
+      !c->restriction_reasons.empty() || c->is_scam != is_scam || c->is_fake != is_fake) {
     // c->has_linked_channel = has_linked_channel;
     // c->has_location = has_location;
     c->is_slow_mode_enabled = is_slow_mode_enabled;
     c->is_megagroup = is_megagroup;
     c->restriction_reasons.clear();
     c->is_scam = is_scam;
+    c->is_fake = is_fake;
 
     c->is_changed = true;
     need_invalidate_channel_full = true;
@@ -14260,7 +15246,7 @@ td_api::object_ptr<td_api::UserStatus> ContactsManager::get_user_status_object(U
 td_api::object_ptr<td_api::updateUser> ContactsManager::get_update_unknown_user_object(UserId user_id) {
   return td_api::make_object<td_api::updateUser>(td_api::make_object<td_api::user>(
       user_id.get(), -1, "", "", "", "", td_api::make_object<td_api::userStatusEmpty>(), nullptr, false, false, false,
-      false, "", false, false, td_api::make_object<td_api::userTypeUnknown>(), ""));
+      false, "", false, false, false, td_api::make_object<td_api::userTypeUnknown>(), ""));
 }
 
 int32 ContactsManager::get_user_id_object(UserId user_id, const char *source) const {
@@ -14293,7 +15279,7 @@ tl_object_ptr<td_api::user> ContactsManager::get_user_object(UserId user_id, con
   return make_tl_object<td_api::user>(
       user_id.get(), u->access_hash, u->first_name, u->last_name, u->username, u->phone_number, get_user_status_object(user_id, u),
       get_profile_photo_object(td_->file_manager_.get(), u->photo), u->is_contact, u->is_mutual_contact, u->is_verified,
-      u->is_support, get_restriction_reason_description(u->restriction_reasons), u->is_scam, u->is_received,
+      u->is_support, get_restriction_reason_description(u->restriction_reasons), u->is_scam, u->is_fake, u->is_received,
       std::move(type), u->language_code);
 }
 
@@ -14371,14 +15357,14 @@ tl_object_ptr<td_api::basicGroupFullInfo> ContactsManager::get_basic_group_full_
       get_user_id_object(chat_full->creator_user_id, "basicGroupFullInfo"),
       transform(chat_full->participants,
                 [this](const DialogParticipant &chat_participant) { return get_chat_member_object(chat_participant); }),
-      chat_full->invite_link);
+      chat_full->invite_link.get_chat_invite_link_object(this));
 }
 
 td_api::object_ptr<td_api::updateSupergroup> ContactsManager::get_update_unknown_supergroup_object(
     ChannelId channel_id) {
   return td_api::make_object<td_api::updateSupergroup>(td_api::make_object<td_api::supergroup>(
       channel_id.get(), -1, string(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, false,
-      false, false, false, true, false, "", false));
+      false, false, false, true, false, "", false, false));
 }
 
 int32 ContactsManager::get_supergroup_id_object(ChannelId channel_id, const char *source) const {
@@ -14401,7 +15387,8 @@ tl_object_ptr<td_api::supergroup> ContactsManager::get_supergroup_object(Channel
   return td_api::make_object<td_api::supergroup>(
       channel_id.get(), -1, c->username, c->date, get_channel_status(c).get_chat_member_status_object(),
       c->participant_count, c->has_linked_channel, c->has_location, c->sign_messages, c->is_slow_mode_enabled,
-      !c->is_megagroup, c->is_verified, get_restriction_reason_description(c->restriction_reasons), c->is_scam);
+      !c->is_megagroup, c->is_verified, get_restriction_reason_description(c->restriction_reasons), c->is_scam,
+      c->is_fake);
 }
 
 tl_object_ptr<td_api::supergroupFullInfo> ContactsManager::get_supergroup_full_info_object(ChannelId channel_id) const {
@@ -14422,7 +15409,7 @@ tl_object_ptr<td_api::supergroupFullInfo> ContactsManager::get_supergroup_full_i
       slow_mode_delay_expires_in, channel_full->can_get_participants, channel_full->can_set_username,
       channel_full->can_set_sticker_set, channel_full->can_set_location, channel_full->can_view_statistics,
       channel_full->is_all_history_available, channel_full->sticker_set_id.get(),
-      channel_full->location.get_chat_location_object(), channel_full->invite_link,
+      channel_full->location.get_chat_location_object(), channel_full->invite_link.get_chat_invite_link_object(this),
       get_basic_group_id_object(channel_full->migrated_from_chat_id, "get_supergroup_full_info_object"),
       channel_full->migrated_from_max_message_id.get());
 }

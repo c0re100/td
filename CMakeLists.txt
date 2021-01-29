@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 
-project(TDLib VERSION 1.7.0 LANGUAGES CXX C)
+project(TDLib VERSION 1.7.1 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -291,6 +291,7 @@ set(TDLIB_SOURCE
   td/telegram/DialogDb.cpp
   td/telegram/DialogFilter.cpp
   td/telegram/DialogId.cpp
+  td/telegram/DialogInviteLink.cpp
   td/telegram/DialogLocation.cpp
   td/telegram/DialogParticipant.cpp
   td/telegram/DialogSource.cpp
@@ -456,6 +457,7 @@ set(TDLIB_SOURCE
   td/telegram/DialogFilter.h
   td/telegram/DialogFilterId.h
   td/telegram/DialogId.h
+  td/telegram/DialogInviteLink.h
   td/telegram/DialogListId.h
   td/telegram/DialogLocation.h
   td/telegram/DialogParticipant.h
