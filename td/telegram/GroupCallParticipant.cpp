@@ -25,6 +25,7 @@ GroupCallParticipant::GroupCallParticipant(const tl_object_ptr<telegram_api::gro
       LOG(ERROR) << "Receive " << to_string(participant);
       volume_level = 10000;
     }
+    is_volume_level_local = (participant->flags_ & telegram_api::groupCallParticipant::VOLUME_BY_ADMIN_MASK) == 0;
   }
   if (!participant->left_) {
     joined_date = participant->date_;
@@ -38,10 +39,38 @@ GroupCallParticipant::GroupCallParticipant(const tl_object_ptr<telegram_api::gro
     }
   }
   is_just_joined = participant->just_joined_;
+  is_min = (participant->flags_ & telegram_api::groupCallParticipant::MIN_MASK) != 0;
 }
 
 bool GroupCallParticipant::is_versioned_update(const tl_object_ptr<telegram_api::groupCallParticipant> &participant) {
   return participant->just_joined_ || participant->left_ || participant->versioned_;
+}
+
+int32 GroupCallParticipant::get_volume_level() const {
+  return pending_volume_level != 0 ? pending_volume_level : volume_level;
+}
+
+void GroupCallParticipant::update_from(const GroupCallParticipant &old_participant) {
+  CHECK(!old_participant.is_min);
+  if (joined_date < old_participant.joined_date) {
+    LOG(ERROR) << "Join date decreased from " << old_participant.joined_date << " to " << joined_date;
+    joined_date = old_participant.joined_date;
+  }
+  if (active_date < old_participant.active_date) {
+    active_date = old_participant.active_date;
+  }
+  local_active_date = old_participant.local_active_date;
+  is_speaking = old_participant.is_speaking;
+  if (is_min) {
+    is_muted_only_for_self = old_participant.is_muted_only_for_self;
+  }
+  if (old_participant.is_volume_level_local && !is_volume_level_local) {
+    is_volume_level_local = true;
+    volume_level = old_participant.volume_level;
+  }
+  pending_volume_level = old_participant.pending_volume_level;
+  pending_volume_level_generation = old_participant.pending_volume_level_generation;
+  is_min = false;
 }
 
 bool GroupCallParticipant::update_can_be_muted(bool can_manage, bool is_self, bool is_admin) {
@@ -88,7 +117,7 @@ td_api::object_ptr<td_api::groupCallParticipant> GroupCallParticipant::get_group
   return td_api::make_object<td_api::groupCallParticipant>(
       contacts_manager->get_user_id_object(user_id, "get_group_call_participant_object"), audio_source, is_speaking,
       can_be_muted_for_all_users, can_be_unmuted_for_all_users, can_be_muted_only_for_self,
-      can_be_unmuted_only_for_self, is_muted, can_self_unmute, volume_level, order);
+      can_be_unmuted_only_for_self, is_muted, can_self_unmute, get_volume_level(), order);
 }
 
 bool operator==(const GroupCallParticipant &lhs, const GroupCallParticipant &rhs) {
@@ -98,7 +127,7 @@ bool operator==(const GroupCallParticipant &lhs, const GroupCallParticipant &rhs
          lhs.can_be_muted_only_for_self == rhs.can_be_muted_only_for_self &&
          lhs.can_be_unmuted_only_for_self == rhs.can_be_unmuted_only_for_self && lhs.is_muted == rhs.is_muted &&
          lhs.can_self_unmute == rhs.can_self_unmute && lhs.is_speaking == rhs.is_speaking &&
-         lhs.volume_level == rhs.volume_level && lhs.order == rhs.order;
+         lhs.get_volume_level() == rhs.get_volume_level() && lhs.order == rhs.order;
 }
 
 bool operator!=(const GroupCallParticipant &lhs, const GroupCallParticipant &rhs) {

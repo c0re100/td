@@ -137,11 +137,15 @@ class GroupCallManager : public Actor {
 
   bool need_group_call_participants(InputGroupCallId input_group_call_id) const;
 
+  bool need_group_call_participants(InputGroupCallId input_group_call_id, const GroupCall *group_call) const;
+
   bool process_pending_group_call_participant_updates(InputGroupCallId input_group_call_id);
 
   void sync_group_call_participants(InputGroupCallId input_group_call_id);
 
   void on_sync_group_call_participants_failed(InputGroupCallId input_group_call_id);
+
+  int64 get_real_participant_order(const GroupCallParticipant &participant, int64 min_order) const;
 
   void process_group_call_participants(InputGroupCallId group_call_id,
                                        vector<tl_object_ptr<telegram_api::groupCallParticipant>> &&participants,
@@ -165,13 +169,19 @@ class GroupCallManager : public Actor {
 
   GroupCallParticipants *add_group_call_participants(InputGroupCallId input_group_call_id);
 
+  static GroupCallParticipant *get_group_call_participant(GroupCallParticipants *group_call_participants,
+                                                          UserId user_id);
+
+  void on_set_group_call_participant_volume_level(InputGroupCallId input_group_call_id, UserId user_id,
+                                                  uint64 generation, Promise<Unit> &&promise);
+
   void on_group_call_left(InputGroupCallId input_group_call_id, int32 audio_source, bool need_rejoin);
 
   void on_group_call_left_impl(GroupCall *group_call, bool need_rejoin);
 
   InputGroupCallId update_group_call(const tl_object_ptr<telegram_api::GroupCall> &group_call_ptr, DialogId dialog_id);
 
-  void on_receive_group_call_version(InputGroupCallId input_group_call_id, int32 version);
+  void on_receive_group_call_version(InputGroupCallId input_group_call_id, int32 version, bool immediate_sync = false);
 
   void on_participant_speaking_in_group_call(InputGroupCallId input_group_call_id,
                                              const GroupCallParticipant &participant);
@@ -228,6 +238,8 @@ class GroupCallManager : public Actor {
 
   std::unordered_map<InputGroupCallId, unique_ptr<PendingJoinRequest>, InputGroupCallIdHash> pending_join_requests_;
   uint64 join_group_request_generation_ = 0;
+
+  uint64 set_volume_level_generation_ = 0;
 
   MultiTimeout check_group_call_is_joined_timeout_{"CheckGroupCallIsJoinedTimeout"};
   MultiTimeout pending_send_speaking_action_timeout_{"PendingSendSpeakingActionTimeout"};

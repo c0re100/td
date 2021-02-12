@@ -10816,10 +10816,10 @@ void MessagesManager::delete_all_dialog_messages(Dialog *d, bool remove_from_dia
     MessageId max_message_id =
         d->last_database_message_id.is_valid() ? d->last_database_message_id : d->last_new_message_id;
     if (max_message_id.is_valid()) {
-      read_history_inbox(d->dialog_id, max_message_id, -1, "delete_all_dialog_messages");
+      read_history_inbox(d->dialog_id, max_message_id, -1, "delete_all_dialog_messages 1");
     }
     if (d->server_unread_count != 0 || d->local_unread_count != 0) {
-      set_dialog_last_read_inbox_message_id(d, MessageId::min(), 0, 0, true, "delete_all_dialog_messages");
+      set_dialog_last_read_inbox_message_id(d, MessageId::min(), 0, 0, true, "delete_all_dialog_messages 2");
     }
   }
 
@@ -10845,7 +10845,7 @@ void MessagesManager::delete_all_dialog_messages(Dialog *d, bool remove_from_dia
 
   vector<int64> deleted_message_ids;
   do_delete_all_dialog_messages(d, d->messages, is_permanently_deleted, deleted_message_ids);
-  delete_all_dialog_messages_from_database(d, MessageId::max(), "delete_all_dialog_messages");
+  delete_all_dialog_messages_from_database(d, MessageId::max(), "delete_all_dialog_messages 3");
   if (is_permanently_deleted) {
     for (auto id : deleted_message_ids) {
       d->deleted_message_ids.insert(MessageId{id});
@@ -10856,9 +10856,10 @@ void MessagesManager::delete_all_dialog_messages(Dialog *d, bool remove_from_dia
     set_dialog_reply_markup(d, MessageId());
   }
 
-  set_dialog_first_database_message_id(d, MessageId(), "delete_all_dialog_messages");
-  set_dialog_last_database_message_id(d, MessageId(), "delete_all_dialog_messages");
-  set_dialog_last_clear_history_date(d, last_message_date, last_clear_history_message_id, "delete_all_dialog_messages");
+  set_dialog_first_database_message_id(d, MessageId(), "delete_all_dialog_messages 4");
+  set_dialog_last_database_message_id(d, MessageId(), "delete_all_dialog_messages 5");
+  set_dialog_last_clear_history_date(d, last_message_date, last_clear_history_message_id,
+                                     "delete_all_dialog_messages 6");
   d->last_read_all_mentions_message_id = MessageId();                            // it is not needed anymore
   d->message_notification_group.max_removed_notification_id = NotificationId();  // it is not needed anymore
   d->message_notification_group.max_removed_message_id = MessageId();            // it is not needed anymore
@@ -10868,25 +10869,25 @@ void MessagesManager::delete_all_dialog_messages(Dialog *d, bool remove_from_dia
   d->notification_id_to_message_id.clear();
 
   if (has_last_message_id) {
-    set_dialog_last_message_id(d, MessageId(), "delete_all_dialog_messages");
-    send_update_chat_last_message(d, "delete_all_dialog_messages");
+    set_dialog_last_message_id(d, MessageId(), "delete_all_dialog_messages 7");
+    send_update_chat_last_message(d, "delete_all_dialog_messages 8");
   }
   if (remove_from_dialog_list) {
-    set_dialog_order(d, DEFAULT_ORDER, true, false, "delete_all_dialog_messages 1");
+    set_dialog_order(d, DEFAULT_ORDER, true, false, "delete_all_dialog_messages 9");
   } else {
-    update_dialog_pos(d, "delete_all_dialog_messages 2");
+    update_dialog_pos(d, "delete_all_dialog_messages 10");
   }
 
-  on_dialog_updated(d->dialog_id, "delete_all_dialog_messages");
+  on_dialog_updated(d->dialog_id, "delete_all_dialog_messages 11");
 
   send_update_delete_messages(d->dialog_id, std::move(deleted_message_ids), is_permanently_deleted, false);
 }
 
-void MessagesManager::delete_dialog(DialogId dialog_id) {
+void MessagesManager::on_dialog_deleted(DialogId dialog_id, Promise<Unit> &&promise) {
   LOG(INFO) << "Delete " << dialog_id;
   Dialog *d = get_dialog_force(dialog_id);
   if (d == nullptr) {
-    return;
+    return promise.set_value(Unit());
   }
 
   delete_all_dialog_messages(d, true, false);
@@ -10899,6 +10900,7 @@ void MessagesManager::delete_dialog(DialogId dialog_id) {
   }
 
   close_dialog(d);
+  promise.set_value(Unit());
 }
 
 void MessagesManager::on_update_dialog_group_call_rights(DialogId dialog_id) {
@@ -13639,6 +13641,10 @@ void MessagesManager::set_dialog_last_new_message_id(Dialog *d, MessageId last_n
 void MessagesManager::set_dialog_last_clear_history_date(Dialog *d, int32 date, MessageId last_clear_history_message_id,
                                                          const char *source, bool is_loaded_from_database) {
   CHECK(!last_clear_history_message_id.is_scheduled());
+
+  if (d->last_clear_history_message_id == last_clear_history_message_id && d->last_clear_history_date == date) {
+    return;
+  }
 
   LOG(INFO) << "Set " << d->dialog_id << " last clear history date to " << date << " of "
             << last_clear_history_message_id << " from " << source;
@@ -33779,33 +33785,34 @@ void MessagesManager::add_dialog_last_database_message(Dialog *d, unique_ptr<Mes
   LOG_CHECK(d->last_database_message_id == message_id)
       << message_id << " " << d->last_database_message_id << " " << d->debug_set_dialog_last_database_message_id;
 
-  if (!have_input_peer(d->dialog_id, AccessRights::Read)) {
-    // do not add last message to inaccessible dialog
+  bool need_update_dialog_pos = false;
+  const Message *m = nullptr;
+  if (have_input_peer(d->dialog_id, AccessRights::Read)) {
+    bool need_update = false;
+    last_database_message->have_previous = false;
+    last_database_message->have_next = false;
+    last_database_message->from_database = true;
+    m = add_message_to_dialog(d, std::move(last_database_message), false, &need_update, &need_update_dialog_pos,
+                              "add_dialog_last_database_message 1");
+    if (need_update_dialog_pos) {
+      LOG(ERROR) << "Need to update pos in " << d->dialog_id;
+    }
+  }
+  if (m != nullptr) {
+    set_dialog_last_message_id(d, m->message_id, "add_dialog_last_database_message 2");
+    send_update_chat_last_message(d, "add_dialog_last_database_message 3");
+  } else {
     if (d->pending_last_message_date != 0) {
       d->pending_last_message_date = 0;
       d->pending_last_message_id = MessageId();
-      update_dialog_pos(d, "add_dialog_last_database_message 1");
+      need_update_dialog_pos = true;
     }
-    return;
-  }
+    on_dialog_updated(d->dialog_id, "add_dialog_last_database_message 4");  // resave without last database message
 
-  bool need_update = false;
-  bool need_update_dialog_pos = false;
-  last_database_message->have_previous = false;
-  last_database_message->have_next = false;
-  last_database_message->from_database = true;
-  Message *m = add_message_to_dialog(d, std::move(last_database_message), false, &need_update, &need_update_dialog_pos,
-                                     "add_dialog_last_database_message 2");
-  if (need_update_dialog_pos) {
-    LOG(ERROR) << "Need to update pos in " << d->dialog_id;
-  }
-  if (m != nullptr) {
-    set_dialog_last_message_id(d, message_id, "add_dialog_last_database_message 3");
-    send_update_chat_last_message(d, "add_dialog_last_database_message 4");
-  } else if (d->pending_last_message_date != 0) {
-    d->pending_last_message_date = 0;
-    d->pending_last_message_id = MessageId();
-    need_update_dialog_pos = true;
+    if (!td_->auth_manager_->is_bot() && d->dialog_id != being_added_dialog_id_ &&
+        have_input_peer(d->dialog_id, AccessRights::Read) && (d->order != DEFAULT_ORDER || is_dialog_sponsored(d))) {
+      get_history_from_the_end(d->dialog_id, true, false, Auto());
+    }
   }
 
   if (need_update_dialog_pos) {

@@ -7317,7 +7317,9 @@ void ContactsManager::delete_chat_participant(ChatId chat_id, UserId user_id, bo
   auto my_id = get_my_id();
   if (c->status.is_left()) {
     if (user_id == my_id) {
-      td_->messages_manager_->delete_dialog(DialogId(chat_id));
+      if (revoke_messages) {
+        return td_->messages_manager_->delete_dialog_history(DialogId(chat_id), true, true, std::move(promise));
+      }
       return promise.set_value(Unit());
     } else {
       return promise.set_error(Status::Error(3, "Not in the chat"));
@@ -9751,7 +9753,8 @@ void ContactsManager::update_channel(Channel *c, ChannelId channel_id, bool from
   bool have_read_access = have_input_peer_channel(c, channel_id, AccessRights::Read);
   bool is_member = c->status.is_member();
   if (c->had_read_access && !have_read_access) {
-    send_closure_later(G()->messages_manager(), &MessagesManager::delete_dialog, DialogId(channel_id));
+    send_closure_later(G()->messages_manager(), &MessagesManager::on_dialog_deleted, DialogId(channel_id),
+                       Promise<Unit>());
   } else if (!from_database && c->was_member != is_member) {
     DialogId dialog_id(channel_id);
     send_closure_later(G()->messages_manager(), &MessagesManager::force_create_dialog, dialog_id, "update channel",

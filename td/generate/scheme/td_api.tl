@@ -592,10 +592,10 @@ basicGroup id:int32 access_hash:int64 member_count:int32 status:ChatMemberStatus
 
 //@description Contains full information about a basic group
 //@photo Chat photo; may be null
-//@param_description Group description
+//@param_description Group description. Updated only after the basic group is opened
 //@creator_user_id User identifier of the creator of the group; 0 if unknown
 //@members Group members
-//@invite_link Permanent invite link for this group; only for the group creator
+//@invite_link Permanent invite link for this group; may be null. For chat administrators with can_invite_users right only. Updated only after the basic group is opened
 basicGroupFullInfo photo:chatPhoto description:string creator_user_id:int32 members:vector<chatMember> invite_link:chatInviteLink = BasicGroupFullInfo;
 
 
@@ -635,7 +635,7 @@ supergroup id:int32 access_hash:int64 username:string date:int32 status:ChatMemb
 //@is_all_history_available True, if new chat members will have access to old messages. In public or discussion groups and both public and private channels, old messages are always available, so this option affects only private supergroups without a linked chat. The value of this field is only available for chat administrators
 //@sticker_set_id Identifier of the supergroup sticker set; 0 if none
 //@location Location to which the supergroup is connected; may be null
-//@invite_link Permanent invite link for this chat; for chat administrators with can_invite_users right only
+//@invite_link Permanent invite link for this chat; may be null. For chat administrators with can_invite_users right only
 //@upgraded_from_basic_group_id Identifier of the basic group from which supergroup was upgraded; 0 if none
 //@upgraded_from_max_message_id Identifier of the last message in the basic group from which supergroup was upgraded; 0 if none
 supergroupFullInfo photo:chatPhoto description:string member_count:int32 administrator_count:int32 restricted_count:int32 banned_count:int32 linked_chat_id:int53 slow_mode_delay:int32 slow_mode_delay_expires_in:double can_get_members:Bool can_set_username:Bool can_set_sticker_set:Bool can_set_location:Bool can_get_statistics:Bool is_all_history_available:Bool sticker_set_id:int64 location:chatLocation invite_link:chatInviteLink upgraded_from_basic_group_id:int32 upgraded_from_max_message_id:int53 = SupergroupFullInfo;
@@ -4315,7 +4315,7 @@ addChatMembers chat_id:int53 user_ids:vector<int32> = Ok;
 //@chat_id Chat identifier @user_id User identifier @status The new status of the member in the chat
 setChatMemberStatus chat_id:int53 user_id:int32 status:ChatMemberStatus = Ok;
 
-//@description Bans a member in a chat. Members can't be banned in private or secret chats. In supergroups and channels, the user will not be able to return to the group on their own using invite links, etc., unless [unbanned](#unbanchatmember) first
+//@description Bans a member in a chat. Members can't be banned in private or secret chats. In supergroups and channels, the user will not be able to return to the group on their own using invite links, etc., unless unbanned first
 //@chat_id Chat identifier
 //@user_id Identifier of the user
 //@banned_until_date Point in time (Unix timestamp) when the user will be unbanned; 0 if never. If the user is banned for more than 366 days or for less than 30 seconds from the current time, the user is considered to be banned forever. Ignored in basic groups
