@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 
-project(TDLib VERSION 1.7.1 LANGUAGES CXX C)
+project(TDLib VERSION 1.7.2 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -340,6 +340,7 @@ set(TDLIB_SOURCE
   td/telegram/MessagesDb.cpp
   td/telegram/MessageSearchFilter.cpp
   td/telegram/MessagesManager.cpp
+  td/telegram/MessageTtlSetting.cpp
   td/telegram/misc.cpp
   td/telegram/net/AuthDataShared.cpp
   td/telegram/net/ConnectionCreator.cpp
@@ -371,6 +372,7 @@ set(TDLIB_SOURCE
   td/telegram/PollManager.cpp
   td/telegram/QueryCombiner.cpp
   td/telegram/ReplyMarkup.cpp
+  td/telegram/ReportReason.cpp
   td/telegram/RestrictionReason.cpp
   td/telegram/SecretChatActor.cpp
   td/telegram/SecretChatDb.cpp
@@ -520,6 +522,7 @@ set(TDLIB_SOURCE
   td/telegram/MessagesDb.h
   td/telegram/MessageSearchFilter.h
   td/telegram/MessagesManager.h
+  td/telegram/MessageTtlSetting.h
   td/telegram/misc.h
   td/telegram/net/AuthDataShared.h
   td/telegram/net/ConnectionCreator.h
@@ -564,6 +567,7 @@ set(TDLIB_SOURCE
   td/telegram/PublicDialogType.h
   td/telegram/QueryCombiner.h
   td/telegram/ReplyMarkup.h
+  td/telegram/ReportReason.h
   td/telegram/RequestActor.h
   td/telegram/RestrictionReason.h
   td/telegram/ScheduledServerMessageId.h

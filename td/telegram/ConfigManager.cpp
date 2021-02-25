@@ -45,6 +45,7 @@
 #include "td/utils/common.h"
 #include "td/utils/crypto.h"
 #include "td/utils/format.h"
+#include "td/utils/HttpUrl.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -56,7 +57,6 @@
 #include "td/utils/tl_parsers.h"
 #include "td/utils/UInt.h"
 
-#include <algorithm>
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -100,7 +100,7 @@ Result<int32> HttpDate::to_unix_time(int32 year, int32 month, int32 day, int32 h
   return res;
 }
 
-Result<int32> HttpDate::parse_http_date(std::string slice) {
+Result<int32> HttpDate::parse_http_date(string slice) {
   Parser p(slice);
   p.read_till(',');  // ignore week day
   p.skip(',');
@@ -888,6 +888,9 @@ void ConfigManager::start_up() {
     expire_time_ = expire_time;
     set_timeout_in(expire_time_.in());
   }
+
+  autologin_update_time_ = Time::now() - 365 * 86400;
+  autologin_domains_ = full_split(G()->td_db()->get_binlog_pmc()->get("autologin_domains"), '\xFF');
 }
 
 ActorShared<> ConfigManager::create_reference() {
@@ -964,6 +967,60 @@ void ConfigManager::get_app_config(Promise<td_api::object_ptr<td_api::JsonValue>
   }
 }
 
+void ConfigManager::get_external_link(string &&link, Promise<string> &&promise) {
+  if (G()->close_flag()) {
+    return promise.set_value(std::move(link));
+  }
+
+  auto r_url = parse_url(link);
+  if (r_url.is_error()) {
+    return promise.set_value(std::move(link));
+  }
+
+  if (!td::contains(autologin_domains_, r_url.ok().host_)) {
+    return promise.set_value(std::move(link));
+  }
+
+  if (autologin_update_time_ < Time::now() - 10000) {
+    auto query_promise = PromiseCreator::lambda([link = std::move(link), promise = std::move(promise)](
+                                                    Result<td_api::object_ptr<td_api::JsonValue>> &&result) mutable {
+      if (result.is_error()) {
+        return promise.set_value(std::move(link));
+      }
+      send_closure(G()->config_manager(), &ConfigManager::get_external_link, std::move(link), std::move(promise));
+    });
+    return get_app_config(std::move(query_promise));
+  }
+
+  if (autologin_token_.empty()) {
+    return promise.set_value(std::move(link));
+  }
+
+  auto url = r_url.move_as_ok();
+  url.protocol_ = HttpUrl::Protocol::Https;
+  Slice path = url.query_;
+  path.truncate(url.query_.find_first_of("?#"));
+  Slice parameters_hash = Slice(url.query_).substr(path.size());
+  Slice parameters = parameters_hash;
+  parameters.truncate(parameters.find('#'));
+  Slice hash = parameters_hash.substr(parameters.size());
+
+  string added_parameter;
+  if (parameters.empty()) {
+    added_parameter = '?';
+  } else if (parameters.size() == 1) {
+    CHECK(parameters == "?");
+  } else {
+    added_parameter = '&';
+  }
+  added_parameter += "autologin_token=";
+  added_parameter += autologin_token_;
+
+  url.query_ = PSTRING() << path << parameters << added_parameter << hash;
+
+  promise.set_value(url.get_url());
+}
+
 void ConfigManager::get_content_settings(Promise<Unit> &&promise) {
   if (G()->close_flag()) {
     return promise.set_error(Status::Error(500, "Request aborted"));
@@ -1023,7 +1080,7 @@ void ConfigManager::set_archive_and_mute(bool archive_and_mute, Promise<Unit> &&
     return promise.set_error(Status::Error(500, "Request aborted"));
   }
   if (archive_and_mute) {
-    do_dismiss_suggested_action(SuggestedAction::EnableArchiveAndMuteNewChats);
+    remove_suggested_action(suggested_actions_, SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats});
   }
 
   last_set_archive_and_mute_ = archive_and_mute;
@@ -1068,22 +1125,13 @@ void ConfigManager::do_set_ignore_sensitive_content_restrictions(bool ignore_sen
 
 void ConfigManager::do_set_archive_and_mute(bool archive_and_mute) {
   if (archive_and_mute) {
-    do_dismiss_suggested_action(SuggestedAction::EnableArchiveAndMuteNewChats);
+    remove_suggested_action(suggested_actions_, SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats});
   }
   G()->shared_config().set_option_boolean("archive_and_mute_new_chats_from_unknown_users", archive_and_mute);
 }
 
-td_api::object_ptr<td_api::updateSuggestedActions> ConfigManager::get_update_suggested_actions(
-    const vector<SuggestedAction> &added_actions, const vector<SuggestedAction> &removed_actions) {
-  return td_api::make_object<td_api::updateSuggestedActions>(transform(added_actions, get_suggested_action_object),
-                                                             transform(removed_actions, get_suggested_action_object));
-}
-
 void ConfigManager::dismiss_suggested_action(SuggestedAction suggested_action, Promise<Unit> &&promise) {
-  if (suggested_action == SuggestedAction::Empty) {
-    return promise.set_error(Status::Error(400, "Action must be non-empty"));
-  }
-  auto action_str = get_suggested_action_str(suggested_action);
+  auto action_str = suggested_action.get_suggested_action_str();
   if (action_str.empty()) {
     return promise.set_value(Unit());
   }
@@ -1093,27 +1141,24 @@ void ConfigManager::dismiss_suggested_action(SuggestedAction suggested_action, P
   }
 
   dismiss_suggested_action_request_count_++;
-  auto &queries = dismiss_suggested_action_queries_[suggested_action];
+  auto type = static_cast<int32>(suggested_action.type_);
+  auto &queries = dismiss_suggested_action_queries_[type];
   queries.push_back(std::move(promise));
   if (queries.size() == 1) {
     G()->net_query_dispatcher().dispatch_with_callback(
-        G()->net_query_creator().create(telegram_api::help_dismissSuggestion(action_str)),
-        actor_shared(this, 100 + static_cast<int32>(suggested_action)));
-  }
-}
-
-void ConfigManager::do_dismiss_suggested_action(SuggestedAction suggested_action) {
-  if (td::remove(suggested_actions_, suggested_action)) {
-    send_closure(G()->td(), &Td::send_update, get_update_suggested_actions({}, {suggested_action}));
+        G()->net_query_creator().create(
+            telegram_api::help_dismissSuggestion(make_tl_object<telegram_api::inputPeerEmpty>(), action_str)),
+        actor_shared(this, 100 + type));
   }
 }
 
 void ConfigManager::on_result(NetQueryPtr res) {
   auto token = get_link_token();
   if (token >= 100 && token <= 200) {
-    SuggestedAction suggested_action = static_cast<SuggestedAction>(static_cast<int32>(token - 100));
-    auto promises = std::move(dismiss_suggested_action_queries_[suggested_action]);
-    dismiss_suggested_action_queries_.erase(suggested_action);
+    auto type = static_cast<int32>(token - 100);
+    SuggestedAction suggested_action{static_cast<SuggestedAction::Type>(type)};
+    auto promises = std::move(dismiss_suggested_action_queries_[type]);
+    dismiss_suggested_action_queries_.erase(type);
     CHECK(!promises.empty());
     CHECK(dismiss_suggested_action_request_count_ >= promises.size());
     dismiss_suggested_action_request_count_ -= promises.size();
@@ -1125,7 +1170,7 @@ void ConfigManager::on_result(NetQueryPtr res) {
       }
       return;
     }
-    do_dismiss_suggested_action(suggested_action);
+    remove_suggested_action(suggested_actions_, suggested_action);
     get_app_config(Auto());
 
     for (auto &promise : promises) {
@@ -1474,6 +1519,11 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   const bool archive_and_mute =
       G()->shared_config().get_option_boolean("archive_and_mute_new_chats_from_unknown_users");
 
+  autologin_token_.clear();
+  auto old_autologin_domains = std::move(autologin_domains_);
+  autologin_domains_.clear();
+  autologin_update_time_ = Time::now();
+
   vector<tl_object_ptr<telegram_api::jsonObjectValue>> new_values;
   string ignored_restriction_reasons;
   vector<string> dice_emojis;
@@ -1611,10 +1661,11 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
             CHECK(action != nullptr);
             if (action->get_id() == telegram_api::jsonString::ID) {
               Slice action_str = static_cast<telegram_api::jsonString *>(action.get())->value_;
-              auto suggested_action = get_suggested_action(action_str);
-              if (suggested_action != SuggestedAction::Empty) {
-                if (archive_and_mute && suggested_action == SuggestedAction::EnableArchiveAndMuteNewChats) {
-                  LOG(INFO) << "Skip SuggestedAction::EnableArchiveAndMuteNewChats";
+              SuggestedAction suggested_action(action_str);
+              if (!suggested_action.is_empty()) {
+                if (archive_and_mute &&
+                    suggested_action == SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats}) {
+                  LOG(INFO) << "Skip EnableArchiveAndMuteNewChats suggested action";
                 } else {
                   suggested_actions.push_back(suggested_action);
                 }
@@ -1639,6 +1690,30 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         }
         continue;
       }
+      if (key == "autologin_token") {
+        if (value->get_id() == telegram_api::jsonString::ID) {
+          autologin_token_ = url_encode(static_cast<telegram_api::jsonString *>(value)->value_);
+        } else {
+          LOG(ERROR) << "Receive unexpected autologin_token " << to_string(*value);
+        }
+        continue;
+      }
+      if (key == "autologin_domains") {
+        if (value->get_id() == telegram_api::jsonArray::ID) {
+          auto domains = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
+          for (auto &domain : domains) {
+            CHECK(domain != nullptr);
+            if (domain->get_id() == telegram_api::jsonString::ID) {
+              autologin_domains_.push_back(std::move(static_cast<telegram_api::jsonString *>(domain.get())->value_));
+            } else {
+              LOG(ERROR) << "Receive unexpected autologin domain " << to_string(domain);
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected autologin_domains " << to_string(*value);
+        }
+        continue;
+      }
 
       new_values.push_back(std::move(key_value));
     }
@@ -1646,6 +1721,10 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     LOG(ERROR) << "Receive wrong app config " << to_string(config);
   }
   config = make_tl_object<telegram_api::jsonObject>(std::move(new_values));
+
+  if (autologin_domains_ != old_autologin_domains) {
+    G()->td_db()->get_binlog_pmc()->set("autologin_domains", implode(autologin_domains_, '\xFF'));
+  }
 
   ConfigShared &shared_config = G()->shared_config();
 
@@ -1698,34 +1777,13 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
 
   // do not update suggested actions while changing content settings or dismissing an action
   if (!is_set_content_settings_request_sent_ && dismiss_suggested_action_request_count_ == 0) {
-    td::unique(suggested_actions);
-    if (suggested_actions != suggested_actions_) {
-      vector<SuggestedAction> added_actions;
-      vector<SuggestedAction> removed_actions;
-      auto old_it = suggested_actions_.begin();
-      auto new_it = suggested_actions.begin();
-      while (old_it != suggested_actions_.end() || new_it != suggested_actions.end()) {
-        if (old_it != suggested_actions_.end() &&
-            (new_it == suggested_actions.end() || std::less<SuggestedAction>()(*old_it, *new_it))) {
-          removed_actions.push_back(*old_it++);
-        } else if (old_it == suggested_actions_.end() || std::less<SuggestedAction>()(*new_it, *old_it)) {
-          added_actions.push_back(*new_it++);
-        } else {
-          old_it++;
-          new_it++;
-        }
-      }
-      CHECK(!added_actions.empty() || !removed_actions.empty());
-      suggested_actions_ = std::move(suggested_actions);
-      send_closure(G()->td(), &Td::send_update,
-                   get_update_suggested_actions(std::move(added_actions), std::move(removed_actions)));
-    }
+    update_suggested_actions(suggested_actions_, std::move(suggested_actions));
   }
 }
 
 void ConfigManager::get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const {
   if (!suggested_actions_.empty()) {
-    updates.push_back(get_update_suggested_actions(suggested_actions_, {}));
+    updates.push_back(get_update_suggested_actions_object(suggested_actions_, {}));
   }
 }
 

@@ -32,6 +32,7 @@
 #include "td/telegram/MessageReplyInfo.h"
 #include "td/telegram/MessagesDb.h"
 #include "td/telegram/MessageSearchFilter.h"
+#include "td/telegram/MessageTtlSetting.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/Notification.h"
 #include "td/telegram/NotificationGroupId.h"
@@ -40,6 +41,7 @@
 #include "td/telegram/NotificationId.h"
 #include "td/telegram/NotificationSettings.h"
 #include "td/telegram/ReplyMarkup.h"
+#include "td/telegram/ReportReason.h"
 #include "td/telegram/RestrictionReason.h"
 #include "td/telegram/ScheduledServerMessageId.h"
 #include "td/telegram/SecretChatId.h"
@@ -117,6 +119,7 @@ class MessagesManager : public Actor {
   static constexpr int32 MESSAGE_FLAG_IS_RESTRICTED = 1 << 22;
   static constexpr int32 MESSAGE_FLAG_HAS_REPLY_INFO = 1 << 23;
   static constexpr int32 MESSAGE_FLAG_IS_PINNED = 1 << 24;
+  static constexpr int32 MESSAGE_FLAG_HAS_TTL_PERIOD = 1 << 25;
 
   static constexpr int32 SEND_MESSAGE_FLAG_IS_REPLY = 1 << 0;
   static constexpr int32 SEND_MESSAGE_FLAG_DISABLE_WEB_PAGE_PREVIEW = 1 << 1;
@@ -287,6 +290,8 @@ class MessagesManager : public Actor {
 
   void on_update_dialog_group_call_id(DialogId dialog_id, InputGroupCallId input_group_call_id);
 
+  void on_update_dialog_message_ttl_setting(DialogId dialog_id, MessageTtlSetting message_ttl_setting);
+
   void on_update_dialog_filters();
 
   void on_update_service_notification(tl_object_ptr<telegram_api::updateServiceNotification> &&update,
@@ -384,7 +389,7 @@ class MessagesManager : public Actor {
 
   Result<vector<MessageId>> resend_messages(DialogId dialog_id, vector<MessageId> message_ids) TD_WARN_UNUSED_RESULT;
 
-  Result<MessageId> send_dialog_set_ttl_message(DialogId dialog_id, int32 ttl);
+  void set_dialog_message_ttl_setting(DialogId dialog_id, int32 ttl, Promise<Unit> &&promise);
 
   Status send_screenshot_taken_notification_message(DialogId dialog_id);
 
@@ -395,6 +400,8 @@ class MessagesManager : public Actor {
 
   void get_message_file_type(const string &message_file_head,
                              Promise<td_api::object_ptr<td_api::MessageFileType>> &&promise);
+
+  void get_message_import_confirmation_text(DialogId dialog_id, Promise<string> &&promise);
 
   void import_messages(DialogId dialog_id, const td_api::object_ptr<td_api::InputFile> &message_file,
                        const vector<td_api::object_ptr<td_api::InputFile>> &attached_files, Promise<Unit> &&promise);
@@ -771,8 +778,10 @@ class MessagesManager : public Actor {
 
   void reget_dialog_action_bar(DialogId dialog_id, const char *source);
 
-  void report_dialog(DialogId dialog_id, const tl_object_ptr<td_api::ChatReportReason> &reason,
-                     const vector<MessageId> &message_ids, Promise<Unit> &&promise);
+  void report_dialog(DialogId dialog_id, const vector<MessageId> &message_ids, ReportReason &&reason,
+                     Promise<Unit> &&promise);
+
+  void report_dialog_photo(DialogId dialog_id, FileId file_id, ReportReason &&reason, Promise<Unit> &&promise);
 
   void on_get_peer_settings(DialogId dialog_id, tl_object_ptr<telegram_api::peerSettings> &&peer_settings,
                             bool ignore_privacy_exception = false);
@@ -799,8 +808,8 @@ class MessagesManager : public Actor {
   void check_send_message_result(int64 random_id, DialogId dialog_id, const telegram_api::Updates *updates_ptr,
                                  const char *source);
 
-  FullMessageId on_send_message_success(int64 random_id, MessageId new_message_id, int32 date, FileId new_file_id,
-                                        const char *source);
+  FullMessageId on_send_message_success(int64 random_id, MessageId new_message_id, int32 date, int32 ttl_period,
+                                        FileId new_file_id, const char *source);
 
   void on_send_message_file_part_missing(int64 random_id, int bad_part);
 
@@ -924,6 +933,7 @@ class MessagesManager : public Actor {
     UserId sender_user_id;
     DialogId sender_dialog_id;
     int32 date = 0;
+    int32 ttl_period = 0;
     int32 ttl = 0;
     int64 random_id = 0;
     tl_object_ptr<telegram_api::messageFwdHeader> forward_header;
@@ -1068,8 +1078,9 @@ class MessagesManager : public Actor {
     string send_error_message;
     double try_resend_at = 0;
 
-    int32 ttl = 0;
-    double ttl_expires_at = 0;
+    int32 ttl_period = 0;       // counted from message send date
+    int32 ttl = 0;              // counted from message content view date
+    double ttl_expires_at = 0;  // only for ttl
 
     int64 media_album_id = 0;
 
@@ -1142,6 +1153,7 @@ class MessagesManager : public Actor {
     MessageId last_pinned_message_id;
     MessageId reply_markup_message_id;
     DialogNotificationSettings notification_settings;
+    MessageTtlSetting message_ttl_setting;
     unique_ptr<DraftMessage> draft_message;
     LogEventIdWithGeneration save_draft_message_log_event_id;
     LogEventIdWithGeneration save_notification_settings_log_event_id;
@@ -1223,10 +1235,12 @@ class MessagesManager : public Actor {
     bool had_last_yet_unsent_message = false;  // whether the dialog was stored to database without last message
     bool has_active_group_call = false;
     bool is_group_call_empty = false;
+    bool is_message_ttl_setting_inited = false;
 
     bool increment_view_counter = false;
 
     bool is_update_new_chat_sent = false;
+    bool has_unload_timeout = false;
 
     int32 pts = 0;                                                     // for channels only
     std::multimap<int32, PendingPtsUpdate> postponed_channel_updates;  // for channels only
@@ -1784,8 +1798,8 @@ class MessagesManager : public Actor {
 
   void delete_messages_from_updates(const vector<MessageId> &message_ids);
 
-  void delete_dialog_messages_from_updates(DialogId dialog_id, const vector<MessageId> &message_ids,
-                                           bool skip_update_for_not_found_messages);
+  void delete_dialog_messages(DialogId dialog_id, const vector<MessageId> &message_ids, bool from_updates,
+                              bool skip_update_for_not_found_messages);
 
   void update_dialog_pinned_messages_from_updates(DialogId dialog_id, const vector<MessageId> &message_ids,
                                                   bool is_pin);
@@ -2212,6 +2226,8 @@ class MessagesManager : public Actor {
 
   void send_update_chat_voice_chat(const Dialog *d);
 
+  void send_update_chat_message_ttl_setting(const Dialog *d);
+
   void send_update_chat_has_scheduled_messages(Dialog *d, bool from_deletion);
 
   void send_update_user_chat_action(DialogId dialog_id, MessageId top_thread_message_id, UserId user_id,
@@ -2588,7 +2604,9 @@ class MessagesManager : public Actor {
   void ttl_on_view(const Dialog *d, Message *m, double view_date, double now);
   bool ttl_on_open(Dialog *d, Message *m, double now, bool is_local_read);
   void ttl_register_message(DialogId dialog_id, const Message *m, double now);
-  void ttl_unregister_message(DialogId dialog_id, const Message *m, double now, const char *source);
+  void ttl_unregister_message(DialogId dialog_id, const Message *m, const char *source);
+  void ttl_period_register_message(DialogId dialog_id, const Message *m, double server_time);
+  void ttl_period_unregister_message(DialogId dialog_id, const Message *m);
   void ttl_loop(double now);
   void ttl_update_timeout(double now);
 
@@ -2826,6 +2844,8 @@ class MessagesManager : public Actor {
 
   void on_imported_message_attachments_uploaded(int64 random_id, Result<Unit> &&result);
 
+  Status can_import_messages(DialogId dialog_id);
+
   void add_sponsored_dialog(const Dialog *d, DialogSource source);
 
   void save_sponsored_dialog();
@@ -2988,10 +3008,12 @@ class MessagesManager : public Actor {
   // TTL
   class TtlNode : private HeapNode {
    public:
-    TtlNode(DialogId dialog_id, MessageId message_id) : full_message_id(dialog_id, message_id) {
+    TtlNode(DialogId dialog_id, MessageId message_id, bool by_ttl_period)
+        : full_message_id_(dialog_id, message_id), by_ttl_period_(by_ttl_period) {
     }
 
-    FullMessageId full_message_id;
+    FullMessageId full_message_id_;
+    bool by_ttl_period_;
 
     HeapNode *as_heap_node() const {
       return const_cast<HeapNode *>(static_cast<const HeapNode *>(this));
@@ -3001,12 +3023,12 @@ class MessagesManager : public Actor {
     }
 
     bool operator==(const TtlNode &other) const {
-      return full_message_id == other.full_message_id;
+      return full_message_id_ == other.full_message_id_;
     }
   };
   struct TtlNodeHash {
     std::size_t operator()(const TtlNode &ttl_node) const {
-      return FullMessageIdHash()(ttl_node.full_message_id);
+      return FullMessageIdHash()(ttl_node.full_message_id_) * 2 + static_cast<size_t>(ttl_node.by_ttl_period_);
     }
   };
   std::unordered_set<TtlNode, TtlNodeHash> ttl_nodes_;

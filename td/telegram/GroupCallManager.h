@@ -135,6 +135,8 @@ class GroupCallManager : public Actor {
   void finish_check_group_call_is_joined(InputGroupCallId input_group_call_id, int32 audio_source,
                                          Result<Unit> &&result);
 
+  static bool get_group_call_mute_new_participants(const GroupCall *group_call);
+
   bool need_group_call_participants(InputGroupCallId input_group_call_id) const;
 
   bool need_group_call_participants(InputGroupCallId input_group_call_id, const GroupCall *group_call) const;
@@ -169,10 +171,20 @@ class GroupCallManager : public Actor {
 
   void finish_join_group_call(InputGroupCallId input_group_call_id, uint64 generation, Status error);
 
+  void process_group_call_after_join_requests(InputGroupCallId input_group_call_id);
+
   GroupCallParticipants *add_group_call_participants(InputGroupCallId input_group_call_id);
+
+  GroupCallParticipant *get_group_call_participant(InputGroupCallId input_group_call_id, UserId user_id);
 
   static GroupCallParticipant *get_group_call_participant(GroupCallParticipants *group_call_participants,
                                                           UserId user_id);
+
+  void send_toggle_group_call_mute_new_participants_query(InputGroupCallId input_group_call_id,
+                                                          bool mute_new_participants);
+
+  void on_toggle_group_call_mute_new_participants(InputGroupCallId input_group_call_id, bool mute_new_participants,
+                                                  Result<Unit> &&result);
 
   void on_toggle_group_call_participant_is_muted(InputGroupCallId input_group_call_id, UserId user_id,
                                                  uint64 generation, Promise<Unit> &&promise);

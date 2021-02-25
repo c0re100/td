@@ -31,6 +31,7 @@
 #include "td/telegram/RestrictionReason.h"
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/StickerSetId.h"
+#include "td/telegram/SuggestedAction.h"
 #include "td/telegram/UserId.h"
 
 #include "td/actor/actor.h"
@@ -42,6 +43,7 @@
 #include "td/utils/Hints.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
+#include "td/utils/Time.h"
 
 #include <functional>
 #include <memory>
@@ -164,7 +166,7 @@ class ContactsManager : public Actor {
   void on_binlog_channel_event(BinlogEvent &&event);
   void on_binlog_secret_chat_event(BinlogEvent &&event);
 
-  void on_get_user_full(tl_object_ptr<telegram_api::userFull> &&user_full);
+  void on_get_user_full(tl_object_ptr<telegram_api::userFull> &&user);
 
   void on_get_user_photos(UserId user_id, int32 offset, int32 limit, int32 total_count,
                           vector<tl_object_ptr<telegram_api::Photo>> photos);
@@ -210,7 +212,12 @@ class ContactsManager : public Actor {
                                                   Promise<Unit> &&promise);
   void on_update_channel_default_permissions(ChannelId channel_id, RestrictedRights default_permissions);
   void on_update_channel_administrator_count(ChannelId channel_id, int32 administrator_count);
-  void on_update_channel_participant(ChannelId channel_id, UserId user_id, int32 date,
+
+  void on_update_bot_stopped(UserId user_id, int32 date, bool is_stopped);
+  void on_update_chat_participant(ChatId chat_id, UserId user_id, int32 date, DialogInviteLink invite_link,
+                                  tl_object_ptr<telegram_api::ChatParticipant> old_participant,
+                                  tl_object_ptr<telegram_api::ChatParticipant> new_participant);
+  void on_update_channel_participant(ChannelId channel_id, UserId user_id, int32 date, DialogInviteLink invite_link,
                                      tl_object_ptr<telegram_api::ChannelParticipant> old_participant,
                                      tl_object_ptr<telegram_api::ChannelParticipant> new_participant);
 
@@ -352,6 +359,8 @@ class ContactsManager : public Actor {
   void toggle_channel_is_all_history_available(ChannelId channel_id, bool is_all_history_available,
                                                Promise<Unit> &&promise);
 
+  void convert_channel_to_gigagroup(ChannelId channel_id, Promise<Unit> &&promise);
+
   void set_channel_description(ChannelId channel_id, const string &description, Promise<Unit> &&promise);
 
   void set_channel_discussion_group(DialogId dialog_id, DialogId discussion_dialog_id, Promise<Unit> &&promise);
@@ -385,11 +394,17 @@ class ContactsManager : public Actor {
 
   void export_dialog_invite_link(DialogId dialog_id, int32 expire_date, int32 usage_limit, bool is_permanent,
                                  Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise);
-  /*
-  void edit_dialog_invite_link(DialogId dialog_id, const string &link, int32 expire_date, int32 usage_limit,
-                               bool is_revoked, Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise);
 
-  void get_dialog_invite_links(DialogId dialog_id, UserId administrator_user_id, bool is_revoked, int32 offset_date,
+  void edit_dialog_invite_link(DialogId dialog_id, const string &link, int32 expire_date, int32 usage_limit,
+                               Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise);
+
+  void get_dialog_invite_link(DialogId dialog_id, const string &invite_link,
+                              Promise<td_api::object_ptr<td_api::chatInviteLink>> &&promise);
+
+  void get_dialog_invite_link_counts(DialogId dialog_id,
+                                     Promise<td_api::object_ptr<td_api::chatInviteLinkCounts>> &&promise);
+
+  void get_dialog_invite_links(DialogId dialog_id, UserId creator_user_id, bool is_revoked, int32 offset_date,
                                const string &offset_invite_link, int32 limit,
                                Promise<td_api::object_ptr<td_api::chatInviteLinks>> &&promise);
 
@@ -397,10 +412,13 @@ class ContactsManager : public Actor {
                                     td_api::object_ptr<td_api::chatInviteLinkMember> offset_member, int32 limit,
                                     Promise<td_api::object_ptr<td_api::chatInviteLinkMembers>> &&promise);
 
+  void revoke_dialog_invite_link(DialogId dialog_id, const string &link,
+                                 Promise<td_api::object_ptr<td_api::chatInviteLinks>> &&promise);
+
   void delete_revoked_dialog_invite_link(DialogId dialog_id, const string &invite_link, Promise<Unit> &&promise);
 
-  void delete_all_revoked_dialog_invite_links(DialogId dialog_id, Promise<Unit> &&promise);
-  */
+  void delete_all_revoked_dialog_invite_links(DialogId dialog_id, UserId creator_user_id, Promise<Unit> &&promise);
+
   void check_dialog_invite_link(const string &invite_link, Promise<Unit> &&promise) const;
 
   void import_dialog_invite_link(const string &invite_link, Promise<DialogId> &&promise);
@@ -414,6 +432,8 @@ class ContactsManager : public Actor {
   vector<DialogId> get_dialogs_for_discussion(Promise<Unit> &&promise);
 
   vector<DialogId> get_inactive_channels(Promise<Unit> &&promise);
+
+  void dismiss_suggested_action(SuggestedAction action, Promise<Unit> &&promise);
 
   bool is_user_contact(UserId user_id, bool is_mutual = false) const;
 
@@ -772,6 +792,7 @@ class ContactsManager : public Actor {
     bool is_slow_mode_enabled = false;
 
     bool is_megagroup = false;
+    bool is_gigagroup = false;
     bool is_verified = false;
     bool is_scam = false;
     bool is_fake = false;
@@ -874,6 +895,7 @@ class ContactsManager : public Actor {
 
     bool is_outbound = false;
 
+    bool is_ttl_changed = true;
     bool is_state_changed = true;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
@@ -990,6 +1012,7 @@ class ContactsManager : public Actor {
   static constexpr int32 USER_FULL_FLAG_CAN_PIN_MESSAGE = 1 << 7;
   static constexpr int32 USER_FULL_FLAG_HAS_FOLDER_ID = 1 << 11;
   static constexpr int32 USER_FULL_FLAG_HAS_SCHEDULED_MESSAGES = 1 << 12;
+  static constexpr int32 USER_FULL_FLAG_HAS_MESSAGE_TTL = 1 << 14;
 
   static constexpr int32 CHAT_FLAG_USER_IS_CREATOR = 1 << 0;
   static constexpr int32 CHAT_FLAG_USER_WAS_KICKED = 1 << 1;
@@ -1005,6 +1028,7 @@ class ContactsManager : public Actor {
   static constexpr int32 CHAT_FULL_FLAG_HAS_SCHEDULED_MESSAGES = 1 << 8;
   static constexpr int32 CHAT_FULL_FLAG_HAS_FOLDER_ID = 1 << 11;
   static constexpr int32 CHAT_FULL_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 12;
+  static constexpr int32 CHAT_FULL_FLAG_HAS_MESSAGE_TTL = 1 << 14;
 
   static constexpr int32 CHANNEL_FLAG_USER_IS_CREATOR = 1 << 0;
   static constexpr int32 CHANNEL_FLAG_USER_HAS_LEFT = 1 << 2;
@@ -1028,6 +1052,7 @@ class ContactsManager : public Actor {
   static constexpr int32 CHANNEL_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 23;
   static constexpr int32 CHANNEL_FLAG_IS_GROUP_CALL_NON_EMPTY = 1 << 24;
   static constexpr int32 CHANNEL_FLAG_IS_FAKE = 1 << 25;
+  static constexpr int32 CHANNEL_FLAG_IS_GIGAGROUP = 1 << 26;
 
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_PARTICIPANT_COUNT = 1 << 0;
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_ADMINISTRATOR_COUNT = 1 << 1;
@@ -1053,6 +1078,7 @@ class ContactsManager : public Actor {
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 21;
   static constexpr int32 CHANNEL_FULL_FLAG_IS_BLOCKED = 1 << 22;
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_EXPORTED_INVITE = 1 << 23;
+  static constexpr int32 CHANNEL_FULL_FLAG_HAS_MESSAGE_TTL = 1 << 24;
 
   static constexpr int32 CHAT_INVITE_FLAG_IS_CHANNEL = 1 << 0;
   static constexpr int32 CHAT_INVITE_FLAG_IS_BROADCAST = 1 << 1;
@@ -1348,6 +1374,10 @@ class ContactsManager : public Actor {
   void on_clear_imported_contacts(vector<Contact> &&contacts, vector<size_t> contacts_unique_id,
                                   std::pair<vector<size_t>, vector<Contact>> &&to_add, Promise<Unit> &&promise);
 
+  void send_update_chat_member(DialogId dialog_id, UserId agent_user_id, int32 date, DialogInviteLink invite_link,
+                               const DialogParticipant &old_dialog_participant,
+                               const DialogParticipant &new_dialog_participant);
+
   static vector<td_api::object_ptr<td_api::chatNearby>> get_chats_nearby_object(
       const vector<DialogNearby> &dialogs_nearby);
 
@@ -1371,7 +1401,7 @@ class ContactsManager : public Actor {
 
   void remove_dialog_access_by_invite_link(DialogId dialog_id);
 
-  Status can_manage_dialog_invite_links(DialogId dialog_id);
+  Status can_manage_dialog_invite_links(DialogId dialog_id, bool creator_only = false);
 
   bool update_permanent_invite_link(DialogInviteLink &invite_link, DialogInviteLink new_invite_link);
 
@@ -1407,6 +1437,10 @@ class ContactsManager : public Actor {
                                             Result<> result, Promise<Unit> promise);
 
   void reload_dialog_administrators(DialogId dialog_id, int32 hash, Promise<Unit> &&promise);
+
+  void remove_dialog_suggested_action(SuggestedAction action);
+
+  void on_dismiss_suggested_action(SuggestedAction action, Result<Unit> &&result);
 
   static td_api::object_ptr<td_api::updateUser> get_update_unknown_user_object(UserId user_id);
 
@@ -1594,6 +1628,9 @@ class ContactsManager : public Actor {
   QueryCombiner get_channel_full_queries_{"GetChannelFullCombiner", 2.0};
 
   std::unordered_map<DialogId, vector<DialogAdministrator>, DialogIdHash> dialog_administrators_;
+
+  std::unordered_map<DialogId, vector<SuggestedAction>, DialogIdHash> dialog_suggested_actions_;
+  std::unordered_map<DialogId, vector<Promise<Unit>>, DialogIdHash> dismiss_suggested_action_queries_;
 
   class UploadProfilePhotoCallback;
   std::shared_ptr<UploadProfilePhotoCallback> upload_profile_photo_callback_;
