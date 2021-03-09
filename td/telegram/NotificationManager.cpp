@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -41,6 +41,7 @@
 
 #include "td/actor/SleepActor.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/as.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
@@ -1253,10 +1254,7 @@ void NotificationManager::flush_pending_updates(int32 group_id, const char *sour
       auto update_ptr = static_cast<td_api::updateNotificationGroup *>(update.get());
       append(update_ptr->removed_notification_ids_, std::move(moved_deleted_notification_ids));
       auto old_size = update_ptr->removed_notification_ids_.size();
-      std::sort(update_ptr->removed_notification_ids_.begin(), update_ptr->removed_notification_ids_.end());
-      update_ptr->removed_notification_ids_.erase(
-          std::unique(update_ptr->removed_notification_ids_.begin(), update_ptr->removed_notification_ids_.end()),
-          update_ptr->removed_notification_ids_.end());
+      td::unique(update_ptr->removed_notification_ids_);
       CHECK(old_size == update_ptr->removed_notification_ids_.size());
     }
 
@@ -3271,9 +3269,9 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     auto user = telegram_api::make_object<telegram_api::user>(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, sender_user_id.get(),
-        sender_access_hash, user_name, string(), string(), string(), std::move(sender_photo), nullptr, 0, Auto(),
-        string(), string());
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+        sender_user_id.get(), sender_access_hash, user_name, string(), string(), string(), std::move(sender_photo),
+        nullptr, 0, Auto(), string(), string());
     td_->contacts_manager_->on_get_user(std::move(user), "process_push_notification_payload");
   }
 
@@ -3608,8 +3606,9 @@ void NotificationManager::add_message_push_notification(DialogId dialog_id, Mess
     auto user = telegram_api::make_object<telegram_api::user>(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, sender_user_id.get(), 0, user_name,
-        string(), string(), string(), nullptr, nullptr, 0, Auto(), string(), string());
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+        sender_user_id.get(), 0, user_name, string(), string(), string(), nullptr, nullptr, 0, Auto(), string(),
+        string());
     td_->contacts_manager_->on_get_user(std::move(user), "add_message_push_notification");
   }
 

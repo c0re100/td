@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -184,7 +184,7 @@ Result<FileLoader::PrefixInfo> FileUploader::on_update_local_location(const Loca
   }
 
   local_size_ = local_size;
-  if (expected_size_ < local_size_) {
+  if (expected_size_ < local_size_ && (expected_size_ != (10 << 20) || local_size_ >= (30 << 20))) {
     expected_size_ = local_size_;
   }
   local_is_ready_ = local_is_ready;

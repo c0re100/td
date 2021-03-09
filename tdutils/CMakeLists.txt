@@ -123,6 +123,7 @@ set(TDUTILS_SOURCE
   td/utils/port/EventFd.h
   td/utils/port/EventFdBase.h
   td/utils/port/FileFd.h
+  td/utils/port/FromApp.h
   td/utils/port/IPAddress.h
   td/utils/port/IoSlice.h
   td/utils/port/MemoryMapping.h
@@ -164,6 +165,7 @@ set(TDUTILS_SOURCE
   td/utils/port/detail/WineventPoll.h
 
   td/utils/AesCtrByteFlow.h
+  td/utils/algorithm.h
   td/utils/as.h
   td/utils/AtomicRead.h
   td/utils/base64.h

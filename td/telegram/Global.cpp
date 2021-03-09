@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -215,7 +215,7 @@ DcId Global::get_webfile_dc_id() const {
   return DcId::internal(dc_id);
 }
 
-bool Global::ignore_backgrond_updates() const {
+bool Global::ignore_background_updates() const {
   return !parameters_.use_file_db && !parameters_.use_secret_chats &&
          shared_config_->get_option_boolean("ignore_background_updates");
 }

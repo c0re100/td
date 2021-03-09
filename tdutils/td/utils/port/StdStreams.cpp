@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -127,11 +127,13 @@ class BufferedStdinImpl : public Iocp::Callback {
         break;
       }
       writer_.confirm_append(r_size.ok());
-      if (iocp_ref_.post(0, this, nullptr)) {
-        inc_refcnt();
+      inc_refcnt();
+      if (!iocp_ref_.post(0, this, nullptr)) {
+        dec_refcnt();
       }
     }
     if (!iocp_ref_.post(0, this, nullptr)) {
+      read_thread_.detach();
       dec_refcnt();
     }
   }
@@ -199,7 +201,8 @@ class BufferedStdinImpl {
     size_t result = 0;
     ::td::sync_with_poll(*this);
     while (::td::can_read_local(*this) && max_read) {
-      MutableSlice slice = writer_.prepare_append().truncate(max_read);
+      MutableSlice slice = writer_.prepare_append();
+      slice.truncate(max_read);
       TRY_RESULT(x, file_fd_.read(slice));
       slice.truncate(x);
       writer_.confirm_append(x);

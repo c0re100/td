@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,9 +9,9 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/TdDb.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
-#include "td/utils/misc.h"
 #include "td/utils/port/RwMutex.h"
 #include "td/utils/tl_helpers.h"
 
@@ -41,12 +41,9 @@ class AuthDataSharedImpl : public AuthDataShared {
     }
     return res;
   }
-  using AuthDataShared::get_auth_key_state;
-  std::pair<AuthKeyState, bool> get_auth_key_state() override {
-    // TODO (perf):
-    auto auth_key = get_auth_key();
-    AuthKeyState state = get_auth_key_state(auth_key);
-    return std::make_pair(state, auth_key.was_auth_flag());
+
+  AuthKeyState get_auth_key_state() override {
+    return AuthDataShared::get_auth_key_state(get_auth_key());
   }
 
   void set_auth_key(const mtproto::AuthKey &auth_key) override {
@@ -106,7 +103,8 @@ class AuthDataSharedImpl : public AuthDataShared {
   }
 
   void log_auth_key(const mtproto::AuthKey &auth_key) {
-    LOG(WARNING) << dc_id_ << " " << tag("auth_key_id", auth_key.id()) << tag("state", get_auth_key_state(auth_key))
+    LOG(WARNING) << dc_id_ << " " << tag("auth_key_id", auth_key.id())
+                 << tag("state", AuthDataShared::get_auth_key_state(auth_key))
                  << tag("created_at", auth_key.created_at());
   }
 };

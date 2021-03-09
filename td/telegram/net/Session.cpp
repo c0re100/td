@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,6 +8,7 @@
 
 #include "td/telegram/telegram_api.h"
 
+#include "td/telegram/ConfigShared.h"
 #include "td/telegram/DhCache.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/net/DcAuthManager.h"
@@ -27,6 +28,7 @@
 #include "td/mtproto/SessionConnection.h"
 #include "td/mtproto/TransportType.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/as.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
@@ -777,6 +779,7 @@ void Session::on_message_result_error(uint64 id, int error_code, BufferSlice mes
         LOG(WARNING) << "Lost authorization due to " << tag("msg", message.as_slice());
       }
       auth_data_.set_auth_flag(false);
+      G()->shared_config().set_option_boolean("auth", false);
       shared_auth_data_->set_auth_key(auth_data_.get_main_auth_key());
       on_session_failed(Status::OK());
     }

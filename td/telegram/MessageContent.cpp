@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -27,7 +27,9 @@
 #include "td/telegram/Game.h"
 #include "td/telegram/Game.hpp"
 #include "td/telegram/Global.h"
+#include "td/telegram/GroupCallManager.h"
 #include "td/telegram/HashtagHints.h"
+#include "td/telegram/InputGroupCallId.h"
 #include "td/telegram/InputMessageText.h"
 #include "td/telegram/Location.h"
 #include "td/telegram/MessageEntity.h"
@@ -69,6 +71,7 @@
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/format.h"
 #include "td/utils/HttpUrl.h"
 #include "td/utils/logging.h"
@@ -688,6 +691,8 @@ class MessageDice : public MessageContent {
   }
 };
 
+constexpr const char *MessageDice::DEFAULT_EMOJI;
+
 class MessageProximityAlertTriggered : public MessageContent {
  public:
   DialogId traveler_dialog_id;
@@ -704,7 +709,35 @@ class MessageProximityAlertTriggered : public MessageContent {
   }
 };
 
-constexpr const char *MessageDice::DEFAULT_EMOJI;
+class MessageGroupCall : public MessageContent {
+ public:
+  InputGroupCallId input_group_call_id;
+  int32 duration = -1;
+
+  MessageGroupCall() = default;
+  MessageGroupCall(InputGroupCallId input_group_call_id, int32 duration)
+      : input_group_call_id(input_group_call_id), duration(duration) {
+  }
+
+  MessageContentType get_type() const override {
+    return MessageContentType::GroupCall;
+  }
+};
+
+class MessageInviteToGroupCall : public MessageContent {
+ public:
+  InputGroupCallId input_group_call_id;
+  vector<UserId> user_ids;
+
+  MessageInviteToGroupCall() = default;
+  MessageInviteToGroupCall(InputGroupCallId input_group_call_id, vector<UserId> &&user_ids)
+      : input_group_call_id(input_group_call_id), user_ids(std::move(user_ids)) {
+  }
+
+  MessageContentType get_type() const override {
+    return MessageContentType::InviteToGroupCall;
+  }
+};
 
 template <class StorerT>
 static void store(const MessageContent *content, StorerT &storer) {
@@ -976,6 +1009,24 @@ static void store(const MessageContent *content, StorerT &storer) {
       store(m->traveler_dialog_id, storer);
       store(m->watcher_dialog_id, storer);
       store(m->distance, storer);
+      break;
+    }
+    case MessageContentType::GroupCall: {
+      auto m = static_cast<const MessageGroupCall *>(content);
+      bool has_duration = m->duration >= 0;
+      BEGIN_STORE_FLAGS();
+      STORE_FLAG(has_duration);
+      END_STORE_FLAGS();
+      store(m->input_group_call_id, storer);
+      if (has_duration) {
+        store(m->duration, storer);
+      }
+      break;
+    }
+    case MessageContentType::InviteToGroupCall: {
+      auto m = static_cast<const MessageInviteToGroupCall *>(content);
+      store(m->input_group_call_id, storer);
+      store(m->user_ids, storer);
       break;
     }
     default:
@@ -1352,6 +1403,26 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       content = std::move(m);
       break;
     }
+    case MessageContentType::GroupCall: {
+      auto m = make_unique<MessageGroupCall>();
+      bool has_duration;
+      BEGIN_PARSE_FLAGS();
+      PARSE_FLAG(has_duration);
+      END_PARSE_FLAGS();
+      parse(m->input_group_call_id, parser);
+      if (has_duration) {
+        parse(m->duration, parser);
+      }
+      content = std::move(m);
+      break;
+    }
+    case MessageContentType::InviteToGroupCall: {
+      auto m = make_unique<MessageInviteToGroupCall>();
+      parse(m->input_group_call_id, parser);
+      parse(m->user_ids, parser);
+      content = std::move(m);
+      break;
+    }
     default:
       LOG(FATAL) << "Have unknown message content type " << static_cast<int32>(content_type);
   }
@@ -1512,8 +1583,8 @@ static Result<InputMessageContent> create_input_message_content(
   string mime_type;
   if (file_id.is_valid()) {
     file_view = td->file_manager_->get_file_view(file_id);
-    auto suggested_name = file_view.suggested_name();
-    const PathView path_view(suggested_name);
+    auto suggested_path = file_view.suggested_path();
+    const PathView path_view(suggested_path);
     file_name = path_view.file_name().str();
     mime_type = MimeType::from_extension(path_view.extension());
   }
@@ -1523,6 +1594,7 @@ static Result<InputMessageContent> create_input_message_content(
   unique_ptr<MessageContent> content;
   UserId via_bot_user_id;
   int32 ttl = 0;
+  string emoji;
   bool is_bot = td->auth_manager_->is_bot();
   switch (input_message_content->get_id()) {
     case td_api::inputMessageText::ID: {
@@ -1549,7 +1621,7 @@ static Result<InputMessageContent> create_input_message_content(
       td->animations_manager_->create_animation(
           file_id, string(), thumbnail, AnimationSize(), has_stickers, std::move(sticker_file_ids),
           std::move(file_name), std::move(mime_type), input_animation->duration_,
-          get_dimensions(input_animation->width_, input_animation->height_), false);
+          get_dimensions(input_animation->width_, input_animation->height_, "inputMessageAnimation"), false);
 
       content = make_unique<MessageAnimation>(file_id, std::move(caption));
       break;
@@ -1618,7 +1690,7 @@ static Result<InputMessageContent> create_input_message_content(
 
       PhotoSize s;
       s.type = type;
-      s.dimensions = get_dimensions(input_photo->width_, input_photo->height_);
+      s.dimensions = get_dimensions(input_photo->width_, input_photo->height_, "inputMessagePhoto");
       s.size = static_cast<int32>(file_view.size());
       s.file_id = file_id;
 
@@ -1638,8 +1710,13 @@ static Result<InputMessageContent> create_input_message_content(
     }
     case td_api::inputMessageSticker::ID: {
       auto input_sticker = static_cast<td_api::inputMessageSticker *>(input_message_content.get());
+
+      emoji = std::move(input_sticker->emoji_);
+
       td->stickers_manager_->create_sticker(
-          file_id, thumbnail, get_dimensions(input_sticker->width_, input_sticker->height_), nullptr, false, nullptr);
+          file_id, string(), thumbnail,
+          get_dimensions(input_sticker->width_, input_sticker->height_, "inputMessageSticker"), nullptr, false,
+          nullptr);
 
       content = make_unique<MessageSticker>(file_id);
       break;
@@ -1650,10 +1727,11 @@ static Result<InputMessageContent> create_input_message_content(
       ttl = input_video->ttl_;
 
       bool has_stickers = !sticker_file_ids.empty();
-      td->videos_manager_->create_video(
-          file_id, string(), thumbnail, AnimationSize(), has_stickers, std::move(sticker_file_ids),
-          std::move(file_name), std::move(mime_type), input_video->duration_,
-          get_dimensions(input_video->width_, input_video->height_), input_video->supports_streaming_, false);
+      td->videos_manager_->create_video(file_id, string(), thumbnail, AnimationSize(), has_stickers,
+                                        std::move(sticker_file_ids), std::move(file_name), std::move(mime_type),
+                                        input_video->duration_,
+                                        get_dimensions(input_video->width_, input_video->height_, "inputMessageVideo"),
+                                        input_video->supports_streaming_, false);
 
       content = make_unique<MessageVideo>(file_id, std::move(caption));
       break;
@@ -1667,7 +1745,7 @@ static Result<InputMessageContent> create_input_message_content(
       }
 
       td->video_notes_manager_->create_video_note(file_id, string(), thumbnail, input_video_note->duration_,
-                                                  get_dimensions(length, length), false);
+                                                  get_dimensions(length, length, "inputMessageVideoNote"), false);
 
       content = make_unique<MessageVideoNote>(file_id, false);
       break;
@@ -1758,7 +1836,8 @@ static Result<InputMessageContent> create_input_message_content(
 
           PhotoSize s;
           s.type = 'n';
-          s.dimensions = get_dimensions(input_invoice->photo_width_, input_invoice->photo_height_);
+          s.dimensions =
+              get_dimensions(input_invoice->photo_width_, input_invoice->photo_height_, "inputMessageInvoice");
           s.size = input_invoice->photo_size_;  // TODO use invoice_file_id size
           s.file_id = invoice_file_id;
 
@@ -1895,7 +1974,8 @@ static Result<InputMessageContent> create_input_message_content(
     default:
       UNREACHABLE();
   }
-  return InputMessageContent{std::move(content), disable_web_page_preview, clear_draft, ttl, via_bot_user_id};
+  return InputMessageContent{std::move(content), disable_web_page_preview, clear_draft, ttl,
+                             via_bot_user_id,    std::move(emoji)};
 }
 
 Result<InputMessageContent> get_input_message_content(
@@ -1998,7 +2078,7 @@ Result<InputMessageContent> get_input_message_content(
       LOG(WARNING) << "Ignore thumbnail file: " << r_thumbnail_file_id.error().message();
     } else {
       thumbnail.type = 't';
-      thumbnail.dimensions = get_dimensions(input_thumbnail->width_, input_thumbnail->height_);
+      thumbnail.dimensions = get_dimensions(input_thumbnail->width_, input_thumbnail->height_, "inputThumbnail");
       thumbnail.file_id = r_thumbnail_file_id.ok();
       CHECK(thumbnail.file_id.is_valid());
 
@@ -2047,6 +2127,8 @@ bool can_have_input_media(const Td *td, const MessageContent *content) {
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       return false;
     case MessageContentType::Animation:
     case MessageContentType::Audio:
@@ -2160,6 +2242,8 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       break;
     default:
       UNREACHABLE();
@@ -2247,7 +2331,7 @@ static tl_object_ptr<telegram_api::inputMediaInvoice> get_input_media_invoice(co
 
 static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     const MessageContent *content, Td *td, tl_object_ptr<telegram_api::InputFile> input_file,
-    tl_object_ptr<telegram_api::InputFile> input_thumbnail, int32 ttl) {
+    tl_object_ptr<telegram_api::InputFile> input_thumbnail, int32 ttl, const string &emoji) {
   if (!can_have_input_media(td, content)) {
     return nullptr;
   }
@@ -2305,7 +2389,8 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     }
     case MessageContentType::Sticker: {
       auto m = static_cast<const MessageSticker *>(content);
-      return td->stickers_manager_->get_input_media(m->file_id, std::move(input_file), std::move(input_thumbnail));
+      return td->stickers_manager_->get_input_media(m->file_id, std::move(input_file), std::move(input_thumbnail),
+                                                    emoji);
     }
     case MessageContentType::Venue: {
       auto m = static_cast<const MessageVenue *>(content);
@@ -2350,6 +2435,8 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       break;
     default:
       UNREACHABLE();
@@ -2364,7 +2451,8 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
                                                         bool force) {
   bool had_input_file = input_file != nullptr;
   bool had_input_thumbnail = input_thumbnail != nullptr;
-  auto input_media = get_input_media_impl(content, td, std::move(input_file), std::move(input_thumbnail), ttl);
+  auto input_media =
+      get_input_media_impl(content, td, std::move(input_file), std::move(input_thumbnail), ttl, string());
   auto was_uploaded = FileManager::extract_was_uploaded(input_media);
   if (had_input_file) {
     if (!was_uploaded) {
@@ -2393,8 +2481,9 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
   return input_media;
 }
 
-tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td, int32 ttl, bool force) {
-  auto input_media = get_input_media_impl(content, td, nullptr, nullptr, ttl);
+tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td, int32 ttl,
+                                                        const string &emoji, bool force) {
+  auto input_media = get_input_media_impl(content, td, nullptr, nullptr, ttl, emoji);
   auto file_reference = FileManager::extract_file_reference(input_media);
   if (file_reference == FileReferenceView::invalid_file_reference()) {
     auto file_id = get_message_content_any_file_id(content);
@@ -2405,6 +2494,42 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
     LOG(ERROR) << "File " << file_id << " has invalid file reference, but we forced to use it";
   }
   return input_media;
+}
+
+tl_object_ptr<telegram_api::InputMedia> get_fake_input_media(Td *td, tl_object_ptr<telegram_api::InputFile> input_file,
+                                                             FileId file_id) {
+  FileView file_view = td->file_manager_->get_file_view(file_id);
+  auto file_type = file_view.get_type();
+  switch (file_type) {
+    case FileType::Animation:
+    case FileType::Audio:
+    case FileType::Document:
+    case FileType::Sticker:
+    case FileType::Video:
+    case FileType::VoiceNote: {
+      vector<tl_object_ptr<telegram_api::DocumentAttribute>> attributes;
+      auto file_path = file_view.suggested_path();
+      const PathView path_view(file_path);
+      Slice file_name = path_view.file_name();
+      if (!file_name.empty()) {
+        attributes.push_back(make_tl_object<telegram_api::documentAttributeFilename>(file_name.str()));
+      }
+      string mime_type = MimeType::from_extension(path_view.extension());
+      int32 flags = 0;
+      if (file_type == FileType::Video) {
+        flags |= telegram_api::inputMediaUploadedDocument::NOSOUND_VIDEO_MASK;
+      }
+      return make_tl_object<telegram_api::inputMediaUploadedDocument>(
+          flags, false /*ignored*/, false /*ignored*/, std::move(input_file), nullptr, mime_type, std::move(attributes),
+          vector<tl_object_ptr<telegram_api::InputDocument>>(), 0);
+    }
+    case FileType::Photo:
+      return make_tl_object<telegram_api::inputMediaUploadedPhoto>(
+          0, std::move(input_file), vector<tl_object_ptr<telegram_api::InputDocument>>(), 0);
+    default:
+      UNREACHABLE();
+  }
+  return nullptr;
 }
 
 void delete_message_content_thumbnail(MessageContent *content, Td *td) {
@@ -2473,6 +2598,8 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td) {
     case MessageContentType::PassportDataReceived:
     case MessageContentType::Poll:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       break;
     default:
       UNREACHABLE();
@@ -2597,6 +2724,8 @@ static int32 get_message_content_media_index_mask(const MessageContent *content,
     case MessageContentType::Poll:
     case MessageContentType::Dice:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       return 0;
     default:
       UNREACHABLE();
@@ -3218,6 +3347,28 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
       }
       break;
     }
+    case MessageContentType::GroupCall: {
+      auto old_ = static_cast<const MessageGroupCall *>(old_content);
+      auto new_ = static_cast<const MessageGroupCall *>(new_content);
+      if (old_->input_group_call_id != new_->input_group_call_id || old_->duration != new_->duration) {
+        need_update = true;
+      }
+      if (!old_->input_group_call_id.is_identical(new_->input_group_call_id)) {
+        is_content_changed = true;
+      }
+      break;
+    }
+    case MessageContentType::InviteToGroupCall: {
+      auto old_ = static_cast<const MessageInviteToGroupCall *>(old_content);
+      auto new_ = static_cast<const MessageInviteToGroupCall *>(new_content);
+      if (old_->input_group_call_id != new_->input_group_call_id || old_->user_ids != new_->user_ids) {
+        need_update = true;
+      }
+      if (!old_->input_group_call_id.is_identical(new_->input_group_call_id)) {
+        is_content_changed = true;
+      }
+      break;
+    }
     case MessageContentType::Unsupported: {
       auto old_ = static_cast<const MessageUnsupported *>(old_content);
       auto new_ = static_cast<const MessageUnsupported *>(new_content);
@@ -3351,6 +3502,8 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
     case MessageContentType::Poll:
     case MessageContentType::Dice:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       LOG(ERROR) << "Receive new file " << new_file_id << " in a sent message of the type " << content_type;
       break;
     default:
@@ -3927,7 +4080,7 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
       auto message_contact = move_tl_object_as<telegram_api::messageMediaContact>(media);
       if (message_contact->user_id_ != 0) {
         td->contacts_manager_->get_user_id_object(UserId(message_contact->user_id_),
-                                                  "messageMediaContact");  // to ensure updateUser
+                                                  "MessageMediaContact");  // to ensure updateUser
       }
       return make_unique<MessageContact>(Contact(
           std::move(message_contact->phone_number_), std::move(message_contact->first_name_),
@@ -4032,7 +4185,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     if (to_secret && !file_view.is_encrypted_secret()) {
       auto download_file_id = file_manager->dup_file_id(file_id);
       file_id = file_manager
-                    ->register_generate(FileType::Encrypted, FileLocationSource::FromServer, file_view.suggested_name(),
+                    ->register_generate(FileType::Encrypted, FileLocationSource::FromServer, file_view.suggested_path(),
                                         PSTRING() << "#file_id#" << download_file_id.get(), dialog_id, file_view.size())
                     .ok();
     }
@@ -4244,6 +4397,8 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::PassportDataSent:
     case MessageContentType::PassportDataReceived:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       return nullptr;
     default:
       UNREACHABLE();
@@ -4370,6 +4525,10 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       auto duration =
           (phone_call->flags_ & telegram_api::messageActionPhoneCall::DURATION_MASK) != 0 ? phone_call->duration_ : 0;
       auto is_video = (phone_call->flags_ & telegram_api::messageActionPhoneCall::VIDEO_MASK) != 0;
+      if (duration < 0) {
+        LOG(ERROR) << "Receive invalid " << oneline(to_string(phone_call));
+        break;
+      }
       return make_unique<MessageCall>(phone_call->call_id_, duration, get_call_discard_reason(phone_call->reason_),
                                       is_video);
     }
@@ -4437,6 +4596,43 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       }
 
       return make_unique<MessageProximityAlertTriggered>(traveler_id, watcher_id, distance);
+    }
+    case telegram_api::messageActionGroupCall::ID: {
+      auto group_call = move_tl_object_as<telegram_api::messageActionGroupCall>(action);
+      int32 duration = -1;
+      if ((group_call->flags_ & telegram_api::messageActionGroupCall::DURATION_MASK) != 0) {
+        duration = group_call->duration_;
+        if (duration < 0) {
+          LOG(ERROR) << "Receive invalid " << oneline(to_string(group_call));
+          break;
+        }
+      }
+      return make_unique<MessageGroupCall>(InputGroupCallId(group_call->call_), duration);
+    }
+    case telegram_api::messageActionInviteToGroupCall::ID: {
+      auto invite_to_group_call = move_tl_object_as<telegram_api::messageActionInviteToGroupCall>(action);
+
+      vector<UserId> user_ids;
+      user_ids.reserve(invite_to_group_call->users_.size());
+      for (auto &user : invite_to_group_call->users_) {
+        UserId user_id(user);
+        if (user_id.is_valid()) {
+          user_ids.push_back(user_id);
+        } else {
+          LOG(ERROR) << "Receive messageActionInviteToGroupCall with invalid " << user_id << " in " << owner_dialog_id;
+        }
+      }
+
+      return td::make_unique<MessageInviteToGroupCall>(InputGroupCallId(invite_to_group_call->call_),
+                                                       std::move(user_ids));
+    }
+    case telegram_api::messageActionSetMessagesTTL::ID: {
+      auto set_messages_ttl = move_tl_object_as<telegram_api::messageActionSetMessagesTTL>(action);
+      if (set_messages_ttl->period_ < 0) {
+        LOG(ERROR) << "Receive wrong TTL = " << set_messages_ttl->period_;
+        break;
+      }
+      return td::make_unique<MessageChatSetTtl>(set_messages_ttl->period_);
     }
     default:
       UNREACHABLE();
@@ -4556,12 +4752,12 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::ChatDeleteUser: {
       const MessageChatDeleteUser *m = static_cast<const MessageChatDeleteUser *>(content);
       return make_tl_object<td_api::messageChatDeleteMember>(
-          td->contacts_manager_->get_user_id_object(m->user_id, "messageChatDeleteMember"));
+          td->contacts_manager_->get_user_id_object(m->user_id, "MessageChatDeleteMember"));
     }
     case MessageContentType::ChatMigrateTo: {
       const MessageChatMigrateTo *m = static_cast<const MessageChatMigrateTo *>(content);
       return make_tl_object<td_api::messageChatUpgradeTo>(
-          td->contacts_manager_->get_supergroup_id_object(m->migrated_to_channel_id, "messageChatUpgradeTo"));
+          td->contacts_manager_->get_supergroup_id_object(m->migrated_to_channel_id, "MessageChatUpgradeTo"));
     }
     case MessageContentType::ChannelCreate: {
       const MessageChannelCreate *m = static_cast<const MessageChannelCreate *>(content);
@@ -4571,7 +4767,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       const MessageChannelMigrateFrom *m = static_cast<const MessageChannelMigrateFrom *>(content);
       return make_tl_object<td_api::messageChatUpgradeFrom>(
           m->title,
-          td->contacts_manager_->get_basic_group_id_object(m->migrated_from_chat_id, "messageChatUpgradeFrom"));
+          td->contacts_manager_->get_basic_group_id_object(m->migrated_from_chat_id, "MessageChatUpgradeFrom"));
     }
     case MessageContentType::PinMessage: {
       const MessagePinMessage *m = static_cast<const MessagePinMessage *>(content);
@@ -4646,6 +4842,21 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       return make_tl_object<td_api::messageProximityAlertTriggered>(
           td->messages_manager_->get_message_sender_object(m->traveler_dialog_id),
           td->messages_manager_->get_message_sender_object(m->watcher_dialog_id), m->distance);
+    }
+    case MessageContentType::GroupCall: {
+      auto *m = static_cast<const MessageGroupCall *>(content);
+      if (m->duration >= 0) {
+        return make_tl_object<td_api::messageVoiceChatEnded>(m->duration);
+      } else {
+        return make_tl_object<td_api::messageVoiceChatStarted>(
+            td->group_call_manager_->get_group_call_id(m->input_group_call_id, DialogId()).get());
+      }
+    }
+    case MessageContentType::InviteToGroupCall: {
+      auto *m = static_cast<const MessageInviteToGroupCall *>(content);
+      return make_tl_object<td_api::messageInviteVoiceChatParticipants>(
+          td->group_call_manager_->get_group_call_id(m->input_group_call_id, DialogId()).get(),
+          td->contacts_manager_->get_user_ids_object(m->user_ids, "MessageInviteToGroupCall"));
     }
     default:
       UNREACHABLE();
@@ -4959,6 +5170,8 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::PassportDataReceived:
     case MessageContentType::Dice:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       return string();
     default:
       UNREACHABLE();
@@ -5156,6 +5369,13 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
       auto content = static_cast<const MessageProximityAlertTriggered *>(message_content);
       add_message_sender_dependencies(dependencies, content->traveler_dialog_id);
       add_message_sender_dependencies(dependencies, content->watcher_dialog_id);
+      break;
+    }
+    case MessageContentType::GroupCall:
+      break;
+    case MessageContentType::InviteToGroupCall: {
+      auto content = static_cast<const MessageInviteToGroupCall *>(message_content);
+      dependencies.user_ids.insert(content->user_ids.begin(), content->user_ids.end());
       break;
     }
     default:

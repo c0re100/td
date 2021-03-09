@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -185,6 +185,8 @@ class PollManager : public Actor {
                           Promise<Unit> &&promise);
 
   void on_set_poll_answer(PollId poll_id, uint64 generation, Result<tl_object_ptr<telegram_api::Updates>> &&result);
+
+  void on_set_poll_answer_finished(PollId poll_id, Result<Unit> &&result, vector<Promise<Unit>> &&promises);
 
   void invalidate_poll_voters(const Poll *poll, PollId poll_id);
 

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -20,6 +20,7 @@
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/telegram_api.hpp"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
 #include "td/utils/crypto.h"
@@ -433,7 +434,7 @@ static td_api::object_ptr<td_api::datedFile> get_dated_file_object(FileManager *
                                                            file_view.remote_location().get_access_hash(),
                                                            file_view.remote_location().get_dc_id(), ""),
                                     FileLocationSource::FromServer, DialogId(), file_view.size(),
-                                    file_view.expected_size(), file_view.suggested_name());
+                                    file_view.expected_size(), file_view.suggested_path());
   return get_dated_file_object(file_manager, dated_file);
 }
 

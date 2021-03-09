@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -101,7 +101,8 @@ Result<size_t> BufferedFdBase<FdT>::flush_read(size_t max_read) {
   CHECK(read_);
   size_t result = 0;
   while (::td::can_read_local(*this) && max_read) {
-    MutableSlice slice = read_->prepare_append().truncate(max_read);
+    MutableSlice slice = read_->prepare_append();
+    slice.truncate(max_read);
     TRY_RESULT(x, FdT::read(slice));
     slice.truncate(x);
     read_->confirm_append(x);

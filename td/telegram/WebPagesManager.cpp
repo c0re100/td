@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -38,6 +38,7 @@
 #include "td/db/SqliteKeyValue.h"
 #include "td/db/SqliteKeyValueAsync.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/format.h"
@@ -484,7 +485,7 @@ WebPageId WebPagesManager::on_get_web_page(tl_object_ptr<telegram_api::WebPage> 
         page->embed_type = std::move(web_page->embed_type_);
       }
       if (web_page->flags_ & WEBPAGE_FLAG_HAS_EMBEDDED_PREVIEW_SIZE) {
-        page->embed_dimensions = get_dimensions(web_page->embed_width_, web_page->embed_height_);
+        page->embed_dimensions = get_dimensions(web_page->embed_width_, web_page->embed_height_, "webPage");
       }
       if (web_page->flags_ & WEBPAGE_FLAG_HAS_DURATION) {
         page->duration = web_page->duration_;
@@ -968,7 +969,9 @@ void WebPagesManager::on_load_web_page_instant_view_from_database(WebPageId web_
 
 void WebPagesManager::update_web_page_instant_view_load_requests(WebPageId web_page_id, bool force_update,
                                                                  Result<> result) {
-  // TODO [Error : 0 : Lost promise] on closing
+  if (G()->close_flag() && result.is_error()) {
+    result = Status::Error(500, "Request aborted");
+  }
   LOG(INFO) << "Update load requests for " << web_page_id;
   auto it = load_web_page_instant_view_queries_.find(web_page_id);
   if (it == load_web_page_instant_view_queries_.end()) {

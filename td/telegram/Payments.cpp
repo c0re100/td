@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -16,12 +16,12 @@
 #include "td/telegram/Td.h"
 #include "td/telegram/UpdatesManager.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/format.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
-#include "td/utils/misc.h"
 #include "td/utils/Status.h"
 
 namespace td {
@@ -361,8 +361,10 @@ class SendPaymentFormQuery : public Td::ResultHandler {
     switch (payment_result->get_id()) {
       case telegram_api::payments_paymentResult::ID: {
         auto result = move_tl_object_as<telegram_api::payments_paymentResult>(payment_result);
-        G()->td().get_actor_unsafe()->updates_manager_->on_get_updates(std::move(result->updates_));
-        promise_.set_value(make_tl_object<td_api::paymentResult>(true, string()));
+        td->updates_manager_->on_get_updates(std::move(result->updates_),
+                                             PromiseCreator::lambda([promise = std::move(promise_)](Unit) mutable {
+                                               promise.set_value(make_tl_object<td_api::paymentResult>(true, string()));
+                                             }));
         return;
       }
       case telegram_api::payments_paymentVerificationNeeded::ID: {
@@ -410,9 +412,7 @@ class GetPaymentReceiptQuery : public Td::ResultHandler {
     }
 
     promise_.set_value(make_tl_object<td_api::paymentReceipt>(
-        payment_receipt->date_,
-        G()->td().get_actor_unsafe()->contacts_manager_->get_user_id_object(payments_provider_user_id,
-                                                                            "paymentReceipt"),
+        payment_receipt->date_, td->contacts_manager_->get_user_id_object(payments_provider_user_id, "paymentReceipt"),
         convert_invoice(std::move(payment_receipt->invoice_)), convert_order_info(std::move(payment_receipt->info_)),
         convert_shipping_option(std::move(payment_receipt->shipping_)),
         std::move(payment_receipt->credentials_title_)));
@@ -859,10 +859,10 @@ void send_payment_form(ServerMessageId server_message_id, const string &order_in
           flags, false /*ignored*/, make_tl_object<telegram_api::dataJSON>(credentials_new->data_));
       break;
     }
-    case td_api::inputCredentialsAndroidPay::ID: {
-      auto credentials_android_pay = static_cast<const td_api::inputCredentialsAndroidPay *>(credentials.get());
-      input_credentials = make_tl_object<telegram_api::inputPaymentCredentialsAndroidPay>(
-          make_tl_object<telegram_api::dataJSON>(credentials_android_pay->data_), string());
+    case td_api::inputCredentialsGooglePay::ID: {
+      auto credentials_google_pay = static_cast<const td_api::inputCredentialsGooglePay *>(credentials.get());
+      input_credentials = make_tl_object<telegram_api::inputPaymentCredentialsGooglePay>(
+          make_tl_object<telegram_api::dataJSON>(credentials_google_pay->data_));
       break;
     }
     case td_api::inputCredentialsApplePay::ID: {

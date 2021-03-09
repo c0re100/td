@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -728,6 +728,8 @@ void AuthManager::on_get_authorization(tl_object_ptr<telegram_api::auth_Authoriz
     td->schedule_get_terms_of_service(0);
     td->schedule_get_promo_data(0);
     G()->td_db()->get_binlog_pmc()->set("fetched_marks_as_unread", "1");
+  } else {
+    td->set_is_bot_online(true);
   }
   send_closure(G()->config_manager(), &ConfigManager::request_config);
   if (query_id_ != 0) {

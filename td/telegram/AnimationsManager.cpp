@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -29,6 +29,7 @@
 
 #include "td/db/SqliteKeyValueAsync.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/Random.h"
@@ -294,6 +295,7 @@ bool AnimationsManager::merge_animations(FileId new_id, FileId old_id, bool can_
     return old_->is_changed;
   }
 
+  bool need_merge = true;
   auto new_it = animations_.find(new_id);
   if (new_it == animations_.end()) {
     auto &old = animations_[old_id];
@@ -312,8 +314,13 @@ bool AnimationsManager::merge_animations(FileId new_id, FileId old_id, bool can_
     if (old_->thumbnail != new_->thumbnail) {
       //    LOG_STATUS(td_->file_manager_->merge(new_->thumbnail.file_id, old_->thumbnail.file_id));
     }
+    if (old_->mime_type == "image/gif" && new_->mime_type == "video/mp4") {
+      need_merge = false;
+    }
   }
-  LOG_STATUS(td_->file_manager_->merge(new_id, old_id));
+  if (need_merge) {
+    LOG_STATUS(td_->file_manager_->merge(new_id, old_id));
+  }
   if (can_delete_old) {
     animations_.erase(old_id);
   }
@@ -346,7 +353,8 @@ tl_object_ptr<telegram_api::InputMedia> AnimationsManager::get_input_media(
     return nullptr;
   }
   if (file_view.has_remote_location() && !file_view.main_remote_location().is_web() && input_file == nullptr) {
-    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.main_remote_location().as_input_document(), 0);
+    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.main_remote_location().as_input_document(), 0,
+                                                            string());
   }
   if (file_view.has_url()) {
     return make_tl_object<telegram_api::inputMediaDocumentExternal>(0, file_view.url(), 0);
@@ -383,7 +391,7 @@ tl_object_ptr<telegram_api::InputMedia> AnimationsManager::get_input_media(
     }
     return make_tl_object<telegram_api::inputMediaUploadedDocument>(
         flags, false /*ignored*/, false /*ignored*/, std::move(input_file), std::move(input_thumbnail), mime_type,
-        std::move(attributes), vector<tl_object_ptr<telegram_api::InputDocument>>(), 0);
+        std::move(attributes), std::move(added_stickers), 0);
   } else {
     CHECK(!file_view.has_remote_location());
   }

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -69,7 +69,7 @@ class StickersManager : public Actor {
 
   void unregister_dice(const string &emoji, int32 value, FullMessageId full_message_id, const char *source);
 
-  void create_sticker(FileId file_id, PhotoSize thumbnail, Dimensions dimensions,
+  void create_sticker(FileId file_id, string minithumbnail, PhotoSize thumbnail, Dimensions dimensions,
                       tl_object_ptr<telegram_api::documentAttributeSticker> sticker, bool is_animated,
                       MultiPromiseActor *load_data_multipromise_ptr);
 
@@ -77,7 +77,8 @@ class StickersManager : public Actor {
 
   tl_object_ptr<telegram_api::InputMedia> get_input_media(FileId file_id,
                                                           tl_object_ptr<telegram_api::InputFile> input_file,
-                                                          tl_object_ptr<telegram_api::InputFile> input_thumbnail) const;
+                                                          tl_object_ptr<telegram_api::InputFile> input_thumbnail,
+                                                          const string &emoji) const;
 
   SecretInputMedia get_secret_input_media(FileId sticker_file_id,
                                           tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
@@ -89,7 +90,7 @@ class StickersManager : public Actor {
 
   vector<StickerSetId> get_installed_sticker_sets(bool is_masks, Promise<Unit> &&promise);
 
-  bool has_webp_thumbnail(const tl_object_ptr<telegram_api::documentAttributeSticker> &sticker);
+  static bool has_webp_thumbnail(const vector<tl_object_ptr<telegram_api::PhotoSize>> &thumbnails);
 
   StickerSetId get_sticker_set_id(const tl_object_ptr<telegram_api::InputStickerSet> &set_ptr);
 
@@ -304,6 +305,7 @@ class StickersManager : public Actor {
     StickerSetId set_id;
     string alt;
     Dimensions dimensions;
+    string minithumbnail;
     PhotoSize s_thumbnail;
     PhotoSize m_thumbnail;
     FileId file_id;
@@ -331,6 +333,7 @@ class StickersManager : public Actor {
     int32 hash = 0;
     int32 expires_at = 0;
 
+    string minithumbnail;
     PhotoSize thumbnail;
 
     vector<FileId> sticker_ids;
@@ -344,7 +347,7 @@ class StickersManager : public Actor {
     bool is_masks = false;
     bool is_viewed = true;
     bool is_thumbnail_reloaded = false;
-    bool are_legacy_thumbnails_reloaded = false;
+    bool are_legacy_sticker_thumbnails_reloaded = false;
     mutable bool was_update_sent = false;  // does the sticker set is known to the client
     bool is_changed = true;                // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;     // have new changes that need only to be saved to the database
@@ -390,6 +393,10 @@ class StickersManager : public Actor {
   class StickerSetListLogEvent;
 
   class UploadStickerFileCallback;
+
+  static vector<td_api::object_ptr<td_api::closedVectorPath>> get_sticker_minithumbnail(CSlice path,
+                                                                                        StickerSetId sticker_set_id,
+                                                                                        int64 document_id);
 
   static tl_object_ptr<td_api::MaskPoint> get_mask_point_object(int32 point);
 
@@ -673,7 +680,12 @@ class StickersManager : public Actor {
 
   Hints installed_sticker_sets_hints_[2];  // search installed sticker sets by their title and name
 
-  std::unordered_map<string, vector<FileId>> found_stickers_;
+  struct FoundStickers {
+    vector<FileId> sticker_ids_;
+    int32 cache_time_ = 300;
+    double next_reload_time_ = 0;
+  };
+  std::unordered_map<string, FoundStickers> found_stickers_;
   std::unordered_map<string, vector<Promise<Unit>>> search_stickers_queries_;
 
   std::unordered_map<string, vector<StickerSetId>> found_sticker_sets_;

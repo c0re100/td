@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -28,6 +28,7 @@
 #include "td/telegram/VoiceNotesManager.hpp"
 #include "td/telegram/WebPageId.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -1850,7 +1851,7 @@ RichText get_rich_text(tl_object_ptr<telegram_api::RichText> &&rich_text_ptr,
       if (it != documents.end()) {
         result.type = RichText::Type::Icon;
         result.document_file_id = it->second;
-        Dimensions dimensions = get_dimensions(rich_text->w_, rich_text->h_);
+        Dimensions dimensions = get_dimensions(rich_text->w_, rich_text->h_, "textImage");
         result.content = PSTRING() << (dimensions.width * static_cast<uint32>(65536) + dimensions.height);
       } else {
         LOG(ERROR) << "Can't find document " << rich_text->document_id_;
@@ -2069,7 +2070,7 @@ unique_ptr<WebPageBlock> get_web_page_block(Td *td, tl_object_ptr<telegram_api::
       }
       Dimensions dimensions;
       if (has_dimensions) {
-        dimensions = get_dimensions(page_block->w_, page_block->h_);
+        dimensions = get_dimensions(page_block->w_, page_block->h_, "pageBlockEmbed");
       }
       return td::make_unique<WebPageBlockEmbedded>(
           std::move(page_block->url_), std::move(page_block->html_), std::move(poster_photo), dimensions,
@@ -2220,7 +2221,7 @@ unique_ptr<WebPageBlock> get_web_page_block(Td *td, tl_object_ptr<telegram_api::
       auto page_block = move_tl_object_as<telegram_api::pageBlockMap>(page_block_ptr);
       Location location(std::move(page_block->geo_));
       auto zoom = page_block->zoom_;
-      Dimensions dimensions = get_dimensions(page_block->w_, page_block->h_);
+      Dimensions dimensions = get_dimensions(page_block->w_, page_block->h_, "pageBlockMap");
       if (location.empty()) {
         LOG(ERROR) << "Receive invalid map location";
         break;

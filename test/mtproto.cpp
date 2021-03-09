@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -37,6 +37,7 @@
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/SocketFd.h"
 #include "td/utils/Random.h"
+#include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/tests.h"
 #include "td/utils/Time.h"
@@ -710,4 +711,23 @@ TEST(Mtproto, TlsTransport) {
     // empty
   }
   sched.finish();
+}
+
+TEST(Mtproto, RSA) {
+  auto pem = td::Slice(
+      "-----BEGIN RSA PUBLIC KEY-----\n"
+      "MIIBCgKCAQEAr4v4wxMDXIaMOh8bayF/NyoYdpcysn5EbjTIOZC0RkgzsRj3SGlu\n"
+      "52QSz+ysO41dQAjpFLgxPVJoOlxXokaOq827IfW0bGCm0doT5hxtedu9UCQKbE8j\n"
+      "lDOk+kWMXHPZFJKWRgKgTu9hcB3y3Vk+JFfLpq3d5ZB48B4bcwrRQnzkx5GhWOFX\n"
+      "x73ZgjO93eoQ2b/lDyXxK4B4IS+hZhjzezPZTI5upTRbs5ljlApsddsHrKk6jJNj\n"
+      "8Ygs/ps8e6ct82jLXbnndC9s8HjEvDvBPH9IPjv5JUlmHMBFZ5vFQIfbpo0u0+1P\n"
+      "n6bkEi5o7/ifoyVv2pAZTRwppTz0EuXD8QIDAQAB\n"
+      "-----END RSA PUBLIC KEY-----");
+  auto rsa = RSA::from_pem_public_key(pem).move_as_ok();
+  ASSERT_EQ(-7596991558377038078, rsa.get_fingerprint());
+  ASSERT_EQ(256u, rsa.size());
+
+  string s(255, '\0');
+  string to(256, '\0');
+  ASSERT_EQ(256u, rsa.encrypt(MutableSlice(s).ubegin(), 10, 255, MutableSlice(to).ubegin(), 256));
 }

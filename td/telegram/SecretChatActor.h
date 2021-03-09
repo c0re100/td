@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -55,7 +55,8 @@ class SecretChatActor : public NetQueryCallback {
     VIDEO_NOTES_LAYER = 66,
     MTPROTO_2_LAYER = 73,
     NEW_ENTITIES_LAYER = 101,
-    MY_LAYER = NEW_ENTITIES_LAYER
+    DELETE_MESSAGES_ON_CLOSE_LAYER = 123,
+    MY_LAYER = DELETE_MESSAGES_ON_CLOSE_LAYER
   };
 
   class Context {
@@ -96,7 +97,7 @@ class SecretChatActor : public NetQueryCallback {
                                     tl_object_ptr<telegram_api::encryptedFile> file,
                                     tl_object_ptr<secret_api::decryptedMessage> message, Promise<> promise) = 0;
     virtual void on_delete_messages(std::vector<int64> random_id, Promise<> promise) = 0;
-    virtual void on_flush_history(MessageId message_id, Promise<> promise) = 0;
+    virtual void on_flush_history(bool remove_from_dialog_list, MessageId message_id, Promise<> promise) = 0;
     virtual void on_read_message(int64 random_id, Promise<> promise) = 0;
     virtual void on_screenshot_taken(UserId user_id, MessageId message_id, int32 date, int64 random_id,
                                      Promise<> promise) = 0;
@@ -112,10 +113,11 @@ class SecretChatActor : public NetQueryCallback {
 
   SecretChatActor(int32 id, unique_ptr<Context> context, bool can_be_empty);
 
-  // First query to new chat must be on of these two
+  // First query to new chat must be one of these two
   void update_chat(telegram_api::object_ptr<telegram_api::EncryptedChat> chat);
   void create_chat(int32 user_id, int64 user_access_hash, int32 random_id, Promise<SecretChatId> promise);
-  void cancel_chat(Promise<> promise);
+
+  void cancel_chat(bool delete_history, bool is_already_discarded, Promise<> promise);
 
   // Inbound messages
   // Logevent is created by SecretChatsManager, because it must contain qts
@@ -461,7 +463,7 @@ class SecretChatActor : public NetQueryCallback {
 
   bool binlog_replay_finish_flag_ = false;
   bool close_flag_ = false;
-  LogEvent::Id close_log_event_id_ = 0;
+  Promise<Unit> discard_encryption_promise_;
 
   LogEvent::Id create_log_event_id_ = 0;
 
@@ -637,8 +639,8 @@ class SecretChatActor : public NetQueryCallback {
 
   // DiscardEncryption
   void on_fatal_error(Status status);
-  void do_close_chat_impl(unique_ptr<log_event::CloseSecretChat> event);
-  void on_discard_encryption_result(NetQueryPtr result);
+  void do_close_chat_impl(bool delete_history, bool is_already_discarded, uint64 log_event_id, Promise<Unit> &&promise);
+  void on_closed(uint64 log_event_id, Promise<Unit> &&promise);
 
   // Other
   template <class T>

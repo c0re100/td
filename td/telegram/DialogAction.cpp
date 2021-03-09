@@ -1,10 +1,12 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #include "td/telegram/DialogAction.h"
+
+#include "td/utils/misc.h"
 
 namespace td {
 
@@ -14,11 +16,8 @@ void DialogAction::init(Type type) {
 }
 
 void DialogAction::init(Type type, int32 progress) {
-  if (progress < 0 || progress > 100) {
-    progress = 0;
-  }
   type_ = type;
-  progress_ = progress;
+  progress_ = clamp(progress, 0, 100);
 }
 
 DialogAction::DialogAction(Type type, int32 progress) {
@@ -137,6 +136,14 @@ DialogAction::DialogAction(tl_object_ptr<telegram_api::SendMessageAction> &&acti
       init(Type::UploadingVideoNote, upload_round_action->progress_);
       break;
     }
+    case telegram_api::speakingInGroupCallAction::ID:
+      init(Type::SpeakingInVoiceChat);
+      break;
+    case telegram_api::sendMessageHistoryImportAction::ID: {
+      auto history_import_action = move_tl_object_as<telegram_api::sendMessageHistoryImportAction>(action);
+      init(Type::ImportingMessages, history_import_action->progress_);
+      break;
+    }
     default:
       UNREACHABLE();
       break;
@@ -171,6 +178,10 @@ tl_object_ptr<telegram_api::SendMessageAction> DialogAction::get_input_send_mess
       return make_tl_object<telegram_api::sendMessageRecordRoundAction>();
     case Type::UploadingVideoNote:
       return make_tl_object<telegram_api::sendMessageUploadRoundAction>(progress_);
+    case Type::SpeakingInVoiceChat:
+      return make_tl_object<telegram_api::speakingInGroupCallAction>();
+    case Type::ImportingMessages:
+      return make_tl_object<telegram_api::sendMessageHistoryImportAction>(progress_);
     default:
       UNREACHABLE();
       return nullptr;
@@ -205,6 +216,10 @@ tl_object_ptr<secret_api::SendMessageAction> DialogAction::get_secret_input_send
       return make_tl_object<secret_api::sendMessageRecordRoundAction>();
     case Type::UploadingVideoNote:
       return make_tl_object<secret_api::sendMessageUploadRoundAction>();
+    case Type::SpeakingInVoiceChat:
+      return make_tl_object<secret_api::sendMessageTypingAction>();
+    case Type::ImportingMessages:
+      return make_tl_object<secret_api::sendMessageTypingAction>();
     default:
       UNREACHABLE();
       return nullptr;
@@ -239,6 +254,8 @@ tl_object_ptr<td_api::ChatAction> DialogAction::get_chat_action_object() const {
       return td_api::make_object<td_api::chatActionRecordingVideoNote>();
     case Type::UploadingVideoNote:
       return td_api::make_object<td_api::chatActionUploadingVideoNote>(progress_);
+    case Type::ImportingMessages:
+    case Type::SpeakingInVoiceChat:
     default:
       UNREACHABLE();
       return td_api::make_object<td_api::chatActionCancel>();
@@ -306,6 +323,8 @@ bool DialogAction::is_cancelled_by_message_of_type(MessageContentType message_co
     case MessageContentType::Poll:
     case MessageContentType::Dice:
     case MessageContentType::ProximityAlertTriggered:
+    case MessageContentType::GroupCall:
+    case MessageContentType::InviteToGroupCall:
       return false;
     default:
       UNREACHABLE();
@@ -334,6 +353,17 @@ DialogAction DialogAction::get_uploading_action(MessageContentType message_conte
 
 DialogAction DialogAction::get_typing_action() {
   return DialogAction(Type::Typing, 0);
+}
+
+DialogAction DialogAction::get_speaking_action() {
+  return DialogAction(Type::SpeakingInVoiceChat, 0);
+}
+
+int32 DialogAction::get_importing_messages_action_progress() const {
+  if (type_ != Type::ImportingMessages) {
+    return -1;
+  }
+  return progress_;
 }
 
 StringBuilder &operator<<(StringBuilder &string_builder, const DialogAction &action) {
@@ -366,6 +396,10 @@ StringBuilder &operator<<(StringBuilder &string_builder, const DialogAction &act
         return "RecordingVideoNote";
       case DialogAction::Type::UploadingVideoNote:
         return "UploadingVideoNote";
+      case DialogAction::Type::SpeakingInVoiceChat:
+        return "SpeakingInVoiceChat";
+      case DialogAction::Type::ImportingMessages:
+        return "ImportingMessages";
       default:
         UNREACHABLE();
         return "Cancel";

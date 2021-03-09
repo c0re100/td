@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -300,6 +300,32 @@ TEST(Crypto, md5) {
   for (std::size_t i = 0; i < strings.size(); i++) {
     td::string output(16, '\0');
     td::md5(strings[i], output);
+    ASSERT_STREQ(answers[i], td::base64_encode(output));
+  }
+}
+
+TEST(Crypto, hmac_sha256) {
+  td::vector<td::Slice> answers{
+      "t33rfT85UOe6N00BhsNwobE+f2TnW331HhdvQ4GdJp8=", "BQl5HF2jqhCz4JTqhAs+H364oxboh7QlluOMHuuRVh8=",
+      "NCCPuZBsAPBd/qr3SyeYE+e1RNgzkKJCS/+eXDBw8zU=", "mo3ahTkyLKfoQoYA0s7vRZULuH++vqwFJD0U5n9HHw0="};
+
+  for (std::size_t i = 0; i < strings.size(); i++) {
+    td::string output(32, '\0');
+    td::hmac_sha256("cucumber", strings[i], output);
+    ASSERT_STREQ(answers[i], td::base64_encode(output));
+  }
+}
+
+TEST(Crypto, hmac_sha512) {
+  td::vector<td::Slice> answers{
+      "o28hTN1m/TGlm/VYxDIzOdUE4wMpQzO8hVcTkiP2ezEJXtrOvCjRnl20aOV1S8axA5Te0TzIjfIoEAtpzamIsA==",
+      "32X3GslSz0HDznSrCNt++ePRcFVSUSD+tfOVannyxS+yLt/om11qILCE64RFTS8/B84gByMzC3FuAlfcIam/KA==",
+      "BVqe5rK1Fg1i+C7xXTAzT9vDPcf3kQQpTtse6rT/EVDzKo9AUo4ZwyUyJ0KcLHoffIjul/TuJoBg+wLz7Z7r7g==",
+      "WASmeku5Pcfz7N0Kp4Q3I9sxtO2MiaBXA418CY0HvjdtmAo7QY+K3E0o9UemgGzz41KqeypzRC92MwOAOnXJLA=="};
+
+  for (std::size_t i = 0; i < strings.size(); i++) {
+    td::string output(64, '\0');
+    td::hmac_sha512("cucumber", strings[i], output);
     ASSERT_STREQ(answers[i], td::base64_encode(output));
   }
 }

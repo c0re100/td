@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -36,7 +36,7 @@ class UdpWriter {
     }
 
     size_t cnt;
-    auto status = fd.send_messages(::td::Span<UdpSocketFd::OutboundMessage>(messages).truncate(to_send_n), cnt);
+    auto status = fd.send_messages(Span<UdpSocketFd::OutboundMessage>(messages).truncate(to_send_n), cnt);
     queue.pop_n(cnt);
     return status;
   }
@@ -51,7 +51,7 @@ class UdpReaderHelper {
       buffer_ = BufferSlice(RESERVED_SIZE);
     }
     CHECK(buffer_.size() >= MAX_PACKET_SIZE);
-    message.data = buffer_.as_slice().truncate(MAX_PACKET_SIZE);
+    message.data = buffer_.as_slice().substr(0, MAX_PACKET_SIZE);
   }
 
   UdpMessage extract_udp_message(UdpSocketFd::InboundMessage &message) {

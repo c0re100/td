@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -100,6 +100,7 @@ class LogEvent {
     ReadMessageThreadHistoryOnServer = 0x119,
     BlockMessageSenderFromRepliesOnServer = 0x120,
     UnpinAllDialogMessagesOnServer = 0x121,
+    DeleteAllCallMessagesFromServer = 0x122,
     GetChannelDifference = 0x140,
     AddMessagePushNotification = 0x200,
     EditMessagePushNotification = 0x201,

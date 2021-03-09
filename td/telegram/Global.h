@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -38,6 +38,7 @@ class ConnectionCreator;
 class ContactsManager;
 class FileManager;
 class FileReferenceManager;
+class GroupCallManager;
 class LanguagePackManager;
 class MessagesManager;
 class MtprotoHeader;
@@ -99,7 +100,7 @@ class Global : public ActorContext {
     return parameters_.use_test_dc;
   }
 
-  bool ignore_backgrond_updates() const;
+  bool ignore_background_updates() const;
 
   NetQueryCreator &net_query_creator() {
     return *net_query_creator_.get();
@@ -213,6 +214,13 @@ class Global : public ActorContext {
   }
   void set_file_reference_manager(ActorId<FileReferenceManager> file_reference_manager) {
     file_reference_manager_ = std::move(file_reference_manager);
+  }
+
+  ActorId<GroupCallManager> group_call_manager() const {
+    return group_call_manager_;
+  }
+  void set_group_call_manager(ActorId<GroupCallManager> group_call_manager) {
+    group_call_manager_ = group_call_manager;
   }
 
   ActorId<LanguagePackManager> language_pack_manager() const {
@@ -385,6 +393,7 @@ class Global : public ActorContext {
   ActorId<ContactsManager> contacts_manager_;
   ActorId<FileManager> file_manager_;
   ActorId<FileReferenceManager> file_reference_manager_;
+  ActorId<GroupCallManager> group_call_manager_;
   ActorId<LanguagePackManager> language_pack_manager_;
   ActorId<MessagesManager> messages_manager_;
   ActorId<NotificationManager> notification_manager_;

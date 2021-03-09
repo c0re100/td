@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -17,6 +17,7 @@
 #include "td/telegram/PasswordManager.h"
 #include "td/telegram/Td.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -545,7 +546,7 @@ void SetSecureValue::start_upload(FileManager *file_manager, FileId &file_id, Se
       auto download_file_id = file_manager->dup_file_id(file_id);
       file_id =
           file_manager
-              ->register_generate(FileType::Secure, FileLocationSource::FromServer, file_view.suggested_name(),
+              ->register_generate(FileType::Secure, FileLocationSource::FromServer, file_view.suggested_path(),
                                   PSTRING() << "#file_id#" << download_file_id.get(), DialogId(), file_view.size())
               .ok();
     }

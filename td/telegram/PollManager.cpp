@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -31,6 +31,7 @@
 #include "td/db/SqliteKeyValue.h"
 #include "td/db/SqliteKeyValueAsync.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
@@ -223,10 +224,8 @@ class StopPollActor : public NetActorOnce {
     }
 
     auto result = result_ptr.move_as_ok();
-    LOG(INFO) << "Receive result for StopPollQuery: " << to_string(result);
-    td->updates_manager_->on_get_updates(std::move(result));
-
-    promise_.set_value(Unit());
+    LOG(INFO) << "Receive result for StopPoll: " << to_string(result);
+    td->updates_manager_->on_get_updates(std::move(result), std::move(promise_));
   }
 
   void on_error(uint64 id, Status status) override {
@@ -677,8 +676,7 @@ string PollManager::get_poll_search_text(PollId poll_id) const {
 
 void PollManager::set_poll_answer(PollId poll_id, FullMessageId full_message_id, vector<int32> &&option_ids,
                                   Promise<Unit> &&promise) {
-  std::sort(option_ids.begin(), option_ids.end());
-  option_ids.erase(std::unique(option_ids.begin(), option_ids.end()), option_ids.end());
+  td::unique(option_ids);
 
   if (is_local_poll_id(poll_id)) {
     return promise.set_error(Status::Error(400, "Poll can't be answered"));
@@ -846,26 +844,34 @@ void PollManager::on_set_poll_answer(PollId poll_id, uint64 generation,
     poll->was_saved = false;
   }
   if (result.is_ok()) {
-    td_->updates_manager_->on_get_updates(result.move_as_ok());
-
-    for (auto &promise : promises) {
-      promise.set_value(Unit());
-    }
+    td_->updates_manager_->on_get_updates(
+        result.move_as_ok(), PromiseCreator::lambda([actor_id = actor_id(this), poll_id,
+                                                     promises = std::move(promises)](Result<Unit> &&result) mutable {
+          send_closure(actor_id, &PollManager::on_set_poll_answer_finished, poll_id, Unit(), std::move(promises));
+        }));
   } else {
-    for (auto &promise : promises) {
-      promise.set_error(result.error().clone());
+    on_set_poll_answer_finished(poll_id, result.move_as_error(), std::move(promises));
+  }
+}
+
+void PollManager::on_set_poll_answer_finished(PollId poll_id, Result<Unit> &&result, vector<Promise<Unit>> &&promises) {
+  if (!G()->close_flag()) {
+    auto poll = get_poll(poll_id);
+    if (poll != nullptr && !poll->was_saved) {
+      // no updates was sent during updates processing, so send them
+      // poll wasn't changed, so there is no reason to actually save it
+      if (!(poll->is_closed && poll->is_updated_after_close)) {
+        LOG(INFO) << "Schedule updating of " << poll_id << " soon";
+        update_poll_timeout_.set_timeout_in(poll_id.get(), 0.0);
+      }
+
+      notify_on_poll_update(poll_id);
+      poll->was_saved = true;
     }
   }
-  if (poll != nullptr && !poll->was_saved) {
-    // no updates was sent during updates processing, so send them
-    // poll wasn't changed, so there is no reason to actually save it
-    if (!(poll->is_closed && poll->is_updated_after_close)) {
-      LOG(INFO) << "Schedule updating of " << poll_id << " soon";
-      update_poll_timeout_.set_timeout_in(poll_id.get(), 0.0);
-    }
 
-    notify_on_poll_update(poll_id);
-    poll->was_saved = true;
+  for (auto &promise : promises) {
+    promise.set_result(result.clone());
   }
 }
 
@@ -1220,7 +1226,7 @@ void PollManager::on_get_poll_results(PollId poll_id, uint64 generation,
     return;
   }
 
-  td_->updates_manager_->on_get_updates(result.move_as_ok());
+  td_->updates_manager_->on_get_updates(result.move_as_ok(), Promise<Unit>());
 }
 
 void PollManager::on_online() {

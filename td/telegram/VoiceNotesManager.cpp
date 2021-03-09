@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2020
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -170,7 +170,8 @@ tl_object_ptr<telegram_api::InputMedia> VoiceNotesManager::get_input_media(
     return nullptr;
   }
   if (file_view.has_remote_location() && !file_view.main_remote_location().is_web() && input_file == nullptr) {
-    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.main_remote_location().as_input_document(), 0);
+    return make_tl_object<telegram_api::inputMediaDocument>(0, file_view.main_remote_location().as_input_document(), 0,
+                                                            string());
   }
   if (file_view.has_url()) {
     return make_tl_object<telegram_api::inputMediaDocumentExternal>(0, file_view.url(), 0);
