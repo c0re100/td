@@ -25,9 +25,9 @@ string get_restriction_reason_description(const vector<RestrictionReason> &restr
   auto ignored_restriction_reasons =
       full_split(G()->shared_config().get_option_string("ignored_restriction_reasons"), ',');
   auto platform = [] {
-    if (G()->shared_config().get_option_boolean("ignore_platform_restrictions")) {
-      return Slice();
-    }
+//    if (G()->shared_config().get_option_boolean("ignore_platform_restrictions")) {
+//      return Slice();
+//    }
 
 #if TD_ANDROID
     return Slice("android");
@@ -42,17 +42,15 @@ string get_restriction_reason_description(const vector<RestrictionReason> &restr
 
   if (!platform.empty()) {
     for (auto &restriction_reason : restriction_reasons) {
-      if (restriction_reason.platform_ == platform &&
-          !td::contains(ignored_restriction_reasons, restriction_reason.reason_)) {
-        return restriction_reason.description_;
+      if (restriction_reason.platform_ == platform) {
+        return restriction_reason.reason_+"-"+restriction_reason.platform_+": "+restriction_reason.description_;
       }
     }
   }
 
   for (auto &restriction_reason : restriction_reasons) {
-    if (restriction_reason.platform_ == "all" &&
-        !td::contains(ignored_restriction_reasons, restriction_reason.reason_)) {
-      return restriction_reason.description_;
+    if (restriction_reason.platform_ == "all") {
+      return restriction_reason.reason_+"-"+restriction_reason.platform_+": "+restriction_reason.description_;
     }
   }
 
