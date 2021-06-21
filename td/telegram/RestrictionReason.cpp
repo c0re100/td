@@ -49,7 +49,7 @@ string get_restriction_reason_description(const vector<RestrictionReason> &restr
   }
 
   for (auto &restriction_reason : restriction_reasons) {
-    if (restriction_reason.platform_ == "all") {
+    if (!restriction_reason.reason_.empty()) {
       return restriction_reason.reason_+"-"+restriction_reason.platform_+": "+restriction_reason.description_;
     }
   }
