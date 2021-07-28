@@ -6,12 +6,12 @@
 //
 #include "td/telegram/VideosManager.h"
 
+#include "td/telegram/AuthManager.h"
+#include "td/telegram/files/FileManager.h"
 #include "td/telegram/secret_api.h"
+#include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
-
-#include "td/telegram/files/FileManager.h"
-#include "td/telegram/Td.h"
 
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -152,7 +152,7 @@ FileId VideosManager::dup_video(FileId new_id, FileId old_id) {
 
 bool VideosManager::merge_videos(FileId new_id, FileId old_id, bool can_delete_old) {
   if (!old_id.is_valid()) {
-    LOG(ERROR) << "Old file id is invalid";
+    LOG(ERROR) << "Old file identifier is invalid";
     return true;
   }
 
@@ -203,7 +203,9 @@ void VideosManager::create_video(FileId file_id, string minithumbnail, PhotoSize
   v->mime_type = std::move(mime_type);
   v->duration = max(duration, 0);
   v->dimensions = dimensions;
-  v->minithumbnail = std::move(minithumbnail);
+  if (!td_->auth_manager_->is_bot()) {
+    v->minithumbnail = std::move(minithumbnail);
+  }
   v->thumbnail = std::move(thumbnail);
   v->animated_thumbnail = std::move(animated_thumbnail);
   v->supports_streaming = supports_streaming;

@@ -61,7 +61,7 @@ struct NetworkStats {
   }
 };
 
-class NetStatsManager : public Actor {
+class NetStatsManager final : public Actor {
  public:
   explicit NetStatsManager(ActorShared<> parent) : parent_(std::move(parent)) {
   }
@@ -135,7 +135,7 @@ class NetStatsManager : public Actor {
 
   void add_network_stats_impl(NetStatsInfo &info, const NetworkStatsEntry &entry);
 
-  void start_up() override;
+  void start_up() final;
   void update(NetStatsInfo &info, bool force_save);
   void save_stats(NetStatsInfo &info, NetType net_type);
   void info_loop(NetStatsInfo &info);

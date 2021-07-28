@@ -6,19 +6,26 @@
 //
 #include "td/telegram/GroupCallParticipant.h"
 
-#include "td/telegram/ContactsManager.h"
+#include "td/telegram/Global.h"
+#include "td/telegram/MessagesManager.h"
+#include "td/telegram/Td.h"
 
 #include "td/utils/logging.h"
 
+#include <limits>
+
 namespace td {
 
-GroupCallParticipant::GroupCallParticipant(const tl_object_ptr<telegram_api::groupCallParticipant> &participant) {
+GroupCallParticipant::GroupCallParticipant(const tl_object_ptr<telegram_api::groupCallParticipant> &participant,
+                                           int32 call_version) {
   CHECK(participant != nullptr);
-  user_id = UserId(participant->user_id_);
+  dialog_id = DialogId(participant->peer_);
+  about = std::move(participant->about_);
   audio_source = participant->source_;
   server_is_muted_by_themselves = participant->can_self_unmute_;
   server_is_muted_by_admin = participant->muted_ && !participant->can_self_unmute_;
   server_is_muted_locally = participant->muted_by_you_;
+  is_self = participant->self_;
   if ((participant->flags_ & telegram_api::groupCallParticipant::VOLUME_MASK) != 0) {
     volume_level = participant->volume_;
     if (volume_level < MIN_VOLUME_LEVEL || volume_level > MAX_VOLUME_LEVEL) {
@@ -32,18 +39,53 @@ GroupCallParticipant::GroupCallParticipant(const tl_object_ptr<telegram_api::gro
     if ((participant->flags_ & telegram_api::groupCallParticipant::ACTIVE_DATE_MASK) != 0) {
       active_date = participant->active_date_;
     }
-    if (joined_date < 0 || active_date < 0) {
-      LOG(ERROR) << "Receive invalid " << to_string(participant);
-      joined_date = 0;
+    if (joined_date <= 0 || active_date < 0) {
+      LOG(ERROR) << "Receive invalid active_date/joined_date in " << to_string(participant);
+      joined_date = 1;
       active_date = 0;
+    }
+    if ((participant->flags_ & telegram_api::groupCallParticipant::RAISE_HAND_RATING_MASK) != 0) {
+      raise_hand_rating = participant->raise_hand_rating_;
+      if (raise_hand_rating < 0) {
+        LOG(ERROR) << "Receive invalid raise_hand_rating in " << to_string(participant);
+        raise_hand_rating = 0;
+      }
     }
   }
   is_just_joined = participant->just_joined_;
-  is_min = (participant->flags_ & telegram_api::groupCallParticipant::MIN_MASK) != 0;
+  is_min = participant->min_;
+  version = call_version;
+
+  if (participant->video_ != nullptr) {
+    video_payload = GroupCallVideoPayload(participant->video_.get());
+  }
+  if (participant->presentation_ != nullptr) {
+    if (participant->presentation_->flags_ & telegram_api::groupCallParticipantVideo::AUDIO_SOURCE_MASK) {
+      presentation_audio_source = participant->presentation_->audio_source_;
+    }
+    presentation_payload = GroupCallVideoPayload(participant->presentation_.get());
+  }
+
+  if (is_just_joined && get_has_video()) {
+    video_diff++;
+  }
 }
 
 bool GroupCallParticipant::is_versioned_update(const tl_object_ptr<telegram_api::groupCallParticipant> &participant) {
+  // updates about new and left participants must be applyed as versioned, even they don't increase version
   return participant->just_joined_ || participant->left_ || participant->versioned_;
+}
+
+GroupCallParticipantOrder GroupCallParticipant::get_real_order(bool can_self_unmute, bool joined_date_asc,
+                                                               bool keep_active_date) const {
+  auto sort_active_date = td::max(active_date, local_active_date);
+  if (!keep_active_date && sort_active_date < G()->unix_time() - 300) {
+    sort_active_date = 0;
+  }
+  auto sort_raise_hand_rating = can_self_unmute ? raise_hand_rating : 0;
+  auto sort_joined_date = joined_date_asc ? std::numeric_limits<int32>::max() - joined_date : joined_date;
+  bool has_video = !video_payload.is_empty() || !presentation_payload.is_empty();
+  return GroupCallParticipantOrder(has_video, sort_active_date, sort_raise_hand_rating, sort_joined_date);
 }
 
 bool GroupCallParticipant::get_is_muted_by_themselves() const {
@@ -66,10 +108,19 @@ int32 GroupCallParticipant::get_volume_level() const {
   return pending_volume_level != 0 ? pending_volume_level : volume_level;
 }
 
+bool GroupCallParticipant::get_is_hand_raised() const {
+  return have_pending_is_hand_raised ? pending_is_hand_raised : raise_hand_rating != 0;
+}
+
+int32 GroupCallParticipant::get_has_video() const {
+  return video_payload.is_empty() && presentation_payload.is_empty() ? 0 : 1;
+}
+
 void GroupCallParticipant::update_from(const GroupCallParticipant &old_participant) {
   CHECK(!old_participant.is_min);
   if (joined_date < old_participant.joined_date) {
-    LOG(ERROR) << "Join date decreased from " << old_participant.joined_date << " to " << joined_date;
+    LOG(ERROR) << "Join date of " << old_participant.dialog_id << " decreased from " << old_participant.joined_date
+               << " to " << joined_date;
     joined_date = old_participant.joined_date;
   }
   if (active_date < old_participant.active_date) {
@@ -84,6 +135,10 @@ void GroupCallParticipant::update_from(const GroupCallParticipant &old_participa
       is_volume_level_local = true;
       volume_level = old_participant.volume_level;
     }
+
+    if (audio_source == old_participant.audio_source) {
+      is_self = old_participant.is_self;
+    }
   }
   is_min = false;
 
@@ -95,9 +150,13 @@ void GroupCallParticipant::update_from(const GroupCallParticipant &old_participa
   pending_is_muted_by_admin = old_participant.pending_is_muted_by_admin;
   pending_is_muted_locally = old_participant.pending_is_muted_locally;
   pending_is_muted_generation = old_participant.pending_is_muted_generation;
+
+  have_pending_is_hand_raised = old_participant.have_pending_is_hand_raised;
+  pending_is_hand_raised = old_participant.pending_is_hand_raised;
+  pending_is_hand_raised_generation = old_participant.pending_is_hand_raised_generation;
 }
 
-bool GroupCallParticipant::update_can_be_muted(bool can_manage, bool is_self, bool is_admin) {
+bool GroupCallParticipant::update_can_be_muted(bool can_manage, bool is_admin) {
   bool is_muted_by_admin = get_is_muted_by_admin();
   bool is_muted_by_themselves = get_is_muted_by_themselves();
   bool is_muted_locally = get_is_muted_locally();
@@ -141,8 +200,8 @@ bool GroupCallParticipant::update_can_be_muted(bool can_manage, bool is_self, bo
   return false;
 }
 
-bool GroupCallParticipant::set_pending_is_muted(bool is_muted, bool can_manage, bool is_self, bool is_admin) {
-  update_can_be_muted(can_manage, is_self, is_admin);
+bool GroupCallParticipant::set_pending_is_muted(bool is_muted, bool can_manage, bool is_admin) {
+  update_can_be_muted(can_manage, is_admin);
   if (is_muted) {
     if (!can_be_muted_for_all_users && !can_be_muted_only_for_self) {
       return false;
@@ -197,32 +256,36 @@ bool GroupCallParticipant::set_pending_is_muted(bool is_muted, bool can_manage, 
   }
 
   have_pending_is_muted = true;
-  update_can_be_muted(can_manage, is_self, is_admin);
+  update_can_be_muted(can_manage, is_admin);
   return true;
 }
 
-td_api::object_ptr<td_api::groupCallParticipant> GroupCallParticipant::get_group_call_participant_object(
-    ContactsManager *contacts_manager) const {
+td_api::object_ptr<td_api::groupCallParticipant> GroupCallParticipant::get_group_call_participant_object(Td *td) const {
   if (!is_valid()) {
     return nullptr;
   }
 
   return td_api::make_object<td_api::groupCallParticipant>(
-      contacts_manager->get_user_id_object(user_id, "get_group_call_participant_object"), audio_source, is_speaking,
-      can_be_muted_for_all_users, can_be_unmuted_for_all_users, can_be_muted_only_for_self,
+      td->messages_manager_->get_message_sender_object(dialog_id), audio_source, presentation_audio_source,
+      video_payload.get_group_call_participant_video_info_object(),
+      presentation_payload.get_group_call_participant_video_info_object(), about, is_self, is_speaking,
+      get_is_hand_raised(), can_be_muted_for_all_users, can_be_unmuted_for_all_users, can_be_muted_only_for_self,
       can_be_unmuted_only_for_self, get_is_muted_for_all_users(), get_is_muted_locally(), get_is_muted_by_themselves(),
-      get_volume_level(), order);
+      get_volume_level(), order.get_group_call_participant_order_object());
 }
 
 bool operator==(const GroupCallParticipant &lhs, const GroupCallParticipant &rhs) {
-  return lhs.user_id == rhs.user_id && lhs.audio_source == rhs.audio_source &&
+  return lhs.dialog_id == rhs.dialog_id && lhs.audio_source == rhs.audio_source &&
+         lhs.presentation_audio_source == rhs.presentation_audio_source && lhs.video_payload == rhs.video_payload &&
+         lhs.presentation_payload == rhs.presentation_payload && lhs.about == rhs.about && lhs.is_self == rhs.is_self &&
+         lhs.is_speaking == rhs.is_speaking && lhs.get_is_hand_raised() == rhs.get_is_hand_raised() &&
          lhs.can_be_muted_for_all_users == rhs.can_be_muted_for_all_users &&
          lhs.can_be_unmuted_for_all_users == rhs.can_be_unmuted_for_all_users &&
          lhs.can_be_muted_only_for_self == rhs.can_be_muted_only_for_self &&
          lhs.can_be_unmuted_only_for_self == rhs.can_be_unmuted_only_for_self &&
          lhs.get_is_muted_for_all_users() == rhs.get_is_muted_for_all_users() &&
          lhs.get_is_muted_locally() == rhs.get_is_muted_locally() &&
-         lhs.get_is_muted_by_themselves() == rhs.get_is_muted_by_themselves() && lhs.is_speaking == rhs.is_speaking &&
+         lhs.get_is_muted_by_themselves() == rhs.get_is_muted_by_themselves() &&
          lhs.get_volume_level() == rhs.get_volume_level() && lhs.order == rhs.order;
 }
 
@@ -231,7 +294,7 @@ bool operator!=(const GroupCallParticipant &lhs, const GroupCallParticipant &rhs
 }
 
 StringBuilder &operator<<(StringBuilder &string_builder, const GroupCallParticipant &group_call_participant) {
-  return string_builder << '[' << group_call_participant.user_id << " with source "
+  return string_builder << "GroupCallParticipant[" << group_call_participant.dialog_id << " with source "
                         << group_call_participant.audio_source << " and order " << group_call_participant.order << ']';
 }
 

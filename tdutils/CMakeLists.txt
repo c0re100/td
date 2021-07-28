@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
+if ((CMAKE_MAJOR_VERSION LESS 3) OR (CMAKE_VERSION VERSION_LESS "3.0.2"))
+  message(FATAL_ERROR "CMake >= 3.0.2 is required")
+endif()
 
 option(TDUTILS_MIME_TYPE "Generate mime types conversion; requires gperf" ON)
 
@@ -51,6 +53,7 @@ set(TDUTILS_SOURCE
   td/utils/port/IPAddress.cpp
   td/utils/port/MemoryMapping.cpp
   td/utils/port/path.cpp
+  td/utils/port/platform.cpp
   td/utils/port/PollFlags.cpp
   td/utils/port/rlimit.cpp
   td/utils/port/ServerSocketFd.cpp
@@ -113,7 +116,9 @@ set(TDUTILS_SOURCE
   td/utils/TsFileLog.cpp
   td/utils/tl_parsers.cpp
   td/utils/translit.cpp
+  td/utils/TsCerr.cpp
   td/utils/TsFileLog.cpp
+  td/utils/TsLog.cpp
   td/utils/unicode.cpp
   td/utils/utf8.cpp
 
@@ -181,6 +186,7 @@ set(TDUTILS_SOURCE
   td/utils/ChangesProcessor.h
   td/utils/check.h
   td/utils/Closure.h
+  td/utils/CombinedLog.h
   td/utils/common.h
   td/utils/ConcurrentHashTable.h
   td/utils/Container.h
@@ -219,6 +225,7 @@ set(TDUTILS_SOURCE
   td/utils/MpscPollableQueue.h
   td/utils/MpscLinkQueue.h
   td/utils/Named.h
+  td/utils/NullLog.h
   td/utils/ObjectPool.h
   td/utils/Observer.h
   td/utils/optional.h
@@ -234,6 +241,7 @@ set(TDUTILS_SOURCE
   td/utils/SharedSlice.h
   td/utils/Slice-decl.h
   td/utils/Slice.h
+  td/utils/SliceBuilder.h
   td/utils/Span.h
   td/utils/SpinLock.h
   td/utils/StackAllocator.h
@@ -253,8 +261,10 @@ set(TDUTILS_SOURCE
   td/utils/tl_parsers.h
   td/utils/tl_storers.h
   td/utils/translit.h
+  td/utils/TsCerr.h
   td/utils/TsFileLog.h
   td/utils/TsList.h
+  td/utils/TsLog.h
   td/utils/type_traits.h
   td/utils/UInt.h
   td/utils/uint128.h
@@ -284,6 +294,7 @@ set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/gzip.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/HazardPointers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/heap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/HttpUrl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/json.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/List.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/log.cpp
@@ -359,7 +370,7 @@ if (ANDROID)
   target_link_libraries(tdutils PRIVATE log)
 endif()
 
-if (CMAKE_HOST_SYSTEM_NAME MATCHES "NetBSD")
+if (CMAKE_SYSTEM_NAME MATCHES "NetBSD")
   target_link_libraries(tdutils PUBLIC /usr/pkg/gcc5/i486--netbsdelf/lib/libatomic.so)
 endif()
 

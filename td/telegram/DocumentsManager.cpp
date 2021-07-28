@@ -17,15 +17,14 @@
 #include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/Photo.h"
+#include "td/telegram/secret_api.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/td_api.h"
+#include "td/telegram/telegram_api.h"
 #include "td/telegram/VideoNotesManager.h"
 #include "td/telegram/VideosManager.h"
 #include "td/telegram/VoiceNotesManager.h"
-
-#include "td/telegram/secret_api.h"
-#include "td/telegram/td_api.h"
-#include "td/telegram/telegram_api.h"
 
 #include "td/utils/common.h"
 #include "td/utils/format.h"
@@ -167,9 +166,6 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       default_extension = Slice("webp");
       owner_dialog_id = DialogId();
       file_name.clear();
-      if (td_->stickers_manager_->has_webp_thumbnail(sticker) && remote_document.secret_file == nullptr) {
-        thumbnail_format = PhotoFormat::Webp;
-      }
     } else if (video != nullptr || default_document_type == Document::Type::Video ||
                default_document_type == Document::Type::VideoNote) {
       bool is_video_note = default_document_type == Document::Type::VideoNote;
@@ -252,6 +248,9 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     mime_type = std::move(document->mime_type_);
     file_reference = document->file_reference_.as_slice().str();
 
+    if (document_type == Document::Type::Sticker && StickersManager::has_webp_thumbnail(document->thumbs_)) {
+      thumbnail_format = PhotoFormat::Webp;
+    }
     fix_animated_sticker_type();
 
     if (owner_dialog_id.get_type() == DialogType::SecretChat) {
@@ -265,9 +264,9 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
 
     if (document_type != Document::Type::VoiceNote) {
       for (auto &thumb : document->thumbs_) {
-        auto photo_size = get_photo_size(td_->file_manager_.get(), {FileType::Thumbnail, 0}, id, access_hash,
-                                         file_reference, DcId::create(dc_id), owner_dialog_id, std::move(thumb),
-                                         thumbnail_format, document_type != Document::Type::Sticker);
+        auto photo_size =
+            get_photo_size(td_->file_manager_.get(), {FileType::Thumbnail, 0}, id, access_hash, file_reference,
+                           DcId::create(dc_id), owner_dialog_id, std::move(thumb), thumbnail_format);
         if (photo_size.get_offset() == 0) {
           if (!thumbnail.file_id.is_valid()) {
             thumbnail = std::move(photo_size.get<0>());
@@ -364,7 +363,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     // fix_animated_sticker_type();
   }
 
-  LOG(DEBUG) << "Receive document with id = " << id << " of type " << document_type;
+  LOG(DEBUG) << "Receive document with ID = " << id << " of type " << document_type;
   if (!is_web && !DcId::is_valid(dc_id)) {
     LOG(ERROR) << "Wrong dc_id = " << dc_id;
     return {};
@@ -435,6 +434,9 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
                       std::move(mime_type), !is_web);
       break;
     case Document::Type::Sticker:
+      if (thumbnail_format == PhotoFormat::Jpeg) {
+        minithumbnail = string();
+      }
       td_->stickers_manager_->create_sticker(file_id, std::move(minithumbnail), std::move(thumbnail), dimensions,
                                              std::move(sticker), is_animated_sticker, load_data_multipromise_ptr);
       break;
@@ -510,7 +512,9 @@ void DocumentsManager::create_document(FileId file_id, string minithumbnail, Pho
   d->file_id = file_id;
   d->file_name = std::move(file_name);
   d->mime_type = std::move(mime_type);
-  d->minithumbnail = std::move(minithumbnail);
+  if (!td_->auth_manager_->is_bot()) {
+    d->minithumbnail = std::move(minithumbnail);
+  }
   d->thumbnail = std::move(thumbnail);
   on_get_document(std::move(d), replace);
 }
@@ -643,7 +647,7 @@ FileId DocumentsManager::dup_document(FileId new_id, FileId old_id) {
 
 bool DocumentsManager::merge_documents(FileId new_id, FileId old_id, bool can_delete_old) {
   if (!old_id.is_valid()) {
-    LOG(ERROR) << "Old file id is invalid";
+    LOG(ERROR) << "Old file identifier is invalid";
     return true;
   }
 

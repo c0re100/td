@@ -17,12 +17,10 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/misc.h"
-#include "td/telegram/SecretChatActor.h"
-#include "td/telegram/Td.h"
-#include "td/telegram/TdDb.h"
-
 #include "td/telegram/secret_api.h"
+#include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
+#include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
 
 #include "td/actor/PromiseFuture.h"
@@ -40,7 +38,7 @@
 
 namespace td {
 
-class GetSavedGifsQuery : public Td::ResultHandler {
+class GetSavedGifsQuery final : public Td::ResultHandler {
   bool is_repair_ = false;
 
  public:
@@ -50,7 +48,7 @@ class GetSavedGifsQuery : public Td::ResultHandler {
     send_query(G()->net_query_creator().create(telegram_api::messages_getSavedGifs(hash)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_getSavedGifs>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -60,7 +58,7 @@ class GetSavedGifsQuery : public Td::ResultHandler {
     td->animations_manager_->on_get_saved_animations(is_repair_, std::move(ptr));
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for get saved animations: " << status;
     }
@@ -68,7 +66,7 @@ class GetSavedGifsQuery : public Td::ResultHandler {
   }
 };
 
-class SaveGifQuery : public Td::ResultHandler {
+class SaveGifQuery final : public Td::ResultHandler {
   FileId file_id_;
   string file_reference_;
   bool unsave_ = false;
@@ -88,7 +86,7 @@ class SaveGifQuery : public Td::ResultHandler {
     send_query(G()->net_query_creator().create(telegram_api::messages_saveGif(std::move(input_document), unsave)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_saveGif>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -103,7 +101,7 @@ class SaveGifQuery : public Td::ResultHandler {
     promise_.set_value(Unit());
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     if (!td->auth_manager_->is_bot() && FileReferenceManager::is_file_reference_error(status)) {
       VLOG(file_references) << "Receive " << status << " for " << file_id_;
       td->file_manager_->delete_file_reference(file_id_, file_reference_);
@@ -284,7 +282,7 @@ FileId AnimationsManager::dup_animation(FileId new_id, FileId old_id) {
 
 bool AnimationsManager::merge_animations(FileId new_id, FileId old_id, bool can_delete_old) {
   if (!old_id.is_valid()) {
-    LOG(ERROR) << "Old file id is invalid";
+    LOG(ERROR) << "Old file identifier is invalid";
     return true;
   }
 
@@ -337,7 +335,9 @@ void AnimationsManager::create_animation(FileId file_id, string minithumbnail, P
   a->mime_type = std::move(mime_type);
   a->duration = max(duration, 0);
   a->dimensions = dimensions;
-  a->minithumbnail = std::move(minithumbnail);
+  if (!td_->auth_manager_->is_bot()) {
+    a->minithumbnail = std::move(minithumbnail);
+  }
   a->thumbnail = std::move(thumbnail);
   a->animated_thumbnail = std::move(animated_thumbnail);
   a->has_stickers = has_stickers;
@@ -401,8 +401,7 @@ tl_object_ptr<telegram_api::InputMedia> AnimationsManager::get_input_media(
 
 SecretInputMedia AnimationsManager::get_secret_input_media(FileId animation_file_id,
                                                            tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                                           const string &caption, BufferSlice thumbnail,
-                                                           int32 layer) const {
+                                                           const string &caption, BufferSlice thumbnail) const {
   auto *animation = get_animation(animation_file_id);
   CHECK(animation != nullptr);
   auto file_view = td_->file_manager_->get_file_view(animation_file_id);
@@ -424,13 +423,8 @@ SecretInputMedia AnimationsManager::get_secret_input_media(FileId animation_file
     attributes.push_back(make_tl_object<secret_api::documentAttributeFilename>(animation->file_name));
   }
   if (animation->duration != 0 && animation->mime_type == "video/mp4") {
-    if (layer >= SecretChatActor::VIDEO_NOTES_LAYER) {
-      attributes.push_back(make_tl_object<secret_api::documentAttributeVideo66>(
-          0, false, animation->duration, animation->dimensions.width, animation->dimensions.height));
-    } else {
-      attributes.push_back(make_tl_object<secret_api::documentAttributeVideo>(
-          animation->duration, animation->dimensions.width, animation->dimensions.height));
-    }
+    attributes.push_back(make_tl_object<secret_api::documentAttributeVideo66>(
+        0, false, animation->duration, animation->dimensions.width, animation->dimensions.height));
   }
   if (animation->dimensions.width != 0 && animation->dimensions.height != 0) {
     attributes.push_back(make_tl_object<secret_api::documentAttributeImageSize>(animation->dimensions.width,

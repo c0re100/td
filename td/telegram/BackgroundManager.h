@@ -29,7 +29,7 @@ namespace td {
 
 class Td;
 
-class BackgroundManager : public Actor {
+class BackgroundManager final : public Actor {
  public:
   BackgroundManager(Td *td, ActorShared<> parent);
 
@@ -40,7 +40,7 @@ class BackgroundManager : public Actor {
 
   void reload_background(BackgroundId background_id, int64 access_hash, Promise<Unit> &&promise);
 
-  BackgroundId search_background(const string &name, Promise<Unit> &&promise);
+  std::pair<BackgroundId, BackgroundType> search_background(const string &name, Promise<Unit> &&promise);
 
   BackgroundId set_background(const td_api::InputBackground *input_background,
                               const td_api::BackgroundType *background_type, bool for_dark_theme,
@@ -50,7 +50,8 @@ class BackgroundManager : public Actor {
 
   void reset_backgrounds(Promise<Unit> &&promise);
 
-  td_api::object_ptr<td_api::background> get_background_object(BackgroundId background_id, bool for_dark_theme) const;
+  td_api::object_ptr<td_api::background> get_background_object(BackgroundId background_id, bool for_dark_theme,
+                                                               const BackgroundType *type = nullptr) const;
 
   td_api::object_ptr<td_api::backgrounds> get_backgrounds_object(bool for_dark_theme) const;
 
@@ -74,6 +75,7 @@ class BackgroundManager : public Actor {
     bool is_creator = false;
     bool is_default = false;
     bool is_dark = false;
+    bool has_new_local_id = true;
     BackgroundType type;
     FileSourceId file_source_id;
 
@@ -85,16 +87,21 @@ class BackgroundManager : public Actor {
   };
 
   class BackgroundLogEvent;
+  class BackgroundsLogEvent;
 
   class UploadBackgroundFileCallback;
 
-  void start_up() override;
+  void start_up() final;
 
-  void tear_down() override;
+  void tear_down() final;
 
   static string get_background_database_key(bool for_dark_theme);
 
-  void save_background_id(bool for_dark_theme) const;
+  static string get_local_backgrounds_database_key(bool for_dark_theme);
+
+  void save_background_id(bool for_dark_theme);
+
+  void save_local_backgrounds(bool for_dark_theme);
 
   void reload_background_from_server(BackgroundId background_id, const string &background_name,
                                      telegram_api::object_ptr<telegram_api::InputWallPaper> &&input_wallpaper,
@@ -104,9 +111,11 @@ class BackgroundManager : public Actor {
 
   void send_update_selected_background(bool for_dark_theme) const;
 
-  BackgroundId add_fill_background(const BackgroundFill &fill);
+  void set_max_local_background_id(BackgroundId background_id);
 
-  BackgroundId add_fill_background(const BackgroundFill &fill, bool is_default, bool is_dark);
+  BackgroundId get_next_local_background_id();
+
+  BackgroundId add_local_background(const BackgroundType &type);
 
   void add_background(const Background &background);
 
@@ -122,7 +131,7 @@ class BackgroundManager : public Actor {
 
   Result<FileId> prepare_input_file(const tl_object_ptr<td_api::InputFile> &input_file);
 
-  BackgroundId set_background(BackgroundId background_id, const BackgroundType &type, bool for_dark_theme,
+  BackgroundId set_background(BackgroundId background_id, BackgroundType type, bool for_dark_theme,
                               Promise<Unit> &&promise);
 
   void on_installed_background(BackgroundId background_id, BackgroundType type, bool for_dark_theme,
@@ -170,6 +179,9 @@ class BackgroundManager : public Actor {
     Promise<Unit> promise;
   };
   std::unordered_map<FileId, UploadedFileInfo, FileIdHash> being_uploaded_files_;
+
+  BackgroundId max_local_background_id_;
+  vector<BackgroundId> local_background_ids_[2];
 
   Td *td_;
   ActorShared<> parent_;

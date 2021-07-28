@@ -27,13 +27,25 @@ namespace td {
 namespace {
 
 void print_backtrace(void) {
-#if __GLIBC__
+#if TD_PORT_WINDOWS
+  void *buffer[128];
+  USHORT nptrs = CaptureStackBackTrace(0, 128, buffer, nullptr);
+#elif __GLIBC__
   void *buffer[128];
   int nptrs = backtrace(buffer, 128);
-  signal_safe_write("------- Stack Backtrace -------\n", false);
-  backtrace_symbols_fd(buffer, nptrs, 2);
-  signal_safe_write("-------------------------------\n", false);
+#else
+  return;
 #endif
+
+  signal_safe_write("------- Stack Backtrace -------\n", false);
+#if TD_PORT_WINDOWS
+  for (USHORT i = 0; i < nptrs; i++) {
+    signal_safe_write_pointer(buffer[i], false);
+  }
+#elif __GLIBC__
+  backtrace_symbols_fd(buffer, nptrs, 2);
+#endif
+  signal_safe_write("-------------------------------\n", false);
 }
 
 void print_backtrace_gdb(void) {

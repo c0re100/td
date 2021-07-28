@@ -36,10 +36,11 @@ struct Dimensions {
 struct DialogPhoto {
   FileId small_file_id;
   FileId big_file_id;
+  string minithumbnail;
   bool has_animation = false;
 };
 
-struct ProfilePhoto : public DialogPhoto {
+struct ProfilePhoto final : public DialogPhoto {
   int64 id = 0;
 };
 
@@ -51,7 +52,7 @@ struct PhotoSize {
   vector<int32> progressive_sizes;
 };
 
-struct AnimationSize : public PhotoSize {
+struct AnimationSize final : public PhotoSize {
   double main_frame_timestamp = 0.0;
 };
 
@@ -95,7 +96,7 @@ DialogPhoto get_dialog_photo(FileManager *file_manager, DialogId dialog_id, int6
 tl_object_ptr<td_api::chatPhotoInfo> get_chat_photo_info_object(FileManager *file_manager,
                                                                 const DialogPhoto *dialog_photo);
 
-DialogPhoto as_fake_dialog_photo(const Photo &photo);
+DialogPhoto as_fake_dialog_photo(const Photo &photo, DialogId dialog_id);
 
 ProfilePhoto as_profile_photo(FileManager *file_manager, UserId user_id, int64 user_access_hash, const Photo &photo);
 
@@ -113,7 +114,7 @@ PhotoSize get_secret_thumbnail_photo_size(FileManager *file_manager, BufferSlice
 Variant<PhotoSize, string> get_photo_size(FileManager *file_manager, PhotoSizeSource source, int64 id,
                                           int64 access_hash, string file_reference, DcId dc_id,
                                           DialogId owner_dialog_id, tl_object_ptr<telegram_api::PhotoSize> &&size_ptr,
-                                          PhotoFormat format, bool expect_jpeg_minithumbnail);
+                                          PhotoFormat format);
 AnimationSize get_animation_size(FileManager *file_manager, PhotoSizeSource source, int64 id, int64 access_hash,
                                  string file_reference, DcId dc_id, DialogId owner_dialog_id,
                                  tl_object_ptr<telegram_api::videoSize> &&size);

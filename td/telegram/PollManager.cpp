@@ -38,6 +38,7 @@
 #include "td/utils/misc.h"
 #include "td/utils/Random.h"
 #include "td/utils/Slice.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 #include "td/utils/tl_helpers.h"
 
@@ -47,7 +48,7 @@
 
 namespace td {
 
-class GetPollResultsQuery : public Td::ResultHandler {
+class GetPollResultsQuery final : public Td::ResultHandler {
   Promise<tl_object_ptr<telegram_api::Updates>> promise_;
   PollId poll_id_;
   DialogId dialog_id_;
@@ -70,7 +71,7 @@ class GetPollResultsQuery : public Td::ResultHandler {
         G()->net_query_creator().create(telegram_api::messages_getPollResults(std::move(input_peer), message_id)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_getPollResults>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -79,7 +80,7 @@ class GetPollResultsQuery : public Td::ResultHandler {
     promise_.set_value(result_ptr.move_as_ok());
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     if (!td->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetPollResultsQuery") &&
         status.message() != "MESSAGE_ID_INVALID") {
       LOG(ERROR) << "Receive " << status << ", while trying to get results of " << poll_id_;
@@ -88,7 +89,7 @@ class GetPollResultsQuery : public Td::ResultHandler {
   }
 };
 
-class GetPollVotersQuery : public Td::ResultHandler {
+class GetPollVotersQuery final : public Td::ResultHandler {
   Promise<tl_object_ptr<telegram_api::messages_votesList>> promise_;
   PollId poll_id_;
   DialogId dialog_id_;
@@ -118,7 +119,7 @@ class GetPollVotersQuery : public Td::ResultHandler {
         flags, std::move(input_peer), message_id, std::move(option), offset, limit)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_getPollVotes>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -127,7 +128,7 @@ class GetPollVotersQuery : public Td::ResultHandler {
     promise_.set_value(result_ptr.move_as_ok());
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     if (!td->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetPollVotersQuery") &&
         status.message() != "MESSAGE_ID_INVALID") {
       LOG(ERROR) << "Receive " << status << ", while trying to get voters of " << poll_id_;
@@ -136,7 +137,7 @@ class GetPollVotersQuery : public Td::ResultHandler {
   }
 };
 
-class SetPollAnswerActor : public NetActorOnce {
+class SetPollAnswerActor final : public NetActorOnce {
   Promise<tl_object_ptr<telegram_api::Updates>> promise_;
   DialogId dialog_id_;
 
@@ -161,7 +162,7 @@ class SetPollAnswerActor : public NetActorOnce {
                  std::move(query), actor_shared(this), sequence_id);
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_sendVote>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -172,13 +173,13 @@ class SetPollAnswerActor : public NetActorOnce {
     promise_.set_value(std::move(result));
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     td->messages_manager_->on_get_dialog_error(dialog_id_, status, "SetPollAnswerActor");
     promise_.set_error(std::move(status));
   }
 };
 
-class StopPollActor : public NetActorOnce {
+class StopPollActor final : public NetActorOnce {
   Promise<Unit> promise_;
   DialogId dialog_id_;
 
@@ -217,7 +218,7 @@ class StopPollActor : public NetActorOnce {
     }
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_editMessage>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -228,7 +229,7 @@ class StopPollActor : public NetActorOnce {
     td->updates_manager_->on_get_updates(std::move(result), std::move(promise_));
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     if (!td->auth_manager_->is_bot() && status.message() == "MESSAGE_NOT_MODIFIED") {
       return promise_.set_value(Unit());
     }
@@ -246,11 +247,11 @@ PollManager::PollManager(Td *td, ActorShared<> parent) : td_(td), parent_(std::m
 }
 
 void PollManager::start_up() {
-  class StateCallback : public StateManager::Callback {
+  class StateCallback final : public StateManager::Callback {
    public:
     explicit StateCallback(ActorId<PollManager> parent) : parent_(std::move(parent)) {
     }
-    bool on_online(bool is_online) override {
+    bool on_online(bool is_online) final {
       if (is_online) {
         send_closure(parent_, &PollManager::on_online);
       }
@@ -556,7 +557,8 @@ td_api::object_ptr<td_api::poll> PollManager::get_poll_object(PollId poll_id, co
   if (poll->is_quiz) {
     auto correct_option_id = is_local_poll_id(poll_id) ? -1 : poll->correct_option_id;
     poll_type = td_api::make_object<td_api::pollTypeQuiz>(
-        correct_option_id, get_formatted_text_object(is_local_poll_id(poll_id) ? FormattedText() : poll->explanation));
+        correct_option_id,
+        get_formatted_text_object(is_local_poll_id(poll_id) ? FormattedText() : poll->explanation, true));
   } else {
     poll_type = td_api::make_object<td_api::pollTypeRegular>(poll->allow_multiple_answers);
   }

@@ -21,6 +21,7 @@
 #include "td/utils/port/PollFlags.h"
 #include "td/utils/port/sleep.h"
 #include "td/utils/ScopeGuard.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/StringBuilder.h"
 
 #include <cstring>
@@ -36,6 +37,8 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#else
+#include <limits>
 #endif
 
 #if TD_PORT_WINDOWS && defined(WIN32_LEAN_AND_MEAN)
@@ -254,7 +257,9 @@ Result<size_t> FileFd::write(Slice slice) {
   BOOL success = WriteFile(native_fd, slice.data(), narrow_cast<DWORD>(slice.size()), &bytes_written, nullptr);
 #endif
   if (success) {
-    return narrow_cast<size_t>(bytes_written);
+    auto result = narrow_cast<size_t>(bytes_written);
+    CHECK(result <= slice.size());
+    return result;
   }
   return OS_ERROR(PSLICE() << "Write to " << get_native_fd() << " has failed");
 }
@@ -266,14 +271,29 @@ Result<size_t> FileFd::writev(Span<IoSlice> slices) {
   auto bytes_written = detail::skip_eintr([&] { return ::writev(native_fd, slices.begin(), slices_size); });
   bool success = bytes_written >= 0;
   if (success) {
-    return narrow_cast<size_t>(bytes_written);
+    auto result = narrow_cast<size_t>(bytes_written);
+    auto left = result;
+    for (const auto &slice : slices) {
+      if (left <= slice.iov_len) {
+        return result;
+      }
+      left -= slice.iov_len;
+    }
+    UNREACHABLE();
   }
   return OS_ERROR(PSLICE() << "Writev to " << get_native_fd() << " has failed");
 #else
   size_t res = 0;
-  for (auto slice : slices) {
+  for (const auto &slice : slices) {
+    if (slice.size() > std::numeric_limits<size_t>::max() - res) {
+      break;
+    }
     TRY_RESULT(size, write(slice));
     res += size;
+    if (size != slice.size()) {
+      CHECK(size < slice.size());
+      break;
+    }
   }
   return res;
 #endif
@@ -305,7 +325,9 @@ Result<size_t> FileFd::read(MutableSlice slice) {
     if (is_eof) {
       get_poll_info().clear_flags(PollFlags::Read());
     }
-    return static_cast<size_t>(bytes_read);
+    auto result = narrow_cast<size_t>(bytes_read);
+    CHECK(result <= slice.size());
+    return result;
   }
   return OS_ERROR(PSLICE() << "Read from " << get_native_fd() << " has failed");
 }
@@ -329,7 +351,9 @@ Result<size_t> FileFd::pwrite(Slice slice, int64 offset) {
   BOOL success = WriteFile(native_fd, slice.data(), narrow_cast<DWORD>(slice.size()), &bytes_written, &overlapped);
 #endif
   if (success) {
-    return narrow_cast<size_t>(bytes_written);
+    auto result = narrow_cast<size_t>(bytes_written);
+    CHECK(result <= slice.size());
+    return result;
   }
   return OS_ERROR(PSLICE() << "Pwrite to " << get_native_fd() << " at offset " << offset << " has failed");
 }
@@ -352,7 +376,9 @@ Result<size_t> FileFd::pread(MutableSlice slice, int64 offset) const {
   BOOL success = ReadFile(native_fd, slice.data(), narrow_cast<DWORD>(slice.size()), &bytes_read, &overlapped);
 #endif
   if (success) {
-    return narrow_cast<size_t>(bytes_read);
+    auto result = narrow_cast<size_t>(bytes_read);
+    CHECK(result <= slice.size());
+    return result;
   }
   return OS_ERROR(PSLICE() << "Pread from " << get_native_fd() << " at offset " << offset << " has failed");
 }

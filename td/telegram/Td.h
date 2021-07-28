@@ -55,6 +55,7 @@ class GroupCallManager;
 class InlineQueriesManager;
 class HashtagHints;
 class LanguagePackManager;
+class LinkManager;
 class MessagesManager;
 class NetStatsManager;
 class NotificationManager;
@@ -95,7 +96,7 @@ class Td final : public NetQueryCallback {
   Td(Td &&) = delete;
   Td &operator=(const Td &) = delete;
   Td &operator=(Td &&) = delete;
-  ~Td() override;
+  ~Td() final;
 
   struct Options {
     std::shared_ptr<NetQueryStats> net_query_stats;
@@ -111,18 +112,16 @@ class Td final : public NetQueryCallback {
 
   void schedule_get_promo_data(int32 expires_in);
 
-  void on_result(NetQueryPtr query) override;
+  void on_result(NetQueryPtr query) final;
 
   void on_update_server_time_difference();
-
-  void on_authorization_lost();
 
   void on_online_updated(bool force, bool send_update);
   void on_update_status_success(bool is_online);
 
-  void on_channel_unban_timeout(int64 channel_id_long);
-
   bool is_online() const;
+
+  void set_is_bot_online(bool is_bot_online);
 
   template <class ActorT, class... ArgsT>
   ActorId<ActorT> create_net_actor(ArgsT &&... args) {
@@ -162,6 +161,8 @@ class Td final : public NetQueryCallback {
   ActorOwn<GroupCallManager> group_call_manager_actor_;
   unique_ptr<InlineQueriesManager> inline_queries_manager_;
   ActorOwn<InlineQueriesManager> inline_queries_manager_actor_;
+  unique_ptr<LinkManager> link_manager_;
+  ActorOwn<LinkManager> link_manager_actor_;
   unique_ptr<MessagesManager> messages_manager_;
   ActorOwn<MessagesManager> messages_manager_actor_;
   unique_ptr<NotificationManager> notification_manager_;
@@ -235,7 +236,7 @@ class Td final : public NetQueryCallback {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.7.2";
+  static constexpr const char *TDLIB_VERSION = "1.7.6";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
@@ -287,6 +288,7 @@ class Td final : public NetQueryCallback {
   Container<ActorOwn<Actor>> request_actors_;
 
   bool is_online_ = false;
+  bool is_bot_online_ = false;
   NetQueryRef update_status_query_;
 
   int64 alarm_id_ = 1;
@@ -404,6 +406,8 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::requestAuthenticationPasswordRecovery &request);
 
+  void on_request(uint64 id, td_api::checkAuthenticationPasswordRecoveryCode &request);
+
   void on_request(uint64 id, td_api::recoverAuthenticationPassword &request);
 
   void on_request(uint64 id, const td_api::logOut &request);
@@ -432,7 +436,13 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::requestPasswordRecovery &request);
 
+  void on_request(uint64 id, td_api::checkPasswordRecoveryCode &request);
+
   void on_request(uint64 id, td_api::recoverPassword &request);
+
+  void on_request(uint64 id, const td_api::resetPassword &request);
+
+  void on_request(uint64 id, const td_api::cancelPasswordReset &request);
 
   void on_request(uint64 id, td_api::getTemporaryPasswordState &request);
 
@@ -574,6 +584,10 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::openMessageContent &request);
 
+  void on_request(uint64 id, const td_api::getInternalLinkType &request);
+
+  void on_request(uint64 id, td_api::getExternalLinkInfo &request);
+
   void on_request(uint64 id, td_api::getExternalLink &request);
 
   void on_request(uint64 id, const td_api::getChatHistory &request);
@@ -696,15 +710,43 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::sendCallDebugInformation &request);
 
-  void on_request(uint64 id, const td_api::createVoiceChat &request);
+  void on_request(uint64 id, const td_api::getVoiceChatAvailableParticipants &request);
+
+  void on_request(uint64 id, const td_api::setVoiceChatDefaultParticipant &request);
+
+  void on_request(uint64 id, td_api::createVoiceChat &request);
 
   void on_request(uint64 id, const td_api::getGroupCall &request);
 
+  void on_request(uint64 id, const td_api::startScheduledGroupCall &request);
+
+  void on_request(uint64 id, const td_api::toggleGroupCallEnabledStartNotification &request);
+
   void on_request(uint64 id, td_api::joinGroupCall &request);
+
+  void on_request(uint64 id, td_api::startGroupCallScreenSharing &request);
+
+  void on_request(uint64 id, const td_api::endGroupCallScreenSharing &request);
+
+  void on_request(uint64 id, td_api::setGroupCallTitle &request);
 
   void on_request(uint64 id, const td_api::toggleGroupCallMuteNewParticipants &request);
 
+  void on_request(uint64 id, const td_api::revokeGroupCallInviteLink &request);
+
   void on_request(uint64 id, const td_api::inviteGroupCallParticipants &request);
+
+  void on_request(uint64 id, const td_api::getGroupCallInviteLink &request);
+
+  void on_request(uint64 id, td_api::startGroupCallRecording &request);
+
+  void on_request(uint64 id, const td_api::toggleGroupCallScreenSharingIsPaused &request);
+
+  void on_request(uint64 id, const td_api::endGroupCallRecording &request);
+
+  void on_request(uint64 id, const td_api::toggleGroupCallIsMyVideoPaused &request);
+
+  void on_request(uint64 id, const td_api::toggleGroupCallIsMyVideoEnabled &request);
 
   void on_request(uint64 id, const td_api::setGroupCallParticipantIsSpeaking &request);
 
@@ -712,11 +754,15 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::setGroupCallParticipantVolumeLevel &request);
 
+  void on_request(uint64 id, const td_api::toggleGroupCallParticipantIsHandRaised &request);
+
   void on_request(uint64 id, const td_api::loadGroupCallParticipants &request);
 
   void on_request(uint64 id, const td_api::leaveGroupCall &request);
 
   void on_request(uint64 id, const td_api::discardGroupCall &request);
+
+  void on_request(uint64 id, const td_api::getGroupCallStreamSegment &request);
 
   void on_request(uint64 id, const td_api::upgradeBasicGroupChatToSupergroupChat &request);
 
@@ -788,7 +834,7 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::transferChatOwnership &request);
 
-  void on_request(uint64 id, const td_api::getChatMember &request);
+  void on_request(uint64 id, td_api::getChatMember &request);
 
   void on_request(uint64 id, td_api::searchChatMembers &request);
 
@@ -827,6 +873,8 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, const td_api::getFileDownloadedPrefixSize &request);
 
   void on_request(uint64 id, const td_api::cancelDownloadFile &request);
+
+  void on_request(uint64 id, const td_api::getSuggestedFileName &request);
 
   void on_request(uint64 id, td_api::uploadFile &request);
 
@@ -880,6 +928,10 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, td_api::setCommands &request);
 
+  void on_request(uint64 id, td_api::deleteCommands &request);
+
+  void on_request(uint64 id, td_api::getCommands &request);
+
   void on_request(uint64 id, const td_api::setLocation &request);
 
   void on_request(uint64 id, td_api::setProfilePhoto &request);
@@ -931,6 +983,10 @@ class Td final : public NetQueryCallback {
   void on_request(uint64 id, td_api::reorderInstalledStickerSets &request);
 
   void on_request(uint64 id, td_api::uploadStickerFile &request);
+
+  void on_request(uint64 id, td_api::getSuggestedStickerSetName &request);
+
+  void on_request(uint64 id, td_api::checkStickerSetName &request);
 
   void on_request(uint64 id, td_api::createNewStickerSet &request);
 
@@ -1128,7 +1184,7 @@ class Td final : public NetQueryCallback {
 
   void on_request(uint64 id, const td_api::getPhoneNumberInfo &request);
 
-  void on_request(uint64 id, const td_api::getInviteText &request);
+  void on_request(uint64 id, const td_api::getApplicationDownloadLink &request);
 
   void on_request(uint64 id, td_api::getDeepLinkInfo &request);
 
@@ -1249,10 +1305,10 @@ class Td final : public NetQueryCallback {
   }
 
   // Actor
-  void start_up() override;
-  void tear_down() override;
-  void hangup_shared() override;
-  void hangup() override;
+  void start_up() final;
+  void tear_down() final;
+  void hangup_shared() final;
+  void hangup() final;
 };
 
 }  // namespace td

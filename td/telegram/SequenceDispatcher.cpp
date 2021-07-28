@@ -14,6 +14,7 @@
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 
 #include <limits>
@@ -138,7 +139,8 @@ void SequenceDispatcher::on_result(NetQueryPtr query) {
   }
 
   if (query->is_error() && (query->error().code() == NetQuery::ResendInvokeAfter ||
-                            (query->error().code() == 400 && query->error().message() == "MSG_WAIT_FAILED"))) {
+                            (query->error().code() == 400 && (query->error().message() == "MSG_WAIT_FAILED" ||
+                                                              query->error().message() == "MSG_WAIT_TIMEOUT")))) {
     VLOG(net_query) << "Resend " << query;
     query->resend();
     query->debug("Waiting at SequenceDispatcher");

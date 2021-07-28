@@ -15,6 +15,7 @@
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/thread.h"
 #include "td/utils/Slice.h"
+#include "td/utils/SliceBuilder.h"
 
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/telegram_api.hpp"
@@ -118,20 +119,20 @@ BENCH(Time, "Clocks::monotonic") {
 }
 */
 #if !TD_WINDOWS
-class PipeBench : public Benchmark {
+class PipeBench final : public Benchmark {
  public:
   int p[2];
 
-  string get_description() const override {
+  string get_description() const final {
     return "pipe write + read int32";
   }
 
-  void start_up() override {
+  void start_up() final {
     int res = pipe(p);
     CHECK(res == 0);
   }
 
-  void run(int n) override {
+  void run(int n) final {
     int res = 0;
     for (int i = 0; i < n; i++) {
       int val = 1;
@@ -144,7 +145,7 @@ class PipeBench : public Benchmark {
     do_not_optimize_away(res);
   }
 
-  void tear_down() override {
+  void tear_down() final {
     close(p[0]);
     close(p[1]);
   }
@@ -152,42 +153,42 @@ class PipeBench : public Benchmark {
 #endif
 
 #if TD_LINUX || TD_ANDROID || TD_TIZEN
-class SemBench : public Benchmark {
+class SemBench final : public Benchmark {
   sem_t sem;
 
  public:
-  string get_description() const override {
+  string get_description() const final {
     return "sem post + wait";
   }
 
-  void start_up() override {
+  void start_up() final {
     int err = sem_init(&sem, 0, 0);
     CHECK(err != -1);
   }
 
-  void run(int n) override {
+  void run(int n) final {
     for (int i = 0; i < n; i++) {
       sem_post(&sem);
       sem_wait(&sem);
     }
   }
 
-  void tear_down() override {
+  void tear_down() final {
     sem_destroy(&sem);
   }
 };
 #endif
 
 #if !TD_WINDOWS
-class UtimeBench : public Benchmark {
+class UtimeBench final : public Benchmark {
  public:
-  void start_up() override {
+  void start_up() final {
     FileFd::open("test", FileFd::Flags::Create | FileFd::Flags::Write).move_as_ok().close();
   }
-  string get_description() const override {
+  string get_description() const final {
     return "utime";
   }
-  void run(int n) override {
+  void run(int n) final {
     for (int i = 0; i < n; i++) {
       int err = utime("test", nullptr);
       CHECK(err >= 0);
@@ -209,19 +210,19 @@ BENCH(Pwrite, "pwrite") {
   fd.close();
 }
 
-class CreateFileBench : public Benchmark {
-  string get_description() const override {
+class CreateFileBench final : public Benchmark {
+  string get_description() const final {
     return "create_file";
   }
-  void start_up() override {
+  void start_up() final {
     mkdir("A").ensure();
   }
-  void run(int n) override {
+  void run(int n) final {
     for (int i = 0; i < n; i++) {
       FileFd::open(PSLICE() << "A/" << i, FileFd::Flags::Write | FileFd::Flags::Create).move_as_ok().close();
     }
   }
-  void tear_down() override {
+  void tear_down() final {
     td::walk_path("A/", [&](CSlice path, auto type) {
       if (type == td::WalkPath::Type::ExitDir) {
         rmdir(path).ignore();
@@ -232,17 +233,17 @@ class CreateFileBench : public Benchmark {
   }
 };
 
-class WalkPathBench : public Benchmark {
-  string get_description() const override {
+class WalkPathBench final : public Benchmark {
+  string get_description() const final {
     return "walk_path";
   }
-  void start_up_n(int n) override {
+  void start_up_n(int n) final {
     mkdir("A").ensure();
     for (int i = 0; i < n; i++) {
       FileFd::open(PSLICE() << "A/" << i, FileFd::Flags::Write | FileFd::Flags::Create).move_as_ok().close();
     }
   }
-  void run(int n) override {
+  void run(int n) final {
     int cnt = 0;
     td::walk_path("A/", [&](CSlice path, auto type) {
       if (type == td::WalkPath::Type::EnterDir) {
@@ -252,7 +253,7 @@ class WalkPathBench : public Benchmark {
       cnt++;
     }).ignore();
   }
-  void tear_down() override {
+  void tear_down() final {
     td::walk_path("A/", [&](CSlice path, auto type) {
       if (type == td::WalkPath::Type::ExitDir) {
         rmdir(path).ignore();
@@ -265,13 +266,13 @@ class WalkPathBench : public Benchmark {
 
 #if !TD_THREAD_UNSUPPORTED
 template <int ThreadN = 2>
-class AtomicReleaseIncBench : public Benchmark {
-  string get_description() const override {
+class AtomicReleaseIncBench final : public Benchmark {
+  string get_description() const final {
     return PSTRING() << "AtomicReleaseInc" << ThreadN;
   }
 
   static std::atomic<uint64> a_;
-  void run(int n) override {
+  void run(int n) final {
     std::vector<thread> threads;
     for (int i = 0; i < ThreadN; i++) {
       threads.emplace_back([&] {
@@ -289,13 +290,13 @@ template <int ThreadN>
 std::atomic<uint64> AtomicReleaseIncBench<ThreadN>::a_;
 
 template <int ThreadN = 2>
-class AtomicReleaseCasIncBench : public Benchmark {
-  string get_description() const override {
+class AtomicReleaseCasIncBench final : public Benchmark {
+  string get_description() const final {
     return PSTRING() << "AtomicReleaseCasInc" << ThreadN;
   }
 
   static std::atomic<uint64> a_;
-  void run(int n) override {
+  void run(int n) final {
     std::vector<thread> threads;
     for (int i = 0; i < ThreadN; i++) {
       threads.emplace_back([&] {
@@ -315,12 +316,12 @@ template <int ThreadN>
 std::atomic<uint64> AtomicReleaseCasIncBench<ThreadN>::a_;
 
 template <int ThreadN = 2>
-class RwMutexReadBench : public Benchmark {
-  string get_description() const override {
+class RwMutexReadBench final : public Benchmark {
+  string get_description() const final {
     return PSTRING() << "RwMutexRead" << ThreadN;
   }
   RwMutex mutex_;
-  void run(int n) override {
+  void run(int n) final {
     std::vector<thread> threads;
     for (int i = 0; i < ThreadN; i++) {
       threads.emplace_back([&] {
@@ -335,12 +336,12 @@ class RwMutexReadBench : public Benchmark {
   }
 };
 template <int ThreadN = 2>
-class RwMutexWriteBench : public Benchmark {
-  string get_description() const override {
+class RwMutexWriteBench final : public Benchmark {
+  string get_description() const final {
     return PSTRING() << "RwMutexWrite" << ThreadN;
   }
   RwMutex mutex_;
-  void run(int n) override {
+  void run(int n) final {
     std::vector<thread> threads;
     for (int i = 0; i < ThreadN; i++) {
       threads.emplace_back([&] {

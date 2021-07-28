@@ -19,8 +19,10 @@
 #include "td/utils/format.h"
 #include "td/utils/Gzip.h"
 #include "td/utils/logging.h"
+#include "td/utils/misc.h"
 #include "td/utils/Random.h"
 #include "td/utils/ScopeGuard.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Time.h"
 #include "td/utils/tl_parsers.h"
 
@@ -300,10 +302,10 @@ Status SessionConnection::on_packet(const MsgInfo &info, uint64 req_msg_id, cons
   VLOG(mtproto) << "ERROR " << tag("code", rpc_error.error_code_) << tag("message", rpc_error.error_message_)
                 << tag("req_msg_id", req_msg_id);
   if (req_msg_id != 0) {
-    callback_->on_message_result_error(req_msg_id, rpc_error.error_code_, as_buffer_slice(rpc_error.error_message_));
+    callback_->on_message_result_error(req_msg_id, rpc_error.error_code_, rpc_error.error_message_.str());
   } else {
-    LOG(WARNING) << "Receive rpc_error as update: [" << rpc_error.error_code_ << "][" << rpc_error.error_message_
-                 << "]";
+    LOG(ERROR) << "Receive rpc_error as update: [" << rpc_error.error_code_ << "][" << rpc_error.error_message_
+               << "]";
   }
   return Status::OK();
 }
@@ -863,7 +865,7 @@ void SessionConnection::flush_packet() {
     max_after = HTTP_MAX_AFTER;
     auto time_to_disconnect =
         min(ping_disconnect_delay() + last_pong_at_, read_disconnect_delay() + last_read_at_) - Time::now_cached();
-    max_wait = min(http_max_wait(), static_cast<int>(1000 * max(0.1, time_to_disconnect - rtt())));
+    max_wait = static_cast<int>(1000 * clamp(time_to_disconnect - rtt(), 0.1, http_max_wait()));
   } else if (mode_ == Mode::Http) {
     max_delay = HTTP_MAX_DELAY;
     max_after = HTTP_MAX_AFTER;

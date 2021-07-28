@@ -46,13 +46,14 @@
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/Slice.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/tl_helpers.h"
 #include "td/utils/utf8.h"
 
 namespace td {
 
-class GetWebPagePreviewQuery : public Td::ResultHandler {
+class GetWebPagePreviewQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   int64 request_id_;
   string url_;
@@ -75,7 +76,7 @@ class GetWebPagePreviewQuery : public Td::ResultHandler {
         G()->net_query_creator().create(telegram_api::messages_getWebPagePreview(flags, text, std::move(entities))));
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_getWebPagePreview>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -86,12 +87,12 @@ class GetWebPagePreviewQuery : public Td::ResultHandler {
     td->web_pages_manager_->on_get_web_page_preview_success(request_id_, url_, std::move(ptr), std::move(promise_));
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     td->web_pages_manager_->on_get_web_page_preview_fail(request_id_, url_, std::move(status), std::move(promise_));
   }
 };
 
-class GetWebPageQuery : public Td::ResultHandler {
+class GetWebPageQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   WebPageId web_page_id_;
   string url_;
@@ -106,7 +107,7 @@ class GetWebPageQuery : public Td::ResultHandler {
     send_query(G()->net_query_creator().create(telegram_api::messages_getWebPage(url, hash)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_getWebPage>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -132,7 +133,7 @@ class GetWebPageQuery : public Td::ResultHandler {
     promise_.set_value(Unit());
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     promise_.set_error(std::move(status));
   }
 };
@@ -539,7 +540,7 @@ WebPageId WebPagesManager::on_get_web_page(tl_object_ptr<telegram_api::WebPage> 
 
 void WebPagesManager::update_web_page(unique_ptr<WebPage> web_page, WebPageId web_page_id, bool from_binlog,
                                       bool from_database) {
-  LOG(INFO) << "Update " << web_page_id;
+  LOG(INFO) << "Update " << web_page_id << (from_database ? " from database" : (from_binlog ? " from binlog" : ""));
   CHECK(web_page != nullptr);
 
   auto &page = web_pages_[web_page_id];
@@ -1037,7 +1038,7 @@ WebPageId WebPagesManager::get_web_page_by_url(const string &url) const {
     return WebPageId();
   }
 
-  LOG(INFO) << "Get web page id for the url \"" << url << '"';
+  LOG(INFO) << "Get web page identifier for the url \"" << url << '"';
 
   auto it = url_to_web_page_id_.find(url);
   if (it != url_to_web_page_id_.end()) {
@@ -1048,7 +1049,7 @@ WebPageId WebPagesManager::get_web_page_by_url(const string &url) const {
 }
 
 WebPageId WebPagesManager::get_web_page_by_url(const string &url, Promise<Unit> &&promise) {
-  LOG(INFO) << "Trying to get web page id for the url \"" << url << '"';
+  LOG(INFO) << "Trying to get web page identifier for the url \"" << url << '"';
 
   auto it = url_to_web_page_id_.find(url);
   if (it != url_to_web_page_id_.end()) {
@@ -1255,7 +1256,7 @@ tl_object_ptr<td_api::webPage> WebPagesManager::get_web_page_object(WebPageId we
 
   return make_tl_object<td_api::webPage>(
       web_page->url, web_page->display_url, web_page->type, web_page->site_name, web_page->title,
-      get_formatted_text_object(description), get_photo_object(td_->file_manager_.get(), web_page->photo),
+      get_formatted_text_object(description, true), get_photo_object(td_->file_manager_.get(), web_page->photo),
       web_page->embed_url, web_page->embed_type, web_page->embed_dimensions.width, web_page->embed_dimensions.height,
       web_page->duration, web_page->author,
       web_page->document.type == Document::Type::Animation
@@ -1367,11 +1368,15 @@ void WebPagesManager::on_pending_web_page_timeout(WebPageId web_page_id) {
   if (it != web_page_messages_.end()) {
     vector<FullMessageId> full_message_ids;
     for (auto full_message_id : it->second) {
-      full_message_ids.push_back(full_message_id);
+      if (full_message_id.get_dialog_id().get_type() != DialogType::SecretChat) {
+        full_message_ids.push_back(full_message_id);
+      }
       count++;
     }
-    send_closure_later(G()->messages_manager(), &MessagesManager::get_messages_from_server, std::move(full_message_ids),
-                       Promise<Unit>(), nullptr);
+    if (!full_message_ids.empty()) {
+      send_closure_later(G()->messages_manager(), &MessagesManager::get_messages_from_server,
+                         std::move(full_message_ids), Promise<Unit>(), "on_pending_web_page_timeout", nullptr);
+    }
   }
   auto get_it = pending_get_web_pages_.find(web_page_id);
   if (get_it != pending_get_web_pages_.end()) {
@@ -1683,6 +1688,14 @@ string WebPagesManager::get_web_page_search_text(WebPageId web_page_id) const {
     return "";
   }
   return PSTRING() << web_page->title + " " + web_page->description;
+}
+
+int32 WebPagesManager::get_web_page_duration(WebPageId web_page_id) const {
+  const WebPage *web_page = get_web_page(web_page_id);
+  if (web_page == nullptr) {
+    return 0;
+  }
+  return web_page->duration;
 }
 
 vector<FileId> WebPagesManager::get_web_page_file_ids(const WebPage *web_page) const {

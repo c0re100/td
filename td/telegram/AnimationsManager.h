@@ -27,7 +27,7 @@ namespace td {
 
 class Td;
 
-class AnimationsManager : public Actor {
+class AnimationsManager final : public Actor {
  public:
   AnimationsManager(Td *td, ActorShared<> parent);
 
@@ -45,7 +45,7 @@ class AnimationsManager : public Actor {
 
   SecretInputMedia get_secret_input_media(FileId animation_file_id,
                                           tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                          const string &caption, BufferSlice thumbnail, int32 layer) const;
+                                          const string &caption, BufferSlice thumbnail) const;
 
   FileId get_animation_thumbnail_file_id(FileId file_id) const;
 
@@ -138,7 +138,7 @@ class AnimationsManager : public Actor {
 
   void save_saved_animations_to_database();
 
-  void tear_down() override;
+  void tear_down() final;
 
   class AnimationListLogEvent;
 

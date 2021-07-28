@@ -17,7 +17,7 @@
 
 namespace td {
 
-Contact::Contact(string phone_number, string first_name, string last_name, string vcard, int32 user_id)
+Contact::Contact(string phone_number, string first_name, string last_name, string vcard, UserId user_id)
     : phone_number_(std::move(phone_number))
     , first_name_(std::move(first_name))
     , last_name_(std::move(last_name))
@@ -58,7 +58,11 @@ tl_object_ptr<telegram_api::inputPhoneContact> Contact::get_input_phone_contact(
 }
 
 tl_object_ptr<telegram_api::inputBotInlineMessageMediaContact> Contact::get_input_bot_inline_message_media_contact(
-    int32 flags, tl_object_ptr<telegram_api::ReplyMarkup> &&reply_markup) const {
+    tl_object_ptr<telegram_api::ReplyMarkup> &&reply_markup) const {
+  int32 flags = 0;
+  if (reply_markup != nullptr) {
+    flags |= telegram_api::inputBotInlineMessageMediaContact::REPLY_MARKUP_MASK;
+  }
   return make_tl_object<telegram_api::inputBotInlineMessageMediaContact>(flags, phone_number_, first_name_, last_name_,
                                                                          vcard_, std::move(reply_markup));
 }
@@ -96,7 +100,8 @@ Result<Contact> process_input_message_contact(tl_object_ptr<td_api::InputMessage
     return Status::Error(400, "vCard must be encoded in UTF-8");
   }
 
-  return Contact(contact->phone_number_, contact->first_name_, contact->last_name_, contact->vcard_, contact->user_id_);
+  return Contact(contact->phone_number_, contact->first_name_, contact->last_name_, contact->vcard_,
+                 UserId(contact->user_id_));
 }
 
 }  // namespace td

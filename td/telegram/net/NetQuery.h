@@ -43,7 +43,7 @@ class NetQueryCallback : public Actor {
   virtual void on_result_resendable(NetQueryPtr query, Promise<NetQueryPtr> promise);
 };
 
-class NetQuery : public TsListNode<NetQueryDebug> {
+class NetQuery final : public TsListNode<NetQueryDebug> {
  public:
   NetQuery() = default;
 
@@ -51,7 +51,7 @@ class NetQuery : public TsListNode<NetQueryDebug> {
   enum class Type : int8 { Common, Upload, Download, DownloadSmall };
   enum class AuthFlag : int8 { Off, On };
   enum class GzipFlag : int8 { Off, On };
-  enum Error : int32 { Resend = 202, Cancelled = 203, ResendInvokeAfter = 204 };
+  enum Error : int32 { Resend = 202, Canceled = 203, ResendInvokeAfter = 204 };
 
   uint64 id() const {
     return id_;
@@ -143,8 +143,8 @@ class NetQuery : public TsListNode<NetQueryDebug> {
     set_error_impl(Status::Error<Error::Resend>());
   }
 
-  void set_error_cancelled() {
-    set_error_impl(Status::Error<Error::Cancelled>());
+  void set_error_canceled() {
+    set_error_impl(Status::Error<Error::Canceled>());
   }
 
   void set_error_resend_invoke_after() {
@@ -154,7 +154,7 @@ class NetQuery : public TsListNode<NetQueryDebug> {
   bool update_is_ready() {
     if (state_ == State::Query) {
       if (cancellation_token_.load(std::memory_order_relaxed) == 0 || cancel_slot_.was_signal()) {
-        set_error_cancelled();
+        set_error_canceled();
         return true;
       }
       return false;
@@ -296,7 +296,7 @@ class NetQuery : public TsListNode<NetQueryDebug> {
   int8 priority_{0};
 
   template <class T>
-  struct movable_atomic : public std::atomic<T> {
+  struct movable_atomic final : public std::atomic<T> {
     movable_atomic() = default;
     movable_atomic(T &&x) : std::atomic<T>(std::forward<T>(x)) {
     }

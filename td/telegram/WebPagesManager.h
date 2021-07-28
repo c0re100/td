@@ -33,7 +33,7 @@ struct BinlogEvent;
 
 class Td;
 
-class WebPagesManager : public Actor {
+class WebPagesManager final : public Actor {
  public:
   WebPagesManager(Td *td, ActorShared<> parent);
 
@@ -41,7 +41,7 @@ class WebPagesManager : public Actor {
   WebPagesManager &operator=(const WebPagesManager &) = delete;
   WebPagesManager(WebPagesManager &&) = delete;
   WebPagesManager &operator=(WebPagesManager &&) = delete;
-  ~WebPagesManager() override;
+  ~WebPagesManager() final;
 
   WebPageId on_get_web_page(tl_object_ptr<telegram_api::WebPage> &&web_page_ptr, DialogId owner_dialog_id);
 
@@ -86,6 +86,8 @@ class WebPagesManager : public Actor {
   FileSourceId get_url_file_source_id(const string &url);
 
   string get_web_page_search_text(WebPageId web_page_id) const;
+
+  int32 get_web_page_duration(WebPageId web_page_id) const;
 
  private:
   static constexpr int32 WEBPAGE_FLAG_HAS_TYPE = 1 << 0;
@@ -166,7 +168,7 @@ class WebPagesManager : public Actor {
   void on_load_web_page_by_url_from_database(WebPageId web_page_id, const string &url, Promise<Unit> &&promise,
                                              Result<> result);
 
-  void tear_down() override;
+  void tear_down() final;
 
   FileSourceId get_web_page_file_source_id(WebPage *web_page);
 

@@ -21,7 +21,7 @@ namespace td {
 
 class Td;
 
-class CountryInfoManager : public Actor {
+class CountryInfoManager final : public Actor {
  public:
   CountryInfoManager(Td *td, ActorShared<> parent);
 
@@ -36,10 +36,10 @@ class CountryInfoManager : public Actor {
   CountryInfoManager &operator=(const CountryInfoManager &) = delete;
   CountryInfoManager(CountryInfoManager &&) = delete;
   CountryInfoManager &operator=(CountryInfoManager &&) = delete;
-  ~CountryInfoManager() override;
+  ~CountryInfoManager() final;
 
  private:
-  void tear_down() override;
+  void tear_down() final;
 
   struct CallingCodeInfo;
   struct CountryInfo;

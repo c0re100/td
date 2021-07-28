@@ -54,12 +54,12 @@ namespace td {
 
 extern int VERBOSITY_NAME(connections);
 
-class ConnectionCreator : public NetQueryCallback {
+class ConnectionCreator final : public NetQueryCallback {
  public:
   explicit ConnectionCreator(ActorShared<> parent);
   ConnectionCreator(ConnectionCreator &&other);
   ConnectionCreator &operator=(ConnectionCreator &&other);
-  ~ConnectionCreator() override;
+  ~ConnectionCreator() final;
 
   void on_dc_options(DcOptions new_dc_options);
   void on_dc_update(DcId dc_id, string ip_port, Promise<> promise);
@@ -84,6 +84,7 @@ class ConnectionCreator : public NetQueryCallback {
   void ping_proxy(int32 proxy_id, Promise<double> promise);
 
   struct ConnectionData {
+    IPAddress ip_address;
     SocketFd socket_fd;
     StateManager::ConnectionToken connection_token;
     unique_ptr<mtproto::RawConnection::StatsCallback> stats_callback;
@@ -91,8 +92,9 @@ class ConnectionCreator : public NetQueryCallback {
 
   static DcOptions get_default_dc_options(bool is_test);
 
-  static ActorOwn<> prepare_connection(SocketFd socket_fd, const Proxy &proxy, const IPAddress &mtproto_ip_address,
-                                       mtproto::TransportType transport_type, Slice actor_name_prefix, Slice debug_str,
+  static ActorOwn<> prepare_connection(IPAddress ip_address, SocketFd socket_fd, const Proxy &proxy,
+                                       const IPAddress &mtproto_ip_address, mtproto::TransportType transport_type,
+                                       Slice actor_name_prefix, Slice debug_str,
                                        unique_ptr<mtproto::RawConnection::StatsCallback> stats_callback,
                                        ActorShared<> parent, bool use_connection_token,
                                        Promise<ConnectionData> promise);
@@ -200,10 +202,10 @@ class ConnectionCreator : public NetQueryCallback {
   void save_proxy_last_used_date(int32 delay);
   td_api::object_ptr<td_api::proxy> get_proxy_object(int32 proxy_id) const;
 
-  void start_up() override;
-  void hangup_shared() override;
-  void hangup() override;
-  void loop() override;
+  void start_up() final;
+  void hangup_shared() final;
+  void hangup() final;
+  void loop() final;
 
   void save_dc_options();
   Result<SocketFd> do_request_connection(DcId dc_id, bool allow_media_only);
@@ -232,6 +234,7 @@ class ConnectionCreator : public NetQueryCallback {
     DcOptionsSet::Stat *stat{nullptr};
     mtproto::TransportType transport_type;
     string debug_str;
+    IPAddress ip_address;
     IPAddress mtproto_ip_address;
     bool check_mode{false};
   };
@@ -246,8 +249,8 @@ class ConnectionCreator : public NetQueryCallback {
 
   void ping_proxy_resolved(int32 proxy_id, IPAddress ip_address, Promise<double> promise);
 
-  void ping_proxy_socket_fd(SocketFd socket_fd, mtproto::TransportType transport_type, string debug_str,
-                            Promise<double> promise);
+  void ping_proxy_socket_fd(IPAddress ip_address, SocketFd socket_fd, mtproto::TransportType transport_type,
+                            string debug_str, Promise<double> promise);
 
   void on_ping_main_dc_result(uint64 token, Result<double> result);
 };

@@ -6,12 +6,11 @@
 //
 #include "td/telegram/VoiceNotesManager.h"
 
+#include "td/telegram/files/FileManager.h"
 #include "td/telegram/secret_api.h"
+#include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
-
-#include "td/telegram/files/FileManager.h"
-#include "td/telegram/Td.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/logging.h"
@@ -88,7 +87,7 @@ FileId VoiceNotesManager::dup_voice_note(FileId new_id, FileId old_id) {
 
 bool VoiceNotesManager::merge_voice_notes(FileId new_id, FileId old_id, bool can_delete_old) {
   if (!old_id.is_valid()) {
-    LOG(ERROR) << "Old file id is invalid";
+    LOG(ERROR) << "Old file identifier is invalid";
     return true;
   }
 

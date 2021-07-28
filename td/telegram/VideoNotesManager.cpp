@@ -6,13 +6,12 @@
 //
 #include "td/telegram/VideoNotesManager.h"
 
+#include "td/telegram/AuthManager.h"
+#include "td/telegram/files/FileManager.h"
 #include "td/telegram/secret_api.h"
+#include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
-
-#include "td/telegram/files/FileManager.h"
-#include "td/telegram/SecretChatActor.h"
-#include "td/telegram/Td.h"
 
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -112,7 +111,7 @@ FileId VideoNotesManager::dup_video_note(FileId new_id, FileId old_id) {
 
 bool VideoNotesManager::merge_video_notes(FileId new_id, FileId old_id, bool can_delete_old) {
   if (!old_id.is_valid()) {
-    LOG(ERROR) << "Old file id is invalid";
+    LOG(ERROR) << "Old file identifier is invalid";
     return true;
   }
 
@@ -158,14 +157,16 @@ void VideoNotesManager::create_video_note(FileId file_id, string minithumbnail, 
   } else {
     LOG(INFO) << "Receive wrong video note dimensions " << dimensions;
   }
-  v->minithumbnail = std::move(minithumbnail);
+  if (!td_->auth_manager_->is_bot()) {
+    v->minithumbnail = std::move(minithumbnail);
+  }
   v->thumbnail = std::move(thumbnail);
   on_get_video_note(std::move(v), replace);
 }
 
 SecretInputMedia VideoNotesManager::get_secret_input_media(FileId video_note_file_id,
                                                            tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                                           BufferSlice thumbnail, int32 layer) const {
+                                                           BufferSlice thumbnail) const {
   const VideoNote *video_note = get_video_note(video_note_file_id);
   CHECK(video_note != nullptr);
   auto file_view = td_->file_manager_->get_file_view(video_note_file_id);
@@ -182,7 +183,6 @@ SecretInputMedia VideoNotesManager::get_secret_input_media(FileId video_note_fil
   if (video_note->thumbnail.file_id.is_valid() && thumbnail.empty()) {
     return SecretInputMedia{};
   }
-  CHECK(layer >= SecretChatActor::VIDEO_NOTES_LAYER);
   vector<tl_object_ptr<secret_api::DocumentAttribute>> attributes;
   attributes.push_back(make_tl_object<secret_api::documentAttributeVideo66>(
       secret_api::documentAttributeVideo66::ROUND_MESSAGE_MASK, true, video_note->duration,

@@ -23,7 +23,7 @@
 
 namespace td {
 
-class TempAuthKeyWatchdog : public NetQueryCallback {
+class TempAuthKeyWatchdog final : public NetQueryCallback {
   class RegisteredAuthKeyImpl {
    public:
     explicit RegisteredAuthKeyImpl(int64 auth_key_id)
@@ -96,7 +96,7 @@ class TempAuthKeyWatchdog : public NetQueryCallback {
     set_timeout_at(min(sync_at_, now + SYNC_WAIT));
   }
 
-  void timeout_expired() override {
+  void timeout_expired() final {
     LOG(DEBUG) << "Sync timeout expired";
     CHECK(!run_sync_);
     if (!need_sync_) {

@@ -6,6 +6,7 @@
 //
 #include "td/db/SqliteKeyValue.h"
 
+#include "td/utils/logging.h"
 #include "td/utils/ScopeGuard.h"
 
 namespace td {
@@ -66,7 +67,7 @@ SqliteKeyValue::SeqNo SqliteKeyValue::set(Slice key, Slice value) {
   set_stmt_.bind_blob(2, value).ensure();
   auto status = set_stmt_.step();
   if (status.is_error()) {
-    LOG(FATAL) << "Failed to set \"" << key << '"';
+    LOG(FATAL) << "Failed to set \"" << key << "\": " << status.error();
   }
   // set_stmt_.step().ensure();
   set_stmt_.reset();

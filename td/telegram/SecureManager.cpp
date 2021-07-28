@@ -23,12 +23,13 @@
 #include "td/utils/misc.h"
 #include "td/utils/optional.h"
 #include "td/utils/Slice.h"
+#include "td/utils/SliceBuilder.h"
 
 #include <memory>
 
 namespace td {
 
-class GetSecureValue : public NetQueryCallback {
+class GetSecureValue final : public NetQueryCallback {
  public:
   GetSecureValue(ActorShared<SecureManager> parent, std::string password, SecureValueType type,
                  Promise<SecureValueWithCredentials> promise);
@@ -43,13 +44,13 @@ class GetSecureValue : public NetQueryCallback {
 
   void on_error(Status error);
   void on_secret(Result<secure_storage::Secret> r_secret, bool dummy);
-  void loop() override;
-  void start_up() override;
+  void loop() final;
+  void start_up() final;
 
-  void on_result(NetQueryPtr query) override;
+  void on_result(NetQueryPtr query) final;
 };
 
-class GetAllSecureValues : public NetQueryCallback {
+class GetAllSecureValues final : public NetQueryCallback {
  public:
   GetAllSecureValues(ActorShared<SecureManager> parent, std::string password, Promise<TdApiSecureValues> promise);
 
@@ -62,13 +63,13 @@ class GetAllSecureValues : public NetQueryCallback {
 
   void on_error(Status error);
   void on_secret(Result<secure_storage::Secret> r_secret, bool dummy);
-  void loop() override;
-  void start_up() override;
+  void loop() final;
+  void start_up() final;
 
-  void on_result(NetQueryPtr query) override;
+  void on_result(NetQueryPtr query) final;
 };
 
-class SetSecureValue : public NetQueryCallback {
+class SetSecureValue final : public NetQueryCallback {
  public:
   SetSecureValue(ActorShared<SecureManager> parent, string password, SecureValue secure_value,
                  Promise<SecureValueWithCredentials> promise);
@@ -93,17 +94,17 @@ class SetSecureValue : public NetQueryCallback {
 
   enum class State : int32 { WaitSecret, WaitSetValue } state_ = State::WaitSecret;
 
-  class UploadCallback : public FileManager::UploadCallback {
+  class UploadCallback final : public FileManager::UploadCallback {
    public:
     UploadCallback(ActorId<SetSecureValue> actor_id, uint32 upload_generation);
 
    private:
     ActorId<SetSecureValue> actor_id_;
     uint32 upload_generation_;
-    void on_upload_ok(FileId file_id, tl_object_ptr<telegram_api::InputFile> input_file) override;
-    void on_upload_encrypted_ok(FileId file_id, tl_object_ptr<telegram_api::InputEncryptedFile> input_file) override;
-    void on_upload_secure_ok(FileId file_id, tl_object_ptr<telegram_api::InputSecureFile> input_file) override;
-    void on_upload_error(FileId file_id, Status status) override;
+    void on_upload_ok(FileId file_id, tl_object_ptr<telegram_api::InputFile> input_file) final;
+    void on_upload_encrypted_ok(FileId file_id, tl_object_ptr<telegram_api::InputEncryptedFile> input_file) final;
+    void on_upload_secure_ok(FileId file_id, tl_object_ptr<telegram_api::InputSecureFile> input_file) final;
+    void on_upload_error(FileId file_id, Status status) final;
   };
 
   void on_upload_ok(FileId file_id, tl_object_ptr<telegram_api::InputSecureFile> input_file, uint32 upload_generation);
@@ -113,12 +114,12 @@ class SetSecureValue : public NetQueryCallback {
 
   void on_secret(Result<secure_storage::Secret> r_secret, bool x);
 
-  void start_up() override;
-  void hangup() override;
-  void tear_down() override;
+  void start_up() final;
+  void hangup() final;
+  void tear_down() final;
 
-  void loop() override;
-  void on_result(NetQueryPtr query) override;
+  void loop() final;
+  void on_result(NetQueryPtr query) final;
 
   void load_secret();
   void cancel_upload();
@@ -127,7 +128,7 @@ class SetSecureValue : public NetQueryCallback {
   void merge(FileManager *file_manager, FileId file_id, EncryptedSecureFile &encrypted_file);
 };
 
-class SetSecureValueErrorsQuery : public Td::ResultHandler {
+class SetSecureValueErrorsQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
 
  public:
@@ -140,7 +141,7 @@ class SetSecureValueErrorsQuery : public Td::ResultHandler {
         telegram_api::users_setSecureValueErrors(std::move(input_user), std::move(input_errors))));
   }
 
-  void on_result(uint64 id, BufferSlice packet) override {
+  void on_result(uint64 id, BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::users_setSecureValueErrors>(packet);
     if (result_ptr.is_error()) {
       return on_error(id, result_ptr.move_as_error());
@@ -151,7 +152,7 @@ class SetSecureValueErrorsQuery : public Td::ResultHandler {
     promise_.set_value(Unit());
   }
 
-  void on_error(uint64 id, Status status) override {
+  void on_error(uint64 id, Status status) final {
     if (status.code() != 0) {
       promise_.set_error(std::move(status));
     } else {
@@ -651,7 +652,7 @@ void SetSecureValue::merge(FileManager *file_manager, FileId file_id, EncryptedS
   LOG_IF(ERROR, status.is_error()) << status.error();
 }
 
-class DeleteSecureValue : public NetQueryCallback {
+class DeleteSecureValue final : public NetQueryCallback {
  public:
   DeleteSecureValue(ActorShared<SecureManager> parent, SecureValueType type, Promise<Unit> promise)
       : parent_(std::move(parent)), type_(std::move(type)), promise_(std::move(promise)) {
@@ -662,14 +663,14 @@ class DeleteSecureValue : public NetQueryCallback {
   SecureValueType type_;
   Promise<Unit> promise_;
 
-  void start_up() override {
+  void start_up() final {
     std::vector<telegram_api::object_ptr<telegram_api::SecureValueType>> types;
     types.push_back(get_input_secure_value_type(type_));
     auto query = G()->net_query_creator().create(telegram_api::account_deleteSecureValue(std::move(types)));
     G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this));
   }
 
-  void on_result(NetQueryPtr query) override {
+  void on_result(NetQueryPtr query) final {
     auto r_result = fetch_result<telegram_api::account_deleteSecureValue>(std::move(query));
     if (r_result.is_error()) {
       promise_.set_error(r_result.move_as_error());
@@ -680,7 +681,7 @@ class DeleteSecureValue : public NetQueryCallback {
   }
 };
 
-class GetPassportAuthorizationForm : public NetQueryCallback {
+class GetPassportAuthorizationForm final : public NetQueryCallback {
  public:
   GetPassportAuthorizationForm(ActorShared<SecureManager> parent, UserId bot_user_id, string scope, string public_key,
                                Promise<telegram_api::object_ptr<telegram_api::account_authorizationForm>> promise)
@@ -707,14 +708,14 @@ class GetPassportAuthorizationForm : public NetQueryCallback {
     stop();
   }
 
-  void start_up() override {
+  void start_up() final {
     auto account_get_authorization_form =
         telegram_api::account_getAuthorizationForm(bot_user_id_.get(), std::move(scope_), std::move(public_key_));
     auto query = G()->net_query_creator().create(account_get_authorization_form);
     G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this));
   }
 
-  void on_result(NetQueryPtr query) override {
+  void on_result(NetQueryPtr query) final {
     auto r_result = fetch_result<telegram_api::account_getAuthorizationForm>(std::move(query));
     if (r_result.is_error()) {
       return on_error(r_result.move_as_error());
@@ -751,7 +752,7 @@ void SecureManager::get_secure_value(std::string password, SecureValueType type,
       .release();
 }
 
-class GetPassportConfig : public NetQueryCallback {
+class GetPassportConfig final : public NetQueryCallback {
  public:
   GetPassportConfig(ActorShared<SecureManager> parent, string country_code,
                     Promise<td_api::object_ptr<td_api::text>> promise)
@@ -763,12 +764,12 @@ class GetPassportConfig : public NetQueryCallback {
   string country_code_;
   Promise<td_api::object_ptr<td_api::text>> promise_;
 
-  void start_up() override {
+  void start_up() final {
     auto query = G()->net_query_creator().create(telegram_api::help_getPassportConfig(0));
     G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this));
   }
 
-  void on_result(NetQueryPtr query) override {
+  void on_result(NetQueryPtr query) final {
     auto r_result = fetch_result<telegram_api::help_getPassportConfig>(std::move(query));
     if (r_result.is_error()) {
       promise_.set_error(r_result.move_as_error());

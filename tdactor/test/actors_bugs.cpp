@@ -51,7 +51,7 @@ TEST(MultiTimeout, bug) {
   sched.finish();
 }
 
-class TimeoutManager : public Actor {
+class TimeoutManager final : public Actor {
  public:
   static int32 count;
 
@@ -65,7 +65,7 @@ class TimeoutManager : public Actor {
   TimeoutManager &operator=(const TimeoutManager &) = delete;
   TimeoutManager(TimeoutManager &&) = delete;
   TimeoutManager &operator=(TimeoutManager &&) = delete;
-  ~TimeoutManager() override {
+  ~TimeoutManager() final {
     count--;
     LOG(INFO) << "Destroy TimeoutManager";
   }

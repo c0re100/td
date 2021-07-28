@@ -31,7 +31,7 @@ class FileGenerateCallback {
   virtual void on_error(Status error) = 0;
 };
 
-class FileGenerateManager : public Actor {
+class FileGenerateManager final : public Actor {
  public:
   explicit FileGenerateManager(ActorShared<> parent) : parent_(std::move(parent)) {
   }
@@ -62,9 +62,9 @@ class FileGenerateManager : public Actor {
   std::map<uint64, Query> query_id_to_query_;
   bool close_flag_ = false;
 
-  void hangup() override;
-  void hangup_shared() override;
-  void loop() override;
+  void hangup() final;
+  void hangup_shared() final;
+  void loop() final;
   void do_cancel(uint64 query_id);
 };
 

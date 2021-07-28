@@ -23,7 +23,7 @@ namespace td {
 
 extern int VERBOSITY_NAME(dc);
 
-class DcAuthManager : public NetQueryCallback {
+class DcAuthManager final : public NetQueryCallback {
  public:
   explicit DcAuthManager(ActorShared<> parent);
 
@@ -56,11 +56,11 @@ class DcAuthManager : public NetQueryCallback {
 
   void update_auth_key_state();
 
-  void on_result(NetQueryPtr result) override;
+  void on_result(NetQueryPtr result) final;
   void dc_loop(DcInfo &dc);
 
   void destroy_loop();
-  void loop() override;
+  void loop() final;
 };
 
 }  // namespace td

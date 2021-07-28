@@ -30,6 +30,7 @@
 #include "td/utils/crypto.h"
 #include "td/utils/logging.h"
 #include "td/utils/Random.h"
+#include "td/utils/SliceBuilder.h"
 
 #include <tuple>
 #include <unordered_set>
@@ -189,8 +190,8 @@ void CallActor::send_call_signaling_data(string &&data, Promise<> promise) {
   auto query = G()->net_query_creator().create(
       telegram_api::phone_sendSignalingData(get_input_phone_call("send_call_signaling_data"), BufferSlice(data)));
   send_with_promise(std::move(query),
-                    PromiseCreator::lambda([promise = std::move(promise)](NetQueryPtr net_query) mutable {
-                      auto res = fetch_result<telegram_api::phone_sendSignalingData>(std::move(net_query));
+                    PromiseCreator::lambda([promise = std::move(promise)](Result<NetQueryPtr> r_net_query) mutable {
+                      auto res = fetch_result<telegram_api::phone_sendSignalingData>(std::move(r_net_query));
                       if (res.is_error()) {
                         promise.set_error(res.move_as_error());
                       } else {
@@ -298,14 +299,15 @@ void CallActor::rate_call(int32 rating, string comment, vector<td_api::object_pt
   auto tl_query = telegram_api::phone_setCallRating(0, false /*ignored*/, get_input_phone_call("rate_call"), rating,
                                                     std::move(comment));
   auto query = G()->net_query_creator().create(tl_query);
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_set_rating_query_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_set_rating_query_result, std::move(r_net_query));
                     }));
   loop();
 }
 
-void CallActor::on_set_rating_query_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_setCallRating>(std::move(net_query));
+void CallActor::on_set_rating_query_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_setCallRating>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }
@@ -321,14 +323,15 @@ void CallActor::send_call_debug_information(string data, Promise<> promise) {
   auto tl_query = telegram_api::phone_saveCallDebug(get_input_phone_call("send_call_debug_information"),
                                                     make_tl_object<telegram_api::dataJSON>(std::move(data)));
   auto query = G()->net_query_creator().create(tl_query);
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_set_debug_query_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_set_debug_query_result, std::move(r_net_query));
                     }));
   loop();
 }
 
-void CallActor::on_set_debug_query_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_saveCallDebug>(std::move(net_query));
+void CallActor::on_set_debug_query_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_saveCallDebug>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }
@@ -379,8 +382,8 @@ Status CallActor::do_update_call(telegram_api::phoneCallWaiting &call) {
   call_access_hash_ = call.access_hash_;
   is_call_id_inited_ = true;
   is_video_ |= (call.flags_ & telegram_api::phoneCallWaiting::VIDEO_MASK) != 0;
-  call_admin_id_ = call.admin_id_;
-  call_participant_id_ = call.participant_id_;
+  call_admin_user_id_ = UserId(call.admin_id_);
+  // call_participant_user_id_ = UserId(call.participant_id_);
   if (call_id_promise_) {
     call_id_promise_.set_value(std::move(call.id_));
   }
@@ -402,8 +405,8 @@ Status CallActor::do_update_call(telegram_api::phoneCallRequested &call) {
   call_access_hash_ = call.access_hash_;
   is_call_id_inited_ = true;
   is_video_ |= (call.flags_ & telegram_api::phoneCallRequested::VIDEO_MASK) != 0;
-  call_admin_id_ = call.admin_id_;
-  call_participant_id_ = call.participant_id_;
+  call_admin_user_id_ = UserId(call.admin_id_);
+  // call_participant_user_id_ = UserId(call.participant_id_);
   if (call_id_promise_) {
     call_id_promise_.set_value(std::move(call.id_));
   }
@@ -435,8 +438,8 @@ Status CallActor::do_update_call(telegram_api::phoneCallAccepted &call) {
     call_id_ = call.id_;
     call_access_hash_ = call.access_hash_;
     is_call_id_inited_ = true;
-    call_admin_id_ = call.admin_id_;
-    call_participant_id_ = call.participant_id_;
+    call_admin_user_id_ = UserId(call.admin_id_);
+    // call_participant_user_id_ = UserId(call.participant_id_);
     if (call_id_promise_) {
       call_id_promise_.set_value(std::move(call.id_));
     }
@@ -554,7 +557,7 @@ void CallActor::on_dh_config(Result<std::shared_ptr<DhConfig>> r_dh_config, bool
   }
 
   dh_config_ = r_dh_config.move_as_ok();
-  auto check_result = DhHandshake::check_config(dh_config_->g, dh_config_->prime, DhCache::instance());
+  auto check_result = mtproto::DhHandshake::check_config(dh_config_->g, dh_config_->prime, DhCache::instance());
   if (check_result.is_error()) {
     return on_error(std::move(check_result));
   }
@@ -603,13 +606,14 @@ void CallActor::do_load_dh_config(Promise<std::shared_ptr<DhConfig>> promise) {
 void CallActor::send_received_query() {
   auto tl_query = telegram_api::phone_receivedCall(get_input_phone_call("send_received_query"));
   auto query = G()->net_query_creator().create(tl_query);
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_received_query_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_received_query_result, std::move(r_net_query));
                     }));
 }
 
-void CallActor::on_received_query_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_receivedCall>(std::move(net_query));
+void CallActor::on_received_query_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_receivedCall>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }
@@ -637,13 +641,14 @@ void CallActor::try_send_request_query() {
   set_timeout_in(timeout);
   query->total_timeout_limit_ = max(timeout, 10.0);
   request_query_ref_ = query.get_weak();
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_request_query_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_request_query_result, std::move(r_net_query));
                     }));
 }
 
-void CallActor::on_request_query_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_requestCall>(std::move(net_query));
+void CallActor::on_request_query_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_requestCall>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }
@@ -666,13 +671,14 @@ void CallActor::try_send_accept_query() {
                                                  call_state_.protocol.get_input_phone_call_protocol());
   auto query = G()->net_query_creator().create(tl_query);
   state_ = State::WaitAcceptResult;
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_accept_query_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_accept_query_result, std::move(r_net_query));
                     }));
 }
 
-void CallActor::on_accept_query_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_acceptCall>(std::move(net_query));
+void CallActor::on_accept_query_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_acceptCall>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }
@@ -690,13 +696,14 @@ void CallActor::try_send_confirm_query() {
                                                   call_state_.protocol.get_input_phone_call_protocol());
   auto query = G()->net_query_creator().create(tl_query);
   state_ = State::WaitConfirmResult;
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_confirm_query_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_confirm_query_result, std::move(r_net_query));
                     }));
 }
 
-void CallActor::on_confirm_query_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_confirmCall>(std::move(net_query));
+void CallActor::on_confirm_query_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_confirmCall>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }
@@ -720,13 +727,14 @@ void CallActor::try_send_discard_query() {
       get_input_phone_call_discard_reason(call_state_.discard_reason), connection_id_);
   auto query = G()->net_query_creator().create(tl_query);
   state_ = State::WaitDiscardResult;
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_discard_query_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_discard_query_result, std::move(r_net_query));
                     }));
 }
 
-void CallActor::on_discard_query_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_discardCall>(std::move(net_query));
+void CallActor::on_discard_query_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_discardCall>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }
@@ -740,13 +748,13 @@ void CallActor::flush_call_state() {
         if (!has_notification_) {
           has_notification_ = true;
           send_closure(G()->notification_manager(), &NotificationManager::add_call_notification,
-                       DialogId(UserId(call_admin_id_)), local_call_id_);
+                       DialogId(call_admin_user_id_), local_call_id_);
         }
       } else {
         if (has_notification_) {
           has_notification_ = false;
           send_closure(G()->notification_manager(), &NotificationManager::remove_call_notification,
-                       DialogId(UserId(call_admin_id_)), local_call_id_);
+                       DialogId(call_admin_user_id_), local_call_id_);
         }
       }
     }
@@ -759,22 +767,23 @@ void CallActor::flush_call_state() {
     // TODO can't call const function
     // send_closure(G()->contacts_manager(), &ContactsManager::get_user_id_object, user_id_, "flush_call_state");
     send_closure(G()->td(), &Td::send_update,
-                 make_tl_object<td_api::updateCall>(
-                     make_tl_object<td_api::call>(local_call_id_.get(), is_outgoing_ ? user_id_.get() : call_admin_id_,
-                                                  is_outgoing_, is_video_, call_state_.get_call_state_object())));
+                 make_tl_object<td_api::updateCall>(make_tl_object<td_api::call>(
+                     local_call_id_.get(), is_outgoing_ ? user_id_.get() : call_admin_user_id_.get(), is_outgoing_,
+                     is_video_, call_state_.get_call_state_object())));
   }
 }
 
 void CallActor::start_up() {
   auto tl_query = telegram_api::phone_getCallConfig();
   auto query = G()->net_query_creator().create(tl_query);
-  send_with_promise(std::move(query), PromiseCreator::lambda([actor_id = actor_id(this)](NetQueryPtr net_query) {
-                      send_closure(actor_id, &CallActor::on_get_call_config_result, std::move(net_query));
+  send_with_promise(std::move(query),
+                    PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {
+                      send_closure(actor_id, &CallActor::on_get_call_config_result, std::move(r_net_query));
                     }));
 }
 
-void CallActor::on_get_call_config_result(NetQueryPtr net_query) {
-  auto res = fetch_result<telegram_api::phone_getCallConfig>(std::move(net_query));
+void CallActor::on_get_call_config_result(Result<NetQueryPtr> r_net_query) {
+  auto res = fetch_result<telegram_api::phone_getCallConfig>(std::move(r_net_query));
   if (res.is_error()) {
     return on_error(res.move_as_error());
   }

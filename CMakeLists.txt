@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 
-project(TDLib VERSION 1.7.2 LANGUAGES CXX C)
+if (POLICY CMP0065)
+  # do not export symbols from executables
+  # affects compiler checks in project(), so must be set before it
+  cmake_policy(SET CMP0065 NEW)
+endif()
+
+project(TDLib VERSION 1.7.6 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -31,6 +37,7 @@ prevent_in_source_build()
 
 option(TD_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TDLib API.")
 option(TD_ENABLE_DOTNET "Use \"ON\" to enable generation of C++/CLI or C++/CX TDLib API bindings.")
+option(TD_EXPERIMENTAL_WATCH_OS "Use \"ON\" to enable watch os support.")
 
 if (TD_ENABLE_DOTNET AND (CMAKE_VERSION VERSION_LESS "3.1.0"))
   message(FATAL_ERROR "CMake 3.1.0 or higher is required. You are running version ${CMAKE_VERSION}.")
@@ -197,7 +204,6 @@ endif()
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)
 if (HAS_PARENT)
-  set(TL_TD_API_TLO ${TL_TD_API_TLO} PARENT_SCOPE) # was used in standalone binding generators
   set(TL_TD_JSON_AUTO ${TL_TD_JSON_AUTO_SOURCE} PARENT_SCOPE) # used in tdbot
   set(TD_TEST_SOURCE ${TD_TEST_SOURCE} PARENT_SCOPE) # used to build tests
 endif()
@@ -272,6 +278,8 @@ set(TDLIB_SOURCE
   td/telegram/AutoDownloadSettings.cpp
   td/telegram/BackgroundManager.cpp
   td/telegram/BackgroundType.cpp
+  td/telegram/BotCommand.cpp
+  td/telegram/BotCommandScope.cpp
   td/telegram/CallActor.cpp
   td/telegram/CallDiscardReason.cpp
   td/telegram/CallManager.cpp
@@ -322,6 +330,8 @@ set(TDLIB_SOURCE
   td/telegram/Global.cpp
   td/telegram/GroupCallManager.cpp
   td/telegram/GroupCallParticipant.cpp
+  td/telegram/GroupCallParticipantOrder.cpp
+  td/telegram/GroupCallVideoPayload.cpp
   td/telegram/HashtagHints.cpp
   td/telegram/InlineQueriesManager.cpp
   td/telegram/InputDialogId.cpp
@@ -329,6 +339,7 @@ set(TDLIB_SOURCE
   td/telegram/InputMessageText.cpp
   td/telegram/JsonValue.cpp
   td/telegram/LanguagePackManager.cpp
+  td/telegram/LinkManager.cpp
   td/telegram/Location.cpp
   td/telegram/logevent/LogEventHelper.cpp
   td/telegram/Logging.cpp
@@ -360,6 +371,7 @@ set(TDLIB_SOURCE
   td/telegram/net/Session.cpp
   td/telegram/net/SessionProxy.cpp
   td/telegram/net/SessionMultiProxy.cpp
+  td/telegram/NewPasswordState.cpp
   td/telegram/NotificationManager.cpp
   td/telegram/NotificationSettings.cpp
   td/telegram/NotificationType.cpp
@@ -402,6 +414,7 @@ set(TDLIB_SOURCE
   td/mtproto/AuthData.h
   td/mtproto/AuthKey.h
   td/mtproto/CryptoStorer.h
+  td/mtproto/DhCallback.h
   td/mtproto/DhHandshake.h
   td/mtproto/Handshake.h
   td/mtproto/HandshakeActor.h
@@ -409,13 +422,13 @@ set(TDLIB_SOURCE
   td/mtproto/HttpTransport.h
   td/mtproto/IStreamTransport.h
   td/mtproto/KDF.h
+  td/mtproto/MtprotoQuery.h
   td/mtproto/NoCryptoStorer.h
   td/mtproto/PacketInfo.h
   td/mtproto/PacketStorer.h
   td/mtproto/Ping.h
   td/mtproto/PingConnection.h
   td/mtproto/ProxySecret.h
-  td/mtproto/Query.h
   td/mtproto/RawConnection.h
   td/mtproto/RSA.h
   td/mtproto/SessionConnection.h
@@ -434,6 +447,8 @@ set(TDLIB_SOURCE
   td/telegram/BackgroundId.h
   td/telegram/BackgroundManager.h
   td/telegram/BackgroundType.h
+  td/telegram/BotCommand.h
+  td/telegram/BotCommandScope.h
   td/telegram/CallActor.h
   td/telegram/CallDiscardReason.h
   td/telegram/CallId.h
@@ -501,6 +516,8 @@ set(TDLIB_SOURCE
   td/telegram/GroupCallId.h
   td/telegram/GroupCallManager.h
   td/telegram/GroupCallParticipant.h
+  td/telegram/GroupCallParticipantOrder.h
+  td/telegram/GroupCallVideoPayload.h
   td/telegram/HashtagHints.h
   td/telegram/InlineQueriesManager.h
   td/telegram/InputDialogId.h
@@ -508,6 +525,7 @@ set(TDLIB_SOURCE
   td/telegram/InputMessageText.h
   td/telegram/JsonValue.h
   td/telegram/LanguagePackManager.h
+  td/telegram/LinkManager.h
   td/telegram/Location.h
   td/telegram/logevent/LogEvent.h
   td/telegram/logevent/LogEventHelper.h
@@ -518,6 +536,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageCopyOptions.h
   td/telegram/MessageEntity.h
   td/telegram/MessageId.h
+  td/telegram/MessageLinkInfo.h
   td/telegram/MessageReplyInfo.h
   td/telegram/MessagesDb.h
   td/telegram/MessageSearchFilter.h
@@ -547,6 +566,7 @@ set(TDLIB_SOURCE
   td/telegram/net/SessionProxy.h
   td/telegram/net/SessionMultiProxy.h
   td/telegram/net/TempAuthKeyWatchdog.h
+  td/telegram/NewPasswordState.h
   td/telegram/Notification.h
   td/telegram/NotificationGroupId.h
   td/telegram/NotificationGroupKey.h
@@ -574,6 +594,7 @@ set(TDLIB_SOURCE
   td/telegram/SecretChatActor.h
   td/telegram/SecretChatId.h
   td/telegram/SecretChatDb.h
+  td/telegram/SecretChatLayer.h
   td/telegram/SecretChatsManager.h
   td/telegram/SecretInputMedia.h
   td/telegram/SecureManager.h
@@ -681,7 +702,7 @@ if (MEMPROF)
 endif()
 
 
-add_library(tdapi STATIC ${TL_TD_API_SOURCE})
+add_library(tdapi ${TL_TD_API_SOURCE})
 target_include_directories(tdapi PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}> INTERFACE $<BUILD_INTERFACE:${TL_TD_AUTO_INCLUDE_DIR}>)
 target_link_libraries(tdapi PRIVATE tdutils)
 
@@ -910,4 +931,5 @@ install(FILES "TdConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/TdConfigVersion.cmak
 
 # Add SOVERSION to shared libraries
 set_property(TARGET tdclient PROPERTY SOVERSION "${TDLib_VERSION}")
+set_property(TARGET tdapi PROPERTY SOVERSION "${TDLib_VERSION}")
 set_property(TARGET tdjson PROPERTY SOVERSION "${TDLib_VERSION}")

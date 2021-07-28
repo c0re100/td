@@ -12,12 +12,11 @@
 #include "td/utils/misc.h"
 #include "td/utils/Random.h"
 #include "td/utils/Slice.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/tests.h"
 #include "td/utils/utf8.h"
 
 #include <algorithm>
-
-REGISTER_TESTS(message_entities);
 
 static void check_mention(const td::string &str, const td::vector<td::string> &expected) {
   auto result_slice = td::find_mentions(str);
@@ -44,8 +43,9 @@ TEST(MessageEntities, mention) {
   check_mention("@abcdefghijklmnopqrstuvwxyz123456", {"@abcdefghijklmnopqrstuvwxyz123456"});
   check_mention("@abcdefghijklmnopqrstuvwxyz1234567", {});
   check_mention("нет@mention", {});
-  check_mention("@ya @gif @wiki @vid @bing @pic @bold @imdb @coub @like @vote @giff @cap ya cap @y @yar @bingg @bin",
-                {"@gif", "@wiki", "@vid", "@bing", "@pic", "@bold", "@imdb", "@coub", "@like", "@vote", "@bingg"});
+  check_mention(
+      "@ya @gif @wiki @vid @bing @pic @bold @imdb @ImDb @coub @like @vote @giff @cap ya cap @y @yar @bingg @bin",
+      {"@gif", "@wiki", "@vid", "@bing", "@pic", "@bold", "@imdb", "@ImDb", "@coub", "@like", "@vote", "@bingg"});
 };
 
 static void check_bot_command(const td::string &str, const td::vector<td::string> &expected) {
@@ -212,6 +212,62 @@ TEST(MessageEntities, bank_card_number) {
   check_bank_card_number("1234567890128/", {"1234567890128"});
   check_bank_card_number("\"1234567890128", {"1234567890128"});
   check_bank_card_number("+1234567890128", {});
+}
+
+static void check_tg_url(const td::string &str, const td::vector<td::string> &expected) {
+  auto result_slice = td::find_tg_urls(str);
+  td::vector<td::string> result;
+  for (auto &it : result_slice) {
+    result.push_back(it.str());
+  }
+  if (result != expected) {
+    LOG(FATAL) << td::tag("text", str) << td::tag("got", td::format::as_array(result))
+               << td::tag("expected", td::format::as_array(expected));
+  }
+}
+
+TEST(MessageEntities, tg_url) {
+  check_tg_url("", {});
+  check_tg_url("tg://", {});
+  check_tg_url("tg://a", {"tg://a"});
+  check_tg_url("a", {});
+  check_tg_url("stg://a", {"tg://a"});
+  check_tg_url("asd  asdas das ton:asd tg:test ton://resolve tg://resolve TON://_-RESOLVE_- TG://-_RESOLVE-_",
+               {"ton://resolve", "tg://resolve", "TON://_-RESOLVE_-", "TG://-_RESOLVE-_"});
+  check_tg_url("tg:test/", {});
+  check_tg_url("tg:/test/", {});
+  check_tg_url("tg://test/", {"tg://test/"});
+  check_tg_url("tg://test/?", {"tg://test/"});
+  check_tg_url("tg://test/#", {"tg://test/#"});
+  check_tg_url("tg://test?", {"tg://test"});
+  check_tg_url("tg://test#", {"tg://test"});
+  check_tg_url("tg://test/―asd―?asd=asd&asdas=―#――――", {"tg://test/―asd―?asd=asd&asdas=―#――――"});
+  check_tg_url("tg://test/?asd", {"tg://test/?asd"});
+  check_tg_url("tg://test/?.:;,('?!`.:;,('?!`", {"tg://test/"});
+  check_tg_url("tg://test/#asdf", {"tg://test/#asdf"});
+  check_tg_url("tg://test?asdf", {"tg://test?asdf"});
+  check_tg_url("tg://test#asdf", {"tg://test#asdf"});
+  check_tg_url("tg://test?as‖df", {"tg://test?as"});
+  check_tg_url("tg://test?sa<df", {"tg://test?sa"});
+  check_tg_url("tg://test?as>df", {"tg://test?as"});
+  check_tg_url("tg://test?as\"df", {"tg://test?as"});
+  check_tg_url("tg://test?as«df", {"tg://test?as"});
+  check_tg_url("tg://test?as»df", {"tg://test?as"});
+  check_tg_url("tg://test?as(df", {"tg://test?as(df"});
+  check_tg_url("tg://test?as)df", {"tg://test?as)df"});
+  check_tg_url("tg://test?as[df", {"tg://test?as[df"});
+  check_tg_url("tg://test?as]df", {"tg://test?as]df"});
+  check_tg_url("tg://test?as{df", {"tg://test?as{df"});
+  check_tg_url("tg://test?as'df", {"tg://test?as'df"});
+  check_tg_url("tg://test?as}df", {"tg://test?as}df"});
+  check_tg_url("tg://test?as$df", {"tg://test?as$df"});
+  check_tg_url("tg://test?as%df", {"tg://test?as%df"});
+  check_tg_url("tg://%30/sccct", {});
+  check_tg_url("tg://test:asd@google.com:80", {"tg://test"});
+  check_tg_url("tg://google.com", {"tg://google"});
+  check_tg_url("tg://google/.com", {"tg://google/.com"});
+  check_tg_url("tg://127.0.0.1", {"tg://127"});
+  check_tg_url("tg://б.а.н.а.на", {});
 }
 
 static void check_is_email_address(const td::string &str, bool expected) {
@@ -455,6 +511,7 @@ TEST(MessageEntities, url) {
   check_url("http://google_.com", {});
   check_url("http://google._com_", {});
   check_url("http://[2001:4860:0:2001::68]/", {});  // TODO
+  check_url("tg://resolve", {});
   check_url("test.abd", {});
   check_url("/.b/..a    @.....@/. a.ba", {"a.ba"});
   check_url("bbbbbbbbbbbbbb.@.@", {});
@@ -581,6 +638,9 @@ TEST(MessageEntities, url) {
   check_url("https://t…", {});
   check_url("👉http://ab.com/cdefgh-1IJ", {"http://ab.com/cdefgh-1IJ"});
   check_url("...👉http://ab.com/cdefgh-1IJ", {});  // TODO
+  check_url(".?", {});
+  check_url("http://test―‑@―google―.―com―/―–―‐―/―/―/―?―‑―#―――", {"http://test―‑@―google―.―com―/―–―‐―/―/―/―?―‑―#―――"});
+  check_url("http://google.com/‖", {"http://google.com/"});
 }
 
 static void check_fix_formatted_text(td::string str, td::vector<td::MessageEntity> entities,
@@ -723,9 +783,8 @@ TEST(MessageEntities, fix_formatted_text) {
           td::vector<td::MessageEntity> fixed_entities;
           if (fixed_length > 0) {
             for (auto i = 0; i < length; i++) {
-              if (str[offset + i] != '\r' && str[offset + i] != '\n' &&
-                  (str[offset + i] != ' ' || type == td::MessageEntity::Type::TextUrl ||
-                   type == td::MessageEntity::Type::MentionName)) {
+              if (!td::is_space(str[offset + i]) || type == td::MessageEntity::Type::TextUrl ||
+                  type == td::MessageEntity::Type::MentionName) {
                 fixed_entities.emplace_back(type, fixed_offset, fixed_length);
                 break;
               }
@@ -1353,7 +1412,7 @@ TEST(MessageEntities, parse_markdown_v3) {
   check_parse_markdown_v3("` `", " ", {{td::MessageEntity::Type::Code, 0, 1}});
   check_parse_markdown_v3("`\n`", "\n", {{td::MessageEntity::Type::Code, 0, 1}});
   check_parse_markdown_v3("` `a", " a", {{td::MessageEntity::Type::Code, 0, 1}}, true);
-  check_parse_markdown_v3("`\n`a", "\na", {}, true);
+  check_parse_markdown_v3("`\n`a", "\na", {{td::MessageEntity::Type::Code, 0, 1}}, true);
   check_parse_markdown_v3("``", "``", {});
   check_parse_markdown_v3("`a````b```", "`a````b```", {});
   check_parse_markdown_v3("ab", {{td::MessageEntity::Type::Code, 0, 1}, {td::MessageEntity::Type::Pre, 1, 1}}, "ab",
@@ -1368,7 +1427,7 @@ TEST(MessageEntities, parse_markdown_v3) {
       "[ ](t.me) [ ](t.me)", {{td::MessageEntity::Type::TextUrl, 8, 1, "http://t.me/"}, {10, 1, td::UserId(1)}},
       "[ ](t.me) [ ](t.me)", {{td::MessageEntity::Type::TextUrl, 8, 1, "http://t.me/"}, {10, 1, td::UserId(1)}});
   check_parse_markdown_v3("[\n](t.me)", "\n", {{td::MessageEntity::Type::TextUrl, 0, 1, "http://t.me/"}});
-  check_parse_markdown_v3("[\n](t.me)a", "\na", {}, true);
+  check_parse_markdown_v3("[\n](t.me)a", "\na", {{td::MessageEntity::Type::TextUrl, 0, 1, "http://t.me/"}}, true);
   check_parse_markdown_v3("asd[abcd](google.com)", {{td::MessageEntity::Type::Italic, 0, 5}}, "asdabcd",
                           {{td::MessageEntity::Type::Italic, 0, 3},
                            {td::MessageEntity::Type::TextUrl, 3, 4, "http://google.com/"},

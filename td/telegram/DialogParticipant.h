@@ -6,10 +6,12 @@
 //
 #pragma once
 
+#include "td/telegram/DialogId.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
+#include "td/telegram/Version.h"
 
 #include "td/utils/common.h"
 #include "td/utils/StringBuilder.h"
@@ -140,7 +142,7 @@ class DialogParticipantStatus {
   static constexpr uint32 IS_MEMBER = 1 << 27;
 
   static constexpr uint32 IS_ANONYMOUS = 1 << 13;
-  static constexpr uint32 HAS_RANK = 1u << 14;
+  static constexpr uint32 HAS_RANK = 1 << 14;
   // bits 28-30 reserved for Type
   static constexpr int TYPE_SHIFT = 28;
   static constexpr uint32 HAS_UNTIL_DATE = 1u << 31;
@@ -233,6 +235,11 @@ class DialogParticipantStatus {
 
   bool can_invite_users() const {
     return (flags_ & CAN_INVITE_USERS_ADMIN) != 0 || (flags_ & CAN_INVITE_USERS_BANNED) != 0;
+  }
+
+  bool can_manage_invite_links() const {
+    // invite links can be managed, only if administrator was explicitly granted the right
+    return (flags_ & CAN_INVITE_USERS_ADMIN) != 0;
   }
 
   bool can_restrict_members() const {
@@ -383,30 +390,29 @@ bool operator!=(const DialogParticipantStatus &lhs, const DialogParticipantStatu
 StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipantStatus &status);
 
 struct DialogParticipant {
-  UserId user_id;
+  DialogId dialog_id;
   UserId inviter_user_id;
   int32 joined_date = 0;
   DialogParticipantStatus status = DialogParticipantStatus::Left();
 
   DialogParticipant() = default;
 
-  DialogParticipant(UserId user_id, UserId inviter_user_id, int32 joined_date, DialogParticipantStatus status);
+  DialogParticipant(DialogId user_id, UserId inviter_user_id, int32 joined_date, DialogParticipantStatus status);
 
   DialogParticipant(tl_object_ptr<telegram_api::ChatParticipant> &&participant_ptr, int32 chat_creation_date,
                     bool is_creator);
 
-  DialogParticipant(tl_object_ptr<telegram_api::ChannelParticipant> &&participant_ptr,
-                    DialogParticipantStatus my_status);
+  explicit DialogParticipant(tl_object_ptr<telegram_api::ChannelParticipant> &&participant_ptr);
 
-  static DialogParticipant left(UserId user_id) {
-    return {user_id, UserId(), 0, DialogParticipantStatus::Left()};
+  static DialogParticipant left(DialogId dialog_id) {
+    return {dialog_id, UserId(), 0, DialogParticipantStatus::Left()};
   }
 
   bool is_valid() const;
 
   template <class StorerT>
   void store(StorerT &storer) const {
-    td::store(user_id, storer);
+    td::store(dialog_id, storer);
     td::store(inviter_user_id, storer);
     td::store(joined_date, storer);
     td::store(status, storer);
@@ -414,7 +420,13 @@ struct DialogParticipant {
 
   template <class ParserT>
   void parse(ParserT &parser) {
-    td::parse(user_id, parser);
+    if (parser.version() >= static_cast<int32>(Version::SupportBannedChannels)) {
+      td::parse(dialog_id, parser);
+    } else {
+      UserId user_id;
+      td::parse(user_id, parser);
+      dialog_id = DialogId(user_id);
+    }
     td::parse(inviter_user_id, parser);
     td::parse(joined_date, parser);
     td::parse(status, parser);

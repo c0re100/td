@@ -6,23 +6,64 @@
 //
 #pragma once
 
+#include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
+#include "td/telegram/secret_api.h"
+#include "td/telegram/telegram_api.h"
+#include "td/telegram/UserId.h"
 
 #include "td/actor/PromiseFuture.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/format.h"
+#include "td/utils/SliceBuilder.h"
+#include "td/utils/Status.h"
+#include "td/utils/StorerBase.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/tl_helpers.h"
+#include "td/utils/tl_parsers.h"
+#include "td/utils/tl_storers.h"
 
-#include "td/telegram/secret_api.h"
-#include "td/telegram/telegram_api.h"
+#include <type_traits>
 
 namespace td {
 namespace log_event {
 
-class SecretChatEvent : public LogEventBase<SecretChatEvent> {
+namespace detail {
+
+template <class T>
+class StorerImpl final : public Storer {
+ public:
+  explicit StorerImpl(const T &event) : event_(event) {
+  }
+
+  size_t size() const final {
+    WithContext<TlStorerCalcLength, Global *> storer;
+    storer.set_context(G());
+
+    storer.store_int(T::version());
+    td::store(static_cast<int32>(event_.get_type()), storer);
+    td::store(event_, storer);
+    return storer.get_length();
+  }
+  size_t store(uint8 *ptr) const final {
+    WithContext<TlStorerUnsafe, Global *> storer(ptr);
+    storer.set_context(G());
+
+    storer.store_int(T::version());
+    td::store(static_cast<int32>(event_.get_type()), storer);
+    td::store(event_, storer);
+    return static_cast<size_t>(storer.get_buf() - ptr);
+  }
+
+ private:
+  const T &event_;
+};
+
+}  // namespace detail
+
+class SecretChatEvent : public LogEvent {
  public:
   // append only enum
   enum class Type : int32 {
@@ -40,12 +81,39 @@ class SecretChatEvent : public LogEventBase<SecretChatEvent> {
 
   template <class F>
   static void downcast_call(Type type, F &&f);
+
+  template <class StorerT>
+  void store(StorerT &storer) const {
+    downcast_call(get_type(),
+                  [&](auto *ptr) { static_cast<const std::decay_t<decltype(*ptr)> *>(this)->store(storer); });
+  }
+
+  static Result<unique_ptr<SecretChatEvent>> from_buffer_slice(BufferSlice slice) {
+    WithVersion<WithContext<TlBufferParser, Global *>> parser{&slice};
+    auto version = parser.fetch_int();
+    parser.set_version(version);
+    parser.set_context(G());
+    auto magic = static_cast<Type>(parser.fetch_int());
+
+    unique_ptr<SecretChatEvent> event;
+    downcast_call(magic, [&](auto *ptr) {
+      auto tmp = make_unique<std::decay_t<decltype(*ptr)>>();
+      tmp->parse(parser);
+      event = std::move(tmp);
+    });
+    parser.fetch_end();
+    TRY_STATUS(parser.get_status());
+    if (event != nullptr) {
+      return std::move(event);
+    }
+    return Status::Error(PSLICE() << "Unknown SecretChatEvent type: " << format::as_hex(magic));
+  }
 };
 
 template <class ChildT>
 class SecretChatLogEventBase : public SecretChatEvent {
  public:
-  typename SecretChatEvent::Type get_type() const override {
+  typename SecretChatEvent::Type get_type() const final {
     return ChildT::type;
   }
 
@@ -199,7 +267,7 @@ inline StringBuilder &operator<<(StringBuilder &sb, const EncryptedFileLocation 
 
 // LogEvents
 // TODO: Qts and SeqNoState could be just Logevents that are updated during regenerate
-class InboundSecretMessage : public SecretChatLogEventBase<InboundSecretMessage> {
+class InboundSecretMessage final : public SecretChatLogEventBase<InboundSecretMessage> {
  public:
   static constexpr Type type = SecretChatEvent::Type::InboundSecretMessage;
 
@@ -291,7 +359,7 @@ class InboundSecretMessage : public SecretChatLogEventBase<InboundSecretMessage>
     is_checked = true;
   }
 
-  StringBuilder &print(StringBuilder &sb) const override {
+  StringBuilder &print(StringBuilder &sb) const final {
     return sb << "[Logevent InboundSecretMessage " << tag("id", log_event_id()) << tag("chat_id", chat_id)
               << tag("date", date) << tag("auth_key_id", format::as_hex(auth_key_id)) << tag("message_id", message_id)
               << tag("my_in_seq_no", my_in_seq_no) << tag("my_out_seq_no", my_out_seq_no)
@@ -300,7 +368,7 @@ class InboundSecretMessage : public SecretChatLogEventBase<InboundSecretMessage>
   }
 };
 
-class OutboundSecretMessage : public SecretChatLogEventBase<OutboundSecretMessage> {
+class OutboundSecretMessage final : public SecretChatLogEventBase<OutboundSecretMessage> {
  public:
   static constexpr Type type = SecretChatEvent::Type::OutboundSecretMessage;
 
@@ -397,7 +465,7 @@ class OutboundSecretMessage : public SecretChatLogEventBase<OutboundSecretMessag
     }
   }
 
-  StringBuilder &print(StringBuilder &sb) const override {
+  StringBuilder &print(StringBuilder &sb) const final {
     return sb << "[Logevent OutboundSecretMessage " << tag("id", log_event_id()) << tag("chat_id", chat_id)
               << tag("is_sent", is_sent) << tag("need_notify_user", need_notify_user)
               << tag("is_rewritable", is_rewritable) << tag("is_external", is_external) << tag("message_id", message_id)
@@ -406,7 +474,7 @@ class OutboundSecretMessage : public SecretChatLogEventBase<OutboundSecretMessag
   }
 };
 
-class CloseSecretChat : public SecretChatLogEventBase<CloseSecretChat> {
+class CloseSecretChat final : public SecretChatLogEventBase<CloseSecretChat> {
  public:
   static constexpr Type type = SecretChatEvent::Type::CloseSecretChat;
   int32 chat_id = 0;
@@ -435,24 +503,24 @@ class CloseSecretChat : public SecretChatLogEventBase<CloseSecretChat> {
     parse(chat_id, parser);
   }
 
-  StringBuilder &print(StringBuilder &sb) const override {
+  StringBuilder &print(StringBuilder &sb) const final {
     return sb << "[Logevent CloseSecretChat " << tag("id", log_event_id()) << tag("chat_id", chat_id)
               << tag("delete_history", delete_history) << tag("is_already_discarded", is_already_discarded) << "]";
   }
 };
 
-class CreateSecretChat : public SecretChatLogEventBase<CreateSecretChat> {
+class CreateSecretChat final : public SecretChatLogEventBase<CreateSecretChat> {
  public:
   static constexpr Type type = SecretChatEvent::Type::CreateSecretChat;
   int32 random_id = 0;
-  int32 user_id = 0;
+  UserId user_id;
   int64 user_access_hash = 0;
 
   template <class StorerT>
   void store(StorerT &storer) const {
     using td::store;
     store(random_id, storer);
-    store(user_id, storer);
+    store(user_id.get(), storer);
     store(user_access_hash, storer);
   }
 
@@ -460,13 +528,15 @@ class CreateSecretChat : public SecretChatLogEventBase<CreateSecretChat> {
   void parse(ParserT &parser) {
     using td::parse;
     parse(random_id, parser);
-    parse(user_id, parser);
+    int32 legacy_user_id;
+    parse(legacy_user_id, parser);
+    user_id = UserId(legacy_user_id);
     parse(user_access_hash, parser);
   }
 
-  StringBuilder &print(StringBuilder &sb) const override {
-    return sb << "[Logevent CreateSecretChat " << tag("id", log_event_id()) << tag("chat_id", random_id)
-              << tag("user_id", user_id) << "]";
+  StringBuilder &print(StringBuilder &sb) const final {
+    return sb << "[Logevent CreateSecretChat " << tag("id", log_event_id()) << tag("chat_id", random_id) << user_id
+              << "]";
   }
 };
 

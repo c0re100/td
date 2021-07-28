@@ -13,7 +13,7 @@ To compile `TDLib` you will need to:
 ```
 brew install gperf cmake coreutils
 ```
-* If you don't want to build `TDLib` for macOS, you can pregenerate required source code files using `CMake` prepare_cross_compiling target:
+* If you don't want to build `TDLib` for macOS first, you **must** pregenerate required source code files using `CMake` prepare_cross_compiling target:
 ```
 cd <path to TDLib sources>
 mkdir native-build
@@ -39,6 +39,6 @@ This may take a while, because TDLib will be built about 10 times.
 Resulting library for iOS will work on any architecture (armv7, armv7s, arm64) and even on a simulator.
 We use [CMake/iOS.cmake](https://github.com/tdlib/td/blob/master/CMake/iOS.cmake) toolchain, other toolchains may work too.
 
-Built libraries will be store in `tdjson` directory.
+Built libraries will be stored in `tdjson` directory.
 
 Documentation for all available classes and methods can be found at https://core.telegram.org/tdlib/docs.

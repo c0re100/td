@@ -11,7 +11,6 @@
 
 #include "td/utils/buffer.h"
 #include "td/utils/format.h"
-#include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/port/Clocks.h"
 #include "td/utils/port/FileFd.h"
@@ -20,6 +19,7 @@
 #include "td/utils/port/Stat.h"
 #include "td/utils/Random.h"
 #include "td/utils/ScopeGuard.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 #include "td/utils/Time.h"
 #include "td/utils/tl_helpers.h"
@@ -162,6 +162,8 @@ static int64 file_size(CSlice path) {
   return r_stat.ok().size_;
 }
 }  // namespace detail
+
+int32 VERBOSITY_NAME(binlog) = VERBOSITY_NAME(DEBUG) + 8;
 
 Binlog::Binlog() = default;
 
@@ -312,8 +314,8 @@ Status Binlog::close_and_destroy() {
 }
 
 Status Binlog::destroy(Slice path) {
+  unlink(PSLICE() << path << ".new").ignore();  // delete regenerated version first to avoid it becoming main version
   unlink(PSLICE() << path).ignore();
-  unlink(PSLICE() << path << ".new").ignore();
   return Status::OK();
 }
 
@@ -321,12 +323,13 @@ void Binlog::do_event(BinlogEvent &&event) {
   auto event_size = event.raw_event_.size();
 
   if (state_ == State::Run || state_ == State::Reindex) {
-    VLOG(binlog) << "Write binlog event: " << format::cond(state_ == State::Reindex, "[reindex] ");
     auto validate_status = event.validate();
     if (validate_status.is_error()) {
       LOG(FATAL) << "Failed to validate binlog event " << validate_status << " "
                  << format::as_hex_dump<4>(Slice(event.raw_event_.as_slice().truncate(28)));
     }
+    VLOG(binlog) << "Write binlog event: " << format::cond(state_ == State::Reindex, "[reindex] ")
+                 << event.public_to_string();
     switch (encryption_type_) {
       case EncryptionType::None: {
         buffer_writer_.append(event.raw_event_.clone());
@@ -664,8 +667,15 @@ void Binlog::do_reindex() {
   auto finish_time = Clocks::monotonic();
   auto finish_size = fd_size_;
   auto finish_events = fd_events_;
-  LOG_CHECK(fd_size_ == detail::file_size(path_))
-      << fd_size_ << ' ' << detail::file_size(path_) << ' ' << fd_events_ << ' ' << path_;
+  {
+    auto r_stat = stat(path_);
+    if (r_stat.is_error()) {
+      LOG(FATAL) << "Failed to rename binlog of size " << fd_size_ << " to " << path_ << ": " << r_stat.error()
+                 << ". Old file size is " << detail::file_size(new_path);
+    }
+    LOG_CHECK(fd_size_ == r_stat.ok().size_) << fd_size_ << ' ' << r_stat.ok().size_ << ' '
+                                             << detail::file_size(new_path) << ' ' << fd_events_ << ' ' << path_;
+  }
 
   double ratio = static_cast<double>(start_size) / static_cast<double>(finish_size + 1);
 

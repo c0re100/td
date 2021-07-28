@@ -36,13 +36,13 @@
     }                                                 \
   }
 
-#define TRY_STATUS_PROMISE(promise_name, status)     \
-  {                                                  \
-    auto try_status = (status);                      \
-    if (try_status.is_error()) {                     \
-      promise_name.set_error(std::move(try_status)); \
-      return;                                        \
-    }                                                \
+#define TRY_STATUS_PROMISE(promise_name, status)          \
+  {                                                       \
+    auto try_status = (status);                           \
+    if (try_status.is_error()) {                          \
+      promise_name.set_error(try_status.move_as_error()); \
+      return;                                             \
+    }                                                     \
   }
 
 #define TRY_STATUS_PROMISE_PREFIX(promise_name, status, prefix)        \
@@ -324,32 +324,9 @@ class Status {
     return status.move_as_error_suffix(message());
   }
 
-  Status move_as_error_prefix(Slice prefix) const TD_WARN_UNUSED_RESULT {
-    CHECK(is_error());
-    Info info = get_info();
-    switch (info.error_type) {
-      case ErrorType::General:
-        return Error(code(), PSLICE() << prefix << message());
-      case ErrorType::Os:
-        return Status(false, ErrorType::Os, code(), PSLICE() << prefix << message());
-      default:
-        UNREACHABLE();
-        return {};
-    }
-  }
-  Status move_as_error_suffix(Slice suffix) const TD_WARN_UNUSED_RESULT {
-    CHECK(is_error());
-    Info info = get_info();
-    switch (info.error_type) {
-      case ErrorType::General:
-        return Error(code(), PSLICE() << message() << suffix);
-      case ErrorType::Os:
-        return Status(false, ErrorType::Os, code(), PSLICE() << message() << suffix);
-      default:
-        UNREACHABLE();
-        return {};
-    }
-  }
+  Status move_as_error_prefix(Slice prefix) const TD_WARN_UNUSED_RESULT;
+
+  Status move_as_error_suffix(Slice suffix) const TD_WARN_UNUSED_RESULT;
 
  private:
   struct Info {
@@ -599,27 +576,4 @@ inline StringBuilder &operator<<(StringBuilder &string_builder, const Status &st
   return status.print(string_builder);
 }
 
-namespace detail {
-
-class SlicifySafe {
- public:
-  Result<CSlice> operator&(Logger &logger) {
-    if (logger.is_error()) {
-      return Status::Error("Buffer overflow");
-    }
-    return logger.as_cslice();
-  }
-};
-
-class StringifySafe {
- public:
-  Result<string> operator&(Logger &logger) {
-    if (logger.is_error()) {
-      return Status::Error("Buffer overflow");
-    }
-    return logger.as_cslice().str();
-  }
-};
-
-}  // namespace detail
 }  // namespace td

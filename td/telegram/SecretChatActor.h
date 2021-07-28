@@ -6,23 +6,24 @@
 //
 #pragma once
 
-#include "td/telegram/secret_api.h"
-#include "td/telegram/telegram_api.h"
-
-#include "td/actor/actor.h"
-#include "td/actor/PromiseFuture.h"
-
-#include "td/mtproto/AuthKey.h"
-#include "td/mtproto/DhHandshake.h"
-
 #include "td/telegram/DhConfig.h"
 #include "td/telegram/FolderId.h"
 #include "td/telegram/logevent/SecretChatEvent.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/net/NetQuery.h"
+#include "td/telegram/secret_api.h"
 #include "td/telegram/SecretChatDb.h"
 #include "td/telegram/SecretChatId.h"
+#include "td/telegram/SecretChatLayer.h"
+#include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
+
+#include "td/mtproto/AuthKey.h"
+#include "td/mtproto/DhCallback.h"
+#include "td/mtproto/DhHandshake.h"
+
+#include "td/actor/actor.h"
+#include "td/actor/PromiseFuture.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/ChangesProcessor.h"
@@ -47,25 +48,15 @@ namespace td {
 class BinlogInterface;
 class NetQueryCreator;
 
-class SecretChatActor : public NetQueryCallback {
+class SecretChatActor final : public NetQueryCallback {
  public:
-  // do not change DEFAULT_LAYER, unless all it's usages are fixed
-  enum : int32 {
-    DEFAULT_LAYER = 46,
-    VIDEO_NOTES_LAYER = 66,
-    MTPROTO_2_LAYER = 73,
-    NEW_ENTITIES_LAYER = 101,
-    DELETE_MESSAGES_ON_CLOSE_LAYER = 123,
-    MY_LAYER = DELETE_MESSAGES_ON_CLOSE_LAYER
-  };
-
   class Context {
    public:
     Context() = default;
     Context(const Context &) = delete;
     Context &operator=(const Context &) = delete;
     virtual ~Context() = default;
-    virtual DhCallback *dh_callback() = 0;
+    virtual mtproto::DhCallback *dh_callback() = 0;
     virtual BinlogInterface *binlog() = 0;
     virtual SecretChatDb *secret_chat_db() = 0;
 
@@ -115,7 +106,7 @@ class SecretChatActor : public NetQueryCallback {
 
   // First query to new chat must be one of these two
   void update_chat(telegram_api::object_ptr<telegram_api::EncryptedChat> chat);
-  void create_chat(int32 user_id, int64 user_access_hash, int32 random_id, Promise<SecretChatId> promise);
+  void create_chat(UserId user_id, int64 user_access_hash, int32 random_id, Promise<SecretChatId> promise);
 
   void cancel_chat(bool delete_history, bool is_already_discarded, Promise<> promise);
 
@@ -252,7 +243,7 @@ class SecretChatActor : public NetQueryCallback {
     int32 last_message_id = 0;
     double last_timestamp = 0;
     int32 last_out_seq_no = 0;
-    DhHandshake handshake;
+    mtproto::DhHandshake handshake;
 
     static Slice key() {
       return Slice("pfs_state");
@@ -374,7 +365,7 @@ class SecretChatActor : public NetQueryCallback {
     int32 id = 0;
     int64 access_hash = 0;
 
-    int32 user_id = 0;
+    UserId user_id;
     int64 user_access_hash = 0;
     int32 random_id = 0;
 
@@ -383,7 +374,7 @@ class SecretChatActor : public NetQueryCallback {
     FolderId initial_folder_id;
 
     DhConfig dh_config;
-    DhHandshake handshake;
+    mtproto::DhHandshake handshake;
 
     static Slice key() {
       return Slice("auth_state");
@@ -408,7 +399,7 @@ class SecretChatActor : public NetQueryCallback {
 
       storer.store_int(id);
       storer.store_long(access_hash);
-      storer.store_int(user_id);
+      storer.store_int(user_id.get());
       storer.store_long(user_access_hash);
       storer.store_int(random_id);
       if (has_date) {
@@ -439,7 +430,7 @@ class SecretChatActor : public NetQueryCallback {
 
       id = parser.fetch_int();
       access_hash = parser.fetch_long();
-      user_id = parser.fetch_int();
+      user_id = UserId(parser.fetch_int());
       user_access_hash = parser.fetch_long();
       random_id = parser.fetch_int();
       if (has_date) {
@@ -572,7 +563,8 @@ class SecretChatActor : public NetQueryCallback {
   Result<std::tuple<uint64, BufferSlice, int32>> decrypt(BufferSlice &encrypted_message);
 
   Status do_inbound_message_encrypted(unique_ptr<log_event::InboundSecretMessage> message);
-  Status do_inbound_message_decrypted_unchecked(unique_ptr<log_event::InboundSecretMessage> message);
+  Status do_inbound_message_decrypted_unchecked(unique_ptr<log_event::InboundSecretMessage> message,
+                                                int32 mtproto_version);
   Status do_inbound_message_decrypted(unique_ptr<log_event::InboundSecretMessage> message);
   void do_inbound_message_decrypted_pending(unique_ptr<log_event::InboundSecretMessage> message);
 
@@ -621,7 +613,8 @@ class SecretChatActor : public NetQueryCallback {
                          tl_object_ptr<telegram_api::InputEncryptedFile> file, int32 flags, Promise<> promise);
 
   void do_outbound_message_impl(unique_ptr<log_event::OutboundSecretMessage>, Promise<> promise);
-  Result<BufferSlice> create_encrypted_message(int32 layer, int32 my_in_seq_no, int32 my_out_seq_no,
+
+  Result<BufferSlice> create_encrypted_message(int32 my_in_seq_no, int32 my_out_seq_no,
                                                tl_object_ptr<secret_api::DecryptedMessage> &message);
 
   NetQueryPtr create_net_query(const log_event::OutboundSecretMessage &message);
@@ -647,12 +640,12 @@ class SecretChatActor : public NetQueryCallback {
   Status save_common_info(T &update);
 
   int32 current_layer() const {
-    int32 layer = MY_LAYER;
+    int32 layer = static_cast<int32>(SecretChatLayer::Current);
     if (config_state_.his_layer < layer) {
       layer = config_state_.his_layer;
     }
-    if (layer < DEFAULT_LAYER) {
-      layer = DEFAULT_LAYER;
+    if (layer < static_cast<int32>(SecretChatLayer::Default)) {
+      layer = static_cast<int32>(SecretChatLayer::Default);
     }
     return layer;
   }
@@ -660,12 +653,12 @@ class SecretChatActor : public NetQueryCallback {
   void ask_on_binlog_replay_finish();
 
   void check_status(Status status);
-  void start_up() override;
-  void loop() override;
+  void start_up() final;
+  void loop() final;
   Status do_loop();
-  void tear_down() override;
+  void tear_down() final;
 
-  void on_result_resendable(NetQueryPtr net_query, Promise<NetQueryPtr> promise) override;
+  void on_result_resendable(NetQueryPtr net_query, Promise<NetQueryPtr> promise) final;
 
   Status run_auth();
   void run_pfs();
@@ -701,7 +694,7 @@ class SecretChatActor : public NetQueryCallback {
     return SecretChatId(auth_state_.id);
   }
   UserId get_user_id() {
-    return UserId(auth_state_.user_id);
+    return auth_state_.user_id;
   }
   void send_update_ttl(int32 ttl);
   void send_update_secret_chat();

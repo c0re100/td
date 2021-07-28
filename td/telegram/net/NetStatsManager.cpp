@@ -20,6 +20,7 @@
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/tl_helpers.h"
 
 namespace td {
@@ -47,7 +48,7 @@ static void parse(NetStatsData &net_stats, ParserT &parser) {
 
 void NetStatsManager::init() {
   LOG_CHECK(!empty()) << G()->close_flag();
-  class NetStatsInternalCallback : public NetStats::Callback {
+  class NetStatsInternalCallback final : public NetStats::Callback {
    public:
     NetStatsInternalCallback(ActorId<NetStatsManager> parent, size_t id) : parent_(std::move(parent)), id_(id) {
     }
@@ -55,7 +56,7 @@ void NetStatsManager::init() {
    private:
     ActorId<NetStatsManager> parent_;
     size_t id_;
-    void on_stats_updated() override {
+    void on_stats_updated() final {
       send_closure(parent_, &NetStatsManager::on_stats_updated, id_);
     }
   };
@@ -231,12 +232,12 @@ void NetStatsManager::start_up() {
     G()->td_db()->get_binlog_pmc()->set("net_stats_since", to_string(since_total_));
   }
 
-  class NetCallback : public StateManager::Callback {
+  class NetCallback final : public StateManager::Callback {
    public:
     explicit NetCallback(ActorId<NetStatsManager> net_stats_manager)
         : net_stats_manager_(std::move(net_stats_manager)) {
     }
-    bool on_network(NetType network_type, uint32 network_generation) override {
+    bool on_network(NetType network_type, uint32 network_generation) final {
       send_closure(net_stats_manager_, &NetStatsManager::on_net_type_updated, network_type);
       return net_stats_manager_.is_alive();
     }

@@ -67,7 +67,11 @@ SecretInputMedia Venue::get_secret_input_media_venue() const {
 }
 
 tl_object_ptr<telegram_api::inputBotInlineMessageMediaVenue> Venue::get_input_bot_inline_message_media_venue(
-    int32 flags, tl_object_ptr<telegram_api::ReplyMarkup> &&reply_markup) const {
+    tl_object_ptr<telegram_api::ReplyMarkup> &&reply_markup) const {
+  int32 flags = 0;
+  if (reply_markup != nullptr) {
+    flags |= telegram_api::inputBotInlineMessageMediaVenue::REPLY_MARKUP_MASK;
+  }
   return make_tl_object<telegram_api::inputBotInlineMessageMediaVenue>(
       flags, location_.get_input_geo_point(), title_, address_, provider_, id_, type_, std::move(reply_markup));
 }
@@ -84,7 +88,7 @@ bool operator!=(const Venue &lhs, const Venue &rhs) {
 StringBuilder &operator<<(StringBuilder &string_builder, const Venue &venue) {
   return string_builder << "Venue[location = " << venue.location_ << ", title = " << venue.title_
                         << ", address = " << venue.address_ << ", provider = " << venue.provider_
-                        << ", id = " << venue.id_ << ", type = " << venue.type_ << "]";
+                        << ", ID = " << venue.id_ << ", type = " << venue.type_ << "]";
 }
 
 Result<Venue> process_input_message_venue(tl_object_ptr<td_api::InputMessageContent> &&input_message_content) {

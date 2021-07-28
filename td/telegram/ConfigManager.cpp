@@ -10,6 +10,7 @@
 #include "td/telegram/ConfigShared.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/JsonValue.h"
+#include "td/telegram/LinkManager.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/net/AuthDataShared.h"
 #include "td/telegram/net/ConnectionCreator.h"
@@ -31,11 +32,12 @@
 #include "td/mtproto/RSA.h"
 #include "td/mtproto/TransportType.h"
 
-#include "td/net/HttpQuery.h"
 #if !TD_EMSCRIPTEN  //FIXME
 #include "td/net/SslStream.h"
 #include "td/net/Wget.h"
 #endif
+
+#include "td/net/HttpQuery.h"
 
 #include "td/actor/actor.h"
 
@@ -45,13 +47,13 @@
 #include "td/utils/common.h"
 #include "td/utils/crypto.h"
 #include "td/utils/format.h"
-#include "td/utils/HttpUrl.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/Parser.h"
 #include "td/utils/port/Clocks.h"
 #include "td/utils/Random.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Time.h"
 #include "td/utils/tl_helpers.h"
 #include "td/utils/tl_parsers.h"
@@ -144,7 +146,7 @@ Result<int32> HttpDate::parse_http_date(string slice) {
 }
 
 Result<SimpleConfig> decode_config(Slice input) {
-  static auto rsa = RSA::from_pem_public_key(
+  static auto rsa = mtproto::RSA::from_pem_public_key(
                         "-----BEGIN RSA PUBLIC KEY-----\n"
                         "MIIBCgKCAQEAyr+18Rex2ohtVy8sroGP\n"
                         "BwXD3DOoKCSpjDqYoXgCqB7ioln4eDCFfOBUlfXUEvM/fnKCpF46VkAftlb4VuPD\n"
@@ -377,7 +379,7 @@ ActorOwn<> get_simple_config_firebase_firestore(Promise<SimpleConfigResult> prom
 }
 
 ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorShared<> parent) {
-  class SessionCallback : public Session::Callback {
+  class SessionCallback final : public Session::Callback {
    public:
     SessionCallback(ActorShared<> parent, DcOption option) : parent_(std::move(parent)), option_(std::move(option)) {
     }
@@ -415,17 +417,17 @@ ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorSh
     std::vector<Promise<unique_ptr<mtproto::RawConnection>>> delay_forever_;
   };
 
-  class SimpleAuthData : public AuthDataShared {
+  class SimpleAuthData final : public AuthDataShared {
    public:
     explicit SimpleAuthData(DcId dc_id) : dc_id_(dc_id) {
     }
-    DcId dc_id() const override {
+    DcId dc_id() const final {
       return dc_id_;
     }
-    const std::shared_ptr<PublicRsaKeyShared> &public_rsa_key() override {
+    const std::shared_ptr<PublicRsaKeyShared> &public_rsa_key() final {
       return public_rsa_key_;
     }
-    mtproto::AuthKey get_auth_key() override {
+    mtproto::AuthKey get_auth_key() final {
       string dc_key = G()->td_db()->get_binlog_pmc()->get(auth_key_key());
 
       mtproto::AuthKey res;
@@ -434,31 +436,31 @@ ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorSh
       }
       return res;
     }
-    AuthKeyState get_auth_key_state() override {
+    AuthKeyState get_auth_key_state() final {
       return AuthDataShared::get_auth_key_state(get_auth_key());
     }
-    void set_auth_key(const mtproto::AuthKey &auth_key) override {
+    void set_auth_key(const mtproto::AuthKey &auth_key) final {
       G()->td_db()->get_binlog_pmc()->set(auth_key_key(), serialize(auth_key));
 
       //notify();
     }
-    void update_server_time_difference(double diff) override {
+    void update_server_time_difference(double diff) final {
       G()->update_server_time_difference(diff);
     }
-    double get_server_time_difference() override {
+    double get_server_time_difference() final {
       return G()->get_server_time_difference();
     }
-    void add_auth_key_listener(unique_ptr<Listener> listener) override {
+    void add_auth_key_listener(unique_ptr<Listener> listener) final {
       if (listener->notify()) {
         auth_key_listeners_.push_back(std::move(listener));
       }
     }
 
-    void set_future_salts(const std::vector<mtproto::ServerSalt> &future_salts) override {
+    void set_future_salts(const std::vector<mtproto::ServerSalt> &future_salts) final {
       G()->td_db()->get_binlog_pmc()->set(future_salts_key(), serialize(future_salts));
     }
 
-    std::vector<mtproto::ServerSalt> get_future_salts() override {
+    std::vector<mtproto::ServerSalt> get_future_salts() final {
       string future_salts = G()->td_db()->get_binlog_pmc()->get(future_salts_key());
       std::vector<mtproto::ServerSalt> res;
       if (!future_salts.empty()) {
@@ -485,14 +487,14 @@ ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorSh
     }
   };
 
-  class GetConfigActor : public NetQueryCallback {
+  class GetConfigActor final : public NetQueryCallback {
    public:
     GetConfigActor(DcOption option, Promise<FullConfig> promise, ActorShared<> parent)
         : option_(std::move(option)), promise_(std::move(promise)), parent_(std::move(parent)) {
     }
 
    private:
-    void start_up() override {
+    void start_up() final {
       auto auth_data = std::make_shared<SimpleAuthData>(option_.get_dc_id());
       int32 raw_dc_id = option_.get_dc_id().get_raw_id();
       auto session_callback = make_unique<SessionCallback>(actor_shared(this, 1), std::move(option_));
@@ -512,10 +514,10 @@ ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorSh
       send_closure(session_, &Session::send, std::move(query));
       set_timeout_in(10);
     }
-    void on_result(NetQueryPtr query) override {
+    void on_result(NetQueryPtr query) final {
       promise_.set_result(fetch_result<telegram_api::help_getConfig>(std::move(query)));
     }
-    void hangup_shared() override {
+    void hangup_shared() final {
       if (get_link_token() == 1) {
         if (promise_) {
           promise_.set_error(Status::Error("Failed"));
@@ -523,10 +525,10 @@ ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorSh
         stop();
       }
     }
-    void hangup() override {
+    void hangup() final {
       session_.reset();
     }
-    void timeout_expired() override {
+    void timeout_expired() final {
       promise_.set_error(Status::Error("Timeout expired"));
       session_.reset();
     }
@@ -540,7 +542,7 @@ ActorOwn<> get_full_config(DcOption option, Promise<FullConfig> promise, ActorSh
   return ActorOwn<>(create_actor<GetConfigActor>("GetConfigActor", option, std::move(promise), std::move(parent)));
 }
 
-class ConfigRecoverer : public Actor {
+class ConfigRecoverer final : public Actor {
  public:
   explicit ConfigRecoverer(ActorShared<> parent) : parent_(std::move(parent)) {
     connecting_since_ = Time::now();
@@ -730,11 +732,11 @@ class ConfigRecoverer : public Actor {
 
   ActorShared<> parent_;
 
-  void hangup_shared() override {
+  void hangup_shared() final {
     ref_cnt_--;
     try_stop();
   }
-  void hangup() override {
+  void hangup() final {
     ref_cnt_--;
     close_flag_ = true;
     full_config_query_.reset();
@@ -751,7 +753,7 @@ class ConfigRecoverer : public Actor {
   double max_connecting_delay() const {
     return expect_blocking() ? 5 : 20;
   }
-  void loop() override {
+  void loop() final {
     if (close_flag_) {
       return;
     }
@@ -837,20 +839,20 @@ class ConfigRecoverer : public Actor {
     }
   }
 
-  void start_up() override {
-    class StateCallback : public StateManager::Callback {
+  void start_up() final {
+    class StateCallback final : public StateManager::Callback {
      public:
       explicit StateCallback(ActorId<ConfigRecoverer> parent) : parent_(std::move(parent)) {
       }
-      bool on_state(StateManager::State state) override {
+      bool on_state(StateManager::State state) final {
         send_closure(parent_, &ConfigRecoverer::on_connecting, state == StateManager::State::Connecting);
         return parent_.is_alive();
       }
-      bool on_network(NetType network_type, uint32 network_generation) override {
+      bool on_network(NetType network_type, uint32 network_generation) final {
         send_closure(parent_, &ConfigRecoverer::on_network, network_type != NetType::None, network_generation);
         return parent_.is_alive();
       }
-      bool on_online(bool online_flag) override {
+      bool on_online(bool online_flag) final {
         send_closure(parent_, &ConfigRecoverer::on_online, online_flag);
         return parent_.is_alive();
       }
@@ -888,9 +890,6 @@ void ConfigManager::start_up() {
     expire_time_ = expire_time;
     set_timeout_in(expire_time_.in());
   }
-
-  autologin_update_time_ = Time::now() - 365 * 86400;
-  autologin_domains_ = full_split(G()->td_db()->get_binlog_pmc()->get("autologin_domains"), '\xFF');
 }
 
 ActorShared<> ConfigManager::create_reference() {
@@ -965,60 +964,6 @@ void ConfigManager::get_app_config(Promise<td_api::object_ptr<td_api::JsonValue>
     query->total_timeout_limit_ = 60 * 60 * 24;
     G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this, 1));
   }
-}
-
-void ConfigManager::get_external_link(string &&link, Promise<string> &&promise) {
-  if (G()->close_flag()) {
-    return promise.set_value(std::move(link));
-  }
-
-  auto r_url = parse_url(link);
-  if (r_url.is_error()) {
-    return promise.set_value(std::move(link));
-  }
-
-  if (!td::contains(autologin_domains_, r_url.ok().host_)) {
-    return promise.set_value(std::move(link));
-  }
-
-  if (autologin_update_time_ < Time::now() - 10000) {
-    auto query_promise = PromiseCreator::lambda([link = std::move(link), promise = std::move(promise)](
-                                                    Result<td_api::object_ptr<td_api::JsonValue>> &&result) mutable {
-      if (result.is_error()) {
-        return promise.set_value(std::move(link));
-      }
-      send_closure(G()->config_manager(), &ConfigManager::get_external_link, std::move(link), std::move(promise));
-    });
-    return get_app_config(std::move(query_promise));
-  }
-
-  if (autologin_token_.empty()) {
-    return promise.set_value(std::move(link));
-  }
-
-  auto url = r_url.move_as_ok();
-  url.protocol_ = HttpUrl::Protocol::Https;
-  Slice path = url.query_;
-  path.truncate(url.query_.find_first_of("?#"));
-  Slice parameters_hash = Slice(url.query_).substr(path.size());
-  Slice parameters = parameters_hash;
-  parameters.truncate(parameters.find('#'));
-  Slice hash = parameters_hash.substr(parameters.size());
-
-  string added_parameter;
-  if (parameters.empty()) {
-    added_parameter = '?';
-  } else if (parameters.size() == 1) {
-    CHECK(parameters == "?");
-  } else {
-    added_parameter = '&';
-  }
-  added_parameter += "autologin_token=";
-  added_parameter += autologin_token_;
-
-  url.query_ = PSTRING() << path << parameters << added_parameter << hash;
-
-  promise.set_value(url.get_url());
 }
 
 void ConfigManager::get_content_settings(Promise<Unit> &&promise) {
@@ -1128,6 +1073,10 @@ void ConfigManager::do_set_archive_and_mute(bool archive_and_mute) {
     remove_suggested_action(suggested_actions_, SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats});
   }
   G()->shared_config().set_option_boolean("archive_and_mute_new_chats_from_unknown_users", archive_and_mute);
+}
+
+void ConfigManager::hide_suggested_action(SuggestedAction suggested_action) {
+  remove_suggested_action(suggested_actions_, suggested_action);
 }
 
 void ConfigManager::dismiss_suggested_action(SuggestedAction suggested_action, Promise<Unit> &&promise) {
@@ -1519,10 +1468,9 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   const bool archive_and_mute =
       G()->shared_config().get_option_boolean("archive_and_mute_new_chats_from_unknown_users");
 
-  autologin_token_.clear();
-  auto old_autologin_domains = std::move(autologin_domains_);
-  autologin_domains_.clear();
-  autologin_update_time_ = Time::now();
+  string autologin_token;
+  vector<string> autologin_domains;
+  vector<string> url_auth_domains;
 
   vector<tl_object_ptr<telegram_api::jsonObjectValue>> new_values;
   string ignored_restriction_reasons;
@@ -1692,7 +1640,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       }
       if (key == "autologin_token") {
         if (value->get_id() == telegram_api::jsonString::ID) {
-          autologin_token_ = url_encode(static_cast<telegram_api::jsonString *>(value)->value_);
+          autologin_token = url_encode(static_cast<telegram_api::jsonString *>(value)->value_);
         } else {
           LOG(ERROR) << "Receive unexpected autologin_token " << to_string(*value);
         }
@@ -1704,13 +1652,61 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
           for (auto &domain : domains) {
             CHECK(domain != nullptr);
             if (domain->get_id() == telegram_api::jsonString::ID) {
-              autologin_domains_.push_back(std::move(static_cast<telegram_api::jsonString *>(domain.get())->value_));
+              autologin_domains.push_back(std::move(static_cast<telegram_api::jsonString *>(domain.get())->value_));
             } else {
               LOG(ERROR) << "Receive unexpected autologin domain " << to_string(domain);
             }
           }
         } else {
           LOG(ERROR) << "Receive unexpected autologin_domains " << to_string(*value);
+        }
+        continue;
+      }
+      if (key == "url_auth_domains") {
+        if (value->get_id() == telegram_api::jsonArray::ID) {
+          auto domains = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
+          for (auto &domain : domains) {
+            CHECK(domain != nullptr);
+            if (domain->get_id() == telegram_api::jsonString::ID) {
+              url_auth_domains.push_back(std::move(static_cast<telegram_api::jsonString *>(domain.get())->value_));
+            } else {
+              LOG(ERROR) << "Receive unexpected url auth domain " << to_string(domain);
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected url_auth_domains " << to_string(*value);
+        }
+        continue;
+      }
+      if (key == "round_video_encoding") {
+        if (value->get_id() == telegram_api::jsonObject::ID) {
+          auto video_note_settings = std::move(static_cast<telegram_api::jsonObject *>(value)->value_);
+          for (auto &video_note_setting : video_note_settings) {
+            CHECK(video_note_setting != nullptr);
+            if (video_note_setting->key_ != "diameter" && video_note_setting->key_ != "video_bitrate" &&
+                video_note_setting->key_ != "audio_bitrate") {
+              continue;
+            }
+            if (video_note_setting->value_->get_id() == telegram_api::jsonNumber::ID) {
+              auto setting_value = static_cast<int32>(
+                  static_cast<const telegram_api::jsonNumber *>(video_note_setting->value_.get())->value_);
+              if (value > 0) {
+                if (video_note_setting->key_ == "diameter") {
+                  G()->shared_config().set_option_integer("suggested_video_note_length", setting_value);
+                }
+                if (video_note_setting->key_ == "video_bitrate") {
+                  G()->shared_config().set_option_integer("suggested_video_note_video_bitrate", setting_value);
+                }
+                if (video_note_setting->key_ == "audio_bitrate") {
+                  G()->shared_config().set_option_integer("suggested_video_note_audio_bitrate", setting_value);
+                }
+              }
+            } else {
+              LOG(ERROR) << "Receive unexpected video note setting " << to_string(video_note_setting);
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected round_video_encoding " << to_string(*value);
         }
         continue;
       }
@@ -1722,9 +1718,8 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   }
   config = make_tl_object<telegram_api::jsonObject>(std::move(new_values));
 
-  if (autologin_domains_ != old_autologin_domains) {
-    G()->td_db()->get_binlog_pmc()->set("autologin_domains", implode(autologin_domains_, '\xFF'));
-  }
+  send_closure(G()->link_manager(), &LinkManager::update_autologin_domains, std::move(autologin_token),
+               std::move(autologin_domains), std::move(url_auth_domains));
 
   ConfigShared &shared_config = G()->shared_config();
 

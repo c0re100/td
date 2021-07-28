@@ -13,6 +13,7 @@
 #include "td/utils/port/FileFd.h"
 #include "td/utils/Random.h"
 #include "td/utils/SharedSlice.h"
+#include "td/utils/SliceBuilder.h"
 
 namespace td {
 namespace secure_storage {
@@ -89,12 +90,12 @@ BufferSlice gen_random_prefix(int64 data_size) {
   return buff;
 }
 
-class FileDataView : public DataView {
+class FileDataView final : public DataView {
  public:
   FileDataView(FileFd &fd, int64 size);
 
-  int64 size() const override;
-  Result<BufferSlice> pread(int64 offset, int64 size) const override;
+  int64 size() const final;
+  Result<BufferSlice> pread(int64 offset, int64 size) const final;
 
  private:
   FileFd &fd_;

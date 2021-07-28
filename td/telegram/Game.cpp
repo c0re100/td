@@ -91,9 +91,9 @@ const FormattedText &Game::get_text() const {
   return text_;
 }
 
-tl_object_ptr<td_api::game> Game::get_game_object(Td *td) const {
+tl_object_ptr<td_api::game> Game::get_game_object(Td *td, bool skip_bot_commands) const {
   return make_tl_object<td_api::game>(
-      id_, short_name_, title_, get_formatted_text_object(text_), description_,
+      id_, short_name_, title_, get_formatted_text_object(text_, skip_bot_commands), description_,
       get_photo_object(td->file_manager_.get(), photo_),
       td->animations_manager_->get_animation_object(animation_file_id_, "get_game_object"));
 }
@@ -120,7 +120,7 @@ bool operator!=(const Game &lhs, const Game &rhs) {
 }
 
 StringBuilder &operator<<(StringBuilder &string_builder, const Game &game) {
-  return string_builder << "Game[id = " << game.id_ << ", access_hash = " << game.access_hash_
+  return string_builder << "Game[ID = " << game.id_ << ", access_hash = " << game.access_hash_
                         << ", bot = " << game.bot_user_id_ << ", short_name = " << game.short_name_
                         << ", title = " << game.title_ << ", description = " << game.description_
                         << ", photo = " << game.photo_ << ", animation_file_id = " << game.animation_file_id_ << "]";

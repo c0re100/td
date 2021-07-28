@@ -17,7 +17,7 @@
 namespace td {
 
 template <int buffer_size = 32 * (1 << 10)>
-class MemoryLog : public LogInterface {
+class MemoryLog final : public LogInterface {
   static constexpr size_t MAX_OUTPUT_SIZE = buffer_size / 16 < (8 << 10) ? buffer_size / 16 : (8 << 10);
 
   static_assert((buffer_size & (buffer_size - 1)) == 0, "Buffer size must be power of 2");
@@ -28,7 +28,16 @@ class MemoryLog : public LogInterface {
     std::memset(buffer_, ' ', sizeof(buffer_));
   }
 
-  void append(CSlice new_slice, int log_level) override {
+  Slice get_buffer() const {
+    return Slice(buffer_, sizeof(buffer_));
+  }
+
+  size_t get_pos() const {
+    return pos_ & (buffer_size - 1);
+  }
+
+ private:
+  void do_append(int log_level, CSlice new_slice) final {
     Slice slice = new_slice;
     slice.truncate(MAX_OUTPUT_SIZE);
     while (!slice.empty() && slice.back() == '\n') {
@@ -61,24 +70,8 @@ class MemoryLog : public LogInterface {
     size_t printed = std::snprintf(&buffer_[start_pos + 1], MAGIC_SIZE - 1, "LOG:%08x: ", real_pos);
     CHECK(printed == MAGIC_SIZE - 2);
     buffer_[start_pos + MAGIC_SIZE - 1] = ' ';
-
-    if (log_level == VERBOSITY_NAME(FATAL)) {
-      process_fatal_error(new_slice);
-    }
   }
 
-  void rotate() override {
-  }
-
-  Slice get_buffer() const {
-    return Slice(buffer_, sizeof(buffer_));
-  }
-
-  size_t get_pos() const {
-    return pos_ & (buffer_size - 1);
-  }
-
- private:
   char buffer_[buffer_size];
   std::atomic<uint32> pos_{0};
 };

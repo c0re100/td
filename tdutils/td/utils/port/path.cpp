@@ -12,6 +12,7 @@
 #include "td/utils/logging.h"
 #include "td/utils/port/detail/skip_eintr.h"
 #include "td/utils/ScopeGuard.h"
+#include "td/utils/SliceBuilder.h"
 
 #if TD_PORT_WINDOWS
 #include "td/utils/port/FromApp.h"
@@ -294,7 +295,9 @@ Result<bool> walk_path_subdir(string &path, DIR *dir, const WalkFunction &func) 
       status = walk_path_file(path, func);
     }
 #else
+#if !TD_SOLARIS
 #warning "Slow walk_path"
+#endif
     status = walk_path(path, func);
 #endif
     if (status.is_error() || !status.ok()) {
@@ -391,6 +394,9 @@ Status WalkPath::do_run(CSlice path, const detail::WalkFunction &func) {
 
 Status mkdir(CSlice dir, int32 mode) {
   TRY_RESULT(wdir, to_wstring(dir));
+  while (!wdir.empty() && (wdir.back() == L'/' || wdir.back() == L'\\')) {
+    wdir.pop_back();
+  }
   auto status = td::CreateDirectoryFromAppW(wdir.c_str(), nullptr);
   if (status == 0 && GetLastError() != ERROR_ALREADY_EXISTS) {
     return OS_ERROR(PSLICE() << "Can't create directory \"" << dir << '"');
@@ -470,7 +476,7 @@ CSlice get_temporary_dir() {
       }
       auto rs = from_wstring(buf);
       LOG_IF(FATAL, rs.is_error()) << "GetTempPathW failed: " << rs.error();
-      temporary_dir = rs.ok();
+      temporary_dir = rs.move_as_ok();
     }
     if (temporary_dir.size() > 1 && temporary_dir.back() == TD_DIR_SLASH) {
       temporary_dir.pop_back();

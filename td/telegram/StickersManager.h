@@ -38,7 +38,7 @@ namespace td {
 
 class Td;
 
-class StickersManager : public Actor {
+class StickersManager final : public Actor {
  public:
   static constexpr int64 GREAT_MINDS_SET_ID = 1842540969984001;
 
@@ -90,7 +90,7 @@ class StickersManager : public Actor {
 
   vector<StickerSetId> get_installed_sticker_sets(bool is_masks, Promise<Unit> &&promise);
 
-  bool has_webp_thumbnail(const tl_object_ptr<telegram_api::documentAttributeSticker> &sticker);
+  static bool has_webp_thumbnail(const vector<tl_object_ptr<telegram_api::PhotoSize>> &thumbnails);
 
   StickerSetId get_sticker_set_id(const tl_object_ptr<telegram_api::InputStickerSet> &set_ptr);
 
@@ -163,10 +163,19 @@ class StickersManager : public Actor {
   void reorder_installed_sticker_sets(bool is_masks, const vector<StickerSetId> &sticker_set_ids,
                                       Promise<Unit> &&promise);
 
-  FileId upload_sticker_file(UserId user_id, const tl_object_ptr<td_api::InputFile> &sticker, Promise<Unit> &&promise);
+  FileId upload_sticker_file(UserId user_id, tl_object_ptr<td_api::InputSticker> &&sticker, Promise<Unit> &&promise);
+
+  void get_suggested_sticker_set_name(string short_name, Promise<string> &&promise);
+
+  enum class CheckStickerSetNameResult : uint8 { Ok, Invalid, Occupied };
+  void check_sticker_set_name(const string &name, Promise<CheckStickerSetNameResult> &&promise);
+
+  static td_api::object_ptr<td_api::CheckStickerSetNameResult> get_check_sticker_set_name_result_object(
+      CheckStickerSetNameResult result);
 
   void create_new_sticker_set(UserId user_id, string &title, string &short_name, bool is_masks,
-                              vector<tl_object_ptr<td_api::InputSticker>> &&stickers, Promise<Unit> &&promise);
+                              vector<tl_object_ptr<td_api::InputSticker>> &&stickers, string software,
+                              Promise<Unit> &&promise);
 
   void add_sticker_to_set(UserId user_id, string &short_name, tl_object_ptr<td_api::InputSticker> &&sticker,
                           Promise<Unit> &&promise);
@@ -365,6 +374,7 @@ class StickersManager : public Actor {
     bool is_animated;
     vector<FileId> file_ids;
     vector<tl_object_ptr<td_api::InputSticker>> stickers;
+    string software;
     Promise<> promise;
   };
 
@@ -394,7 +404,9 @@ class StickersManager : public Actor {
 
   class UploadStickerFileCallback;
 
-  static vector<td_api::object_ptr<td_api::closedVectorPath>> get_sticker_minithumbnail(CSlice path);
+  static vector<td_api::object_ptr<td_api::closedVectorPath>> get_sticker_minithumbnail(CSlice path,
+                                                                                        StickerSetId sticker_set_id,
+                                                                                        int64 document_id);
 
   static tl_object_ptr<td_api::MaskPoint> get_mask_point_object(int32 point);
 
@@ -564,9 +576,9 @@ class StickersManager : public Actor {
 
   td_api::object_ptr<td_api::updateDiceEmojis> get_update_dice_emojis_object() const;
 
-  void start_up() override;
+  void start_up() final;
 
-  void tear_down() override;
+  void tear_down() final;
 
   SpecialStickerSet &add_special_sticker_set(const string &type);
 

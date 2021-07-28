@@ -8,10 +8,9 @@
 
 #include "td/utils/ExitGuard.h"
 #include "td/utils/port/Clocks.h"
-#include "td/utils/port/StdStreams.h"
 #include "td/utils/port/thread_local.h"
 #include "td/utils/Slice.h"
-#include "td/utils/Time.h"
+#include "td/utils/TsCerr.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -31,6 +30,30 @@
 namespace td {
 
 LogOptions log_options;
+
+static std::atomic<int> max_callback_verbosity_level{-2};
+static std::atomic<OnLogMessageCallback> on_log_message_callback{nullptr};
+
+void set_log_message_callback(int max_verbosity_level, OnLogMessageCallback callback) {
+  if (callback == nullptr) {
+    max_verbosity_level = -2;
+  }
+
+  max_callback_verbosity_level = max_verbosity_level;
+  on_log_message_callback = callback;
+}
+
+void LogInterface::append(int log_level, CSlice slice) {
+  do_append(log_level, slice);
+  if (log_level == VERBOSITY_NAME(FATAL)) {
+    process_fatal_error(slice);
+  } else if (log_level <= max_callback_verbosity_level.load(std::memory_order_relaxed)) {
+    auto callback = on_log_message_callback.load(std::memory_order_relaxed);
+    if (callback != nullptr) {
+      callback(log_level, slice);
+    }
+  }
+}
 
 TD_THREAD_LOCAL const char *Logger::tag_ = nullptr;
 TD_THREAD_LOCAL const char *Logger::tag2_ = nullptr;
@@ -121,67 +144,14 @@ Logger::~Logger() {
       slice.back() = '\0';
       slice = MutableCSlice(slice.begin(), slice.begin() + slice.size() - 1);
     }
-    log_.append(slice, log_level_);
+    log_.append(log_level_, slice);
   } else {
-    log_.append(as_cslice(), log_level_);
+    log_.append(log_level_, as_cslice());
   }
 }
 
-TsCerr::TsCerr() {
-  enterCritical();
-}
-TsCerr::~TsCerr() {
-  exitCritical();
-}
-TsCerr &TsCerr::operator<<(Slice slice) {
-  auto &fd = Stderr();
-  if (fd.empty()) {
-    return *this;
-  }
-  double end_time = 0;
-  while (!slice.empty()) {
-    auto res = fd.write(slice);
-    if (res.is_error()) {
-      if (res.error().code() == EPIPE) {
-        break;
-      }
-      // Resource temporary unavailable
-      if (end_time == 0) {
-        end_time = Time::now() + 0.01;
-      } else if (Time::now() > end_time) {
-        break;
-      }
-      continue;
-    }
-    slice.remove_prefix(res.ok());
-  }
-  return *this;
-}
-
-void TsCerr::enterCritical() {
-  while (lock_.test_and_set(std::memory_order_acquire) && !ExitGuard::is_exited()) {
-    // spin
-  }
-}
-
-void TsCerr::exitCritical() {
-  lock_.clear(std::memory_order_release);
-}
-TsCerr::Lock TsCerr::lock_ = ATOMIC_FLAG_INIT;
-
-void TsLog::enter_critical() {
-  while (lock_.test_and_set(std::memory_order_acquire) && !ExitGuard::is_exited()) {
-    // spin
-  }
-}
-
-void TsLog::exit_critical() {
-  lock_.clear(std::memory_order_release);
-}
-
-class DefaultLog : public LogInterface {
- public:
-  void append(CSlice slice, int log_level) override {
+class DefaultLog final : public LogInterface {
+  void do_append(int log_level, CSlice slice) final {
 #if TD_ANDROID
     switch (log_level) {
       case VERBOSITY_NAME(FATAL):
@@ -241,29 +211,25 @@ class DefaultLog : public LogInterface {
     switch (log_level) {
       case VERBOSITY_NAME(FATAL):
       case VERBOSITY_NAME(ERROR):
-        color = Slice(TC_RED);
+        color = Slice("\x1b[1;31m");  // red
         break;
       case VERBOSITY_NAME(WARNING):
-        color = Slice(TC_YELLOW);
+        color = Slice("\x1b[1;33m");  // yellow
         break;
       case VERBOSITY_NAME(INFO):
-        color = Slice(TC_CYAN);
+        color = Slice("\x1b[1;36m");  // cyan
         break;
     }
+    Slice no_color("\x1b[0m");
     if (!slice.empty() && slice.back() == '\n') {
-      TsCerr() << color << slice.substr(0, slice.size() - 1) << TC_EMPTY "\n";
+      TsCerr() << color << slice.substr(0, slice.size() - 1) << no_color << "\n";
     } else {
-      TsCerr() << color << slice << TC_EMPTY;
+      TsCerr() << color << slice << no_color;
     }
 #else
     // TODO: color
     TsCerr() << slice;
 #endif
-    if (log_level == VERBOSITY_NAME(FATAL)) {
-      process_fatal_error(slice);
-    }
-  }
-  void rotate() override {
   }
 };
 static DefaultLog default_log;
@@ -271,17 +237,14 @@ static DefaultLog default_log;
 LogInterface *const default_log_interface = &default_log;
 LogInterface *log_interface = default_log_interface;
 
-static OnFatalErrorCallback on_fatal_error_callback = nullptr;
-
-void set_log_fatal_error_callback(OnFatalErrorCallback callback) {
-  on_fatal_error_callback = callback;
-}
-
 void process_fatal_error(CSlice message) {
-  auto callback = on_fatal_error_callback;
-  if (callback) {
-    callback(message);
+  if (0 <= max_callback_verbosity_level.load(std::memory_order_relaxed)) {
+    auto callback = on_log_message_callback.load(std::memory_order_relaxed);
+    if (callback != nullptr) {
+      callback(0, message);
+    }
   }
+
   std::abort();
 }
 

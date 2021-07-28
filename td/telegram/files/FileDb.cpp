@@ -25,11 +25,10 @@
 #include "td/utils/misc.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/Slice.h"
-#include "td/utils/StackAllocator.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 #include "td/utils/tl_helpers.h"
 #include "td/utils/tl_parsers.h"
-#include "td/utils/tl_storers.h"
 
 namespace td {
 
@@ -39,7 +38,6 @@ Status drop_file_db(SqliteDb &db, int32 version) {
   return Status::OK();
 }
 
-Status fix_file_remote_location_key_bug(SqliteDb &db);
 Status init_file_db(SqliteDb &db, int32 version) {
   LOG(INFO) << "Init file database " << tag("version", version);
 
@@ -48,11 +46,9 @@ Status init_file_db(SqliteDb &db, int32 version) {
 
   if (!has_table) {
     version = 0;
-  } else if (version < static_cast<int32>(DbVersion::DialogDbCreated)) {
+  } else if (version < static_cast<int32>(DbVersion::FixFileRemoteLocationKeyBug)) {
     TRY_STATUS(drop_file_db(db, version));
     version = 0;
-  } else if (version < static_cast<int>(DbVersion::FixFileRemoteLocationKeyBug)) {
-    TRY_STATUS(fix_file_remote_location_key_bug(db));
   }
 
   if (version == 0) {
@@ -61,9 +57,9 @@ Status init_file_db(SqliteDb &db, int32 version) {
   return Status::OK();
 }
 
-class FileDb : public FileDbInterface {
+class FileDb final : public FileDbInterface {
  public:
-  class FileDbActor : public Actor {
+  class FileDbActor final : public Actor {
    public:
     FileDbActor(FileDbId current_pmc_id, std::shared_ptr<SqliteKeyValueSafe> file_kv_safe)
         : current_pmc_id_(current_pmc_id), file_kv_safe_(std::move(file_kv_safe)) {
@@ -180,24 +176,24 @@ class FileDb : public FileDbInterface {
         create_actor_on_scheduler<FileDbActor>("FileDbActor", scheduler_id, current_pmc_id_, file_kv_safe_);
   }
 
-  FileDbId create_pmc_id() override {
+  FileDbId create_pmc_id() final {
     current_pmc_id_ = FileDbId(current_pmc_id_.get() + 1);
     return current_pmc_id_;
   }
 
-  void close(Promise<> promise) override {
+  void close(Promise<> promise) final {
     send_closure(std::move(file_db_actor_), &FileDbActor::close, std::move(promise));
   }
 
-  void get_file_data_impl(string key, Promise<FileData> promise) override {
+  void get_file_data_impl(string key, Promise<FileData> promise) final {
     send_closure(file_db_actor_, &FileDbActor::load_file_data, std::move(key), std::move(promise));
   }
 
-  Result<FileData> get_file_data_sync_impl(string key) override {
+  Result<FileData> get_file_data_sync_impl(string key) final {
     return load_file_data_impl(file_db_actor_.get(), file_kv_safe_->get(), key, current_pmc_id_);
   }
 
-  void clear_file_data(FileDbId id, const FileData &file_data) override {
+  void clear_file_data(FileDbId id, const FileData &file_data) final {
     string remote_key;
     if (file_data.remote_.type() == RemoteFileLocation::Type::Full) {
       remote_key = as_key(file_data.remote_.full());
@@ -212,8 +208,7 @@ class FileDb : public FileDbInterface {
     }
     send_closure(file_db_actor_, &FileDbActor::clear_file_data, id, remote_key, local_key, generate_key);
   }
-  void set_file_data(FileDbId id, const FileData &file_data, bool new_remote, bool new_local,
-                     bool new_generate) override {
+  void set_file_data(FileDbId id, const FileData &file_data, bool new_remote, bool new_local, bool new_generate) final {
     string remote_key;
     if (file_data.remote_.type() == RemoteFileLocation::Type::Full && new_remote) {
       remote_key = as_key(file_data.remote_.full());
@@ -234,10 +229,10 @@ class FileDb : public FileDbInterface {
                  generate_key);
   }
 
-  void set_file_data_ref(FileDbId id, FileDbId new_id) override {
+  void set_file_data_ref(FileDbId id, FileDbId new_id) final {
     send_closure(file_db_actor_, &FileDbActor::store_file_data_ref, id, new_id);
   }
-  SqliteKeyValue &pmc() override {
+  SqliteKeyValue &pmc() final {
     return file_kv_safe_->get();
   }
 
@@ -275,7 +270,7 @@ class FileDb : public FileDbInterface {
     if (ids.size() > 1) {
       send_closure(file_db_actor_id, &FileDbActor::optimize_refs, std::move(ids), id);
     }
-    //LOG(DEBUG) << "By id " << id.get() << " found data " << format::as_hex_dump<4>(Slice(data_str));
+    //LOG(DEBUG) << "By ID " << id.get() << " found data " << format::as_hex_dump<4>(Slice(data_str));
     //LOG(INFO) << attempt_count;
 
     log_event::WithVersion<TlParser> parser(data_str);
@@ -292,7 +287,7 @@ class FileDb : public FileDbInterface {
 
   static Result<FileDbId> get_id(SqliteKeyValue &pmc, const string &key) TD_WARN_UNUSED_RESULT {
     auto id_str = pmc.get(key);
-    //LOG(DEBUG) << "Found id " << id_str << " by key " << format::as_hex_dump<4>(Slice(key));
+    //LOG(DEBUG) << "Found ID " << id_str << " by key " << format::as_hex_dump<4>(Slice(key));
     if (id_str.empty()) {
       return Status::Error("There is no such a key in database");
     }
@@ -303,32 +298,6 @@ class FileDb : public FileDbInterface {
 std::shared_ptr<FileDbInterface> create_file_db(std::shared_ptr<SqliteConnectionSafe> connection, int scheduler_id) {
   auto kv = std::make_shared<SqliteKeyValueSafe>("files", std::move(connection));
   return std::make_shared<FileDb>(std::move(kv), scheduler_id);
-}
-
-Status fix_file_remote_location_key_bug(SqliteDb &db) {
-  static const int32 OLD_KEY_MAGIC = 0x64378433;
-  SqliteKeyValue kv;
-  kv.init_with_connection(db.clone(), "files").ensure();
-  auto ptr = StackAllocator::alloc(4);
-  MutableSlice prefix = ptr.as_slice();
-  TlStorerUnsafe(prefix.ubegin()).store_int(OLD_KEY_MAGIC);
-  kv.get_by_prefix(prefix, [&](Slice key, Slice value) {
-    CHECK(TlParser(key).fetch_int() == OLD_KEY_MAGIC);
-    auto remote_str = PSTRING() << key.substr(4, 4) << Slice("\0\0\0\0") << key.substr(8);
-    FullRemoteFileLocation remote;
-    log_event::WithVersion<TlParser> parser(remote_str);
-    parser.set_version(static_cast<int32>(Version::Initial));
-    parse(remote, parser);
-    parser.fetch_end();
-    auto status = parser.get_status();
-    if (status.is_ok()) {
-      kv.set(FileDbInterface::as_key(remote), value);
-    }
-    LOG(DEBUG) << "ERASE " << format::as_hex_dump<4>(Slice(key));
-    kv.erase(key);
-    return true;
-  });
-  return Status::OK();
 }
 
 }  // namespace td

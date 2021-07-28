@@ -6,8 +6,8 @@
 //
 #pragma once
 
+#include "td/mtproto/MtprotoQuery.h"
 #include "td/mtproto/PacketInfo.h"
-#include "td/mtproto/Query.h"
 #include "td/mtproto/RawConnection.h"
 
 #include "td/utils/buffer.h"
@@ -65,7 +65,7 @@ inline StringBuilder &operator<<(StringBuilder &stream, const MsgInfo &id) {
                 << "] [seq_no:" << format::as_hex(id.seq_no) << "]";
 }
 
-class SessionConnection
+class SessionConnection final
     : public Named
     , private RawConnection::Callback {
  public:
@@ -111,7 +111,7 @@ class SessionConnection
 
     virtual void on_message_ack(uint64 id) = 0;
     virtual Status on_message_result_ok(uint64 id, BufferSlice packet, size_t original_size) = 0;
-    virtual void on_message_result_error(uint64 id, int code, BufferSlice descr) = 0;
+    virtual void on_message_result_error(uint64 id, int code, string message) = 0;
     virtual void on_message_failed(uint64 id, Status status) = 0;
     virtual void on_message_info(uint64 id, int32 state, uint64 answer_id, int32 answer_size) = 0;
 
@@ -132,7 +132,7 @@ class SessionConnection
   bool is_main_ = false;
 
   int rtt() const {
-    return max(2, static_cast<int>(raw_connection_->rtt_ * 1.5 + 1));
+    return max(2, static_cast<int>(raw_connection_->extra().rtt * 1.5 + 1));
   }
 
   int32 read_disconnect_delay() const {
@@ -151,8 +151,8 @@ class SessionConnection
     return online_flag_ ? rtt() : 60;
   }
 
-  int http_max_wait() const {
-    return 25 * 1000;  // 25s. Longer could be closed by proxy
+  double http_max_wait() const {
+    return 25.0;  // 25s. Longer could be closed by proxy
   }
   static constexpr int HTTP_MAX_AFTER = 10;              // 0.01s
   static constexpr int HTTP_MAX_DELAY = 30;              // 0.03s
@@ -264,10 +264,10 @@ class SessionConnection
   Status init() TD_WARN_UNUSED_RESULT;
   Status do_flush() TD_WARN_UNUSED_RESULT;
 
-  Status before_write() override TD_WARN_UNUSED_RESULT;
-  Status on_raw_packet(const PacketInfo &info, BufferSlice packet) override;
-  Status on_quick_ack(uint64 quick_ack_token) override;
-  void on_read(size_t size) override;
+  Status before_write() final TD_WARN_UNUSED_RESULT;
+  Status on_raw_packet(const PacketInfo &info, BufferSlice packet) final;
+  Status on_quick_ack(uint64 quick_ack_token) final;
+  void on_read(size_t size) final;
 };
 
 }  // namespace mtproto
