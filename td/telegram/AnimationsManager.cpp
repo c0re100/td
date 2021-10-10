@@ -21,11 +21,12 @@
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.h"
 
-#include "td/actor/PromiseFuture.h"
-
 #include "td/db/SqliteKeyValueAsync.h"
+
+#include "td/actor/PromiseFuture.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/logging.h"
@@ -42,7 +43,7 @@ class GetSavedGifsQuery final : public Td::ResultHandler {
   bool is_repair_ = false;
 
  public:
-  void send(bool is_repair, int32 hash) {
+  void send(bool is_repair, int64 hash) {
     is_repair_ = is_repair;
     LOG(INFO) << "Send get saved animations request with hash = " << hash;
     send_query(G()->net_query_creator().create(telegram_api::messages_getSavedGifs(hash)));
@@ -150,16 +151,15 @@ int32 AnimationsManager::get_animation_duration(FileId file_id) const {
   return it->second->duration;
 }
 
-tl_object_ptr<td_api::animation> AnimationsManager::get_animation_object(FileId file_id, const char *source) {
+tl_object_ptr<td_api::animation> AnimationsManager::get_animation_object(FileId file_id) const {
   if (!file_id.is_valid()) {
     return nullptr;
   }
 
-  auto &animation = animations_[file_id];
-  LOG_CHECK(animation != nullptr) << source << " " << file_id << " "
-                                  << static_cast<int32>(td_->file_manager_->get_file_view(file_id).get_type());
-  // TODO can we make that function const?
-  animation->is_changed = false;
+  auto it = animations_.find(file_id);
+  CHECK(it != animations_.end());
+  auto animation = it->second.get();
+  CHECK(animation != nullptr);
   auto thumbnail =
       animation->animated_thumbnail.file_id.is_valid()
           ? get_thumbnail_object(td_->file_manager_.get(), animation->animated_thumbnail, PhotoFormat::Mpeg4)
@@ -183,26 +183,21 @@ FileId AnimationsManager::on_get_animation(unique_ptr<Animation> new_animation, 
     if (a->mime_type != new_animation->mime_type) {
       LOG(DEBUG) << "Animation " << file_id << " info has changed";
       a->mime_type = new_animation->mime_type;
-      a->is_changed = true;
     }
     if (a->file_name != new_animation->file_name) {
       LOG(DEBUG) << "Animation " << file_id << " file name has changed";
       a->file_name = std::move(new_animation->file_name);
-      a->is_changed = true;
     }
     if (a->dimensions != new_animation->dimensions) {
       LOG(DEBUG) << "Animation " << file_id << " dimensions has changed";
       a->dimensions = new_animation->dimensions;
-      a->is_changed = true;
     }
     if (a->duration != new_animation->duration) {
       LOG(DEBUG) << "Animation " << file_id << " duration has changed";
       a->duration = new_animation->duration;
-      a->is_changed = true;
     }
     if (a->minithumbnail != new_animation->minithumbnail) {
       a->minithumbnail = std::move(new_animation->minithumbnail);
-      a->is_changed = true;
     }
     if (a->thumbnail != new_animation->thumbnail) {
       if (!a->thumbnail.file_id.is_valid()) {
@@ -212,7 +207,6 @@ FileId AnimationsManager::on_get_animation(unique_ptr<Animation> new_animation, 
                   << new_animation->thumbnail;
       }
       a->thumbnail = new_animation->thumbnail;
-      a->is_changed = true;
     }
     if (a->animated_thumbnail != new_animation->animated_thumbnail) {
       if (!a->animated_thumbnail.file_id.is_valid()) {
@@ -222,15 +216,12 @@ FileId AnimationsManager::on_get_animation(unique_ptr<Animation> new_animation, 
                   << " to " << new_animation->animated_thumbnail;
       }
       a->animated_thumbnail = new_animation->animated_thumbnail;
-      a->is_changed = true;
     }
     if (a->has_stickers != new_animation->has_stickers && new_animation->has_stickers) {
       a->has_stickers = new_animation->has_stickers;
-      a->is_changed = true;
     }
     if (a->sticker_file_ids != new_animation->sticker_file_ids && !new_animation->sticker_file_ids.empty()) {
       a->sticker_file_ids = std::move(new_animation->sticker_file_ids);
-      a->is_changed = true;
     }
   }
 
@@ -280,24 +271,18 @@ FileId AnimationsManager::dup_animation(FileId new_id, FileId old_id) {
   return new_id;
 }
 
-bool AnimationsManager::merge_animations(FileId new_id, FileId old_id, bool can_delete_old) {
-  if (!old_id.is_valid()) {
-    LOG(ERROR) << "Old file identifier is invalid";
-    return true;
-  }
+void AnimationsManager::merge_animations(FileId new_id, FileId old_id, bool can_delete_old) {
+  CHECK(old_id.is_valid() && new_id.is_valid());
+  CHECK(new_id != old_id);
 
   LOG(INFO) << "Merge animations " << new_id << " and " << old_id;
   const Animation *old_ = get_animation(old_id);
   CHECK(old_ != nullptr);
-  if (old_id == new_id) {
-    return old_->is_changed;
-  }
 
   bool need_merge = true;
   auto new_it = animations_.find(new_id);
   if (new_it == animations_.end()) {
     auto &old = animations_[old_id];
-    old->is_changed = true;
     if (!can_delete_old) {
       dup_animation(new_id, old_id);
     } else {
@@ -308,11 +293,10 @@ bool AnimationsManager::merge_animations(FileId new_id, FileId old_id, bool can_
     Animation *new_ = new_it->second.get();
     CHECK(new_ != nullptr);
 
-    new_->is_changed = true;
     if (old_->thumbnail != new_->thumbnail) {
       //    LOG_STATUS(td_->file_manager_->merge(new_->thumbnail.file_id, old_->thumbnail.file_id));
     }
-    if (old_->mime_type == "image/gif" && new_->mime_type == "video/mp4") {
+    if (new_->file_name.size() == old_->file_name.size() + 4 && new_->file_name == old_->file_name + ".mp4") {
       need_merge = false;
     }
   }
@@ -322,7 +306,6 @@ bool AnimationsManager::merge_animations(FileId new_id, FileId old_id, bool can_
   if (can_delete_old) {
     animations_.erase(old_id);
   }
-  return true;
 }
 
 void AnimationsManager::create_animation(FileId file_id, string minithumbnail, PhotoSize thumbnail,
@@ -682,9 +665,9 @@ void AnimationsManager::on_get_saved_animations_failed(bool is_repair, Status er
   }
 }
 
-int32 AnimationsManager::get_saved_animations_hash(const char *source) const {
-  vector<uint32> numbers;
-  numbers.reserve(saved_animation_ids_.size() * 2);
+int64 AnimationsManager::get_saved_animations_hash(const char *source) const {
+  vector<uint64> numbers;
+  numbers.reserve(saved_animation_ids_.size());
   for (auto animation_id : saved_animation_ids_) {
     auto animation = get_animation(animation_id);
     CHECK(animation != nullptr);
@@ -694,18 +677,13 @@ int32 AnimationsManager::get_saved_animations_hash(const char *source) const {
       LOG(ERROR) << "Saved animation remote location is not document: " << source << " " << file_view.remote_location();
       continue;
     }
-    auto id = static_cast<uint64>(file_view.remote_location().get_id());
-    numbers.push_back(static_cast<uint32>(id >> 32));
-    numbers.push_back(static_cast<uint32>(id & 0xFFFFFFFF));
+    numbers.push_back(file_view.remote_location().get_id());
   }
   return get_vector_hash(numbers);
 }
 
 void AnimationsManager::add_saved_animation(const tl_object_ptr<td_api::InputFile> &input_file,
                                             Promise<Unit> &&promise) {
-  if (td_->auth_manager_->is_bot()) {
-    return promise.set_error(Status::Error(7, "Method is not available for bots"));
-  }
   if (!are_saved_animations_loaded_) {
     load_saved_animations(std::move(promise));
     return;
@@ -713,7 +691,7 @@ void AnimationsManager::add_saved_animation(const tl_object_ptr<td_api::InputFil
 
   auto r_file_id = td_->file_manager_->get_input_file_id(FileType::Animation, input_file, DialogId(), false, false);
   if (r_file_id.is_error()) {
-    return promise.set_error(Status::Error(7, r_file_id.error().message()));  // TODO do not drop error code
+    return promise.set_error(Status::Error(400, r_file_id.error().message()));  // TODO do not drop error code
   }
 
   add_saved_animation_impl(r_file_id.ok(), true, std::move(promise));
@@ -749,7 +727,7 @@ void AnimationsManager::add_saved_animation_impl(FileId animation_id, bool add_o
 
   auto file_view = td_->file_manager_->get_file_view(animation_id);
   if (file_view.empty()) {
-    return promise.set_error(Status::Error(7, "Animation file not found"));
+    return promise.set_error(Status::Error(400, "Animation file not found"));
   }
 
   LOG(INFO) << "Add saved animation " << animation_id << " with main file " << file_view.file_id();
@@ -783,20 +761,20 @@ void AnimationsManager::add_saved_animation_impl(FileId animation_id, bool add_o
 
   auto animation = get_animation(animation_id);
   if (animation == nullptr) {
-    return promise.set_error(Status::Error(7, "Animation not found"));
+    return promise.set_error(Status::Error(400, "Animation not found"));
   }
   if (animation->mime_type != "video/mp4") {
-    return promise.set_error(Status::Error(7, "Only MPEG4 animations can be saved"));
+    return promise.set_error(Status::Error(400, "Only MPEG4 animations can be saved"));
   }
 
   if (!file_view.has_remote_location()) {
-    return promise.set_error(Status::Error(7, "Can save only sent animations"));
+    return promise.set_error(Status::Error(400, "Can save only sent animations"));
   }
   if (file_view.remote_location().is_web()) {
-    return promise.set_error(Status::Error(7, "Can't save web animations"));
+    return promise.set_error(Status::Error(400, "Can't save web animations"));
   }
   if (!file_view.remote_location().is_document()) {
-    return promise.set_error(Status::Error(7, "Can't save encrypted animations"));
+    return promise.set_error(Status::Error(400, "Can't save encrypted animations"));
   }
 
   auto it = std::find_if(saved_animation_ids_.begin(), saved_animation_ids_.end(), is_equal);
@@ -822,9 +800,6 @@ void AnimationsManager::add_saved_animation_impl(FileId animation_id, bool add_o
 
 void AnimationsManager::remove_saved_animation(const tl_object_ptr<td_api::InputFile> &input_file,
                                                Promise<Unit> &&promise) {
-  if (td_->auth_manager_->is_bot()) {
-    return promise.set_error(Status::Error(7, "Method is not available for bots"));
-  }
   if (!are_saved_animations_loaded_) {
     load_saved_animations(std::move(promise));
     return;
@@ -832,7 +807,7 @@ void AnimationsManager::remove_saved_animation(const tl_object_ptr<td_api::Input
 
   auto r_file_id = td_->file_manager_->get_input_file_id(FileType::Animation, input_file, DialogId(), false, false);
   if (r_file_id.is_error()) {
-    return promise.set_error(Status::Error(7, r_file_id.error().message()));  // TODO do not drop error code
+    return promise.set_error(Status::Error(400, r_file_id.error().message()));  // TODO do not drop error code
   }
 
   FileId file_id = r_file_id.ok();
@@ -842,7 +817,7 @@ void AnimationsManager::remove_saved_animation(const tl_object_ptr<td_api::Input
 
   auto animation = get_animation(file_id);
   if (animation == nullptr) {
-    return promise.set_error(Status::Error(7, "Animation not found"));
+    return promise.set_error(Status::Error(400, "Animation not found"));
   }
 
   send_save_gif_query(file_id, true, std::move(promise));

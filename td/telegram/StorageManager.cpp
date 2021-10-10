@@ -13,6 +13,7 @@
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 
 #include "td/db/SqliteDb.h"
 
@@ -165,7 +166,7 @@ void StorageManager::on_all_files(FileGcParameters gc_parameters, Result<FileSta
 
   create_gc_worker();
 
-  send_closure(gc_worker_, &FileGcWorker::run_gc, std::move(gc_parameters), std::move(r_file_stats.ok_ref().all_files),
+  send_closure(gc_worker_, &FileGcWorker::run_gc, std::move(gc_parameters), r_file_stats.ok_ref().get_all_files(),
                PromiseCreator::lambda([actor_id = actor_id(this), dialog_limit](Result<FileGcResult> r_file_gc_result) {
                  send_closure(actor_id, &StorageManager::on_gc_finished, dialog_limit, std::move(r_file_gc_result));
                }));
@@ -263,11 +264,13 @@ void StorageManager::send_stats(FileStats &&stats, int32 dialog_limit, std::vect
   stats.apply_dialog_limit(dialog_limit);
   auto dialog_ids = stats.get_dialog_ids();
 
-  auto promise = PromiseCreator::lambda([promises = std::move(promises), stats = std::move(stats)](Unit) mutable {
-    for (auto &promise : promises) {
-      promise.set_value(FileStats(stats));
-    }
-  });
+  auto promise = PromiseCreator::lambda(
+      [promises = std::move(promises), stats = std::move(stats)](vector<DialogId> dialog_ids) mutable {
+        stats.apply_dialog_ids(dialog_ids);
+        for (auto &promise : promises) {
+          promise.set_value(FileStats(stats));
+        }
+      });
 
   send_closure(G()->messages_manager(), &MessagesManager::load_dialogs, std::move(dialog_ids), std::move(promise));
 }

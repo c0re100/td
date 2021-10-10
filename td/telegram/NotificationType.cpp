@@ -42,7 +42,8 @@ class NotificationTypeMessage final : public NotificationType {
   }
 
   td_api::object_ptr<td_api::NotificationType> get_notification_type_object(DialogId dialog_id) const final {
-    auto message_object = G()->td().get_actor_unsafe()->messages_manager_->get_message_object({dialog_id, message_id_});
+    auto message_object = G()->td().get_actor_unsafe()->messages_manager_->get_message_object(
+        {dialog_id, message_id_}, "get_notification_type_object");
     if (message_object == nullptr) {
       return nullptr;
     }
@@ -164,7 +165,7 @@ class NotificationTypePushMessage final : public NotificationType {
         if (key == "MESSAGE_ANIMATION") {
           auto animations_manager = G()->td().get_actor_unsafe()->animations_manager_.get();
           return td_api::make_object<td_api::pushMessageContentAnimation>(
-              animations_manager->get_animation_object(document.file_id, "MESSAGE_ANIMATION"), arg, is_pinned);
+              animations_manager->get_animation_object(document.file_id), arg, is_pinned);
         }
         if (key == "MESSAGE_AUDIO") {
           auto audios_manager = G()->td().get_actor_unsafe()->audios_manager_.get();
@@ -193,6 +194,9 @@ class NotificationTypePushMessage final : public NotificationType {
         }
         if (key == "MESSAGE_CHAT_CHANGE_PHOTO") {
           return td_api::make_object<td_api::pushMessageContentChatChangePhoto>();
+        }
+        if (key == "MESSAGE_CHAT_CHANGE_THEME") {
+          return td_api::make_object<td_api::pushMessageContentChatSetTheme>(arg);
         }
         if (key == "MESSAGE_CHAT_CHANGE_TITLE") {
           return td_api::make_object<td_api::pushMessageContentChatChangeTitle>(arg);
@@ -328,8 +332,8 @@ class NotificationTypePushMessage final : public NotificationType {
   }
 
   td_api::object_ptr<td_api::NotificationType> get_notification_type_object(DialogId dialog_id) const final {
-    auto sender =
-        G()->td().get_actor_unsafe()->messages_manager_->get_message_sender_object(sender_user_id_, sender_dialog_id_);
+    auto sender = G()->td().get_actor_unsafe()->messages_manager_->get_message_sender_object(
+        sender_user_id_, sender_dialog_id_, "get_notification_type_object");
     return td_api::make_object<td_api::notificationTypeNewPushMessage>(
         message_id_.get(), std::move(sender), sender_name_, is_outgoing_,
         get_push_message_content_object(key_, arg_, photo_, document_));

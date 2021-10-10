@@ -16,6 +16,7 @@
 #include "td/telegram/MessageEntity.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessagesManager.h"
+#include "td/telegram/misc.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
@@ -62,6 +63,26 @@ static bool is_valid_username(Slice username) {
   }
 
   return true;
+}
+
+static string get_url_query_hash(bool is_tg, const HttpUrlQuery &url_query) {
+  const auto &path = url_query.path_;
+  if (is_tg) {
+    if (path.size() == 1 && path[0] == "join" && !url_query.get_arg("invite").empty()) {
+      // join?invite=abcdef
+      return url_query.get_arg("invite").str();
+    }
+  } else {
+    if (path.size() >= 2 && path[0] == "joinchat" && !path[1].empty()) {
+      // /joinchat/<link>
+      return path[1];
+    }
+    if (path.size() >= 1 && path[0].size() >= 2 && (path[0][0] == ' ' || path[0][0] == '+')) {
+      // /+<link>
+      return path[0].substr(1);
+    }
+  }
+  return string();
 }
 
 class LinkManager::InternalLinkActiveSessions final : public InternalLink {
@@ -143,8 +164,14 @@ class LinkManager::InternalLinkConfirmPhone final : public InternalLink {
 };
 
 class LinkManager::InternalLinkDialogInvite final : public InternalLink {
+  string url_;
+
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeChatInvite>();
+    return td_api::make_object<td_api::internalLinkTypeChatInvite>(url_);
+  }
+
+ public:
+  explicit InternalLinkDialogInvite(string url) : url_(std::move(url)) {
   }
 };
 
@@ -181,8 +208,14 @@ class LinkManager::InternalLinkLanguage final : public InternalLink {
 };
 
 class LinkManager::InternalLinkMessage final : public InternalLink {
+  string url_;
+
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeMessage>();
+    return td_api::make_object<td_api::internalLinkTypeMessage>(url_);
+  }
+
+ public:
+  explicit InternalLinkMessage(string url) : url_(std::move(url)) {
   }
 };
 
@@ -191,7 +224,7 @@ class LinkManager::InternalLinkMessageDraft final : public InternalLink {
   bool contains_link_ = false;
 
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeMessageDraft>(get_formatted_text_object(text_, true),
+    return td_api::make_object<td_api::internalLinkTypeMessageDraft>(get_formatted_text_object(text_, true, -1),
                                                                      contains_link_);
   }
 
@@ -310,22 +343,80 @@ class LinkManager::InternalLinkThemeSettings final : public InternalLink {
 };
 
 class LinkManager::InternalLinkUnknownDeepLink final : public InternalLink {
+  string link_;
+
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeUnknownDeepLink>();
+    return td_api::make_object<td_api::internalLinkTypeUnknownDeepLink>(link_);
+  }
+
+ public:
+  explicit InternalLinkUnknownDeepLink(string link) : link_(std::move(link)) {
   }
 };
 
 class LinkManager::InternalLinkVoiceChat final : public InternalLink {
   string dialog_username_;
   string invite_hash_;
+  bool is_live_stream_;
 
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeVoiceChat>(dialog_username_, invite_hash_);
+    return td_api::make_object<td_api::internalLinkTypeVoiceChat>(dialog_username_, invite_hash_, is_live_stream_);
   }
 
  public:
-  InternalLinkVoiceChat(string dialog_username, string invite_hash)
-      : dialog_username_(std::move(dialog_username)), invite_hash_(std::move(invite_hash)) {
+  InternalLinkVoiceChat(string dialog_username, string invite_hash, bool is_live_stream)
+      : dialog_username_(std::move(dialog_username))
+      , invite_hash_(std::move(invite_hash))
+      , is_live_stream_(is_live_stream) {
+  }
+};
+
+class GetDeepLinkInfoQuery final : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::deepLinkInfo>> promise_;
+
+ public:
+  explicit GetDeepLinkInfoQuery(Promise<td_api::object_ptr<td_api::deepLinkInfo>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send(Slice link) {
+    send_query(G()->net_query_creator().create_unauth(telegram_api::help_getDeepLinkInfo(link.str())));
+  }
+
+  void on_result(uint64 id, BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::help_getDeepLinkInfo>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(id, result_ptr.move_as_error());
+    }
+
+    auto result = result_ptr.move_as_ok();
+    switch (result->get_id()) {
+      case telegram_api::help_deepLinkInfoEmpty::ID:
+        return promise_.set_value(nullptr);
+      case telegram_api::help_deepLinkInfo::ID: {
+        auto info = telegram_api::move_object_as<telegram_api::help_deepLinkInfo>(result);
+        bool need_update = (info->flags_ & telegram_api::help_deepLinkInfo::UPDATE_APP_MASK) != 0;
+
+        auto entities = get_message_entities(nullptr, std::move(info->entities_), "GetDeepLinkInfoQuery");
+        auto status = fix_formatted_text(info->message_, entities, true, true, true, true, true);
+        if (status.is_error()) {
+          LOG(ERROR) << "Receive error " << status << " while parsing deep link info " << info->message_;
+          if (!clean_input_string(info->message_)) {
+            info->message_.clear();
+          }
+          entities = find_entities(info->message_, true, true);
+        }
+        FormattedText text{std::move(info->message_), std::move(entities)};
+        return promise_.set_value(
+            td_api::make_object<td_api::deepLinkInfo>(get_formatted_text_object(text, true, -1), need_update));
+      }
+      default:
+        UNREACHABLE();
+    }
+  }
+
+  void on_error(uint64 id, Status status) final {
+    promise_.set_error(std::move(status));
   }
 };
 
@@ -637,6 +728,13 @@ struct CopyArg {
 StringBuilder &operator<<(StringBuilder &string_builder, const CopyArg &copy_arg) {
   auto arg = copy_arg.url_query_->get_arg(copy_arg.name_);
   if (arg.empty()) {
+    for (const auto &query_arg : copy_arg.url_query_->args_) {
+      if (query_arg.first == copy_arg.name_) {
+        char c = *copy_arg.is_first_ ? '?' : '&';
+        *copy_arg.is_first_ = false;
+        return string_builder << c << copy_arg.name_;
+      }
+    }
     return string_builder;
   }
   char c = *copy_arg.is_first_ ? '?' : '&';
@@ -666,18 +764,20 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
   if (path.size() == 1 && path[0] == "resolve") {
     if (is_valid_username(get_arg("domain"))) {
       if (has_arg("post")) {
-        // resolve?domain=<username>&post=12345&single
-        return td::make_unique<InternalLinkMessage>();
+        // resolve?domain=<username>&post=12345&single&thread=<thread_id>&comment=<message_id>&t=<media_timestamp>
+        return td::make_unique<InternalLinkMessage>(PSTRING() << "tg:resolve" << copy_arg("domain") << copy_arg("post")
+                                                              << copy_arg("single") << copy_arg("thread")
+                                                              << copy_arg("comment") << copy_arg("t"));
       }
       auto username = get_arg("domain");
       for (auto &arg : url_query.args_) {
-        if (arg.first == "voicechat") {
-          // resolve?domain=<username>&voicechat
-          // resolve?domain=<username>&voicechat=<invite_hash>
+        if (arg.first == "voicechat" || arg.first == "videochat" || arg.first == "livestream") {
+          // resolve?domain=<username>&videochat
+          // resolve?domain=<username>&videochat=<invite_hash>
           if (Scheduler::context() != nullptr) {
             send_closure(G()->messages_manager(), &MessagesManager::reload_voice_chat_on_search, username);
           }
-          return td::make_unique<InternalLinkVoiceChat>(std::move(username), arg.second);
+          return td::make_unique<InternalLinkVoiceChat>(std::move(username), arg.second, arg.first == "livestream");
         }
         if (arg.first == "start" && is_valid_start_parameter(arg.second)) {
           // resolve?domain=<bot_username>?start=<parameter>
@@ -694,7 +794,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
       }
       if (username == "telegrampassport") {
         // resolve?domain=telegrampassport&bot_id=<bot_user_id>&scope=<scope>&public_key=<public_key>&nonce=<nonce>
-        return get_internal_link_passport(url_query.args_);
+        return get_internal_link_passport(query, url_query.args_);
       }
       // resolve?domain=<username>
       return td::make_unique<InternalLinkPublicDialog>(std::move(username));
@@ -710,7 +810,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
     }
   } else if (path.size() == 1 && path[0] == "passport") {
     // passport?bot_id=<bot_user_id>&scope=<scope>&public_key=<public_key>&nonce=<nonce>
-    return get_internal_link_passport(url_query.args_);
+    return get_internal_link_passport(query, url_query.args_);
   } else if (path.size() >= 1 && path[0] == "settings") {
     if (path.size() == 2 && path[1] == "change_number") {
       // settings/change_number
@@ -733,7 +833,8 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
   } else if (path.size() == 1 && path[0] == "join") {
     // join?invite=<hash>
     if (has_arg("invite")) {
-      return td::make_unique<InternalLinkDialogInvite>();
+      return td::make_unique<InternalLinkDialogInvite>(PSTRING() << "tg:join?invite="
+                                                                 << url_encode(get_url_query_hash(true, url_query)));
     }
   } else if (path.size() == 1 && path[0] == "addstickers") {
     // addstickers?set=<name>
@@ -774,9 +875,11 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
       }
     }
   } else if (path.size() == 1 && path[0] == "privatepost") {
-    // privatepost?channel=123456789&msg_id=12345
+    // privatepost?channel=123456789&msg_id=12345&single&thread=<thread_id>&comment=<message_id>&t=<media_timestamp>
     if (has_arg("channel") && has_arg("msg_id")) {
-      return td::make_unique<InternalLinkMessage>();
+      return td::make_unique<InternalLinkMessage>(
+          PSTRING() << "tg:privatepost" << copy_arg("channel") << copy_arg("msg_id") << copy_arg("single")
+                    << copy_arg("thread") << copy_arg("comment") << copy_arg("t"));
     }
   } else if (path.size() == 1 && path[0] == "bg") {
     // bg?color=<color>
@@ -801,7 +904,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
     return get_internal_link_message_draft(get_arg("url"), get_arg("text"));
   }
   if (!path.empty() && !path[0].empty()) {
-    return td::make_unique<InternalLinkUnknownDeepLink>();
+    return td::make_unique<InternalLinkUnknownDeepLink>(PSTRING() << "tg://" << query);
   }
   return nullptr;
 }
@@ -828,8 +931,12 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
 
   if (path[0] == "c") {
     if (path.size() >= 3 && to_integer<int64>(path[1]) > 0 && to_integer<int64>(path[2]) > 0) {
-      // /c/123456789/12345
-      return td::make_unique<InternalLinkMessage>();
+      // /c/123456789/12345?single&thread=<thread_id>&comment=<message_id>&t=<media_timestamp>
+      is_first_arg = false;
+      return td::make_unique<InternalLinkMessage>(PSTRING()
+                                                  << "tg:privatepost?channel=" << to_integer<int64>(path[1])
+                                                  << "&msg_id=" << to_integer<int64>(path[2]) << copy_arg("single")
+                                                  << copy_arg("thread") << copy_arg("comment") << copy_arg("t"));
     }
   } else if (path[0] == "login") {
     if (path.size() >= 2 && !path[1].empty()) {
@@ -839,12 +946,14 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
   } else if (path[0] == "joinchat") {
     if (path.size() >= 2 && !path[1].empty()) {
       // /joinchat/<link>
-      return td::make_unique<InternalLinkDialogInvite>();
+      return td::make_unique<InternalLinkDialogInvite>(PSTRING() << "tg:join?invite="
+                                                                 << url_encode(get_url_query_hash(false, url_query)));
     }
   } else if (path[0][0] == ' ' || path[0][0] == '+') {
     if (path[0].size() >= 2) {
       // /+<link>
-      return td::make_unique<InternalLinkDialogInvite>();
+      return td::make_unique<InternalLinkDialogInvite>(PSTRING() << "tg:join?invite="
+                                                                 << url_encode(get_url_query_hash(false, url_query)));
     }
   } else if (path[0] == "addstickers") {
     if (path.size() >= 2 && !path[1].empty()) {
@@ -903,18 +1012,21 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
     }
   } else if (is_valid_username(path[0])) {
     if (path.size() >= 2 && to_integer<int64>(path[1]) > 0) {
-      // /<username>/12345?single&thread=<thread_id>&comment=<message_id>
-      return td::make_unique<InternalLinkMessage>();
+      // /<username>/12345?single&thread=<thread_id>&comment=<message_id>&t=<media_timestamp>
+      is_first_arg = false;
+      return td::make_unique<InternalLinkMessage>(
+          PSTRING() << "tg:resolve?domain=" << url_encode(path[0]) << "&post=" << to_integer<int64>(path[1])
+                    << copy_arg("single") << copy_arg("thread") << copy_arg("comment") << copy_arg("t"));
     }
     auto username = path[0];
     for (auto &arg : url_query.args_) {
-      if (arg.first == "voicechat") {
-        // /<username>?voicechat
-        // /<username>?voicechat=<invite_hash>
+      if (arg.first == "voicechat" || arg.first == "videochat" || arg.first == "livestream") {
+        // /<username>?videochat
+        // /<username>?videochat=<invite_hash>
         if (Scheduler::context() != nullptr) {
           send_closure(G()->messages_manager(), &MessagesManager::reload_voice_chat_on_search, username);
         }
-        return td::make_unique<InternalLinkVoiceChat>(std::move(username), arg.second);
+        return td::make_unique<InternalLinkVoiceChat>(std::move(username), arg.second, arg.first == "livestream");
       }
       if (arg.first == "start" && is_valid_start_parameter(arg.second)) {
         // /<bot_username>?start=<parameter>
@@ -955,7 +1067,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::get_internal_link_message_dra
   } else {
     full_text.text = url.str();
   }
-  if (fix_formatted_text(full_text.text, full_text.entities, false, false, false, true).is_error()) {
+  if (fix_formatted_text(full_text.text, full_text.entities, false, false, false, true, true).is_error()) {
     return nullptr;
   }
   if (full_text.text[0] == '@') {
@@ -968,7 +1080,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::get_internal_link_message_dra
 }
 
 unique_ptr<LinkManager::InternalLink> LinkManager::get_internal_link_passport(
-    const vector<std::pair<string, string>> &args) {
+    Slice query, const vector<std::pair<string, string>> &args) {
   auto get_arg = [&args](Slice key) {
     for (auto &arg : args) {
       if (arg.first == key) {
@@ -978,7 +1090,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::get_internal_link_passport(
     return Slice();
   };
 
-  UserId bot_user_id(to_integer<int32>(get_arg("bot_id")));
+  UserId bot_user_id(to_integer<int64>(get_arg("bot_id")));
   auto scope = get_arg("scope");
   auto public_key = get_arg("public_key");
   auto nonce = get_arg("nonce");
@@ -988,7 +1100,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::get_internal_link_passport(
   auto callback_url = get_arg("callback_url");
 
   if (!bot_user_id.is_valid() || scope.empty() || public_key.empty() || nonce.empty()) {
-    return td::make_unique<InternalLinkUnknownDeepLink>();
+    return td::make_unique<InternalLinkUnknownDeepLink>(PSTRING() << "tg://" << query);
   }
   return td::make_unique<InternalLinkPassportDataRequest>(bot_user_id, scope.str(), public_key.str(), nonce.str(),
                                                           callback_url.str());
@@ -1006,6 +1118,22 @@ void LinkManager::update_autologin_domains(string autologin_token, vector<string
     url_auth_domains_ = std::move(url_auth_domains);
     G()->td_db()->get_binlog_pmc()->set("url_auth_domains", implode(url_auth_domains_, '\xFF'));
   }
+}
+
+void LinkManager::get_deep_link_info(Slice link, Promise<td_api::object_ptr<td_api::deepLinkInfo>> &&promise) {
+  Slice link_scheme("tg:");
+  if (begins_with(link, link_scheme)) {
+    link.remove_prefix(link_scheme.size());
+    if (begins_with(link, "//")) {
+      link.remove_prefix(2);
+    }
+  }
+  size_t pos = 0;
+  while (pos < link.size() && link[pos] != '/' && link[pos] != '?' && link[pos] != '#') {
+    pos++;
+  }
+  link.truncate(pos);
+  td_->create_handler<GetDeepLinkInfoQuery>(std::move(promise))->send(link);
 }
 
 void LinkManager::get_external_link_info(string &&link, Promise<td_api::object_ptr<td_api::LoginUrlInfo>> &&promise) {
@@ -1067,17 +1195,18 @@ void LinkManager::get_external_link_info(string &&link, Promise<td_api::object_p
   promise.set_value(td_api::make_object<td_api::loginUrlInfoOpen>(url.get_url(), false));
 }
 
-void LinkManager::get_login_url_info(FullMessageId full_message_id, int32 button_id,
+void LinkManager::get_login_url_info(FullMessageId full_message_id, int64 button_id,
                                      Promise<td_api::object_ptr<td_api::LoginUrlInfo>> &&promise) {
   TRY_RESULT_PROMISE(promise, url, td_->messages_manager_->get_login_button_url(full_message_id, button_id));
-  td_->create_handler<RequestUrlAuthQuery>(std::move(promise))->send(std::move(url), full_message_id, button_id);
+  td_->create_handler<RequestUrlAuthQuery>(std::move(promise))
+      ->send(std::move(url), full_message_id, narrow_cast<int32>(button_id));
 }
 
-void LinkManager::get_login_url(FullMessageId full_message_id, int32 button_id, bool allow_write_access,
+void LinkManager::get_login_url(FullMessageId full_message_id, int64 button_id, bool allow_write_access,
                                 Promise<td_api::object_ptr<td_api::httpUrl>> &&promise) {
   TRY_RESULT_PROMISE(promise, url, td_->messages_manager_->get_login_button_url(full_message_id, button_id));
   td_->create_handler<AcceptUrlAuthQuery>(std::move(promise))
-      ->send(std::move(url), full_message_id, button_id, allow_write_access);
+      ->send(std::move(url), full_message_id, narrow_cast<int32>(button_id), allow_write_access);
 }
 
 void LinkManager::get_link_login_url(const string &url, bool allow_write_access,
@@ -1091,24 +1220,7 @@ string LinkManager::get_dialog_invite_link_hash(Slice invite_link) {
     return string();
   }
   const auto url_query = parse_url_query(link_info.query_);
-  const auto &path = url_query.path_;
-
-  if (link_info.is_tg_) {
-    if (path.size() == 1 && path[0] == "join" && !url_query.get_arg("invite").empty()) {
-      // join?invite=abcdef
-      return url_query.get_arg("invite").str();
-    }
-  } else {
-    if (path.size() >= 2 && path[0] == "joinchat" && !path[1].empty()) {
-      // /joinchat/<link>
-      return path[1];
-    }
-    if (path.size() >= 1 && path[0].size() >= 2 && (path[0][0] == ' ' || path[0][0] == '+')) {
-      // /+<link>
-      return path[0].substr(1);
-    }
-  }
-  return string();
+  return get_url_query_hash(link_info.is_tg_, url_query);
 }
 
 Result<MessageLinkInfo> LinkManager::get_message_link_info(Slice url) {
@@ -1129,8 +1241,8 @@ Result<MessageLinkInfo> LinkManager::get_message_link_info(Slice url) {
   bool is_single = false;
   bool for_comment = false;
   if (link_info.is_tg_) {
-    // resolve?domain=username&post=12345&single
-    // privatepost?channel=123456789&msg_id=12345
+    // resolve?domain=username&post=12345&single&t=123&comment=12&thread=21
+    // privatepost?channel=123456789&msg_id=12345&single&t=123&comment=12&thread=21
 
     bool is_resolve = false;
     if (begins_with(url, "resolve")) {
@@ -1228,7 +1340,7 @@ Result<MessageLinkInfo> LinkManager::get_message_link_info(Slice url) {
 
   ChannelId channel_id;
   if (username.empty()) {
-    auto r_channel_id = to_integer_safe<int32>(channel_id_slice);
+    auto r_channel_id = to_integer_safe<int64>(channel_id_slice);
     if (r_channel_id.is_error() || !ChannelId(r_channel_id.ok()).is_valid()) {
       return Status::Error("Wrong channel ID");
     }

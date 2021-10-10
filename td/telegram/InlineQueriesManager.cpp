@@ -36,6 +36,7 @@
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 #include "td/telegram/Venue.h"
 #include "td/telegram/VideosManager.h"
 #include "td/telegram/VoiceNotesManager.h"
@@ -196,7 +197,21 @@ void InlineQueriesManager::after_get_difference() {
   }
 }
 
-tl_object_ptr<telegram_api::inputBotInlineMessageID> InlineQueriesManager::get_input_bot_inline_message_id(
+int32 InlineQueriesManager::get_inline_message_dc_id(
+    const tl_object_ptr<telegram_api::InputBotInlineMessageID> &inline_message_id) {
+  CHECK(inline_message_id != nullptr);
+  switch (inline_message_id->get_id()) {
+    case telegram_api::inputBotInlineMessageID::ID:
+      return static_cast<const telegram_api::inputBotInlineMessageID *>(inline_message_id.get())->dc_id_;
+    case telegram_api::inputBotInlineMessageID64::ID:
+      return static_cast<const telegram_api::inputBotInlineMessageID64 *>(inline_message_id.get())->dc_id_;
+    default:
+      UNREACHABLE();
+      return 0;
+  }
+}
+
+tl_object_ptr<telegram_api::InputBotInlineMessageID> InlineQueriesManager::get_input_bot_inline_message_id(
     const string &inline_message_id) {
   auto r_binary = base64url_decode(inline_message_id);
   if (r_binary.is_error()) {
@@ -204,12 +219,13 @@ tl_object_ptr<telegram_api::inputBotInlineMessageID> InlineQueriesManager::get_i
   }
   BufferSlice buffer_slice(r_binary.ok());
   TlBufferParser parser(&buffer_slice);
-  auto result = telegram_api::inputBotInlineMessageID::fetch(parser);
+  auto result = buffer_slice.size() == 20 ? telegram_api::inputBotInlineMessageID::fetch(parser)
+                                          : telegram_api::inputBotInlineMessageID64::fetch(parser);
   parser.fetch_end();
   if (parser.get_error()) {
     return nullptr;
   }
-  if (!DcId::is_valid(result->dc_id_)) {
+  if (!DcId::is_valid(get_inline_message_dc_id(result))) {
     return nullptr;
   }
   LOG(INFO) << "Have inline message identifier: " << to_string(result);
@@ -217,7 +233,7 @@ tl_object_ptr<telegram_api::inputBotInlineMessageID> InlineQueriesManager::get_i
 }
 
 string InlineQueriesManager::get_inline_message_id(
-    tl_object_ptr<telegram_api::inputBotInlineMessageID> &&input_bot_inline_message_id) {
+    tl_object_ptr<telegram_api::InputBotInlineMessageID> &&input_bot_inline_message_id) {
   if (input_bot_inline_message_id == nullptr) {
     return string();
   }
@@ -457,6 +473,9 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
       }
       case td_api::inputInlineQueryResultContact::ID: {
         auto contact = move_tl_object_as<td_api::inputInlineQueryResultContact>(input_result);
+        if (contact->contact_ == nullptr) {
+          return promise.set_error(Status::Error(400, "Contact must be non-empty"));
+        }
         type = "contact";
         id = std::move(contact->id_);
         string phone_number = trim(contact->contact_->phone_number_);
@@ -528,6 +547,9 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
       }
       case td_api::inputInlineQueryResultLocation::ID: {
         auto location = move_tl_object_as<td_api::inputInlineQueryResultLocation>(input_result);
+        if (location->location_ == nullptr) {
+          return promise.set_error(Status::Error(400, "Location must be non-empty"));
+        }
         type = "geo";
         id = std::move(location->id_);
         title = std::move(location->title_);
@@ -583,6 +605,9 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
       }
       case td_api::inputInlineQueryResultVenue::ID: {
         auto venue = move_tl_object_as<td_api::inputInlineQueryResultVenue>(input_result);
+        if (venue->venue_ == nullptr) {
+          return promise.set_error(Status::Error(400, "Venue must be non-empty"));
+        }
         type = "venue";
         id = std::move(venue->id_);
         title = std::move(venue->venue_->title_);
@@ -764,7 +789,7 @@ void InlineQueriesManager::answer_inline_query(int64 inline_query_id, bool is_pe
 uint64 InlineQueriesManager::send_inline_query(UserId bot_user_id, DialogId dialog_id, Location user_location,
                                                const string &query, const string &offset, Promise<Unit> &&promise) {
   if (td_->auth_manager_->is_bot()) {
-    promise.set_error(Status::Error(5, "Bot can't send inline queries to other bot"));
+    promise.set_error(Status::Error(400, "Bot can't send inline queries to other bot"));
     return 0;
   }
 
@@ -774,7 +799,7 @@ uint64 InlineQueriesManager::send_inline_query(UserId bot_user_id, DialogId dial
     return 0;
   }
   if (!r_bot_data.ok().is_inline) {
-    promise.set_error(Status::Error(5, "Bot doesn't support inline queries"));
+    promise.set_error(Status::Error(400, "Bot doesn't support inline queries"));
     return 0;
   }
 
@@ -1069,7 +1094,7 @@ tl_object_ptr<td_api::venue> copy(const td_api::venue &obj) {
 
 template <>
 tl_object_ptr<td_api::formattedText> copy(const td_api::formattedText &obj) {
-  // there is no entities in the game text
+  // there are no entities in the game text
   return make_tl_object<td_api::formattedText>(obj.text_, vector<tl_object_ptr<td_api::textEntity>>());
 }
 
@@ -1302,8 +1327,7 @@ void InlineQueriesManager::on_get_inline_query_results(DialogId dialog_id, UserI
 
               auto animation = make_tl_object<td_api::inlineQueryResultAnimation>();
               animation->id_ = std::move(result->id_);
-              animation->animation_ =
-                  td_->animations_manager_->get_animation_object(parsed_document.file_id, "inlineQueryResultAnimation");
+              animation->animation_ = td_->animations_manager_->get_animation_object(parsed_document.file_id);
               animation->title_ = std::move(result->title_);
 
               if (!register_inline_message_content(results->query_id_, animation->id_, parsed_document.file_id,
@@ -1618,8 +1642,7 @@ void InlineQueriesManager::on_get_inline_query_results(DialogId dialog_id, UserI
           } else if (is_animation && parsed_document.type == Document::Type::Animation) {
             auto animation = make_tl_object<td_api::inlineQueryResultAnimation>();
             animation->id_ = std::move(result->id_);
-            animation->animation_ =
-                td_->animations_manager_->get_animation_object(file_id, "inlineQueryResultAnimationCached");
+            animation->animation_ = td_->animations_manager_->get_animation_object(file_id);
             animation->title_ = std::move(result->title_);
             if (!register_inline_message_content(results->query_id_, animation->id_, file_id,
                                                  std::move(result->send_message_), td_api::inputMessageAnimation::ID,
@@ -1728,7 +1751,7 @@ bool InlineQueriesManager::load_recently_used_bots(Promise<Unit> &promise) {
   auto bot_ids = full_split(saved_bot_ids, ',');
   string saved_bots = G()->td_db()->get_binlog_pmc()->get("recently_used_inline_bot_usernames");
   auto bot_usernames = full_split(saved_bots, ',');
-  if (bot_ids.empty() && bot_usernames.empty()) {
+  if (bot_ids.empty()) {
     recently_used_bots_loaded_ = 2;
     if (!recently_used_bot_user_ids_.empty()) {
       save_recently_used_bots();
@@ -1742,29 +1765,19 @@ bool InlineQueriesManager::load_recently_used_bots(Promise<Unit> &promise) {
     auto newly_used_bots = std::move(recently_used_bot_user_ids_);
     recently_used_bot_user_ids_.clear();
 
-    if (bot_ids.empty()) {
-      // legacy, can be removed in the future
-      for (auto it = bot_usernames.rbegin(); it != bot_usernames.rend(); ++it) {
-        auto dialog_id = td_->messages_manager_->resolve_dialog_username(*it);
-        if (dialog_id.get_type() == DialogType::User) {
-          update_bot_usage(dialog_id.get_user_id());
-        }
-      }
-    } else {
-      for (auto it = bot_ids.rbegin(); it != bot_ids.rend(); ++it) {
-        UserId user_id(to_integer<int32>(*it));
-        if (td_->contacts_manager_->have_user(user_id)) {
-          update_bot_usage(user_id);
-        } else {
-          LOG(ERROR) << "Can't find " << user_id;
-        }
+    for (auto it = bot_ids.rbegin(); it != bot_ids.rend(); ++it) {
+      UserId user_id(to_integer<int64>(*it));
+      if (td_->contacts_manager_->have_user(user_id)) {
+        update_bot_usage(user_id);
+      } else {
+        LOG(ERROR) << "Can't find " << user_id;
       }
     }
     for (auto it = newly_used_bots.rbegin(); it != newly_used_bots.rend(); ++it) {
       update_bot_usage(*it);
     }
     recently_used_bots_loaded_ = 2;
-    if (!newly_used_bots.empty() || (bot_ids.empty() && !bot_usernames.empty())) {
+    if (!newly_used_bots.empty()) {
       save_recently_used_bots();
     }
     return true;
@@ -1773,14 +1786,14 @@ bool InlineQueriesManager::load_recently_used_bots(Promise<Unit> &promise) {
   resolve_recent_inline_bots_multipromise_.add_promise(std::move(promise));
   if (recently_used_bots_loaded_ == 0) {
     resolve_recent_inline_bots_multipromise_.set_ignore_errors(true);
-    if (bot_ids.empty() || !G()->parameters().use_chat_info_db) {
+    if (!G()->parameters().use_chat_info_db) {
       for (auto &bot_username : bot_usernames) {
         td_->messages_manager_->search_public_dialog(bot_username, false,
                                                      resolve_recent_inline_bots_multipromise_.get_promise());
       }
     } else {
       for (auto &bot_id : bot_ids) {
-        UserId user_id(to_integer<int32>(bot_id));
+        UserId user_id(to_integer<int64>(bot_id));
         td_->contacts_manager_->get_user(user_id, 3, resolve_recent_inline_bots_multipromise_.get_promise());
       }
     }
@@ -1834,7 +1847,7 @@ void InlineQueriesManager::on_new_query(int64 query_id, UserId sender_user_id, L
 
 void InlineQueriesManager::on_chosen_result(
     UserId user_id, Location user_location, const string &query, const string &result_id,
-    tl_object_ptr<telegram_api::inputBotInlineMessageID> &&input_bot_inline_message_id) {
+    tl_object_ptr<telegram_api::InputBotInlineMessageID> &&input_bot_inline_message_id) {
   if (!user_id.is_valid()) {
     LOG(ERROR) << "Receive chosen inline query result from invalid " << user_id;
     return;

@@ -4,18 +4,14 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
+#include "td/telegram/EncryptedFile.h"
 #include "td/telegram/FolderId.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/MessageId.h"
+#include "td/telegram/secret_api.h"
 #include "td/telegram/SecretChatActor.h"
 #include "td/telegram/SecretChatId.h"
-
-#include "td/telegram/secret_api.h"
 #include "td/telegram/telegram_api.h"
-
-#include "td/actor/actor.h"
-#include "td/actor/ConcurrentScheduler.h"
-#include "td/actor/PromiseFuture.h"
 
 #include "td/db/binlog/BinlogInterface.h"
 #include "td/db/binlog/detail/BinlogEventsProcessor.h"
@@ -27,6 +23,10 @@
 
 #include "td/tl/tl_object_parse.h"
 #include "td/tl/tl_object_store.h"
+
+#include "td/actor/actor.h"
+#include "td/actor/ConcurrentScheduler.h"
+#include "td/actor/PromiseFuture.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/as.h"
@@ -84,7 +84,7 @@ class InputUser {
 
 class inputUser final : public InputUser {
  public:
-  int32 user_id_{};
+  int64 user_id_{};
   int64 access_hash_{};
 
   static const int32 ID = -668391402;
@@ -253,14 +253,14 @@ class encryptedChat final {
   int32 id_{};
   int64 access_hash_{};
   int32 date_{};
-  int32 admin_id_{};
-  int32 participant_id_{};
+  int64 admin_id_{};
+  int64 participant_id_{};
   BufferSlice g_a_or_b_;
   int64 key_fingerprint_{};
 
   encryptedChat() = default;
 
-  encryptedChat(int32 id_, int64 access_hash_, int32 date_, int32 admin_id_, int32 participant_id_,
+  encryptedChat(int32 id_, int64 access_hash_, int32 date_, int64 admin_id_, int64 participant_id_,
                 BufferSlice &&g_a_or_b_, int64 key_fingerprint_)
       : id_(id_)
       , access_hash_(access_hash_)
@@ -535,14 +535,13 @@ class FakeSecretChatContext final : public SecretChatActor::Context {
                              int32 date, string key_hash, int32 layer, FolderId initial_folder_id) final {
   }
 
-  void on_inbound_message(UserId user_id, MessageId message_id, int32 date,
-                          tl_object_ptr<telegram_api::encryptedFile> file,
+  void on_inbound_message(UserId user_id, MessageId message_id, int32 date, unique_ptr<EncryptedFile> file,
                           tl_object_ptr<secret_api::decryptedMessage> message, Promise<>) final;
 
   void on_send_message_error(int64 random_id, Status error, Promise<>) final;
   void on_send_message_ack(int64 random_id) final;
-  void on_send_message_ok(int64 random_id, MessageId message_id, int32 date,
-                          tl_object_ptr<telegram_api::EncryptedFile> file, Promise<>) final;
+  void on_send_message_ok(int64 random_id, MessageId message_id, int32 date, unique_ptr<EncryptedFile> file,
+                          Promise<>) final;
   void on_delete_messages(std::vector<int64> random_id, Promise<>) final;
   void on_flush_history(bool, MessageId, Promise<>) final;
   void on_read_message(int64, Promise<>) final;
@@ -563,7 +562,7 @@ class FakeSecretChatContext final : public SecretChatActor::Context {
 
   std::shared_ptr<SecretChatDb> secret_chat_db_;
 };
-NetQueryCreator FakeSecretChatContext::net_query_creator_;
+NetQueryCreator FakeSecretChatContext::net_query_creator_{nullptr};
 
 class Master final : public Actor {
  public:
@@ -763,8 +762,8 @@ class Master final : public Actor {
     auto old_context = set_context(std::make_shared<Global>());
     alice_ = create_actor<SecretChatProxy>("SecretChatProxy alice", "alice", actor_shared(this, 1));
     bob_ = create_actor<SecretChatProxy>("SecretChatProxy bob", "bob", actor_shared(this, 2));
-    send_closure(alice_->get_actor_unsafe()->actor_, &SecretChatActor::create_chat, UserId(2), 0, 123,
-                 PromiseCreator::lambda([actor_id = actor_id(this)](Result<SecretChatId> res) {
+    send_closure(alice_->get_actor_unsafe()->actor_, &SecretChatActor::create_chat, UserId(static_cast<int64>(2)), 0,
+                 123, PromiseCreator::lambda([actor_id = actor_id(this)](Result<SecretChatId> res) {
                    send_closure(actor_id, &Master::got_secret_chat_id, std::move(res), 0);
                  }));
   }
@@ -869,7 +868,7 @@ class Master final : public Actor {
     send_message(2, "appo");
     set_timeout_in(1);
   }
-  void send_ping(int id, int cnt) {
+  void send_ping(int32 id, int cnt) {
     if (cnt % 200 == 0) {
       LOG(ERROR) << "Send ping " << tag("id", id) << tag("cnt", cnt);
     } else {
@@ -878,7 +877,7 @@ class Master final : public Actor {
     string text = PSTRING() << "PING: " << cnt;
     send_message(id, std::move(text));
   }
-  void send_message(int id, string text) {
+  void send_message(int32 id, string text) {
     auto random_id = Random::secure_int64();
     LOG(INFO) << "Send message: " << tag("id", id) << tag("text", text) << tag("random_id", random_id);
     sent_messages_[random_id] = Message{id, text};
@@ -974,7 +973,7 @@ void FakeSecretChatContext::send_net_query(NetQueryPtr query, ActorShared<NetQue
   send_closure(master_, &Master::send_net_query, std::move(query), std::move(callback), ordered);
 }
 void FakeSecretChatContext::on_inbound_message(UserId user_id, MessageId message_id, int32 date,
-                                               tl_object_ptr<telegram_api::encryptedFile> file,
+                                               unique_ptr<EncryptedFile> file,
                                                tl_object_ptr<secret_api::decryptedMessage> message, Promise<> promise) {
   send_closure(master_, &Master::on_inbound_message, message->message_, std::move(promise));
 }
@@ -984,7 +983,7 @@ void FakeSecretChatContext::on_send_message_error(int64 random_id, Status error,
 void FakeSecretChatContext::on_send_message_ack(int64 random_id) {
 }
 void FakeSecretChatContext::on_send_message_ok(int64 random_id, MessageId message_id, int32 date,
-                                               tl_object_ptr<telegram_api::EncryptedFile> file, Promise<> promise) {
+                                               unique_ptr<EncryptedFile> file, Promise<> promise) {
   send_closure(master_, &Master::on_send_message_ok, random_id, std::move(promise));
 }
 void FakeSecretChatContext::on_delete_messages(std::vector<int64> random_id, Promise<> promise) {

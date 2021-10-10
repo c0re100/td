@@ -136,10 +136,11 @@ See also the source code of [Fernschreiber](https://github.com/Wunderfitz/harbou
 
 TDLib can be used from the Swift programming language through the [JSON](https://github.com/tdlib/td#using-json) interface and can be linked statically or dynamically.
 
-See [TDLib-iOS](https://github.com/leoMehlig/TDLib-iOS) or [tdlib-swift](https://github.com/modestman/tdlib-swift), which provide convenient TDLib clients with automatically generated and fully-documented classes for all TDLib API methods and objects.
+See [example/ios](https://github.com/tdlib/td/tree/master/example/ios) for an example of building TDLib for iOS, watchOS, tvOS, and macOS.
+
+See [TDLibKit](https://github.com/Swiftgram/TDLibKit), [tdlib-swift](https://github.com/modestman/tdlib-swift), or [TDLib-iOS](https://github.com/leoMehlig/TDLib-iOS), which provide convenient TDLib clients with automatically generated and fully-documented classes for all TDLib API methods and objects.
 
 See [example/swift](https://github.com/tdlib/td/tree/master/example/swift) for an example of a macOS Swift application.
-See [example/ios](https://github.com/tdlib/td/tree/master/example/ios) for an example of building TDLib for iOS, watchOS, tvOS, and macOS.
 
 <a name="objective-c"></a>
 ## Using TDLib in Objective-C projects
@@ -172,11 +173,13 @@ See [project.scarlet](https://github.com/aaugmentum/project.scarlet), [tdlib](ht
 
 TDLib can be used from the Rust programming language through the [JSON](https://github.com/tdlib/td#using-json) interface.
 
-See [rust-tdlib](https://github.com/aCLr/rust-tdlib) or [tdlib-rs](https://github.com/agnipau/tdlib-rs), which provide convenient TDLib clients with automatically generated and fully-documented classes for all TDLib API methods and objects.
+See [rust-tdlib](https://github.com/aCLr/rust-tdlib), [tdgrand](https://github.com/melix99/tdgrand), or [tdlib-rs](https://github.com/agnipau/tdlib-rs), which provide convenient TDLib clients with automatically generated and fully-documented classes for all TDLib API methods and objects.
 
 See [rtdlib](https://github.com/fewensa/rtdlib), [tdlib-rs](https://github.com/d653/tdlib-rs), [tdlib-futures](https://github.com/yuri91/tdlib-futures),
 [tdlib-sys](https://github.com/nuxeh/tdlib-sys), or
 [tdjson-rs](https://github.com/mersinvald/tdjson-rs) for examples of TDLib Rust bindings.
+
+Also see [Telegrand](https://github.com/melix99/telegrand) – a Telegram client optimized for the GNOME desktop.
 
 <a name="erlang"></a>
 ## Using TDLib in Erlang projects

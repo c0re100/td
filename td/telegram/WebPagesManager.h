@@ -87,7 +87,7 @@ class WebPagesManager final : public Actor {
 
   string get_web_page_search_text(WebPageId web_page_id) const;
 
-  int32 get_web_page_duration(WebPageId web_page_id) const;
+  int32 get_web_page_media_duration(WebPageId web_page_id) const;
 
  private:
   static constexpr int32 WEBPAGE_FLAG_HAS_TYPE = 1 << 0;
@@ -126,7 +126,7 @@ class WebPagesManager final : public Actor {
   WebPageId get_web_page_instant_view(WebPageId web_page_id, bool force_full, Promise<Unit> &&promise);
 
   tl_object_ptr<td_api::webPageInstantView> get_web_page_instant_view_object(
-      const WebPageInstantView *web_page_instant_view) const;
+      WebPageId web_page_id, const WebPageInstantView *web_page_instant_view) const;
 
   static void on_pending_web_page_timeout_callback(void *web_pages_manager_ptr, int64 web_page_id);
   void on_pending_web_page_timeout(WebPageId web_page_id);
@@ -169,6 +169,8 @@ class WebPagesManager final : public Actor {
                                              Result<> result);
 
   void tear_down() final;
+
+  static int32 get_web_page_media_duration(const WebPage *web_page);
 
   FileSourceId get_web_page_file_source_id(WebPage *web_page);
 

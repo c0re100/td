@@ -6,14 +6,6 @@
 //
 #pragma once
 
-#include "td/telegram/td_api.h"
-#include "td/telegram/telegram_api.h"
-
-#include "td/actor/actor.h"
-#include "td/actor/MultiPromise.h"
-#include "td/actor/PromiseFuture.h"
-#include "td/actor/Timeout.h"
-
 #include "td/telegram/DialogId.h"
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/Location.h"
@@ -21,7 +13,14 @@
 #include "td/telegram/MessageEntity.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/Photo.h"
+#include "td/telegram/td_api.h"
+#include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
+
+#include "td/actor/actor.h"
+#include "td/actor/MultiPromise.h"
+#include "td/actor/PromiseFuture.h"
+#include "td/actor/Timeout.h"
 
 #include "td/utils/common.h"
 #include "td/utils/Status.h"
@@ -67,13 +66,15 @@ class InlineQueriesManager final : public Actor {
                     const string &offset);
 
   void on_chosen_result(UserId user_id, Location user_location, const string &query, const string &result_id,
-                        tl_object_ptr<telegram_api::inputBotInlineMessageID> &&input_bot_inline_message_id);
+                        tl_object_ptr<telegram_api::InputBotInlineMessageID> &&input_bot_inline_message_id);
 
-  static tl_object_ptr<telegram_api::inputBotInlineMessageID> get_input_bot_inline_message_id(
+  static int32 get_inline_message_dc_id(const tl_object_ptr<telegram_api::InputBotInlineMessageID> &inline_message_id);
+
+  static tl_object_ptr<telegram_api::InputBotInlineMessageID> get_input_bot_inline_message_id(
       const string &inline_message_id);
 
   static string get_inline_message_id(
-      tl_object_ptr<telegram_api::inputBotInlineMessageID> &&input_bot_inline_message_id);
+      tl_object_ptr<telegram_api::InputBotInlineMessageID> &&input_bot_inline_message_id);
 
  private:
   static constexpr int32 MAX_RECENT_INLINE_BOTS = 20;  // some reasonable value

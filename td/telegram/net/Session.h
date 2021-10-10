@@ -9,10 +9,10 @@
 #include "td/telegram/net/AuthDataShared.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/net/TempAuthKeyWatchdog.h"
-#include "td/telegram/StateManager.h"
 
 #include "td/mtproto/AuthData.h"
 #include "td/mtproto/AuthKey.h"
+#include "td/mtproto/ConnectionManager.h"
 #include "td/mtproto/Handshake.h"
 #include "td/mtproto/SessionConnection.h"
 
@@ -61,9 +61,8 @@ class Session final
     virtual void request_raw_connection(unique_ptr<mtproto::AuthData> auth_data,
                                         Promise<unique_ptr<mtproto::RawConnection>>) = 0;
     virtual void on_tmp_auth_key_updated(mtproto::AuthKey auth_key) = 0;
-    virtual void on_server_salt_updated(std::vector<mtproto::ServerSalt> server_salts) {
-    }
-    // one still have to call close after on_closed
+    virtual void on_server_salt_updated(std::vector<mtproto::ServerSalt> server_salts) = 0;
+    virtual void on_update(BufferSlice &&update) = 0;
     virtual void on_result(NetQueryPtr net_query) = 0;
   };
 
@@ -154,7 +153,7 @@ class Session final
   ConnectionInfo *current_info_;
   ConnectionInfo main_connection_;
   ConnectionInfo long_poll_connection_;
-  StateManager::ConnectionToken connection_token_;
+  mtproto::ConnectionManager::ConnectionToken connection_token_;
 
   double cached_connection_timestamp_ = 0;
   unique_ptr<mtproto::RawConnection> cached_connection_;
@@ -205,6 +204,8 @@ class Session final
   void on_session_failed(Status status) final;
 
   void on_container_sent(uint64 container_id, vector<uint64> msg_ids) final;
+
+  Status on_update(BufferSlice packet) final;
 
   void on_message_ack(uint64 id) final;
   Status on_message_result_ok(uint64 id, BufferSlice packet, size_t original_size) final;

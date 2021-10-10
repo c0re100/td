@@ -109,6 +109,8 @@ class SessionConnection final
     virtual void on_container_sent(uint64 container_id, vector<uint64> msgs_id) = 0;
     virtual Status on_pong() = 0;
 
+    virtual Status on_update(BufferSlice packet) = 0;
+
     virtual void on_message_ack(uint64 id) = 0;
     virtual Status on_message_result_ok(uint64 id, BufferSlice packet, size_t original_size) = 0;
     virtual void on_message_result_error(uint64 id, int code, string message) = 0;
@@ -164,15 +166,15 @@ class SessionConnection final
 
   struct ServiceQuery {
     enum Type { GetStateInfo, ResendAnswer } type;
-    std::vector<int64> message_ids;
+    vector<int64> message_ids;
   };
-  std::vector<int64> to_resend_answer_;
-  std::vector<int64> to_cancel_answer_;
-  std::vector<int64> to_get_state_info_;
+  vector<int64> to_resend_answer_;
+  vector<int64> to_cancel_answer_;
+  vector<int64> to_get_state_info_;
   std::unordered_map<uint64, ServiceQuery> service_queries_;
 
   // nobody cleans up this map. But it should be really small.
-  std::unordered_map<uint64, std::vector<uint64>> container_to_service_msg_;
+  std::unordered_map<uint64, vector<uint64>> container_to_service_msg_;
 
   double last_read_at_ = 0;
   double last_ping_at_ = 0;
@@ -201,8 +203,6 @@ class SessionConnection final
   SessionConnection::Callback *callback_ = nullptr;
   BufferSlice *current_buffer_slice_;
 
-  friend class OnPacket;
-
   BufferSlice as_buffer_slice(Slice packet);
   auto set_buffer_slice(BufferSlice *buffer_slice) TD_WARN_UNUSED_RESULT {
     auto old_buffer_slice = current_buffer_slice_;
@@ -216,8 +216,6 @@ class SessionConnection final
   Status parse_packet(TlParser &parser) TD_WARN_UNUSED_RESULT;
   Status on_packet_container(const MsgInfo &info, Slice packet) TD_WARN_UNUSED_RESULT;
   Status on_packet_rpc_result(const MsgInfo &info, Slice packet) TD_WARN_UNUSED_RESULT;
-  Status on_packet(const MsgInfo &info, uint64 req_msg_id,
-                   const mtproto_api::rpc_error &rpc_error) TD_WARN_UNUSED_RESULT;
 
   template <class T>
   Status on_packet(const MsgInfo &info, const T &packet) TD_WARN_UNUSED_RESULT;
@@ -233,7 +231,7 @@ class SessionConnection final
   Status on_packet(const MsgInfo &info, const mtproto_api::pong &pong) TD_WARN_UNUSED_RESULT;
   Status on_packet(const MsgInfo &info, const mtproto_api::future_salts &salts) TD_WARN_UNUSED_RESULT;
 
-  Status on_msgs_state_info(const std::vector<int64> &ids, Slice info) TD_WARN_UNUSED_RESULT;
+  Status on_msgs_state_info(const vector<int64> &ids, Slice info) TD_WARN_UNUSED_RESULT;
   Status on_packet(const MsgInfo &info, const mtproto_api::msgs_state_info &msgs_state_info) TD_WARN_UNUSED_RESULT;
   Status on_packet(const MsgInfo &info, const mtproto_api::msgs_all_info &msgs_all_info) TD_WARN_UNUSED_RESULT;
   Status on_packet(const MsgInfo &info, const mtproto_api::msg_detailed_info &msg_detailed_info) TD_WARN_UNUSED_RESULT;

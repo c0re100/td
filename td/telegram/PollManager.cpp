@@ -23,6 +23,7 @@
 #include "td/telegram/StateManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.hpp"
 #include "td/telegram/UpdatesManager.h"
 
@@ -558,7 +559,7 @@ td_api::object_ptr<td_api::poll> PollManager::get_poll_object(PollId poll_id, co
     auto correct_option_id = is_local_poll_id(poll_id) ? -1 : poll->correct_option_id;
     poll_type = td_api::make_object<td_api::pollTypeQuiz>(
         correct_option_id,
-        get_formatted_text_object(is_local_poll_id(poll_id) ? FormattedText() : poll->explanation, true));
+        get_formatted_text_object(is_local_poll_id(poll_id) ? FormattedText() : poll->explanation, true, -1));
   } else {
     poll_type = td_api::make_object<td_api::pollTypeRegular>(poll->allow_multiple_answers);
   }
@@ -575,6 +576,10 @@ td_api::object_ptr<td_api::poll> PollManager::get_poll_object(PollId poll_id, co
     } else {
       open_period = close_date - now;
     }
+  }
+  if (poll->is_closed) {
+    open_period = 0;
+    close_date = 0;
   }
   return td_api::make_object<td_api::poll>(
       poll_id.get(), poll->question, std::move(poll_options), total_voter_count,
@@ -1246,6 +1251,18 @@ void PollManager::on_online() {
   }
 }
 
+PollId PollManager::dup_poll(PollId poll_id) {
+  auto poll = get_poll(poll_id);
+  CHECK(poll != nullptr);
+
+  auto question = poll->question;
+  auto options = transform(poll->options, [](auto &option) { return option.text; });
+  auto explanation = poll->explanation;
+  return create_poll(std::move(question), std::move(options), poll->is_anonymous, poll->allow_multiple_answers,
+                     poll->is_quiz, poll->correct_option_id, std::move(explanation), poll->open_period,
+                     poll->open_period == 0 ? 0 : G()->unix_time(), false);
+}
+
 bool PollManager::has_input_media(PollId poll_id) const {
   auto poll = get_poll(poll_id);
   CHECK(poll != nullptr);
@@ -1346,6 +1363,7 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
 
   auto poll = get_poll_force(poll_id);
   bool is_changed = false;
+  bool need_save_to_database = false;
   if (poll == nullptr) {
     if (poll_server == nullptr) {
       LOG(INFO) << "Ignore " << poll_id << ", because have no data about it";
@@ -1428,13 +1446,16 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
     }
     if (open_period != poll->open_period) {
       poll->open_period = open_period;
-      is_changed = true;
+      if (!poll->is_closed) {
+        is_changed = true;
+      } else {
+        need_save_to_database = true;
+      }
     }
     if (close_date != poll->close_date) {
       poll->close_date = close_date;
-      is_changed = true;
-
       if (!poll->is_closed) {
+        is_changed = true;
         if (close_date != 0) {
           if (close_date <= G()->server_time()) {
             poll->is_closed = true;
@@ -1444,6 +1465,8 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
         } else {
           close_poll_timeout_.cancel_timeout(poll_id.get());
         }
+      } else {
+        need_save_to_database = true;
       }
     }
     bool is_anonymous = (poll_server->flags_ & telegram_api::poll::PUBLIC_VOTERS_MASK) == 0;
@@ -1544,12 +1567,12 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
 
   auto entities =
       get_message_entities(td_->contacts_manager_.get(), std::move(poll_results->solution_entities_), "on_get_poll");
-  auto status = fix_formatted_text(poll_results->solution_, entities, true, true, true, false);
+  auto status = fix_formatted_text(poll_results->solution_, entities, true, true, true, true, false);
   if (status.is_error()) {
     if (!clean_input_string(poll_results->solution_)) {
       poll_results->solution_.clear();
     }
-    entities = find_entities(poll_results->solution_, true);
+    entities = find_entities(poll_results->solution_, true, true);
   }
   FormattedText explanation{std::move(poll_results->solution_), std::move(entities)};
 
@@ -1608,6 +1631,8 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
   }
   if (is_changed) {
     notify_on_poll_update(poll_id);
+  }
+  if (is_changed || need_save_to_database) {
     save_poll(poll, poll_id);
   }
   if (need_update_poll && (is_changed || (poll->is_closed && being_closed_polls_.erase(poll_id) != 0))) {

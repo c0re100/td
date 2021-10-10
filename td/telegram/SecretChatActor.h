@@ -7,6 +7,7 @@
 #pragma once
 
 #include "td/telegram/DhConfig.h"
+#include "td/telegram/EncryptedFile.h"
 #include "td/telegram/FolderId.h"
 #include "td/telegram/logevent/SecretChatEvent.h"
 #include "td/telegram/MessageId.h"
@@ -84,8 +85,7 @@ class SecretChatActor final : public NetQueryCallback {
     // this update through binlog too. So it wouldn't be deleted before update is saved.
 
     // inbound messages
-    virtual void on_inbound_message(UserId user_id, MessageId message_id, int32 date,
-                                    tl_object_ptr<telegram_api::encryptedFile> file,
+    virtual void on_inbound_message(UserId user_id, MessageId message_id, int32 date, unique_ptr<EncryptedFile> file,
                                     tl_object_ptr<secret_api::decryptedMessage> message, Promise<> promise) = 0;
     virtual void on_delete_messages(std::vector<int64> random_id, Promise<> promise) = 0;
     virtual void on_flush_history(bool remove_from_dialog_list, MessageId message_id, Promise<> promise) = 0;
@@ -97,8 +97,8 @@ class SecretChatActor final : public NetQueryCallback {
 
     // outbound messages
     virtual void on_send_message_ack(int64 random_id) = 0;
-    virtual void on_send_message_ok(int64 random_id, MessageId message_id, int32 date,
-                                    tl_object_ptr<telegram_api::EncryptedFile> file, Promise<> promise) = 0;
+    virtual void on_send_message_ok(int64 random_id, MessageId message_id, int32 date, unique_ptr<EncryptedFile> file,
+                                    Promise<> promise) = 0;
     virtual void on_send_message_error(int64 random_id, Status error, Promise<> promise) = 0;
   };
 
@@ -381,7 +381,7 @@ class SecretChatActor final : public NetQueryCallback {
     }
     template <class StorerT>
     void store(StorerT &storer) const {
-      uint32 flags = 0;
+      uint32 flags = 8;
       bool has_date = date != 0;
       bool has_key_hash = true;
       bool has_initial_folder_id = initial_folder_id != FolderId();
@@ -399,7 +399,7 @@ class SecretChatActor final : public NetQueryCallback {
 
       storer.store_int(id);
       storer.store_long(access_hash);
-      storer.store_int(user_id.get());
+      storer.store_long(user_id.get());
       storer.store_long(user_access_hash);
       storer.store_int(random_id);
       if (has_date) {
@@ -425,12 +425,17 @@ class SecretChatActor final : public NetQueryCallback {
       bool has_date = (flags & 1) != 0;
       bool has_key_hash = (flags & 2) != 0;
       bool has_initial_folder_id = (flags & 4) != 0;
+      bool has_64bit_user_id = (flags & 8) != 0;
 
       x = parser.fetch_int();
 
       id = parser.fetch_int();
       access_hash = parser.fetch_long();
-      user_id = UserId(parser.fetch_int());
+      if (has_64bit_user_id) {
+        user_id = UserId(parser.fetch_long());
+      } else {
+        user_id = UserId(static_cast<int64>(parser.fetch_int()));
+      }
       user_access_hash = parser.fetch_long();
       random_id = parser.fetch_int();
       if (has_date) {
@@ -483,7 +488,7 @@ class SecretChatActor final : public NetQueryCallback {
   // So we can do it immediatelly after EVENT is SENT to the binlog, because SEND CHANGE and ERASE EVENT will be
   // ordered automatically.
   //
-  // We will use common ChangeProcessor for all changes (inside one SecretChatActor).
+  // We will use common ChangesProcessor for all changes (inside one SecretChatActor).
   // So all changes will be saved in exactly the same order as they are applied.
 
   template <class StateT>

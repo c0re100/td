@@ -7,16 +7,16 @@
 #pragma once
 
 #include "td/telegram/DialogId.h"
+#include "td/telegram/EncryptedFile.h"
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/files/FileType.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/PhotoSizeSource.h"
-#include "td/telegram/SecretInputMedia.h"
-#include "td/telegram/UserId.h"
-
 #include "td/telegram/secret_api.h"
+#include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
+#include "td/telegram/UserId.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
@@ -137,7 +137,7 @@ StringBuilder &operator<<(StringBuilder &string_builder, const AnimationSize &an
 
 Photo get_photo(FileManager *file_manager, tl_object_ptr<telegram_api::Photo> &&photo, DialogId owner_dialog_id);
 Photo get_photo(FileManager *file_manager, tl_object_ptr<telegram_api::photo> &&photo, DialogId owner_dialog_id);
-Photo get_encrypted_file_photo(FileManager *file_manager, tl_object_ptr<telegram_api::encryptedFile> &&file,
+Photo get_encrypted_file_photo(FileManager *file_manager, unique_ptr<EncryptedFile> &&file,
                                tl_object_ptr<secret_api::decryptedMessageMediaPhoto> &&photo, DialogId owner_dialog_id);
 Photo get_web_document_photo(FileManager *file_manager, tl_object_ptr<telegram_api::WebDocument> web_document,
                              DialogId owner_dialog_id);

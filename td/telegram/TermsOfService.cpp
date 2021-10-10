@@ -95,12 +95,12 @@ TermsOfService::TermsOfService(telegram_api::object_ptr<telegram_api::help_terms
 
   id_ = std::move(terms->id_->data_);
   auto entities = get_message_entities(nullptr, std::move(terms->entities_), "TermsOfService");
-  auto status = fix_formatted_text(terms->text_, entities, true, true, true, false);
+  auto status = fix_formatted_text(terms->text_, entities, true, true, true, true, false);
   if (status.is_error()) {
     if (!clean_input_string(terms->text_)) {
       terms->text_.clear();
     }
-    entities = find_entities(terms->text_, true);
+    entities = find_entities(terms->text_, true, true);
   }
   if (terms->text_.empty()) {
     id_.clear();

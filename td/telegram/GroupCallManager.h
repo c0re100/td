@@ -60,7 +60,8 @@ class GroupCallManager final : public Actor {
   void reload_group_call(InputGroupCallId input_group_call_id,
                          Promise<td_api::object_ptr<td_api::groupCall>> &&promise);
 
-  void get_group_call_stream_segment(GroupCallId group_call_id, int64 time_offset, int32 scale,
+  void get_group_call_stream_segment(GroupCallId group_call_id, int64 time_offset, int32 scale, int32 channel_id,
+                                     td_api::object_ptr<td_api::GroupCallVideoQuality> quality,
                                      Promise<string> &&promise);
 
   void start_scheduled_group_call(GroupCallId group_call_id, Promise<Unit> &&promise);
@@ -95,7 +96,8 @@ class GroupCallManager final : public Actor {
 
   void get_group_call_invite_link(GroupCallId group_call_id, bool can_self_unmute, Promise<string> &&promise);
 
-  void toggle_group_call_recording(GroupCallId group_call_id, bool is_enabled, string title, Promise<Unit> &&promise);
+  void toggle_group_call_recording(GroupCallId group_call_id, bool is_enabled, string title, bool record_video,
+                                   bool use_portrait_orientation, Promise<Unit> &&promise);
 
   void set_group_call_participant_is_speaking(GroupCallId group_call_id, int32 audio_source, bool is_speaking,
                                               Promise<Unit> &&promise, int32 date = 0);
@@ -214,6 +216,8 @@ class GroupCallManager final : public Actor {
 
   static int32 get_group_call_record_start_date(const GroupCall *group_call);
 
+  static bool get_group_call_is_video_recorded(const GroupCall *group_call);
+
   static bool get_group_call_has_recording(const GroupCall *group_call);
 
   static bool get_group_call_can_enable_video(const GroupCall *group_call);
@@ -310,7 +314,8 @@ class GroupCallManager final : public Actor {
                                                   Result<Unit> &&result);
 
   void send_toggle_group_call_recording_query(InputGroupCallId input_group_call_id, bool is_enabled,
-                                              const string &title, uint64 generation);
+                                              const string &title, bool record_video, bool use_portrait_orientation,
+                                              uint64 generation);
 
   void on_toggle_group_call_recording(InputGroupCallId input_group_call_id, uint64 generation, Result<Unit> &&result);
 

@@ -239,12 +239,15 @@ bool is_empty_string(const string &str) {
   return strip_empty_characters(str, str.size()).empty();
 }
 
-int32 get_vector_hash(const vector<uint32> &numbers) {
-  uint32 acc = 0;
+int64 get_vector_hash(const vector<uint64> &numbers) {
+  uint64 acc = 0;
   for (auto number : numbers) {
-    acc = acc * 20261 + number;
+    acc ^= acc >> 21;
+    acc ^= acc << 35;
+    acc ^= acc >> 4;
+    acc += number;
   }
-  return static_cast<int32>(acc & 0x7FFFFFFF);
+  return static_cast<int64>(acc);
 }
 
 string get_emoji_fingerprint(uint64 num) {
@@ -302,29 +305,6 @@ string get_emoji_fingerprint(uint64 num) {
       u8"\U0001f537"};
 
   return emojis[static_cast<size_t>((num & 0x7FFFFFFFFFFFFFFF) % emojis.size())].str();
-}
-
-string remove_emoji_modifiers(string emoji) {
-  static const Slice modifiers[] = {u8"\uFE0E" /* variation selector-15 */,
-                                    u8"\uFE0F" /* variation selector-16 */,
-                                    u8"\u200D\u2640" /* zero width joiner + female sign */,
-                                    u8"\u200D\u2642" /* zero width joiner + male sign */,
-                                    u8"\U0001F3FB" /* emoji modifier fitzpatrick type-1-2 */,
-                                    u8"\U0001F3FC" /* emoji modifier fitzpatrick type-3 */,
-                                    u8"\U0001F3FD" /* emoji modifier fitzpatrick type-4 */,
-                                    u8"\U0001F3FE" /* emoji modifier fitzpatrick type-5 */,
-                                    u8"\U0001F3FF" /* emoji modifier fitzpatrick type-6 */};
-  bool found = true;
-  while (found) {
-    found = false;
-    for (auto &modifier : modifiers) {
-      if (ends_with(emoji, modifier) && emoji.size() > modifier.size()) {
-        emoji.resize(emoji.size() - modifier.size());
-        found = true;
-      }
-    }
-  }
-  return emoji;
 }
 
 }  // namespace td

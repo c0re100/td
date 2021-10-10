@@ -10,6 +10,7 @@
 #include "td/telegram/BackgroundType.h"
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/files/FileSourceId.h"
+#include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
@@ -33,7 +34,7 @@ class BackgroundManager final : public Actor {
  public:
   BackgroundManager(Td *td, ActorShared<> parent);
 
-  void get_backgrounds(Promise<Unit> &&promise);
+  void get_backgrounds(bool for_dark_theme, Promise<td_api::object_ptr<td_api::backgrounds>> &&promise);
 
   Result<string> get_background_url(const string &name,
                                     td_api::object_ptr<td_api::BackgroundType> background_type) const;
@@ -51,12 +52,11 @@ class BackgroundManager final : public Actor {
   void reset_backgrounds(Promise<Unit> &&promise);
 
   td_api::object_ptr<td_api::background> get_background_object(BackgroundId background_id, bool for_dark_theme,
-                                                               const BackgroundType *type = nullptr) const;
+                                                               const BackgroundType *type) const;
 
-  td_api::object_ptr<td_api::backgrounds> get_backgrounds_object(bool for_dark_theme) const;
-
-  BackgroundId on_get_background(BackgroundId expected_background_id, const string &expected_background_name,
-                                 telegram_api::object_ptr<telegram_api::WallPaper> wallpaper_ptr);
+  std::pair<BackgroundId, BackgroundType> on_get_background(
+      BackgroundId expected_background_id, const string &expected_background_name,
+      telegram_api::object_ptr<telegram_api::WallPaper> wallpaper_ptr, bool replace_type);
 
   FileSourceId get_background_file_source_id(BackgroundId background_id, int64 access_hash);
 
@@ -65,6 +65,12 @@ class BackgroundManager final : public Actor {
                                    Promise<Unit> &&promise);
 
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
+
+  void store_background(BackgroundId background_id, LogEventStorerCalcLength &storer);
+
+  void store_background(BackgroundId background_id, LogEventStorerUnsafe &storer);
+
+  void parse_background(BackgroundId &background_id, LogEventParser &parser);
 
  private:
   struct Background {
@@ -109,6 +115,8 @@ class BackgroundManager final : public Actor {
 
   td_api::object_ptr<td_api::updateSelectedBackground> get_update_selected_background_object(bool for_dark_theme) const;
 
+  td_api::object_ptr<td_api::backgrounds> get_backgrounds_object(bool for_dark_theme) const;
+
   void send_update_selected_background(bool for_dark_theme) const;
 
   void set_max_local_background_id(BackgroundId background_id);
@@ -117,7 +125,7 @@ class BackgroundManager final : public Actor {
 
   BackgroundId add_local_background(const BackgroundType &type);
 
-  void add_background(const Background &background);
+  void add_background(const Background &background, bool replace_type);
 
   Background *get_background_ref(BackgroundId background_id);
 
@@ -167,9 +175,9 @@ class BackgroundManager final : public Actor {
   BackgroundId set_background_id_[2];
   BackgroundType set_background_type_[2];
 
-  vector<BackgroundId> installed_background_ids_;
+  vector<std::pair<BackgroundId, BackgroundType>> installed_backgrounds_;
 
-  vector<Promise<Unit>> pending_get_backgrounds_queries_;
+  vector<std::pair<bool, Promise<td_api::object_ptr<td_api::backgrounds>>>> pending_get_backgrounds_queries_;
 
   std::shared_ptr<UploadBackgroundFileCallback> upload_background_file_callback_;
 

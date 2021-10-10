@@ -54,12 +54,14 @@ class LinkManager final : public Actor {
   void update_autologin_domains(string autologin_token, vector<string> autologin_domains,
                                 vector<string> url_auth_domains);
 
+  void get_deep_link_info(Slice link, Promise<td_api::object_ptr<td_api::deepLinkInfo>> &&promise);
+
   void get_external_link_info(string &&link, Promise<td_api::object_ptr<td_api::LoginUrlInfo>> &&promise);
 
-  void get_login_url_info(FullMessageId full_message_id, int32 button_id,
+  void get_login_url_info(FullMessageId full_message_id, int64 button_id,
                           Promise<td_api::object_ptr<td_api::LoginUrlInfo>> &&promise);
 
-  void get_login_url(FullMessageId full_message_id, int32 button_id, bool allow_write_access,
+  void get_login_url(FullMessageId full_message_id, int64 button_id, bool allow_write_access,
                      Promise<td_api::object_ptr<td_api::httpUrl>> &&promise);
 
   void get_link_login_url(const string &url, bool allow_write_access,
@@ -110,7 +112,8 @@ class LinkManager final : public Actor {
 
   static unique_ptr<InternalLink> parse_t_me_link_query(Slice query);
 
-  static unique_ptr<InternalLink> get_internal_link_passport(const vector<std::pair<string, string>> &args);
+  static unique_ptr<InternalLink> get_internal_link_passport(Slice query,
+                                                             const vector<std::pair<string, string>> &args);
 
   static unique_ptr<InternalLink> get_internal_link_message_draft(Slice url, Slice text);
 

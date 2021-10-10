@@ -26,8 +26,21 @@ static bool is_valid_color(int32 color) {
   return 0 <= color && color <= 0xFFFFFF;
 }
 
+static bool validate_alpha_color(int32 &color) {
+  if (-0x1000000 <= color && color <= 0xFFFFFF) {
+    color &= 0xFFFFFF;
+    return true;
+  }
+  color = 0;
+  return false;
+}
+
 static bool is_valid_rotation_angle(int32 rotation_angle) {
   return 0 <= rotation_angle && rotation_angle < 360 && rotation_angle % 45 == 0;
+}
+
+static bool is_valid_intensity(int32 intensity, bool allow_negative) {
+  return (allow_negative ? -100 : 0) <= intensity && intensity <= 100;
 }
 
 BackgroundFill::BackgroundFill(const telegram_api::wallPaperSettings *settings) {
@@ -38,35 +51,30 @@ BackgroundFill::BackgroundFill(const telegram_api::wallPaperSettings *settings) 
   auto flags = settings->flags_;
   if ((flags & telegram_api::wallPaperSettings::BACKGROUND_COLOR_MASK) != 0) {
     top_color_ = settings->background_color_;
-    if (!is_valid_color(top_color_)) {
+    if (!validate_alpha_color(top_color_)) {
       LOG(ERROR) << "Receive " << to_string(*settings);
-      top_color_ = 0;
     }
   }
   if ((flags & telegram_api::wallPaperSettings::FOURTH_BACKGROUND_COLOR_MASK) != 0 ||
       (flags & telegram_api::wallPaperSettings::THIRD_BACKGROUND_COLOR_MASK) != 0) {
     bottom_color_ = settings->second_background_color_;
-    if (!is_valid_color(bottom_color_)) {
+    if (!validate_alpha_color(bottom_color_)) {
       LOG(ERROR) << "Receive " << to_string(*settings);
-      bottom_color_ = 0;
     }
     third_color_ = settings->third_background_color_;
-    if (!is_valid_color(third_color_)) {
+    if (!validate_alpha_color(third_color_)) {
       LOG(ERROR) << "Receive " << to_string(*settings);
-      third_color_ = 0;
     }
     if ((flags & telegram_api::wallPaperSettings::FOURTH_BACKGROUND_COLOR_MASK) != 0) {
       fourth_color_ = settings->fourth_background_color_;
-      if (!is_valid_color(fourth_color_)) {
+      if (!validate_alpha_color(fourth_color_)) {
         LOG(ERROR) << "Receive " << to_string(*settings);
-        fourth_color_ = 0;
       }
     }
   } else if ((flags & telegram_api::wallPaperSettings::SECOND_BACKGROUND_COLOR_MASK) != 0) {
     bottom_color_ = settings->second_background_color_;
-    if (!is_valid_color(bottom_color_)) {
+    if (!validate_alpha_color(bottom_color_)) {
       LOG(ERROR) << "Receive " << to_string(*settings);
-      bottom_color_ = 0;
     }
 
     rotation_angle_ = settings->rotation_;
@@ -203,10 +211,6 @@ string BackgroundFill::get_link(bool is_first) const {
   }
 }
 
-static bool is_valid_intensity(int32 intensity) {
-  return -100 <= intensity && intensity <= 100;
-}
-
 bool BackgroundFill::is_dark() const {
   switch (get_type()) {
     case Type::Solid:
@@ -254,7 +258,7 @@ void BackgroundType::apply_parameters_from_link(Slice name) {
     if (!intensity_arg.empty()) {
       intensity_ = to_integer<int32>(intensity_arg);
     }
-    if (!is_valid_intensity(intensity_)) {
+    if (!is_valid_intensity(intensity_, true)) {
       intensity_ = 50;
     }
 
@@ -341,10 +345,11 @@ Result<BackgroundType> BackgroundType::get_background_type(const td_api::Backgro
     case td_api::backgroundTypePattern::ID: {
       auto pattern_type = static_cast<const td_api::backgroundTypePattern *>(background_type);
       TRY_RESULT(background_fill, BackgroundFill::get_background_fill(pattern_type->fill_.get()));
-      if (!is_valid_intensity(pattern_type->intensity_)) {
+      if (!is_valid_intensity(pattern_type->intensity_, false)) {
         return Status::Error(400, "Wrong intensity value");
       }
-      return BackgroundType(pattern_type->is_moving_, std::move(background_fill), pattern_type->intensity_);
+      auto intensity = pattern_type->is_inverted_ ? -max(pattern_type->intensity_, 1) : pattern_type->intensity_;
+      return BackgroundType(pattern_type->is_moving_, std::move(background_fill), intensity);
     }
     case td_api::backgroundTypeFill::ID: {
       auto fill_type = static_cast<const td_api::backgroundTypeFill *>(background_type);
@@ -375,7 +380,7 @@ BackgroundType::BackgroundType(bool is_fill, bool is_pattern,
       is_moving_ = (settings->flags_ & telegram_api::wallPaperSettings::MOTION_MASK) != 0;
       if ((settings->flags_ & telegram_api::wallPaperSettings::INTENSITY_MASK) != 0) {
         intensity_ = settings->intensity_;
-        if (!is_valid_intensity(intensity_)) {
+        if (!is_valid_intensity(intensity_, true)) {
           LOG(ERROR) << "Receive " << to_string(settings);
           intensity_ = 50;
         }
@@ -414,8 +419,8 @@ td_api::object_ptr<td_api::BackgroundType> BackgroundType::get_background_type_o
     case Type::Wallpaper:
       return td_api::make_object<td_api::backgroundTypeWallpaper>(is_blurred_, is_moving_);
     case Type::Pattern:
-      return td_api::make_object<td_api::backgroundTypePattern>(fill_.get_background_fill_object(), intensity_,
-                                                                is_moving_);
+      return td_api::make_object<td_api::backgroundTypePattern>(
+          fill_.get_background_fill_object(), intensity_ < 0 ? -intensity_ : intensity_, intensity_ < 0, is_moving_);
     case Type::Fill:
       return td_api::make_object<td_api::backgroundTypeFill>(fill_.get_background_fill_object());
     default:

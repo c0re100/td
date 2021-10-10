@@ -124,14 +124,22 @@ class RichText {
             context->has_anchor_urls_ = true;
           } else {
             auto anchor = Slice(content).substr(context->base_url_.size() + 1);
-            auto it = context->anchors_.find(anchor);
-            if (it != context->anchors_.end()) {
-              if (it->second == nullptr) {
-                return make_tl_object<td_api::richTextAnchorLink>(texts[0].get_rich_text_object(context), anchor.str(),
-                                                                  content);
-              } else {
-                return make_tl_object<td_api::richTextReference>(texts[0].get_rich_text_object(context), anchor.str(),
-                                                                 content);
+            // https://html.spec.whatwg.org/multipage/browsing-the-web.html#the-indicated-part-of-the-document
+            for (int i = 0; i < 2; i++) {
+              string url_decoded_anchor;
+              if (i == 1) {  // try to url_decode anchor
+                url_decoded_anchor = url_decode(anchor, false);
+                anchor = url_decoded_anchor;
+              }
+              auto it = context->anchors_.find(anchor);
+              if (it != context->anchors_.end()) {
+                if (it->second == nullptr) {
+                  return make_tl_object<td_api::richTextAnchorLink>(texts[0].get_rich_text_object(context),
+                                                                    anchor.str(), content);
+                } else {
+                  return make_tl_object<td_api::richTextReference>(texts[0].get_rich_text_object(context), anchor.str(),
+                                                                   content);
+                }
               }
             }
           }
@@ -981,7 +989,7 @@ class WebPageBlockAnimation final : public WebPageBlock {
 
   td_api::object_ptr<td_api::PageBlock> get_page_block_object(Context *context) const final {
     return make_tl_object<td_api::pageBlockAnimation>(
-        context->td_->animations_manager_->get_animation_object(animation_file_id, "get_page_block_object"),
+        context->td_->animations_manager_->get_animation_object(animation_file_id),
         caption.get_page_block_caption_object(context), need_autoplay);
   }
 

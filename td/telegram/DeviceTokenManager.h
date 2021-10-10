@@ -6,12 +6,12 @@
 //
 #pragma once
 
-#include "td/actor/actor.h"
-#include "td/actor/PromiseFuture.h"
-
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/UserId.h"
+
+#include "td/actor/actor.h"
+#include "td/actor/PromiseFuture.h"
 
 #include "td/utils/common.h"
 #include "td/utils/Slice.h"
@@ -55,7 +55,7 @@ class DeviceTokenManager final : public NetQueryCallback {
     State state = State::Sync;
     string token;
     uint64 net_query_id = 0;
-    vector<UserId> other_user_ids;
+    vector<int64> other_user_ids;
     bool is_app_sandbox = false;
     bool encrypt = false;
     string encryption_key;

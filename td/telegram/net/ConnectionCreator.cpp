@@ -143,11 +143,7 @@ void ConnectionCreator::set_net_stats_callback(std::shared_ptr<NetStatsCallback>
 void ConnectionCreator::add_proxy(int32 old_proxy_id, string server, int32 port, bool enable,
                                   td_api::object_ptr<td_api::ProxyType> proxy_type,
                                   Promise<td_api::object_ptr<td_api::proxy>> promise) {
-  auto r_proxy = Proxy::create_proxy(std::move(server), port, proxy_type.get());
-  if (r_proxy.is_error()) {
-    return promise.set_error(r_proxy.move_as_error());
-  }
-  auto new_proxy = r_proxy.move_as_ok();
+  TRY_RESULT_PROMISE(promise, new_proxy, Proxy::create_proxy(std::move(server), port, proxy_type.get()));
   if (old_proxy_id >= 0) {
     if (proxies_.count(old_proxy_id) == 0) {
       return promise.set_error(Status::Error(400, "Proxy not found"));
@@ -705,7 +701,7 @@ Result<SocketFd> ConnectionCreator::find_connection(const Proxy &proxy, const IP
   bool prefer_ipv6 =
       G()->shared_config().get_option_boolean("prefer_ipv6") || (proxy.use_proxy() && proxy_ip_address.is_ipv6());
   bool only_http = proxy.use_http_caching_proxy();
-#if TD_EXPERIMENTAL_WATCH_OS
+#if TD_DARWIN_WATCH_OS
   only_http = true;
 #endif
   TRY_RESULT(info, dc_options_set_.find_connection(
@@ -761,7 +757,7 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
       void set_result(Result<SocketFd> result) final {
         if (result.is_error()) {
           if (use_connection_token_) {
-            connection_token_ = StateManager::ConnectionToken();
+            connection_token_ = mtproto::ConnectionManager::ConnectionToken();
           }
           if (was_connected_ && stats_callback_) {
             stats_callback_->on_error();
@@ -778,14 +774,15 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
       }
       void on_connected() final {
         if (use_connection_token_) {
-          connection_token_ = StateManager::connection_proxy(G()->state_manager());
+          connection_token_ = mtproto::ConnectionManager::connection_proxy(
+              static_cast<ActorId<mtproto::ConnectionManager>>(G()->state_manager()));
         }
         was_connected_ = true;
       }
 
      private:
       Promise<ConnectionData> promise_;
-      StateManager::ConnectionToken connection_token_;
+      mtproto::ConnectionManager::ConnectionToken connection_token_;
       IPAddress ip_address_;
       unique_ptr<mtproto::RawConnection::StatsCallback> stats_callback_;
       bool use_connection_token_;

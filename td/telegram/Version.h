@@ -6,9 +6,11 @@
 //
 #pragma once
 
+#include "td/utils/common.h"
+
 namespace td {
 
-constexpr int32 MTPROTO_LAYER = 131;
+constexpr int32 MTPROTO_LAYER = 133;
 
 enum class Version : int32 {
   Initial,  // 0
@@ -44,6 +46,7 @@ enum class Version : int32 {
   AddLiveLocationProximityAlertDistance,  // 30
   SupportBannedChannels,
   RemovePhotoVolumeAndLocalId,
+  Support64BitIds,
   Next
 };
 

@@ -15,6 +15,7 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 
 #include "td/db/SqliteKeyValue.h"
 
@@ -146,8 +147,7 @@ void FileStatsWorker::get_stats(bool need_all_files, bool split_by_owner_dialog_
     split_by_owner_dialog_id = false;
   }
   if (!split_by_owner_dialog_id) {
-    FileStats file_stats;
-    file_stats.need_all_files = need_all_files;
+    FileStats file_stats(need_all_files, false);
     auto start = Time::now();
     scan_fs(token_, [&](FsFileInfo &fs_info) {
       FullFileInfo info;
@@ -206,9 +206,7 @@ void FileStatsWorker::get_stats(bool need_all_files, bool split_by_owner_dialog_
       return promise.set_error(Status::Error(500, "Request aborted"));
     }
 
-    FileStats file_stats;
-    file_stats.need_all_files = need_all_files;
-    file_stats.split_by_owner_dialog_id = split_by_owner_dialog_id;
+    FileStats file_stats(need_all_files, split_by_owner_dialog_id);
     for (auto &full_info : full_infos) {
       file_stats.add(std::move(full_info));
       if (token_) {

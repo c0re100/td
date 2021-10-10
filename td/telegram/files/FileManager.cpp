@@ -20,6 +20,7 @@
 #include "td/telegram/misc.h"
 #include "td/telegram/SecureStorage.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 #include "td/telegram/Version.h"
 
 #include "td/actor/SleepActor.h"
@@ -920,6 +921,7 @@ bool FileManager::are_modification_times_equal(int64 old_mtime, int64 new_mtime)
 Status FileManager::check_local_location(FullLocalFileLocation &location, int64 &size, bool skip_file_size_checks) {
   constexpr int64 MAX_THUMBNAIL_SIZE = 200 * (1 << 10) - 1 /* 200 KB - 1 B */;
   constexpr int64 MAX_PHOTO_SIZE = 10 * (1 << 20) /* 10 MB */;
+  constexpr int64 DEFAULT_VIDEO_NOTE_SIZE_MAX = 12 * (1 << 20) /* 12 MB */;
 
   if (location.path_.empty()) {
     return Status::Error(400, "File must have non-empty path");
@@ -967,13 +969,17 @@ Status FileManager::check_local_location(FullLocalFileLocation &location, int64 
     return Status::Error(400, PSLICE() << "File \"" << location.path_ << "\" is too big for a thumbnail "
                                        << tag("size", format::as_size(size)));
   }
-  if (location.file_type_ == FileType::Photo && size > MAX_PHOTO_SIZE) {
-    return Status::Error(400, PSLICE() << "File \"" << location.path_ << "\" is too big for a photo "
-                                       << tag("size", format::as_size(size)));
-  }
   if (size > MAX_FILE_SIZE) {
+    return Status::Error(400, PSLICE() << "File \"" << location.path_ << "\" of size " << size << " bytes is too big");
+  }
+  if (location.file_type_ == FileType::Photo && size > MAX_PHOTO_SIZE) {
     return Status::Error(
-        400, PSLICE() << "File \"" << location.path_ << "\" is too big " << tag("size", format::as_size(size)));
+        400, PSLICE() << "File \"" << location.path_ << "\" of size " << size << " bytes is too big for a photo");
+  }
+  if (location.file_type_ == FileType::VideoNote &&
+      size > G()->shared_config().get_option_integer("video_note_size_max", DEFAULT_VIDEO_NOTE_SIZE_MAX)) {
+    return Status::Error(
+        400, PSLICE() << "File \"" << location.path_ << "\" of size " << size << " bytes is too big for a video note");
   }
   return Status::OK();
 }
@@ -1914,6 +1920,7 @@ void FileManager::load_from_pmc(FileNodePtr node, bool new_remote, bool new_loca
     return;
   }
   auto file_view = get_file_view(file_id);
+  CHECK(!file_view.empty());
 
   FullRemoteFileLocation remote;
   FullLocalFileLocation local;
@@ -1924,7 +1931,7 @@ void FileManager::load_from_pmc(FileNodePtr node, bool new_remote, bool new_loca
   }
   new_local &= file_view.has_local_location();
   if (new_local) {
-    local = get_file_view(file_id).local_location();
+    local = file_view.local_location();
     prepare_path_for_pmc(local.file_type_, local.path_);
   }
   new_generate &= file_view.has_generate_location();
@@ -3122,7 +3129,7 @@ Result<FileId> FileManager::get_input_file_id(FileType type, const tl_object_ptr
               auto it = file_hash_to_file_id_.find(hash);
               if (it != file_hash_to_file_id_.end()) {
                 auto file_view = get_file_view(it->second);
-                if (file_view.has_remote_location() && !file_view.remote_location().is_web()) {
+                if (!file_view.empty() && file_view.has_remote_location() && !file_view.remote_location().is_web()) {
                   return it->second;
                 }
               }
@@ -3437,7 +3444,8 @@ void FileManager::on_partial_upload(QueryId query_id, const PartialRemoteFileLoc
 
   auto file_id = query->file_id_;
   auto file_node = get_file_node(file_id);
-  LOG(DEBUG) << "Receive on_partial_upload for file " << file_id << " with " << partial_remote;
+  LOG(DEBUG) << "Receive on_partial_upload for file " << file_id << " with " << partial_remote << " and ready size "
+             << ready_size;
   if (!file_node) {
     return;
   }

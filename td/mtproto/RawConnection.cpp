@@ -11,7 +11,7 @@
 #include "td/mtproto/ProxySecret.h"
 #include "td/mtproto/Transport.h"
 
-#if TD_EXPERIMENTAL_WATCH_OS
+#if TD_DARWIN_WATCH_OS
 #include "td/net/DarwinHttp.h"
 #endif
 
@@ -26,8 +26,8 @@
 #include "td/utils/Status.h"
 #include "td/utils/StorerBase.h"
 
-#include <map>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 
 namespace td {
@@ -42,7 +42,7 @@ class RawConnectionDefault final : public RawConnection {
     transport_->init(&socket_fd_.input_buffer(), &socket_fd_.output_buffer());
   }
 
-  void set_connection_token(StateManager::ConnectionToken connection_token) final {
+  void set_connection_token(ConnectionManager::ConnectionToken connection_token) final {
     connection_token_ = std::move(connection_token);
   }
 
@@ -130,12 +130,12 @@ class RawConnectionDefault final : public RawConnection {
   PublicFields extra_;
   BufferedFd<SocketFd> socket_fd_;
   unique_ptr<IStreamTransport> transport_;
-  std::map<uint32, uint64> quick_ack_to_token_;
+  std::unordered_map<uint32, uint64> quick_ack_to_token_;
   bool has_error_{false};
 
   unique_ptr<StatsCallback> stats_callback_;
 
-  StateManager::ConnectionToken connection_token_;
+  ConnectionManager::ConnectionToken connection_token_;
 
   Status flush_read(const AuthKey &auth_key, Callback &callback) {
     auto r = socket_fd_.flush_read();
@@ -259,7 +259,7 @@ class RawConnectionDefault final : public RawConnection {
   }
 };
 
-#if TD_EXPERIMENTAL_WATCH_OS
+#if TD_DARWIN_WATCH_OS
 class RawConnectionHttp final : public RawConnection {
  public:
   RawConnectionHttp(IPAddress ip_address, unique_ptr<StatsCallback> stats_callback)
@@ -268,7 +268,7 @@ class RawConnectionHttp final : public RawConnection {
     answers_->init();
   }
 
-  void set_connection_token(StateManager::ConnectionToken connection_token) final {
+  void set_connection_token(ConnectionManager::ConnectionToken connection_token) final {
     connection_token_ = std::move(connection_token);
   }
 
@@ -348,7 +348,7 @@ class RawConnectionHttp final : public RawConnection {
 
   unique_ptr<StatsCallback> stats_callback_;
 
-  StateManager::ConnectionToken connection_token_;
+  ConnectionManager::ConnectionToken connection_token_;
   std::shared_ptr<MpscPollableQueue<Result<BufferSlice>>> answers_;
   std::vector<BufferSlice> to_send_;
 
@@ -452,7 +452,7 @@ class RawConnectionHttp final : public RawConnection {
 
 unique_ptr<RawConnection> RawConnection::create(IPAddress ip_address, SocketFd socket_fd, TransportType transport_type,
                                                 unique_ptr<StatsCallback> stats_callback) {
-#if TD_EXPERIMENTAL_WATCH_OS
+#if TD_DARWIN_WATCH_OS
   return td::make_unique<RawConnectionHttp>(ip_address, std::move(stats_callback));
 #else
   return td::make_unique<RawConnectionDefault>(std::move(socket_fd), transport_type, std::move(stats_callback));

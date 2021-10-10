@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.7.6 LANGUAGES CXX C)
+project(TDLib VERSION 1.7.8 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -31,13 +31,16 @@ if (POLICY CMP0060)
   # link libraries by full path
   cmake_policy(SET CMP0060 NEW)
 endif()
+if (POLICY CMP0074)
+  # use environment variables to find libraries
+  cmake_policy(SET CMP0074 NEW)
+endif()
 
 include(PreventInSourceBuild)
 prevent_in_source_build()
 
 option(TD_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TDLib API.")
 option(TD_ENABLE_DOTNET "Use \"ON\" to enable generation of C++/CLI or C++/CX TDLib API bindings.")
-option(TD_EXPERIMENTAL_WATCH_OS "Use \"ON\" to enable watch os support.")
 
 if (TD_ENABLE_DOTNET AND (CMAKE_VERSION VERSION_LESS "3.1.0"))
   message(FATAL_ERROR "CMake 3.1.0 or higher is required. You are running version ${CMAKE_VERSION}.")
@@ -56,15 +59,15 @@ if (POLICY CMP0069)
       # set_property(DIRECTORY PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE) do not work?
       string(REPLACE ";" " " CXX_FLAGS_IPO "${CMAKE_CXX_COMPILE_OPTIONS_IPO}")
       message(STATUS "Use link time optimization CXX options: ${CXX_FLAGS_IPO}")
-      set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${CXX_FLAGS_IPO}")
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CXX_FLAGS_IPO}")
 
       string(REPLACE ";" " " C_FLAGS_IPO "${CMAKE_C_COMPILE_OPTIONS_IPO}")
       message(STATUS "Use link time optimization C options: ${C_FLAGS_IPO}")
-      set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${C_FLAGS_IPO}")
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${C_FLAGS_IPO}")
 
       string(REPLACE ";" " " LINK_FLAGS_IPO "${CMAKE_CXX_LINK_OPTIONS_IPO}")
       message(STATUS "Use link time optimization linker options: ${LINK_FLAGS_IPO}")
-      set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} ${LINK_FLAGS_IPO}")
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINK_FLAGS_IPO}")
     endif()
   endif()
 endif()
@@ -254,6 +257,7 @@ set(TL_DOTNET_SCHEME_SOURCE
 
 set(TDLIB_SOURCE
   td/mtproto/AuthData.cpp
+  td/mtproto/ConnectionManager.cpp
   td/mtproto/DhHandshake.cpp
   td/mtproto/Handshake.cpp
   td/mtproto/HandshakeActor.cpp
@@ -287,6 +291,7 @@ set(TDLIB_SOURCE
   td/telegram/ClientActor.cpp
   td/telegram/ConfigManager.cpp
   td/telegram/ConfigShared.cpp
+  td/telegram/ConnectionState.cpp
   td/telegram/Contact.cpp
   td/telegram/ContactsManager.cpp
   td/telegram/CountryInfoManager.cpp
@@ -327,6 +332,7 @@ set(TDLIB_SOURCE
   td/telegram/files/PartsManager.cpp
   td/telegram/files/ResourceManager.cpp
   td/telegram/Game.cpp
+  td/telegram/GameManager.cpp
   td/telegram/Global.cpp
   td/telegram/GroupCallManager.cpp
   td/telegram/GroupCallParticipant.cpp
@@ -383,6 +389,7 @@ set(TDLIB_SOURCE
   td/telegram/PhotoSizeSource.cpp
   td/telegram/PollManager.cpp
   td/telegram/QueryCombiner.cpp
+  td/telegram/RecentDialogList.cpp
   td/telegram/ReplyMarkup.cpp
   td/telegram/ReportReason.cpp
   td/telegram/RestrictionReason.cpp
@@ -395,6 +402,7 @@ set(TDLIB_SOURCE
   td/telegram/SendCodeHelper.cpp
   td/telegram/SequenceDispatcher.cpp
   td/telegram/SpecialStickerSetType.cpp
+  td/telegram/SponsoredMessageManager.cpp
   td/telegram/StateManager.cpp
   td/telegram/StickersManager.cpp
   td/telegram/StorageManager.cpp
@@ -402,6 +410,8 @@ set(TDLIB_SOURCE
   td/telegram/Td.cpp
   td/telegram/TdDb.cpp
   td/telegram/TermsOfService.cpp
+  td/telegram/ThemeManager.cpp
+  td/telegram/TopDialogCategory.cpp
   td/telegram/TopDialogManager.cpp
   td/telegram/UpdatesManager.cpp
   td/telegram/Venue.cpp
@@ -413,6 +423,7 @@ set(TDLIB_SOURCE
 
   td/mtproto/AuthData.h
   td/mtproto/AuthKey.h
+  td/mtproto/ConnectionManager.h
   td/mtproto/CryptoStorer.h
   td/mtproto/DhCallback.h
   td/mtproto/DhHandshake.h
@@ -459,6 +470,7 @@ set(TDLIB_SOURCE
   td/telegram/ClientActor.h
   td/telegram/ConfigManager.h
   td/telegram/ConfigShared.h
+  td/telegram/ConnectionState.h
   td/telegram/Contact.h
   td/telegram/ContactsManager.h
   td/telegram/CountryInfoManager.h
@@ -482,6 +494,7 @@ set(TDLIB_SOURCE
   td/telegram/Document.h
   td/telegram/DocumentsManager.h
   td/telegram/DraftMessage.h
+  td/telegram/EncryptedFile.h
   td/telegram/FileReferenceManager.h
   td/telegram/files/FileBitmask.h
   td/telegram/files/FileData.h
@@ -512,6 +525,7 @@ set(TDLIB_SOURCE
   td/telegram/FolderId.h
   td/telegram/FullMessageId.h
   td/telegram/Game.h
+  td/telegram/GameManager.h
   td/telegram/Global.h
   td/telegram/GroupCallId.h
   td/telegram/GroupCallManager.h
@@ -538,6 +552,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageId.h
   td/telegram/MessageLinkInfo.h
   td/telegram/MessageReplyInfo.h
+  td/telegram/MessageThreadInfo.h
   td/telegram/MessagesDb.h
   td/telegram/MessageSearchFilter.h
   td/telegram/MessagesManager.h
@@ -586,6 +601,7 @@ set(TDLIB_SOURCE
   td/telegram/PtsManager.h
   td/telegram/PublicDialogType.h
   td/telegram/QueryCombiner.h
+  td/telegram/RecentDialogList.h
   td/telegram/ReplyMarkup.h
   td/telegram/ReportReason.h
   td/telegram/RequestActor.h
@@ -605,6 +621,7 @@ set(TDLIB_SOURCE
   td/telegram/ServerMessageId.h
   td/telegram/SetWithPosition.h
   td/telegram/SpecialStickerSetType.h
+  td/telegram/SponsoredMessageManager.h
   td/telegram/StateManager.h
   td/telegram/StickerSetId.h
   td/telegram/StickersManager.h
@@ -615,6 +632,7 @@ set(TDLIB_SOURCE
   td/telegram/TdDb.h
   td/telegram/TdParameters.h
   td/telegram/TermsOfService.h
+  td/telegram/ThemeManager.h
   td/telegram/TopDialogCategory.h
   td/telegram/TopDialogManager.h
   td/telegram/UniqueId.h

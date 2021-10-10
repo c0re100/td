@@ -9,6 +9,7 @@
 #include "td/telegram/files/FileLocation.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 
 #include "td/utils/common.h"
 #include "td/utils/filesystem.h"
@@ -19,6 +20,7 @@
 #include "td/utils/port/Clocks.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/Random.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/StringBuilder.h"

@@ -435,9 +435,11 @@ void Session::raw_event(const Event::Raw &event) {
 /** Connection::Callback **/
 void Session::on_connected() {
   if (is_main_) {
-    connection_token_ = StateManager::connection(G()->state_manager());
+    connection_token_ =
+        mtproto::ConnectionManager::connection(static_cast<ActorId<mtproto::ConnectionManager>>(G()->state_manager()));
   }
 }
+
 Status Session::on_pong() {
   constexpr int MAX_QUERY_TIMEOUT = 60;
   constexpr int MIN_CONNECTION_ACTIVE = 60;
@@ -468,9 +470,11 @@ Status Session::on_pong() {
   }
   return Status::OK();
 }
+
 void Session::on_auth_key_updated() {
   shared_auth_data_->set_auth_key(auth_data_.get_main_auth_key());
 }
+
 void Session::on_tmp_auth_key_updated() {
   callback_->on_tmp_auth_key_updated(auth_data_.get_tmp_auth_key());
 }
@@ -569,7 +573,8 @@ void Session::on_session_created(uint64 unique_id, uint64 first_id) {
     LOG(DEBUG) << "Sending updatesTooLong to force getDifference";
     BufferSlice packet(4);
     as<int32>(packet.as_slice().begin()) = telegram_api::updatesTooLong::ID;
-    return_query(G()->net_query_creator().create_update(std::move(packet)));
+    last_activity_timestamp_ = Time::now();
+    callback_->on_update(std::move(packet));
   }
 
   for (auto it = sent_queries_.begin(); it != sent_queries_.end();) {
@@ -710,15 +715,18 @@ void Session::mark_as_unknown(uint64 id, Query *query) {
   unknown_queries_.insert(id);
 }
 
-Status Session::on_message_result_ok(uint64 id, BufferSlice packet, size_t original_size) {
-  if (id == 0) {
-    if (is_cdn_) {
-      return Status::Error("Got update from CDN connection");
-    }
-    last_success_timestamp_ = Time::now();
-    return_query(G()->net_query_creator().create_update(std::move(packet)));
-    return Status::OK();
+Status Session::on_update(BufferSlice packet) {
+  if (is_cdn_) {
+    return Status::Error("Receive at update from CDN connection");
   }
+
+  last_success_timestamp_ = Time::now();
+  last_activity_timestamp_ = Time::now();
+  callback_->on_update(std::move(packet));
+  return Status::OK();
+}
+
+Status Session::on_message_result_ok(uint64 id, BufferSlice packet, size_t original_size) {
   last_success_timestamp_ = Time::now();
 
   TlParser parser(packet.as_slice());

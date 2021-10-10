@@ -11,11 +11,11 @@
 #include "td/telegram/net/NetQueryCreator.h"
 #include "td/telegram/TdParameters.h"
 
+#include "td/net/NetStats.h"
+
 #include "td/actor/actor.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/SchedulerLocalStorage.h"
-
-#include "td/net/NetStats.h"
 
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
@@ -38,6 +38,7 @@ class ConnectionCreator;
 class ContactsManager;
 class FileManager;
 class FileReferenceManager;
+class GameManager;
 class GroupCallManager;
 class LanguagePackManager;
 class LinkManager;
@@ -47,18 +48,17 @@ class NetQueryDispatcher;
 class NotificationManager;
 class PasswordManager;
 class SecretChatsManager;
+class SponsoredMessageManager;
 class StateManager;
 class StickersManager;
 class StorageManager;
 class Td;
 class TdDb;
 class TempAuthKeyWatchdog;
+class ThemeManager;
 class TopDialogManager;
 class UpdatesManager;
 class WebPagesManager;
-}  // namespace td
-
-namespace td {
 
 class Global final : public ActorContext {
  public:
@@ -108,6 +108,7 @@ class Global final : public ActorContext {
   }
 
   void set_net_query_stats(std::shared_ptr<NetQueryStats> net_query_stats);
+
   void set_net_query_dispatcher(unique_ptr<NetQueryDispatcher> net_query_dispatcher);
 
   NetQueryDispatcher &net_query_dispatcher() {
@@ -217,6 +218,13 @@ class Global final : public ActorContext {
     file_reference_manager_ = std::move(file_reference_manager);
   }
 
+  ActorId<GameManager> game_manager() const {
+    return game_manager_;
+  }
+  void set_game_manager(ActorId<GameManager> game_manager) {
+    game_manager_ = game_manager;
+  }
+
   ActorId<GroupCallManager> group_call_manager() const {
     return group_call_manager_;
   }
@@ -266,6 +274,13 @@ class Global final : public ActorContext {
     secret_chats_manager_ = secret_chats_manager;
   }
 
+  ActorId<SponsoredMessageManager> sponsored_message_manager() const {
+    return sponsored_message_manager_;
+  }
+  void set_sponsored_message_manager(ActorId<SponsoredMessageManager> sponsored_message_manager) {
+    sponsored_message_manager_ = sponsored_message_manager;
+  }
+
   ActorId<StickersManager> stickers_manager() const {
     return stickers_manager_;
   }
@@ -278,6 +293,13 @@ class Global final : public ActorContext {
   }
   void set_storage_manager(ActorId<StorageManager> storage_manager) {
     storage_manager_ = storage_manager;
+  }
+
+  ActorId<ThemeManager> theme_manager() const {
+    return theme_manager_;
+  }
+  void set_theme_manager(ActorId<ThemeManager> theme_manager) {
+    theme_manager_ = theme_manager;
   }
 
   ActorId<TopDialogManager> top_dialog_manager() const {
@@ -317,10 +339,10 @@ class Global final : public ActorContext {
     return parameters_;
   }
 
-  int32 get_my_id() const {
+  int64 get_my_id() const {
     return my_id_;
   }
-  void set_my_id(int32 my_id) {
+  void set_my_id(int64 my_id) {
     my_id_ = my_id;
   }
 
@@ -401,6 +423,7 @@ class Global final : public ActorContext {
   ActorId<ContactsManager> contacts_manager_;
   ActorId<FileManager> file_manager_;
   ActorId<FileReferenceManager> file_reference_manager_;
+  ActorId<GameManager> game_manager_;
   ActorId<GroupCallManager> group_call_manager_;
   ActorId<LanguagePackManager> language_pack_manager_;
   ActorId<LinkManager> link_manager_;
@@ -408,8 +431,10 @@ class Global final : public ActorContext {
   ActorId<NotificationManager> notification_manager_;
   ActorId<PasswordManager> password_manager_;
   ActorId<SecretChatsManager> secret_chats_manager_;
+  ActorId<SponsoredMessageManager> sponsored_message_manager_;
   ActorId<StickersManager> stickers_manager_;
   ActorId<StorageManager> storage_manager_;
+  ActorId<ThemeManager> theme_manager_;
   ActorId<TopDialogManager> top_dialog_manager_;
   ActorId<UpdatesManager> updates_manager_;
   ActorId<WebPagesManager> web_pages_manager_;
@@ -446,7 +471,7 @@ class Global final : public ActorContext {
 
   unique_ptr<ConfigShared> shared_config_;
 
-  int32 my_id_ = 0;  // hack
+  int64 my_id_ = 0;  // hack
 
   static int64 get_location_key(double latitude, double longitude);
 
@@ -463,8 +488,7 @@ class Global final : public ActorContext {
 
 inline Global *G_impl(const char *file, int line) {
   ActorContext *context = Scheduler::context();
-  CHECK(context);
-  LOG_CHECK(context->get_id() == Global::ID) << "In " << file << " at " << line;
+  LOG_CHECK(context != nullptr && context->get_id() == Global::ID) << "In " << file << " at " << line;
   return static_cast<Global *>(context);
 }
 
