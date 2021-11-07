@@ -22,7 +22,6 @@
 
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
-#include "td/utils/Random.h"
 #include "td/utils/Status.h"
 
 namespace td {
@@ -79,7 +78,9 @@ class GetBotCallbackAnswerQuery final : public Td::ResultHandler {
       return on_error(id, result_ptr.move_as_error());
     }
 
-    td->callback_queries_manager_->on_get_callback_query_answer(result_ptr.move_as_ok(), std::move(promise_));
+    auto answer = result_ptr.move_as_ok();
+    promise_.set_value(
+        td_api::make_object<td_api::callbackQueryAnswer>(answer->message_, answer->alert_, answer->url_));
   }
 
   void on_error(uint64 id, Status status) final {
@@ -274,9 +275,7 @@ void CallbackQueriesManager::send_get_callback_answer_query(
     FullMessageId full_message_id, tl_object_ptr<td_api::CallbackQueryPayload> &&payload,
     tl_object_ptr<telegram_api::InputCheckPasswordSRP> &&password,
     Promise<td_api::object_ptr<td_api::callbackQueryAnswer>> &&promise) {
-  if (G()->close_flag()) {
-    return promise.set_error(Status::Error(500, "Request aborted"));
-  }
+  TRY_STATUS_PROMISE(promise, G()->close_status());
 
   auto dialog_id = full_message_id.get_dialog_id();
   if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
@@ -288,14 +287,6 @@ void CallbackQueriesManager::send_get_callback_answer_query(
 
   td_->create_handler<GetBotCallbackAnswerQuery>(std::move(promise))
       ->send(dialog_id, full_message_id.get_message_id(), payload, std::move(password));
-}
-
-void CallbackQueriesManager::on_get_callback_query_answer(
-    tl_object_ptr<telegram_api::messages_botCallbackAnswer> &&answer,
-    Promise<td_api::object_ptr<td_api::callbackQueryAnswer>> &&promise) {
-  CHECK(answer != nullptr);
-  bool show_alert = (answer->flags_ & BOT_CALLBACK_ANSWER_FLAG_NEED_SHOW_ALERT) != 0;
-  promise.set_value(td_api::make_object<td_api::callbackQueryAnswer>(answer->message_, show_alert, answer->url_));
 }
 
 }  // namespace td

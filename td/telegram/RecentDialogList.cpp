@@ -129,6 +129,13 @@ void RecentDialogList::on_load_dialogs(vector<string> &&found_dialogs) {
   auto promises = std::move(load_list_queries_);
   CHECK(!promises.empty());
 
+  if (G()->close_flag()) {
+    for (auto &promise : promises) {
+      promise.set_error(Global::request_aborted_error());
+    }
+    return;
+  }
+
   auto newly_found_dialogs = std::move(dialog_ids_);
   reset_to_empty(dialog_ids_);
 
@@ -252,7 +259,7 @@ std::pair<int32, vector<DialogId>> RecentDialogList::get_dialogs(int32 limit, Pr
   update_dialogs();
 
   CHECK(limit >= 0);
-  int32 total_count = narrow_cast<int32>(dialog_ids_.size());
+  auto total_count = narrow_cast<int32>(dialog_ids_.size());
   return {total_count, vector<DialogId>(dialog_ids_.begin(), dialog_ids_.begin() + min(limit, total_count))};
 }
 

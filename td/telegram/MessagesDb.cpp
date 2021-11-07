@@ -7,7 +7,6 @@
 #include "td/telegram/MessagesDb.h"
 
 #include "td/telegram/logevent/LogEvent.h"
-#include "td/telegram/MessageSearchFilter.h"
 #include "td/telegram/Version.h"
 
 #include "td/db/SqliteConnectionSafe.h"
@@ -34,6 +33,7 @@
 #include <array>
 #include <iterator>
 #include <limits>
+#include <tuple>
 #include <utility>
 
 namespace td {
@@ -231,6 +231,12 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
 
     for (int32 i = 0; i < MESSAGES_DB_INDEX_COUNT; i++) {
       TRY_RESULT_ASSIGN(
+          get_message_ids_stmts_[i],
+          db_.get_statement(
+              PSLICE() << "SELECT message_id FROM messages WHERE dialog_id = ?1 AND message_id < ?2 AND (index_mask & "
+                       << (1 << i) << ") != 0 ORDER BY message_id DESC LIMIT 1000000"));
+
+      TRY_RESULT_ASSIGN(
           get_messages_from_index_stmts_[i].desc_stmt_,
           db_.get_statement(
               PSLICE()
@@ -334,7 +340,7 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
     if (search_id != 0) {
       // add dialog_id to text
       text += PSTRING() << " \a" << dialog_id.get();
-      if (index_mask) {
+      if (index_mask != 0) {
         for (int i = 0; i < MESSAGES_DB_INDEX_COUNT; i++) {
           if ((index_mask & (1 << i))) {
             text += PSTRING() << " \a\a" << i;
@@ -469,16 +475,16 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
       return Status::Error("Not found");
     }
     MessageId received_message_id(stmt.view_int64(0));
-    MessagesDbDialogMessage result{received_message_id, BufferSlice(stmt.view_blob(1))};
+    Slice data = stmt.view_blob(1);
     if (is_scheduled_server) {
       CHECK(received_message_id.is_scheduled());
       CHECK(received_message_id.is_scheduled_server());
       CHECK(received_message_id.get_scheduled_server_message_id() == message_id.get_scheduled_server_message_id());
     } else {
       LOG_CHECK(received_message_id == message_id)
-          << received_message_id << ' ' << message_id << ' ' << get_message_info(result, true).first;
+          << received_message_id << ' ' << message_id << ' ' << get_message_info(received_message_id, data, true).first;
     }
-    return std::move(result);
+    return MessagesDbDialogMessage{received_message_id, BufferSlice(data)};
   }
 
   Result<MessagesDbMessage> get_message_by_unique_message_id(ServerMessageId unique_message_id) final {
@@ -611,10 +617,72 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
     return std::make_pair(std::move(messages), next_expires_till);
   }
 
+  Result<MessagesDbCalendar> get_dialog_message_calendar(MessagesDbDialogCalendarQuery query) final {
+    auto &stmt = get_messages_from_index_stmts_[message_search_filter_index(query.filter)].desc_stmt_;
+    SCOPE_EXIT {
+      stmt.reset();
+    };
+    int32 limit = 1000;
+    stmt.bind_int64(1, query.dialog_id.get()).ensure();
+    stmt.bind_int64(2, query.from_message_id.get()).ensure();
+    stmt.bind_int32(3, limit).ensure();
+
+    vector<MessagesDbDialogMessage> messages;
+    vector<int32> total_counts;
+    stmt.step().ensure();
+    int32 current_day = std::numeric_limits<int32>::max();
+    while (stmt.has_row()) {
+      auto data_slice = stmt.view_blob(0);
+      MessageId message_id(stmt.view_int64(1));
+      auto info = get_message_info(message_id, data_slice, false);
+      auto day = (query.tz_offset + info.second) / 86400;
+      if (day >= current_day) {
+        CHECK(!total_counts.empty());
+        total_counts.back()++;
+      } else {
+        current_day = day;
+        messages.push_back(MessagesDbDialogMessage{message_id, BufferSlice(data_slice)});
+        total_counts.push_back(1);
+      }
+      stmt.step().ensure();
+    }
+    return MessagesDbCalendar{std::move(messages), std::move(total_counts)};
+  }
+
+  Result<MessagesDbMessagePositions> get_dialog_sparse_message_positions(
+      MessagesDbGetDialogSparseMessagePositionsQuery query) final {
+    auto &stmt = get_message_ids_stmts_[message_search_filter_index(query.filter)];
+    SCOPE_EXIT {
+      stmt.reset();
+    };
+    stmt.bind_int64(1, query.dialog_id.get()).ensure();
+    stmt.bind_int64(2, query.from_message_id.get()).ensure();
+
+    vector<MessageId> message_ids;
+    stmt.step().ensure();
+    while (stmt.has_row()) {
+      message_ids.push_back(MessageId(stmt.view_int64(0)));
+      stmt.step().ensure();
+    }
+
+    int32 limit = min(query.limit, static_cast<int32>(message_ids.size()));
+    double delta = static_cast<double>(message_ids.size()) / limit;
+    vector<MessagesDbMessagePosition> positions;
+    positions.reserve(limit);
+    for (int32 i = 0; i < limit; i++) {
+      auto position = static_cast<int32>((i + 0.5) * delta);
+      auto message_id = message_ids[position];
+      TRY_RESULT(message, get_message({query.dialog_id, message_id}));
+      auto date = get_message_info(message).second;
+      positions.push_back(MessagesDbMessagePosition{position, date, message_id});
+    }
+
+    return MessagesDbMessagePositions{static_cast<int32>(message_ids.size()), std::move(positions)};
+  }
+
   Result<vector<MessagesDbDialogMessage>> get_messages(MessagesDbMessagesQuery query) final {
-    if (query.index_mask != 0) {
-      return get_messages_from_index(query.dialog_id, query.from_message_id, query.index_mask, query.offset,
-                                     query.limit);
+    if (query.filter != MessageSearchFilter::Empty) {
+      return get_messages_from_index(query.dialog_id, query.from_message_id, query.filter, query.offset, query.limit);
     }
     return get_messages_impl(get_messages_stmt_, query.dialog_id, query.from_message_id, query.offset, query.limit);
   }
@@ -698,7 +766,7 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
       get_messages_fts_stmt_.reset();
     };
 
-    LOG(INFO) << tag("query", query.query) << query.dialog_id << tag("index_mask", query.index_mask)
+    LOG(INFO) << tag("query", query.query) << query.dialog_id << tag("filter", query.filter)
               << tag("from_search_id", query.from_search_id) << tag("limit", query.limit);
     string words = prepare_query(query.query);
     LOG(INFO) << tag("from", query.query) << tag("to", words);
@@ -709,18 +777,8 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
     }
 
     // index_mask kludge
-    if (query.index_mask != 0) {
-      int index_i = -1;
-      for (int i = 0; i < MESSAGES_DB_INDEX_COUNT; i++) {
-        if (query.index_mask == (1 << i)) {
-          index_i = i;
-          break;
-        }
-      }
-      if (index_i == -1) {
-        return Status::Error("Union of index types is not supported");
-      }
-      words += PSTRING() << " \"\a\a" << index_i << "\"";
+    if (query.filter != MessageSearchFilter::Empty) {
+      words += PSTRING() << " \"\a\a" << message_search_filter_index(query.filter) << "\"";
     }
 
     auto &stmt = get_messages_fts_stmt_;
@@ -749,44 +807,20 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
   }
 
   Result<vector<MessagesDbDialogMessage>> get_messages_from_index(DialogId dialog_id, MessageId from_message_id,
-                                                                  int32 index_mask, int32 offset, int32 limit) {
-    CHECK(index_mask != 0);
-    LOG_CHECK(index_mask < (1 << MESSAGES_DB_INDEX_COUNT)) << tag("index_mask", index_mask);
-    int index_i = -1;
-    for (int i = 0; i < MESSAGES_DB_INDEX_COUNT; i++) {
-      if (index_mask == (1 << i)) {
-        index_i = i;
-        break;
-      }
-    }
-    if (index_i == -1) {
-      return Status::Error("Union is not supported");
-    }
-
-    auto &stmt = get_messages_from_index_stmts_[index_i];
+                                                                  MessageSearchFilter filter, int32 offset,
+                                                                  int32 limit) {
+    auto &stmt = get_messages_from_index_stmts_[message_search_filter_index(filter)];
     return get_messages_impl(stmt, dialog_id, from_message_id, offset, limit);
   }
 
   Result<MessagesDbCallsResult> get_calls(MessagesDbCallsQuery query) final {
-    CHECK(query.index_mask != 0);
-    LOG_CHECK(query.index_mask < (1 << MESSAGES_DB_INDEX_COUNT)) << tag("index_mask", query.index_mask);
-    int index_i = -1;
-    for (int i = 0; i < MESSAGES_DB_INDEX_COUNT; i++) {
-      if (query.index_mask == (1 << i)) {
-        index_i = i;
-        break;
-      }
-    }
-    if (index_i == -1) {
-      return Status::Error("Union is not supported");
-    }
     int32 pos;
-    if (index_i + 1 == static_cast<int>(MessageSearchFilter::Call)) {
+    if (query.filter == MessageSearchFilter::Call) {
       pos = 0;
-    } else if (index_i + 1 == static_cast<int>(MessageSearchFilter::MissedCall)) {
+    } else if (query.filter == MessageSearchFilter::MissedCall) {
       pos = 1;
     } else {
-      return Status::Error(PSLICE() << "Index mask is not Call or MissedCall " << query.index_mask);
+      return Status::Error(PSLICE() << "Filter is not Call or MissedCall: " << query.filter);
     }
 
     auto &stmt = get_calls_stmts_[pos];
@@ -809,8 +843,8 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
     return std::move(result);
   }
 
-  Status begin_transaction() final {
-    return db_.begin_transaction();
+  Status begin_write_transaction() final {
+    return db_.begin_write_transaction();
   }
   Status commit_transaction() final {
     return db_.commit_transaction();
@@ -839,6 +873,7 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
   SqliteStatement get_scheduled_messages_stmt_;
   SqliteStatement get_messages_from_notification_id_stmt_;
 
+  std::array<SqliteStatement, MESSAGES_DB_INDEX_COUNT> get_message_ids_stmts_;
   std::array<GetMessagesStmt, MESSAGES_DB_INDEX_COUNT> get_messages_from_index_stmts_;
   std::array<SqliteStatement, 2> get_calls_stmts_;
 
@@ -850,8 +885,9 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
   SqliteStatement delete_scheduled_message_stmt_;
   SqliteStatement delete_scheduled_server_message_stmt_;
 
-  Result<vector<MessagesDbDialogMessage>> get_messages_impl(GetMessagesStmt &stmt, DialogId dialog_id,
-                                                            MessageId from_message_id, int32 offset, int32 limit) {
+  static Result<vector<MessagesDbDialogMessage>> get_messages_impl(GetMessagesStmt &stmt, DialogId dialog_id,
+                                                                   MessageId from_message_id, int32 offset,
+                                                                   int32 limit) {
     LOG_CHECK(dialog_id.is_valid()) << dialog_id;
     CHECK(from_message_id.is_valid());
 
@@ -902,8 +938,8 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
     return std::move(right);
   }
 
-  Result<vector<MessagesDbDialogMessage>> get_messages_inner(SqliteStatement &stmt, DialogId dialog_id,
-                                                             int64 from_message_id, int32 limit) {
+  static Result<vector<MessagesDbDialogMessage>> get_messages_inner(SqliteStatement &stmt, DialogId dialog_id,
+                                                                    int64 from_message_id, int32 limit) {
     SCOPE_EXIT {
       stmt.reset();
     };
@@ -926,7 +962,11 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
   }
 
   static std::pair<MessageId, int32> get_message_info(const MessagesDbDialogMessage &message, bool from_data = false) {
-    LogEventParser message_date_parser(message.data.as_slice());
+    return get_message_info(message.message_id, message.data.as_slice(), from_data);
+  }
+
+  static std::pair<MessageId, int32> get_message_info(MessageId message_id, Slice data, bool from_data) {
+    LogEventParser message_date_parser(data);
     int32 flags;
     int32 flags2 = 0;
     int32 flags3 = 0;
@@ -938,17 +978,17 @@ class MessagesDbImpl final : public MessagesDbSyncInterface {
       }
     }
     bool has_sender = (flags & (1 << 10)) != 0;
-    MessageId message_id;
-    td::parse(message_id, message_date_parser);
+    MessageId data_message_id;
+    td::parse(data_message_id, message_date_parser);
     UserId sender_user_id;
     if (has_sender) {
       td::parse(sender_user_id, message_date_parser);
     }
     int32 date;
     td::parse(date, message_date_parser);
-    LOG(INFO) << "Loaded " << message.message_id << "(aka " << message_id << ") sent at " << date << " by "
+    LOG(INFO) << "Loaded " << message_id << "(aka " << data_message_id << ") sent at " << date << " by "
               << sender_user_id;
-    return {from_data ? message_id : message.message_id, date};
+    return {from_data ? data_message_id : message_id, date};
   }
 };
 
@@ -1012,6 +1052,15 @@ class MessagesDbAsync final : public MessagesDbAsyncInterface {
                                   Promise<MessagesDbDialogMessage> promise) final {
     send_closure_later(impl_, &Impl::get_dialog_message_by_date, dialog_id, first_message_id, last_message_id, date,
                        std::move(promise));
+  }
+
+  void get_dialog_message_calendar(MessagesDbDialogCalendarQuery query, Promise<MessagesDbCalendar> promise) final {
+    send_closure_later(impl_, &Impl::get_dialog_message_calendar, std::move(query), std::move(promise));
+  }
+
+  void get_dialog_sparse_message_positions(MessagesDbGetDialogSparseMessagePositionsQuery query,
+                                           Promise<MessagesDbMessagePositions> promise) final {
+    send_closure_later(impl_, &Impl::get_dialog_sparse_message_positions, std::move(query), std::move(promise));
   }
 
   void get_messages(MessagesDbMessagesQuery query, Promise<vector<MessagesDbDialogMessage>> promise) final {
@@ -1105,6 +1154,17 @@ class MessagesDbAsync final : public MessagesDbAsyncInterface {
       promise.set_result(sync_db_->get_dialog_message_by_date(dialog_id, first_message_id, last_message_id, date));
     }
 
+    void get_dialog_message_calendar(MessagesDbDialogCalendarQuery query, Promise<MessagesDbCalendar> promise) {
+      add_read_query();
+      promise.set_result(sync_db_->get_dialog_message_calendar(std::move(query)));
+    }
+
+    void get_dialog_sparse_message_positions(MessagesDbGetDialogSparseMessagePositionsQuery query,
+                                             Promise<MessagesDbMessagePositions> promise) {
+      add_read_query();
+      promise.set_result(sync_db_->get_dialog_sparse_message_positions(std::move(query)));
+    }
+
     void get_messages(MessagesDbMessagesQuery query, Promise<vector<MessagesDbDialogMessage>> promise) {
       add_read_query();
       promise.set_result(sync_db_->get_messages(std::move(query)));
@@ -1176,7 +1236,7 @@ class MessagesDbAsync final : public MessagesDbAsyncInterface {
       if (pending_writes_.empty()) {
         return;
       }
-      sync_db_->begin_transaction().ensure();
+      sync_db_->begin_write_transaction().ensure();
       for (auto &query : pending_writes_) {
         query.set_value(Unit());
       }

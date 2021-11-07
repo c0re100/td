@@ -7,9 +7,8 @@
 #pragma once
 
 #include "td/telegram/Global.h"
-#include "td/telegram/SecretInputMedia.h"
-
 #include "td/telegram/secret_api.h"
+#include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 
@@ -34,7 +33,7 @@ class Location {
 
   void init(double latitude, double longitude, double horizontal_accuracy, int64 access_hash);
 
-  double fix_accuracy(double accuracy);
+  static double fix_accuracy(double accuracy);
 
  public:
   Location() = default;

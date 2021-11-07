@@ -616,7 +616,6 @@ PollId PollManager::create_poll(string &&question, vector<string> &&options, boo
   CHECK(is_local_poll_id(poll_id));
   bool is_inserted = polls_.emplace(poll_id, std::move(poll)).second;
   CHECK(is_inserted);
-  LOG(INFO) << "Created " << poll_id << " with question \"" << oneline(question) << '"';
   return poll_id;
 }
 
@@ -978,7 +977,7 @@ void PollManager::get_poll_voters(PollId poll_id, FullMessageId full_message_id,
 
   auto query_promise =
       PromiseCreator::lambda([actor_id = actor_id(this), poll_id, option_id, offset = voters.next_offset,
-                              limit](Result<tl_object_ptr<telegram_api::messages_votesList>> &&result) {
+                              limit](Result<tl_object_ptr<telegram_api::messages_votesList>> &&result) mutable {
         send_closure(actor_id, &PollManager::on_get_poll_voters, poll_id, option_id, std::move(offset), limit,
                      std::move(result));
       });
@@ -1491,7 +1490,7 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
   }
 
   CHECK(poll_results != nullptr);
-  bool is_min = (poll_results->flags_ & telegram_api::pollResults::MIN_MASK) != 0;
+  bool is_min = poll_results->min_;
   bool has_total_voters = (poll_results->flags_ & telegram_api::pollResults::TOTAL_VOTERS_MASK) != 0;
   if (has_total_voters && poll_results->total_voters_ != poll->total_voter_count) {
     poll->total_voter_count = poll_results->total_voters_;
@@ -1510,14 +1509,14 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
         continue;
       }
       if (!is_min) {
-        bool is_chosen = (poll_result->flags_ & telegram_api::pollAnswerVoters::CHOSEN_MASK) != 0;
+        bool is_chosen = poll_result->chosen_;
         if (is_chosen != option.is_chosen) {
           option.is_chosen = is_chosen;
           is_changed = true;
         }
       }
       if (!is_min || poll_server_is_closed) {
-        bool is_correct = (poll_result->flags_ & telegram_api::pollAnswerVoters::CORRECT_MASK) != 0;
+        bool is_correct = poll_result->correct_;
         if (is_correct) {
           if (correct_option_id != -1) {
             LOG(ERROR) << "Receive more than 1 correct answers " << correct_option_id << " and " << option_index;

@@ -77,7 +77,7 @@ static string get_url_query_hash(bool is_tg, const HttpUrlQuery &url_query) {
       // /joinchat/<link>
       return path[1];
     }
-    if (path.size() >= 1 && path[0].size() >= 2 && (path[0][0] == ' ' || path[0][0] == '+')) {
+    if (!path.empty() && path[0].size() >= 2 && (path[0][0] == ' ' || path[0][0] == '+')) {
       // /+<link>
       return path[0].substr(1);
     }
@@ -354,13 +354,19 @@ class LinkManager::InternalLinkUnknownDeepLink final : public InternalLink {
   }
 };
 
+class LinkManager::InternalLinkUnsupportedProxy final : public InternalLink {
+  td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
+    return td_api::make_object<td_api::internalLinkTypeUnsupportedProxy>();
+  }
+};
+
 class LinkManager::InternalLinkVoiceChat final : public InternalLink {
   string dialog_username_;
   string invite_hash_;
   bool is_live_stream_;
 
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeVoiceChat>(dialog_username_, invite_hash_, is_live_stream_);
+    return td_api::make_object<td_api::internalLinkTypeVideoChat>(dialog_username_, invite_hash_, is_live_stream_);
   }
 
  public:
@@ -395,8 +401,6 @@ class GetDeepLinkInfoQuery final : public Td::ResultHandler {
         return promise_.set_value(nullptr);
       case telegram_api::help_deepLinkInfo::ID: {
         auto info = telegram_api::move_object_as<telegram_api::help_deepLinkInfo>(result);
-        bool need_update = (info->flags_ & telegram_api::help_deepLinkInfo::UPDATE_APP_MASK) != 0;
-
         auto entities = get_message_entities(nullptr, std::move(info->entities_), "GetDeepLinkInfoQuery");
         auto status = fix_formatted_text(info->message_, entities, true, true, true, true, true);
         if (status.is_error()) {
@@ -408,7 +412,7 @@ class GetDeepLinkInfoQuery final : public Td::ResultHandler {
         }
         FormattedText text{std::move(info->message_), std::move(entities)};
         return promise_.set_value(
-            td_api::make_object<td_api::deepLinkInfo>(get_formatted_text_object(text, true, -1), need_update));
+            td_api::make_object<td_api::deepLinkInfo>(get_formatted_text_object(text, true, -1), info->update_app_));
       }
       default:
         UNREACHABLE();
@@ -463,11 +467,9 @@ class RequestUrlAuthQuery final : public Td::ResultHandler {
           return on_error(id, Status::Error(500, "Receive invalid bot_user_id"));
         }
         td->contacts_manager_->on_get_user(std::move(request->bot_), "RequestUrlAuthQuery");
-        bool request_write_access =
-            (request->flags_ & telegram_api::urlAuthResultRequest::REQUEST_WRITE_ACCESS_MASK) != 0;
         promise_.set_value(td_api::make_object<td_api::loginUrlInfoRequestConfirmation>(
             url_, request->domain_, td->contacts_manager_->get_user_id_object(bot_user_id, "RequestUrlAuthQuery"),
-            request_write_access));
+            request->request_write_access_));
         break;
       }
       case telegram_api::urlAuthResultAccepted::ID: {
@@ -811,7 +813,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
   } else if (path.size() == 1 && path[0] == "passport") {
     // passport?bot_id=<bot_user_id>&scope=<scope>&public_key=<public_key>&nonce=<nonce>
     return get_internal_link_passport(query, url_query.args_);
-  } else if (path.size() >= 1 && path[0] == "settings") {
+  } else if (!path.empty() && path[0] == "settings") {
     if (path.size() == 2 && path[1] == "change_number") {
       // settings/change_number
       return td::make_unique<InternalLinkChangePhoneNumber>();
@@ -863,6 +865,8 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
       if (0 < port && port < 65536) {
         return td::make_unique<InternalLinkProxy>(
             get_arg("server"), port, td_api::make_object<td_api::proxyTypeSocks5>(get_arg("user"), get_arg("pass")));
+      } else {
+        return td::make_unique<InternalLinkUnsupportedProxy>();
       }
     }
   } else if (path.size() == 1 && path[0] == "proxy") {
@@ -872,6 +876,8 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
       if (0 < port && port < 65536 && mtproto::ProxySecret::from_link(get_arg("secret")).is_ok()) {
         return td::make_unique<InternalLinkProxy>(get_arg("server"), port,
                                                   td_api::make_object<td_api::proxyTypeMtproto>(get_arg("secret")));
+      } else {
+        return td::make_unique<InternalLinkUnsupportedProxy>();
       }
     }
   } else if (path.size() == 1 && path[0] == "privatepost") {
@@ -982,6 +988,8 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
       if (0 < port && port < 65536) {
         return td::make_unique<InternalLinkProxy>(
             get_arg("server"), port, td_api::make_object<td_api::proxyTypeSocks5>(get_arg("user"), get_arg("pass")));
+      } else {
+        return td::make_unique<InternalLinkUnsupportedProxy>();
       }
     }
   } else if (path[0] == "proxy") {
@@ -991,6 +999,8 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
       if (0 < port && port < 65536 && mtproto::ProxySecret::from_link(get_arg("secret")).is_ok()) {
         return td::make_unique<InternalLinkProxy>(get_arg("server"), port,
                                                   td_api::make_object<td_api::proxyTypeMtproto>(get_arg("secret")));
+      } else {
+        return td::make_unique<InternalLinkUnsupportedProxy>();
       }
     }
   } else if (path[0] == "bg") {
@@ -1156,14 +1166,14 @@ void LinkManager::get_external_link_info(string &&link, Promise<td_api::object_p
   }
 
   if (autologin_update_time_ < Time::now() - 10000) {
-    auto query_promise = PromiseCreator::lambda([link = std::move(link), promise = std::move(promise)](
-                                                    Result<td_api::object_ptr<td_api::JsonValue>> &&result) mutable {
-      if (result.is_error()) {
-        return promise.set_value(td_api::make_object<td_api::loginUrlInfoOpen>(link, false));
-      }
-      send_closure(G()->link_manager(), &LinkManager::get_external_link_info, std::move(link), std::move(promise));
-    });
-    return send_closure(G()->config_manager(), &ConfigManager::get_app_config, std::move(query_promise));
+    auto query_promise =
+        PromiseCreator::lambda([link = std::move(link), promise = std::move(promise)](Result<Unit> &&result) mutable {
+          if (result.is_error()) {
+            return promise.set_value(td_api::make_object<td_api::loginUrlInfoOpen>(link, false));
+          }
+          send_closure(G()->link_manager(), &LinkManager::get_external_link_info, std::move(link), std::move(promise));
+        });
+    return send_closure(G()->config_manager(), &ConfigManager::reget_app_config, std::move(query_promise));
   }
 
   if (autologin_token_.empty()) {

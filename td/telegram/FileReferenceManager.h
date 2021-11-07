@@ -51,10 +51,12 @@ class FileReferenceManager final : public Actor {
   FileSourceId create_background_file_source(BackgroundId background_id, int64 access_hash);
   FileSourceId create_chat_full_file_source(ChatId chat_id);
   FileSourceId create_channel_full_file_source(ChannelId channel_id);
+  FileSourceId create_app_config_file_source();
 
   using NodeId = FileId;
   void repair_file_reference(NodeId node_id, Promise<> promise);
-  void reload_photo(PhotoSizeSource source, Promise<Unit> promise);
+
+  static void reload_photo(PhotoSizeSource source, Promise<Unit> promise);
 
   bool add_file_source(NodeId node_id, FileSourceId file_source_id);
 
@@ -131,12 +133,15 @@ class FileReferenceManager final : public Actor {
   struct FileSourceChannelFull {
     ChannelId channel_id;
   };
+  struct FileSourceAppConfig {
+    // empty
+  };
 
   // append only
   using FileSource =
       Variant<FileSourceMessage, FileSourceUserPhoto, FileSourceChatPhoto, FileSourceChannelPhoto, FileSourceWallpapers,
               FileSourceWebPage, FileSourceSavedAnimations, FileSourceRecentStickers, FileSourceFavoriteStickers,
-              FileSourceBackground, FileSourceChatFull, FileSourceChannelFull>;
+              FileSourceBackground, FileSourceChatFull, FileSourceChannelFull, FileSourceAppConfig>;
   vector<FileSource> file_sources_;
 
   int64 query_generation_{0};

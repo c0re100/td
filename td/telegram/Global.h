@@ -369,10 +369,14 @@ class Global final : public ActorContext {
   void set_dh_config(std::shared_ptr<DhConfig> new_dh_config) {
 #if !TD_HAVE_ATOMIC_SHARED_PTR
     std::lock_guard<std::mutex> guard(dh_config_mutex_);
-    dh_config_ = new_dh_config;
+    dh_config_ = std::move(new_dh_config);
 #else
     atomic_store(&dh_config_, std::move(new_dh_config));
 #endif
+  }
+
+  static Status request_aborted_error() {
+    return Status::Error(500, "Request aborted");
   }
 
   void set_close_flag() {
@@ -380,6 +384,10 @@ class Global final : public ActorContext {
   }
   bool close_flag() const {
     return close_flag_.load();
+  }
+
+  Status close_status() const {
+    return close_flag() ? request_aborted_error() : Status::OK();
   }
 
   bool is_expected_error(const Status &error) const {

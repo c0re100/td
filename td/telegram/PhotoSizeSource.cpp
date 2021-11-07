@@ -150,7 +150,7 @@ string PhotoSizeSource::get_unique_name(int64 photo_id) const {
       UNREACHABLE();
       break;
   }
-  return 0;
+  return string();
 }
 
 static bool operator==(const PhotoSizeSource::Legacy &lhs, const PhotoSizeSource::Legacy &rhs) {
@@ -218,7 +218,7 @@ static bool operator==(const PhotoSizeSource::StickerSetThumbnailVersion &lhs,
 }
 
 bool operator==(const PhotoSizeSource &lhs, const PhotoSizeSource &rhs) {
-  return lhs.variant == rhs.variant;
+  return lhs.variant_ == rhs.variant_;
 }
 
 bool operator!=(const PhotoSizeSource &lhs, const PhotoSizeSource &rhs) {

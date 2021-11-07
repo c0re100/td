@@ -9,6 +9,7 @@
 #include "td/telegram/DialogId.h"
 #include "td/telegram/FullMessageId.h"
 #include "td/telegram/MessageId.h"
+#include "td/telegram/MessageSearchFilter.h"
 #include "td/telegram/NotificationId.h"
 #include "td/telegram/ServerMessageId.h"
 
@@ -28,7 +29,7 @@ class SqliteDb;
 
 struct MessagesDbMessagesQuery {
   DialogId dialog_id;
-  int32 index_mask{0};
+  MessageSearchFilter filter{MessageSearchFilter::Empty};
   MessageId from_message_id;
   int32 offset{0};
   int32 limit{100};
@@ -45,10 +46,40 @@ struct MessagesDbMessage {
   BufferSlice data;
 };
 
+struct MessagesDbDialogCalendarQuery {
+  DialogId dialog_id;
+  MessageSearchFilter filter{MessageSearchFilter::Empty};
+  MessageId from_message_id;
+  int32 tz_offset{0};
+};
+
+struct MessagesDbCalendar {
+  vector<MessagesDbDialogMessage> messages;
+  vector<int32> total_counts;
+};
+
+struct MessagesDbGetDialogSparseMessagePositionsQuery {
+  DialogId dialog_id;
+  MessageSearchFilter filter{MessageSearchFilter::Empty};
+  MessageId from_message_id;
+  int32 limit{0};
+};
+
+struct MessagesDbMessagePosition {
+  int32 position{0};
+  int32 date{0};
+  MessageId message_id;
+};
+
+struct MessagesDbMessagePositions {
+  int32 total_count{0};
+  vector<MessagesDbMessagePosition> positions;
+};
+
 struct MessagesDbFtsQuery {
   string query;
   DialogId dialog_id;
-  int32 index_mask{0};
+  MessageSearchFilter filter{MessageSearchFilter::Empty};
   int64 from_search_id{0};
   int32 limit{100};
 };
@@ -58,10 +89,11 @@ struct MessagesDbFtsResult {
 };
 
 struct MessagesDbCallsQuery {
-  int32 index_mask{0};
+  MessageSearchFilter filter{MessageSearchFilter::Empty};
   int32 from_unique_message_id{0};
   int32 limit{100};
 };
+
 struct MessagesDbCallsResult {
   vector<MessagesDbMessage> messages;
 };
@@ -88,6 +120,11 @@ class MessagesDbSyncInterface {
   virtual Result<MessagesDbDialogMessage> get_dialog_message_by_date(DialogId dialog_id, MessageId first_message_id,
                                                                      MessageId last_message_id, int32 date) = 0;
 
+  virtual Result<MessagesDbCalendar> get_dialog_message_calendar(MessagesDbDialogCalendarQuery query) = 0;
+
+  virtual Result<MessagesDbMessagePositions> get_dialog_sparse_message_positions(
+      MessagesDbGetDialogSparseMessagePositionsQuery query) = 0;
+
   virtual Result<vector<MessagesDbDialogMessage>> get_messages(MessagesDbMessagesQuery query) = 0;
   virtual Result<vector<MessagesDbDialogMessage>> get_scheduled_messages(DialogId dialog_id, int32 limit) = 0;
   virtual Result<vector<MessagesDbDialogMessage>> get_messages_from_notification_id(DialogId dialog_id,
@@ -100,7 +137,7 @@ class MessagesDbSyncInterface {
   virtual Result<MessagesDbCallsResult> get_calls(MessagesDbCallsQuery query) = 0;
   virtual Result<MessagesDbFtsResult> get_messages_fts(MessagesDbFtsQuery query) = 0;
 
-  virtual Status begin_transaction() = 0;
+  virtual Status begin_write_transaction() = 0;
   virtual Status commit_transaction() = 0;
 };
 
@@ -138,6 +175,12 @@ class MessagesDbAsyncInterface {
                                         Promise<MessagesDbDialogMessage> promise) = 0;
   virtual void get_dialog_message_by_date(DialogId dialog_id, MessageId first_message_id, MessageId last_message_id,
                                           int32 date, Promise<MessagesDbDialogMessage> promise) = 0;
+
+  virtual void get_dialog_message_calendar(MessagesDbDialogCalendarQuery query,
+                                           Promise<MessagesDbCalendar> promise) = 0;
+
+  virtual void get_dialog_sparse_message_positions(MessagesDbGetDialogSparseMessagePositionsQuery query,
+                                                   Promise<MessagesDbMessagePositions> promise) = 0;
 
   virtual void get_messages(MessagesDbMessagesQuery query, Promise<vector<MessagesDbDialogMessage>> promise) = 0;
   virtual void get_scheduled_messages(DialogId dialog_id, int32 limit,
