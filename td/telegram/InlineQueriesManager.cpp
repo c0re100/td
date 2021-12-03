@@ -89,26 +89,26 @@ class GetInlineBotResultsQuery final : public Td::ResultHandler {
     return result;
   }
 
-  void on_result(uint64 id, BufferSlice packet) final {
+  void on_result(BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_getInlineBotResults>(packet);
     if (result_ptr.is_error()) {
-      return on_error(id, result_ptr.move_as_error());
+      return on_error(result_ptr.move_as_error());
     }
 
-    td->inline_queries_manager_->on_get_inline_query_results(dialog_id_, bot_user_id_, query_hash_,
-                                                             result_ptr.move_as_ok());
+    td_->inline_queries_manager_->on_get_inline_query_results(dialog_id_, bot_user_id_, query_hash_,
+                                                              result_ptr.move_as_ok());
     promise_.set_value(Unit());
   }
 
-  void on_error(uint64 id, Status status) final {
+  void on_error(Status status) final {
     if (status.code() == NetQuery::Canceled) {
       status = Status::Error(406, "Request canceled");
     } else if (status.message() == "BOT_RESPONSE_TIMEOUT") {
       status = Status::Error(502, "The bot is not responding");
     }
-    LOG(INFO) << "Inline query returned error " << status;
+    LOG(INFO) << "Receive error for GetInlineBotResultsQuery: " << status;
 
-    td->inline_queries_manager_->on_get_inline_query_results(dialog_id_, bot_user_id_, query_hash_, nullptr);
+    td_->inline_queries_manager_->on_get_inline_query_results(dialog_id_, bot_user_id_, query_hash_, nullptr);
     promise_.set_error(std::move(status));
   }
 };
@@ -143,10 +143,10 @@ class SetInlineBotResultsQuery final : public Td::ResultHandler {
         std::move(inline_bot_switch_pm))));
   }
 
-  void on_result(uint64 id, BufferSlice packet) final {
+  void on_result(BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_setInlineBotResults>(packet);
     if (result_ptr.is_error()) {
-      return on_error(id, result_ptr.move_as_error());
+      return on_error(result_ptr.move_as_error());
     }
 
     bool result = result_ptr.ok();
@@ -156,7 +156,7 @@ class SetInlineBotResultsQuery final : public Td::ResultHandler {
     promise_.set_value(Unit());
   }
 
-  void on_error(uint64 id, Status status) final {
+  void on_error(Status status) final {
     promise_.set_error(std::move(status));
   }
 };
@@ -173,6 +173,9 @@ void InlineQueriesManager::tear_down() {
 
 void InlineQueriesManager::on_drop_inline_query_result_timeout_callback(void *inline_queries_manager_ptr,
                                                                         int64 query_hash) {
+  if (G()->close_flag()) {
+    return;
+  }
   auto inline_queries_manager = static_cast<InlineQueriesManager *>(inline_queries_manager_ptr);
   auto it = inline_queries_manager->inline_query_results_.find(query_hash);
   CHECK(it != inline_queries_manager->inline_query_results_.end());

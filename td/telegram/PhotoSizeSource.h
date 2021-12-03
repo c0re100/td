@@ -11,6 +11,7 @@
 #include "td/telegram/telegram_api.h"
 
 #include "td/utils/common.h"
+#include "td/utils/logging.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/Variant.h"
 
@@ -45,7 +46,7 @@ struct PhotoSizeSource {
     Thumbnail(FileType file_type, int32 thumbnail_type) : file_type(file_type), thumbnail_type(thumbnail_type) {
     }
 
-    FileType file_type;
+    FileType file_type = FileType::None;
     int32 thumbnail_type = 0;
   };
 
@@ -177,13 +178,13 @@ struct PhotoSizeSource {
     return PhotoSizeSource(StickerSetThumbnailVersion(sticker_set_id, sticker_set_access_hash, version));
   }
 
-  Type get_type() const {
+  Type get_type(const char *source) const {
     auto offset = variant_.get_offset();
-    CHECK(offset >= 0);
+    LOG_CHECK(offset >= 0) << offset << ' ' << source;
     return static_cast<Type>(offset);
   }
 
-  FileType get_file_type() const;
+  FileType get_file_type(const char *source) const;
 
   Thumbnail &thumbnail() {
     return variant_.get<Thumbnail>();

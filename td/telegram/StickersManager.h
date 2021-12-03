@@ -396,8 +396,8 @@ class StickersManager final : public Actor {
     UserId user_id;
     string title;
     string short_name;
-    bool is_masks;
-    bool is_animated;
+    bool is_masks = false;
+    bool is_animated = false;
     vector<FileId> file_ids;
     vector<tl_object_ptr<td_api::InputSticker>> stickers;
     string software;
@@ -480,9 +480,9 @@ class StickersManager final : public Actor {
 
   static string get_full_sticker_set_database_key(StickerSetId set_id);
 
-  string get_sticker_set_database_value(const StickerSet *s, bool with_stickers);
+  string get_sticker_set_database_value(const StickerSet *s, bool with_stickers, const char *source);
 
-  void update_sticker_set(StickerSet *sticker_set);
+  void update_sticker_set(StickerSet *sticker_set, const char *source);
 
   void load_sticker_sets(vector<StickerSetId> &&sticker_set_ids, Promise<Unit> &&promise);
 
@@ -578,7 +578,7 @@ class StickersManager final : public Actor {
   void save_favorite_stickers_to_database();
 
   template <class StorerT>
-  void store_sticker_set(const StickerSet *sticker_set, bool with_stickers, StorerT &storer) const;
+  void store_sticker_set(const StickerSet *sticker_set, bool with_stickers, StorerT &storer, const char *source) const;
 
   template <class ParserT>
   void parse_sticker_set(StickerSet *sticker_set, ParserT &parser);
@@ -789,7 +789,7 @@ class StickersManager final : public Actor {
   struct StickerSetLoadRequest {
     Promise<Unit> promise;
     Status error;
-    size_t left_queries;
+    size_t left_queries = 0;
   };
 
   std::unordered_map<uint32, StickerSetLoadRequest> sticker_set_load_requests_;

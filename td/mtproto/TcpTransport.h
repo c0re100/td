@@ -122,8 +122,8 @@ class OldTransport final : public IStreamTransport {
 
  private:
   TransportImpl impl_{false};
-  ChainBufferReader *input_;
-  ChainBufferWriter *output_;
+  ChainBufferReader *input_{nullptr};
+  ChainBufferWriter *output_{nullptr};
 };
 
 class ObfuscatedTransport final : public IStreamTransport {
@@ -195,7 +195,7 @@ class ObfuscatedTransport final : public IStreamTransport {
   // The other problem is that first 56 bytes must be sent unencrypted.
   UInt256 output_key_;
   AesCtrState output_state_;
-  ChainBufferWriter *output_;
+  ChainBufferWriter *output_ = nullptr;
 
   void do_write_tls(BufferWriter &&message);
   void do_write_tls(BufferBuilder &&builder);

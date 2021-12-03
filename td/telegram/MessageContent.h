@@ -20,7 +20,6 @@
 #include "td/telegram/ReplyMarkup.h"
 #include "td/telegram/secret_api.h"
 #include "td/telegram/SecretInputMedia.h"
-#include "td/telegram/StickerSetId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/TopDialogCategory.h"
@@ -148,6 +147,8 @@ UserId get_message_content_deleted_user_id(const MessageContent *content);
 
 int32 get_message_content_live_location_period(const MessageContent *content);
 
+bool get_message_content_poll_is_anonymous(const Td *td, const MessageContent *content);
+
 bool get_message_content_poll_is_closed(const Td *td, const MessageContent *content);
 
 bool has_message_content_web_page(const MessageContent *content);
@@ -244,8 +245,6 @@ void update_failed_to_send_message_content(Td *td, unique_ptr<MessageContent> &c
 void add_message_content_dependencies(Dependencies &dependencies, const MessageContent *message_content);
 
 void on_sent_message_content(Td *td, const MessageContent *content);
-
-StickerSetId add_sticker_set(Td *td, tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set);
 
 bool is_unsent_animated_emoji_click(Td *td, DialogId dialog_id, const DialogAction &action);
 

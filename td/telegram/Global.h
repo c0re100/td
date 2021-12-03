@@ -452,8 +452,8 @@ class Global final : public ActorContext {
   unique_ptr<MtprotoHeader> mtproto_header_;
 
   TdParameters parameters_;
-  int32 gc_scheduler_id_;
-  int32 slow_net_scheduler_id_;
+  int32 gc_scheduler_id_ = 0;
+  int32 slow_net_scheduler_id_ = 0;
 
   std::atomic<bool> store_all_files_in_files_directory_{false};
 
@@ -496,7 +496,8 @@ class Global final : public ActorContext {
 
 inline Global *G_impl(const char *file, int line) {
   ActorContext *context = Scheduler::context();
-  LOG_CHECK(context != nullptr && context->get_id() == Global::ID) << "In " << file << " at " << line;
+  LOG_CHECK(context != nullptr && context->get_id() == Global::ID)
+      << "Context = " << context << " in " << file << " at " << line;
   return static_cast<Global *>(context);
 }
 

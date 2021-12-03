@@ -125,8 +125,7 @@ class ContactsManager final : public Actor {
   int32 get_secret_chat_layer(SecretChatId secret_chat_id) const;
   FolderId get_secret_chat_initial_folder_id(SecretChatId secret_chat_id) const;
 
-  void on_imported_contacts(int64 random_id, vector<UserId> imported_contact_user_ids,
-                            vector<int32> unimported_contact_invites);
+  void on_imported_contacts(int64 random_id, Result<tl_object_ptr<telegram_api::contacts_importedContacts>> result);
 
   void on_deleted_contacts(const vector<UserId> &deleted_contact_user_ids);
 
@@ -274,22 +273,6 @@ class ContactsManager final : public Actor {
   static td_api::object_ptr<td_api::CheckChatUsernameResult> get_check_chat_username_result_object(
       CheckDialogUsernameResult result);
 
-  void set_account_ttl(int32 account_ttl, Promise<Unit> &&promise) const;
-  void get_account_ttl(Promise<int32> &&promise) const;
-
-  static td_api::object_ptr<td_api::session> convert_authorization_object(
-      tl_object_ptr<telegram_api::authorization> &&authorization);
-
-  void confirm_qr_code_authentication(const string &link, Promise<td_api::object_ptr<td_api::session>> &&promise);
-
-  void get_active_sessions(Promise<tl_object_ptr<td_api::sessions>> &&promise) const;
-  void terminate_session(int64 session_id, Promise<Unit> &&promise) const;
-  void terminate_all_other_sessions(Promise<Unit> &&promise) const;
-
-  void get_connected_websites(Promise<tl_object_ptr<td_api::connectedWebsites>> &&promise) const;
-  void disconnect_website(int64 website_id, Promise<Unit> &&promise) const;
-  void disconnect_all_websites(Promise<Unit> &&promise) const;
-
   void add_contact(Contact contact, bool share_phone_number, Promise<Unit> &&promise);
 
   std::pair<vector<UserId>, vector<int32>> import_contacts(const vector<Contact> &contacts, int64 &random_id,
@@ -435,7 +418,7 @@ class ContactsManager final : public Actor {
 
   vector<DialogId> get_inactive_channels(Promise<Unit> &&promise);
 
-  void dismiss_suggested_action(SuggestedAction action, Promise<Unit> &&promise);
+  void dismiss_dialog_suggested_action(SuggestedAction action, Promise<Unit> &&promise);
 
   bool is_user_contact(UserId user_id, bool is_mutual = false) const;
 
@@ -527,14 +510,13 @@ class ContactsManager final : public Actor {
 
   void add_dialog_participants(DialogId dialog_id, const vector<UserId> &user_ids, Promise<Unit> &&promise);
 
-  void set_dialog_participant_status(DialogId dialog_id, const tl_object_ptr<td_api::MessageSender> &participant_id,
-                                     const tl_object_ptr<td_api::ChatMemberStatus> &chat_member_status,
-                                     Promise<Unit> &&promise);
+  void set_dialog_participant_status(DialogId dialog_id, DialogId participant_dialog_id,
+                                     DialogParticipantStatus &&status, Promise<Unit> &&promise);
 
-  void ban_dialog_participant(DialogId dialog_id, const tl_object_ptr<td_api::MessageSender> &participant_id,
-                              int32 banned_until_date, bool revoke_messages, Promise<Unit> &&promise);
+  void ban_dialog_participant(DialogId dialog_id, DialogId participant_dialog_id, int32 banned_until_date,
+                              bool revoke_messages, Promise<Unit> &&promise);
 
-  void get_dialog_participant(DialogId dialog_id, const tl_object_ptr<td_api::MessageSender> &participant_id,
+  void get_dialog_participant(DialogId dialog_id, DialogId participant_dialog_id,
                               Promise<td_api::object_ptr<td_api::chatMember>> &&promise);
 
   void search_dialog_participants(DialogId dialog_id, const string &query, int32 limit, DialogParticipantsFilter filter,
@@ -658,7 +640,6 @@ class ContactsManager final : public Actor {
     bool is_photo_changed = true;
     bool is_is_contact_changed = true;
     bool is_is_deleted_changed = true;
-    bool is_default_permissions_changed = true;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
     bool is_status_changed = true;
@@ -907,7 +888,7 @@ class ContactsManager final : public Actor {
   struct SecretChat {
     int64 access_hash = 0;
     UserId user_id;
-    SecretChatState state;
+    SecretChatState state = SecretChatState::Unknown;
     string key_hash;
     int32 ttl = 0;
     int32 date = 0;
@@ -1372,6 +1353,11 @@ class ContactsManager final : public Actor {
 
   void on_get_contacts_finished(size_t expected_contact_count);
 
+  void do_import_contacts(vector<Contact> contacts, int64 random_id, Promise<Unit> &&promise);
+
+  void on_import_contacts_finished(int64 random_id, vector<UserId> imported_contact_user_ids,
+                                   vector<int32> unimported_contact_invites);
+
   void load_imported_contacts(Promise<Unit> &&promise);
 
   void on_load_imported_contacts_from_database(string value);
@@ -1415,8 +1401,6 @@ class ContactsManager final : public Actor {
 
   bool update_permanent_invite_link(DialogInviteLink &invite_link, DialogInviteLink new_invite_link);
 
-  static Result<DialogId> get_participant_dialog_id(const td_api::object_ptr<td_api::MessageSender> &participant_id);
-
   void add_chat_participant(ChatId chat_id, UserId user_id, int32 forward_limit, Promise<Unit> &&promise);
 
   void add_channel_participant(ChannelId channel_id, UserId user_id, const DialogParticipantStatus &old_status,
@@ -1437,7 +1421,8 @@ class ContactsManager final : public Actor {
   DialogParticipants search_private_chat_participants(UserId my_user_id, UserId peer_user_id, const string &query,
                                                       int32 limit, DialogParticipantsFilter filter) const;
 
-  void get_dialog_participant(DialogId dialog_id, DialogId participant_dialog_id, Promise<DialogParticipant> &&promise);
+  void do_get_dialog_participant(DialogId dialog_id, DialogId participant_dialog_id,
+                                 Promise<DialogParticipant> &&promise);
 
   void finish_get_dialog_participant(DialogParticipant &&dialog_participant,
                                      Promise<td_api::object_ptr<td_api::chatMember>> &&promise);
@@ -1683,6 +1668,14 @@ class ContactsManager final : public Actor {
     }
   };
   std::unordered_map<FileId, UploadedProfilePhoto, FileIdHash> uploaded_profile_photos_;  // file_id -> promise
+
+  struct ImportContactsTask {
+    Promise<Unit> promise_;
+    vector<Contact> input_contacts_;
+    vector<UserId> imported_user_ids_;
+    vector<int32> unimported_contact_invites_;
+  };
+  std::unordered_map<int64, unique_ptr<ImportContactsTask>> import_contact_tasks_;
 
   std::unordered_map<int64, std::pair<vector<UserId>, vector<int32>>> imported_contacts_;
 

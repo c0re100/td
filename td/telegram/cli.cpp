@@ -31,6 +31,7 @@
 #include "td/utils/misc.h"
 #include "td/utils/NullLog.h"
 #include "td/utils/OptionParser.h"
+#include "td/utils/port/detail/ThreadIdGuard.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/PollFlags.h"
 #include "td/utils/port/signals.h"
@@ -439,6 +440,9 @@ class CliClient final : public Actor {
     if (str == "me") {
       return my_id_;
     }
+    if (str == ".") {
+      return opened_chat_id_;
+    }
     if (str[0] == '@') {
       str.remove_prefix(1);
     }
@@ -675,7 +679,7 @@ class CliClient final : public Actor {
   }
 
   struct SearchQuery {
-    int32 limit;
+    int32 limit = 0;
     string query;
   };
 
@@ -2592,7 +2596,9 @@ class CliClient final : public Actor {
     } else if (op == "gdialog" || op == "gd") {
       send_request(td_api::make_object<td_api::getChat>(as_chat_id(args)));
     } else if (op == "open") {
-      send_request(td_api::make_object<td_api::openChat>(as_chat_id(args)));
+      auto chat_id = as_chat_id(args);
+      opened_chat_id_ = chat_id;
+      send_request(td_api::make_object<td_api::openChat>(chat_id));
     } else if (op == "close") {
       send_request(td_api::make_object<td_api::closeChat>(as_chat_id(args)));
     } else if (op == "gm") {
@@ -4550,6 +4556,7 @@ class CliClient final : public Actor {
   int64 my_id_ = 0;
   string schedule_date_;
   string message_thread_id_;
+  int64 opened_chat_id_ = 0;
 
   ConcurrentScheduler *scheduler_{nullptr};
 
@@ -4593,6 +4600,7 @@ static void on_log_message(int verbosity_level, const char *message) {
 
 void main(int argc, char **argv) {
   ExitGuard exit_guard;
+  detail::ThreadIdGuard thread_id_guard;
   ignore_signal(SignalType::HangUp).ensure();
   ignore_signal(SignalType::Pipe).ensure();
   set_signal_handler(SignalType::Error, fail_signal).ensure();

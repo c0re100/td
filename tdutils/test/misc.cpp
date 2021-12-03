@@ -35,6 +35,7 @@
 #include "td/utils/StringBuilder.h"
 #include "td/utils/tests.h"
 #include "td/utils/Time.h"
+#include "td/utils/tl_helpers.h"
 #include "td/utils/translit.h"
 #include "td/utils/uint128.h"
 #include "td/utils/unicode.h"
@@ -68,11 +69,9 @@ struct CheckExitGuard {
 
 static CheckExitGuard check_exit_guard_true{true};
 static td::ExitGuard exit_guard;
-static CheckExitGuard check_exit_guard_false{false};
 
 #if TD_LINUX || TD_DARWIN
 TEST(Misc, update_atime_saves_mtime) {
-  SET_VERBOSITY_LEVEL(VERBOSITY_NAME(ERROR));
   td::string name = "test_file";
   td::unlink(name).ignore();
   auto r_file = td::FileFd::open(name, td::FileFd::Read | td::FileFd::Flags::Create | td::FileFd::Flags::Truncate);
@@ -102,7 +101,6 @@ TEST(Misc, update_atime_saves_mtime) {
 }
 
 TEST(Misc, update_atime_change_atime) {
-  SET_VERBOSITY_LEVEL(VERBOSITY_NAME(ERROR));
   td::string name = "test_file";
   td::unlink(name).ignore();
   auto r_file = td::FileFd::open(name, td::FileFd::Read | td::FileFd::Flags::Create | td::FileFd::Flags::Truncate);
@@ -1232,4 +1230,17 @@ TEST(Misc, is_emoji) {
   ASSERT_TRUE(!td::is_emoji(" "));
   ASSERT_TRUE(!td::is_emoji(""));
   ASSERT_TRUE(!td::is_emoji("1234567890123456789012345678901234567890123456789012345678901234567890"));
+  ASSERT_TRUE(td::is_emoji("❤️"));
+  ASSERT_TRUE(td::is_emoji("❤"));
+}
+
+TEST(Misc, serialize) {
+  td::int32 x = 1;
+  ASSERT_EQ(td::base64_encode(td::serialize(x)), td::base64_encode(td::string("\x01\x00\x00\x00", 4)));
+  td::int64 y = -2;
+  ASSERT_EQ(td::base64_encode(td::serialize(y)), td::base64_encode(td::string("\xfe\xff\xff\xff\xff\xff\xff\xff", 8)));
+}
+
+TEST(Misc, check_reset_guard) {
+  CheckExitGuard check_exit_guard{false};
 }

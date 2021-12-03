@@ -6,7 +6,6 @@
 //
 #pragma once
 
-#include "td/telegram/AuthManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
@@ -26,10 +25,14 @@ template <class T = Unit>
 class RequestActor : public Actor {
  public:
   RequestActor(ActorShared<Td> td_id, uint64 request_id)
-      : td_id_(std::move(td_id)), td(td_id_.get().get_actor_unsafe()), request_id_(request_id) {
+      : td_id_(std::move(td_id)), td_(td_id_.get().get_actor_unsafe()), request_id_(request_id) {
   }
 
   void loop() override {
+    if (G()->close_flag()) {
+      return do_send_error(Global::request_aborted_error());
+    }
+
     PromiseActor<T> promise_actor;
     FutureActor<T> future;
     init_promise_future(&promise_actor, &future);
@@ -64,14 +67,12 @@ class RequestActor : public Actor {
     if (future_.is_error()) {
       auto error = future_.move_as_error();
       if (error == Status::Error<FutureActor<T>::HANGUP_ERROR_CODE>()) {
-        // dropping query due to lost authorization or lost promise
-        // td may be already closed, so we should check is auth_manager_ is empty
-        bool is_authorized = td->auth_manager_ && td->auth_manager_->is_authorized();
-        if (is_authorized) {
+        // dropping query due to closing or lost promise
+        if (G()->close_flag()) {
+          do_send_error(Global::request_aborted_error());
+        } else {
           LOG(ERROR) << "Promise was lost";
           do_send_error(Status::Error(500, "Query can't be answered due to a bug in TDLib"));
-        } else {
-          do_send_error(Status::Error(401, "Unauthorized"));
         }
         return stop();
       }
@@ -101,7 +102,7 @@ class RequestActor : public Actor {
 
  protected:
   ActorShared<Td> td_id_;
-  Td *td;
+  Td *td_;
 
   void send_result(tl_object_ptr<td_api::Object> &&result) {
     send_closure(td_id_, &Td::send_result, request_id_, std::move(result));

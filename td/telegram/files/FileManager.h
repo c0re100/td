@@ -321,7 +321,7 @@ class FileView {
     if (!remote_location().is_photo()) {
       return false;
     }
-    auto type = remote_location().get_source().get_type();
+    auto type = remote_location().get_source().get_type("may_reload_photo");
     return type != PhotoSizeSource::Type::Legacy && type != PhotoSizeSource::Type::FullLegacy &&
            type != PhotoSizeSource::Type::Thumbnail;
   }
@@ -538,7 +538,7 @@ class FileManager final : public FileLoadManager::Callback {
     int8 download_priority_{0};
     int8 upload_priority_{0};
 
-    uint64 upload_order_;
+    uint64 upload_order_{0};
 
     std::shared_ptr<DownloadCallback> download_callback_;
     std::shared_ptr<UploadCallback> upload_callback_;

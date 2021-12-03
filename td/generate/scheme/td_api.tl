@@ -590,7 +590,7 @@ chatInviteLinks total_count:int32 invite_links:vector<chatInviteLink> = ChatInvi
 //@revoked_invite_link_count Number of revoked invite links
 chatInviteLinkCount user_id:int53 invite_link_count:int32 revoked_invite_link_count:int32 = ChatInviteLinkCount;
 
-//@description Contains a list of chat invite link counts @invite_link_counts List of invite linkcounts
+//@description Contains a list of chat invite link counts @invite_link_counts List of invite link counts
 chatInviteLinkCounts invite_link_counts:vector<chatInviteLinkCount> = ChatInviteLinkCounts;
 
 //@description Describes a chat member joined a chat by an invite link @user_id User identifier @joined_chat_date Point in time (Unix timestamp) when the user joined the chat @approver_user_id User identifier of the chat administrator, approved user join request
@@ -3725,7 +3725,7 @@ updateChatVideoChat chat_id:int53 video_chat:videoChat = Update;
 //@description The value of the default disable_notification parameter, used when a message is sent to the chat, was changed @chat_id Chat identifier @default_disable_notification The new default_disable_notification value
 updateChatDefaultDisableNotification chat_id:int53 default_disable_notification:Bool = Update;
 
-//@description Incoming messages were read or number of unread messages has been changed @chat_id Chat identifier @last_read_inbox_message_id Identifier of the last read incoming message @unread_count The number of unread messages left in the chat
+//@description Incoming messages were read or the number of unread messages has been changed @chat_id Chat identifier @last_read_inbox_message_id Identifier of the last read incoming message @unread_count The number of unread messages left in the chat
 updateChatReadInbox chat_id:int53 last_read_inbox_message_id:int53 unread_count:int32 = Update;
 
 //@description Outgoing messages were read @chat_id Chat identifier @last_read_outbox_message_id Identifier of last read outgoing message
@@ -4148,7 +4148,7 @@ getMessage chat_id:int53 message_id:int53 = Message;
 getMessageLocally chat_id:int53 message_id:int53 = Message;
 
 //@description Returns information about a message that is replied by a given message. Also returns the pinned message, the game message, and the invoice message for messages of the types messagePinMessage, messageGameScore, and messagePaymentSuccessful respectively
-//@chat_id Identifier of the chat the message belongs to @message_id Identifier of the message reply to which to get
+//@chat_id Identifier of the chat the message belongs to @message_id Identifier of the reply message
 getRepliedMessage chat_id:int53 message_id:int53 = Message;
 
 //@description Returns information about a newest pinned message in the chat @chat_id Identifier of the chat the message belongs to
@@ -4174,7 +4174,7 @@ getFile file_id:int32 = File;
 //@remote_file_id Remote identifier of the file to get @file_type File type; pass null if unknown
 getRemoteFile remote_file_id:string file_type:FileType = File;
 
-//@description Loads more chats from a chat list. The loaded chats and their positions in the chat list will be sent through updates. Chats are sorted by the pair (chat.position.order, chat.id) in descending order. Returns a 404 error if all chats has been loaded
+//@description Loads more chats from a chat list. The loaded chats and their positions in the chat list will be sent through updates. Chats are sorted by the pair (chat.position.order, chat.id) in descending order. Returns a 404 error if all chats have been loaded
 //@chat_list The chat list in which to load chats; pass null to load chats from the main chat list
 //@limit The maximum number of chats to be loaded. For optimal performance, the number of loaded chats is chosen by TDLib and can be smaller than the specified limit, even if the end of the list is not reached
 loadChats chat_list:ChatList limit:int32 = Ok;
@@ -5122,7 +5122,7 @@ setGroupCallParticipantVolumeLevel group_call_id:int32 participant_id:MessageSen
 //@is_hand_raised Pass true if the user's hand needs to be raised. Only self hand can be raised. Requires groupCall.can_be_managed group call flag to lower other's hand
 toggleGroupCallParticipantIsHandRaised group_call_id:int32 participant_id:MessageSender is_hand_raised:Bool = Ok;
 
-//@description Loads more participants of a group call. The loaded participants will be received through updates. Use the field groupCall.loaded_all_participants to check whether all participants has already been loaded
+//@description Loads more participants of a group call. The loaded participants will be received through updates. Use the field groupCall.loaded_all_participants to check whether all participants have already been loaded
 //@group_call_id Group call identifier. The group call must be previously received through getGroupCall and must be joined or being joined
 //@limit The maximum number of participants to load; up to 100
 loadGroupCallParticipants group_call_id:int32 limit:int32 = Ok;

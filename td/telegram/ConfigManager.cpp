@@ -728,7 +728,7 @@ class ConfigRecoverer final : public Actor {
 
   DcOptions dc_options_;  // dc_options_update_ + simple_config_
   double dc_options_at_{0};
-  size_t dc_options_i_;
+  size_t dc_options_i_{0};
 
   size_t date_option_i_{0};
 
@@ -1604,11 +1604,9 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
                 auto current_value = get_json_value_string(std::move(sound_key_value->value_), Slice());
                 if (sound_key_value->key_ == "id") {
                   id = std::move(current_value);
-                }
-                if (sound_key_value->key_ == "access_hash") {
+                } else if (sound_key_value->key_ == "access_hash") {
                   access_hash = std::move(current_value);
-                }
-                if (sound_key_value->key_ == "file_reference_base64") {
+                } else if (sound_key_value->key_ == "file_reference_base64") {
                   file_reference_base64 = std::move(current_value);
                 }
               }

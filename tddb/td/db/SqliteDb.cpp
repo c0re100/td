@@ -74,10 +74,10 @@ SqliteDb::~SqliteDb() = default;
 
 Status SqliteDb::init(CSlice path, bool allow_creation) {
   // if database does not exist, delete all other files which could have been left from the old database
-  bool is_db_exists = stat(path).is_ok();
-  if (!is_db_exists) {
+  auto database_stat = stat(path);
+  if (database_stat.is_error()) {
     if (!allow_creation) {
-      LOG(FATAL) << "Database was deleted during execution and can't be recreated";
+      LOG(FATAL) << "Database was deleted during execution and can't be recreated: " << database_stat.error();
     }
     TRY_STATUS(destroy(path));
   }
@@ -245,7 +245,7 @@ optional<int32> SqliteDb::get_cipher_version() const {
 
 Result<SqliteDb> SqliteDb::change_key(CSlice path, bool allow_creation, const DbKey &new_db_key,
                                       const DbKey &old_db_key) {
-  PerfWarningTimer perf("change key", 0.001);
+  PerfWarningTimer perf("change key", 0.05);
 
   // fast path
   {

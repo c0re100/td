@@ -18,6 +18,7 @@
 #include "td/telegram/files/FileManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
+#include "td/telegram/MessageSender.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/net/ConnectionCreator.h"
@@ -79,16 +80,16 @@ class SetContactSignUpNotificationQuery final : public Td::ResultHandler {
     send_query(G()->net_query_creator().create(telegram_api::account_setContactSignUpNotification(is_disabled)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) final {
+  void on_result(BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::account_setContactSignUpNotification>(packet);
     if (result_ptr.is_error()) {
-      return on_error(id, result_ptr.move_as_error());
+      return on_error(result_ptr.move_as_error());
     }
 
     promise_.set_value(Unit());
   }
 
-  void on_error(uint64 id, Status status) final {
+  void on_error(Status status) final {
     if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for set contact sign up notification: " << status;
     }
@@ -107,17 +108,17 @@ class GetContactSignUpNotificationQuery final : public Td::ResultHandler {
     send_query(G()->net_query_creator().create(telegram_api::account_getContactSignUpNotification()));
   }
 
-  void on_result(uint64 id, BufferSlice packet) final {
+  void on_result(BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::account_getContactSignUpNotification>(packet);
     if (result_ptr.is_error()) {
-      return on_error(id, result_ptr.move_as_error());
+      return on_error(result_ptr.move_as_error());
     }
 
-    td->notification_manager_->on_get_disable_contact_registered_notifications(result_ptr.ok());
+    td_->notification_manager_->on_get_disable_contact_registered_notifications(result_ptr.ok());
     promise_.set_value(Unit());
   }
 
-  void on_error(uint64 id, Status status) final {
+  void on_error(Status status) final {
     if (!G()->is_expected_error(status)) {
       LOG(ERROR) << "Receive error for get contact sign up notification: " << status;
     }
@@ -995,6 +996,7 @@ void NotificationManager::add_update_notification(NotificationGroupId notificati
 }
 
 void NotificationManager::flush_pending_updates(int32 group_id, const char *source) {
+  // no check for G()->close_flag() to flush pending notifications even while closing
   auto it = pending_updates_.find(group_id);
   if (it == pending_updates_.end()) {
     return;
@@ -1360,7 +1362,7 @@ void NotificationManager::flush_all_pending_updates(bool include_delayed_chats, 
   // flush groups in reverse order to not exceed max_notification_group_count_
   VLOG(notifications) << "Flush pending updates in " << ready_group_keys.size() << " notification groups";
   std::sort(ready_group_keys.begin(), ready_group_keys.end());
-  for (auto group_key : reversed(ready_group_keys)) {
+  for (const auto &group_key : reversed(ready_group_keys)) {
     force_flush_pending_updates(group_key.group_id, "flush_all_pending_updates");
   }
   if (include_delayed_chats) {
@@ -1370,6 +1372,7 @@ void NotificationManager::flush_all_pending_updates(bool include_delayed_chats, 
 
 bool NotificationManager::do_flush_pending_notifications(NotificationGroupKey &group_key, NotificationGroup &group,
                                                          vector<PendingNotification> &pending_notifications) {
+  // no check for G()->close_flag() to flush pending notifications even while closing
   if (pending_notifications.empty()) {
     return false;
   }

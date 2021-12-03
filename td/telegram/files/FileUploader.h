@@ -55,8 +55,8 @@ class FileUploader final : public FileLoader {
   FileFd fd_;
   string fd_path_;
   bool is_temp_ = false;
-  int64 file_id_;
-  bool big_flag_;
+  int64 file_id_ = 0;
+  bool big_flag_ = false;
 
   Result<FileInfo> init() final TD_WARN_UNUSED_RESULT;
   Status on_ok(int64 size) final TD_WARN_UNUSED_RESULT;

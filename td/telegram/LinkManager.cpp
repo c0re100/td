@@ -35,6 +35,8 @@
 #include "td/utils/StringBuilder.h"
 #include "td/utils/Time.h"
 
+#include <tuple>
+
 namespace td {
 
 static bool is_valid_start_parameter(Slice start_parameter) {
@@ -389,10 +391,10 @@ class GetDeepLinkInfoQuery final : public Td::ResultHandler {
     send_query(G()->net_query_creator().create_unauth(telegram_api::help_getDeepLinkInfo(link.str())));
   }
 
-  void on_result(uint64 id, BufferSlice packet) final {
+  void on_result(BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::help_getDeepLinkInfo>(packet);
     if (result_ptr.is_error()) {
-      return on_error(id, result_ptr.move_as_error());
+      return on_error(result_ptr.move_as_error());
     }
 
     auto result = result_ptr.move_as_ok();
@@ -419,7 +421,7 @@ class GetDeepLinkInfoQuery final : public Td::ResultHandler {
     }
   }
 
-  void on_error(uint64 id, Status status) final {
+  void on_error(Status status) final {
     promise_.set_error(std::move(status));
   }
 };
@@ -440,7 +442,7 @@ class RequestUrlAuthQuery final : public Td::ResultHandler {
     tl_object_ptr<telegram_api::InputPeer> input_peer;
     if (full_message_id.get_dialog_id().is_valid()) {
       dialog_id_ = full_message_id.get_dialog_id();
-      input_peer = td->messages_manager_->get_input_peer(dialog_id_, AccessRights::Read);
+      input_peer = td_->messages_manager_->get_input_peer(dialog_id_, AccessRights::Read);
       CHECK(input_peer != nullptr);
       flags |= telegram_api::messages_requestUrlAuth::PEER_MASK;
     } else {
@@ -451,24 +453,24 @@ class RequestUrlAuthQuery final : public Td::ResultHandler {
         url_)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) final {
+  void on_result(BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_requestUrlAuth>(packet);
     if (result_ptr.is_error()) {
-      return on_error(id, result_ptr.move_as_error());
+      return on_error(result_ptr.move_as_error());
     }
 
     auto result = result_ptr.move_as_ok();
-    LOG(INFO) << "Receive " << to_string(result);
+    LOG(INFO) << "Receive result for RequestUrlAuthQuery: " << to_string(result);
     switch (result->get_id()) {
       case telegram_api::urlAuthResultRequest::ID: {
         auto request = telegram_api::move_object_as<telegram_api::urlAuthResultRequest>(result);
         UserId bot_user_id = ContactsManager::get_user_id(request->bot_);
         if (!bot_user_id.is_valid()) {
-          return on_error(id, Status::Error(500, "Receive invalid bot_user_id"));
+          return on_error(Status::Error(500, "Receive invalid bot_user_id"));
         }
-        td->contacts_manager_->on_get_user(std::move(request->bot_), "RequestUrlAuthQuery");
+        td_->contacts_manager_->on_get_user(std::move(request->bot_), "RequestUrlAuthQuery");
         promise_.set_value(td_api::make_object<td_api::loginUrlInfoRequestConfirmation>(
-            url_, request->domain_, td->contacts_manager_->get_user_id_object(bot_user_id, "RequestUrlAuthQuery"),
+            url_, request->domain_, td_->contacts_manager_->get_user_id_object(bot_user_id, "RequestUrlAuthQuery"),
             request->request_write_access_));
         break;
       }
@@ -483,10 +485,10 @@ class RequestUrlAuthQuery final : public Td::ResultHandler {
     }
   }
 
-  void on_error(uint64 id, Status status) final {
+  void on_error(Status status) final {
     if (!dialog_id_.is_valid() ||
-        !td->messages_manager_->on_get_dialog_error(dialog_id_, status, "RequestUrlAuthQuery")) {
-      LOG(INFO) << "RequestUrlAuthQuery returned " << status;
+        !td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "RequestUrlAuthQuery")) {
+      LOG(INFO) << "Receive error for RequestUrlAuthQuery: " << status;
     }
     promise_.set_value(td_api::make_object<td_api::loginUrlInfoOpen>(url_, false));
   }
@@ -507,7 +509,7 @@ class AcceptUrlAuthQuery final : public Td::ResultHandler {
     tl_object_ptr<telegram_api::InputPeer> input_peer;
     if (full_message_id.get_dialog_id().is_valid()) {
       dialog_id_ = full_message_id.get_dialog_id();
-      input_peer = td->messages_manager_->get_input_peer(dialog_id_, AccessRights::Read);
+      input_peer = td_->messages_manager_->get_input_peer(dialog_id_, AccessRights::Read);
       CHECK(input_peer != nullptr);
       flags |= telegram_api::messages_acceptUrlAuth::PEER_MASK;
     } else {
@@ -521,10 +523,10 @@ class AcceptUrlAuthQuery final : public Td::ResultHandler {
         button_id, url_)));
   }
 
-  void on_result(uint64 id, BufferSlice packet) final {
+  void on_result(BufferSlice packet) final {
     auto result_ptr = fetch_result<telegram_api::messages_acceptUrlAuth>(packet);
     if (result_ptr.is_error()) {
-      return on_error(id, result_ptr.move_as_error());
+      return on_error(result_ptr.move_as_error());
     }
 
     auto result = result_ptr.move_as_ok();
@@ -532,7 +534,7 @@ class AcceptUrlAuthQuery final : public Td::ResultHandler {
     switch (result->get_id()) {
       case telegram_api::urlAuthResultRequest::ID:
         LOG(ERROR) << "Receive unexpected " << to_string(result);
-        return on_error(id, Status::Error(500, "Receive unexpected urlAuthResultRequest"));
+        return on_error(Status::Error(500, "Receive unexpected urlAuthResultRequest"));
       case telegram_api::urlAuthResultAccepted::ID: {
         auto accepted = telegram_api::move_object_as<telegram_api::urlAuthResultAccepted>(result);
         promise_.set_value(td_api::make_object<td_api::httpUrl>(accepted->url_));
@@ -544,10 +546,10 @@ class AcceptUrlAuthQuery final : public Td::ResultHandler {
     }
   }
 
-  void on_error(uint64 id, Status status) final {
+  void on_error(Status status) final {
     if (!dialog_id_.is_valid() ||
-        !td->messages_manager_->on_get_dialog_error(dialog_id_, status, "AcceptUrlAuthQuery")) {
-      LOG(INFO) << "AcceptUrlAuthQuery returned " << status;
+        !td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "AcceptUrlAuthQuery")) {
+      LOG(INFO) << "Receive error for AcceptUrlAuthQuery: " << status;
     }
     promise_.set_error(std::move(status));
   }
@@ -1231,6 +1233,48 @@ string LinkManager::get_dialog_invite_link_hash(Slice invite_link) {
   }
   const auto url_query = parse_url_query(link_info.query_);
   return get_url_query_hash(link_info.is_tg_, url_query);
+}
+
+UserId LinkManager::get_link_user_id(Slice url) {
+  string lower_cased_url = to_lower(url);
+  url = lower_cased_url;
+
+  Slice link_scheme("tg:");
+  if (!begins_with(url, link_scheme)) {
+    return UserId();
+  }
+  url.remove_prefix(link_scheme.size());
+  if (begins_with(url, "//")) {
+    url.remove_prefix(2);
+  }
+
+  Slice host("user");
+  if (!begins_with(url, host)) {
+    return UserId();
+  }
+  url.remove_prefix(host.size());
+  if (begins_with(url, "/")) {
+    url.remove_prefix(1);
+  }
+  if (!begins_with(url, "?")) {
+    return UserId();
+  }
+  url.remove_prefix(1);
+  url.truncate(url.find('#'));
+
+  for (auto parameter : full_split(url, '&')) {
+    Slice key;
+    Slice value;
+    std::tie(key, value) = split(parameter, '=');
+    if (key == Slice("id")) {
+      auto r_user_id = to_integer_safe<int64>(value);
+      if (r_user_id.is_error()) {
+        return UserId();
+      }
+      return UserId(r_user_id.ok());
+    }
+  }
+  return UserId();
 }
 
 Result<MessageLinkInfo> LinkManager::get_message_link_info(Slice url) {
