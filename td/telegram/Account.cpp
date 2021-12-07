@@ -32,7 +32,8 @@ static td_api::object_ptr<td_api::session> convert_authorization_object(
     tl_object_ptr<telegram_api::authorization> &&authorization) {
   CHECK(authorization != nullptr);
   return td_api::make_object<td_api::session>(
-      authorization->hash_, authorization->current_, authorization->password_pending_, authorization->api_id_,
+      authorization->hash_, authorization->current_, authorization->password_pending_,
+      !authorization->encrypted_requests_disabled_, !authorization->call_requests_disabled_, authorization->api_id_,
       authorization->app_name_, authorization->app_version_, authorization->official_app_, authorization->device_model_,
       authorization->platform_, authorization->system_version_, authorization->date_created_,
       authorization->date_active_, authorization->ip_, authorization->country_, authorization->region_);
@@ -145,8 +146,14 @@ class GetAuthorizationsQuery final : public Td::ResultHandler {
     auto ptr = result_ptr.move_as_ok();
     LOG(INFO) << "Receive result for GetAuthorizationsQuery: " << to_string(ptr);
 
-    auto results =
-        td_api::make_object<td_api::sessions>(transform(std::move(ptr->authorizations_), convert_authorization_object));
+    auto ttl_days = ptr->authorization_ttl_days_;
+    if (ttl_days <= 0 || ttl_days > 366) {
+      LOG(ERROR) << "Receive invalid inactive sessions TTL " << ttl_days;
+      ttl_days = 180;
+    }
+
+    auto results = td_api::make_object<td_api::sessions>(
+        transform(std::move(ptr->authorizations_), convert_authorization_object), ttl_days);
     std::sort(results->sessions_.begin(), results->sessions_.end(),
               [](const td_api::object_ptr<td_api::session> &lhs, const td_api::object_ptr<td_api::session> &rhs) {
                 if (lhs->is_current_ != rhs->is_current_) {
@@ -213,6 +220,69 @@ class ResetAuthorizationsQuery final : public Td::ResultHandler {
     bool result = result_ptr.move_as_ok();
     LOG_IF(WARNING, !result) << "Failed to terminate all sessions";
     send_closure(td_->device_token_manager_, &DeviceTokenManager::reregister_device);
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class ChangeAuthorizationSettingsQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit ChangeAuthorizationSettingsQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(int64 hash, bool set_encrypted_requests_disabled, bool encrypted_requests_disabled,
+            bool set_call_requests_disabled, bool call_requests_disabled) {
+    int32 flags = 0;
+    if (set_encrypted_requests_disabled) {
+      flags |= telegram_api::account_changeAuthorizationSettings::ENCRYPTED_REQUESTS_DISABLED_MASK;
+    }
+    if (set_call_requests_disabled) {
+      flags |= telegram_api::account_changeAuthorizationSettings::CALL_REQUESTS_DISABLED_MASK;
+    }
+    send_query(G()->net_query_creator().create(telegram_api::account_changeAuthorizationSettings(
+        flags, hash, encrypted_requests_disabled, call_requests_disabled)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::account_changeAuthorizationSettings>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    bool result = result_ptr.move_as_ok();
+    LOG_IF(WARNING, !result) << "Failed to change session settings";
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class SetAuthorizationTtlQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit SetAuthorizationTtlQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(int32 authorization_ttl_days) {
+    send_query(G()->net_query_creator().create(telegram_api::account_setAuthorizationTTL(authorization_ttl_days)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::account_setAuthorizationTTL>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    bool result = result_ptr.move_as_ok();
+    LOG_IF(WARNING, !result) << "Failed to set inactive session TTL";
     promise_.set_value(Unit());
   }
 
@@ -354,6 +424,21 @@ void terminate_session(Td *td, int64 session_id, Promise<Unit> &&promise) {
 
 void terminate_all_other_sessions(Td *td, Promise<Unit> &&promise) {
   td->create_handler<ResetAuthorizationsQuery>(std::move(promise))->send();
+}
+
+void toggle_session_can_accept_calls(Td *td, int64 session_id, bool can_accept_calls, Promise<Unit> &&promise) {
+  td->create_handler<ChangeAuthorizationSettingsQuery>(std::move(promise))
+      ->send(session_id, false, false, true, !can_accept_calls);
+}
+
+void toggle_session_can_accept_secret_chats(Td *td, int64 session_id, bool can_accept_secret_chats,
+                                            Promise<Unit> &&promise) {
+  td->create_handler<ChangeAuthorizationSettingsQuery>(std::move(promise))
+      ->send(session_id, true, !can_accept_secret_chats, false, false);
+}
+
+void set_inactive_session_ttl_days(Td *td, int32 authorization_ttl_days, Promise<Unit> &&promise) {
+  td->create_handler<SetAuthorizationTtlQuery>(std::move(promise))->send(authorization_ttl_days);
 }
 
 void get_connected_websites(Td *td, Promise<td_api::object_ptr<td_api::connectedWebsites>> &&promise) {

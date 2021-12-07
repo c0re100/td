@@ -133,7 +133,7 @@ class StickersManager final : public Actor {
   void on_get_installed_sticker_sets_failed(bool is_masks, Status error);
 
   StickerSetId on_get_messages_sticker_set(StickerSetId sticker_set_id,
-                                           tl_object_ptr<telegram_api::messages_stickerSet> &&set, bool is_changed,
+                                           tl_object_ptr<telegram_api::messages_StickerSet> &&set_ptr, bool is_changed,
                                            const char *source);
 
   StickerSetId on_get_sticker_set(tl_object_ptr<telegram_api::stickerSet> &&set, bool is_changed, const char *source);
@@ -436,6 +436,7 @@ class StickersManager final : public Actor {
     string short_name_;
     SpecialStickerSetType type_;
     bool is_being_loaded_ = false;
+    bool is_being_reloaded_ = false;
   };
 
   class StickerListLogEvent;
@@ -495,7 +496,7 @@ class StickersManager final : public Actor {
   void update_load_request(uint32 load_request_id, const Status &status);
 
   void do_reload_sticker_set(StickerSetId sticker_set_id,
-                             tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set,
+                             tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set, int32 hash,
                              Promise<Unit> &&promise) const;
 
   static void read_featured_sticker_sets(void *td_void);
@@ -613,8 +614,6 @@ class StickersManager final : public Actor {
 
   bool update_sticker_set_cache(const StickerSet *sticker_set, Promise<Unit> &promise);
 
-  static vector<td_api::object_ptr<td_api::colorReplacement>> get_color_replacements_object(int fitzpatrick_modifier);
-
   const StickerSet *get_animated_emoji_sticker_set();
 
   static std::pair<FileId, int> get_animated_emoji_sticker(const StickerSet *sticker_set, const string &emoji);
@@ -656,18 +655,20 @@ class StickersManager final : public Actor {
 
   void tear_down() final;
 
-  SpecialStickerSet &add_special_sticker_set(const string &type);
+  SpecialStickerSet &add_special_sticker_set(const SpecialStickerSetType &type);
 
   static void init_special_sticker_set(SpecialStickerSet &sticker_set, int64 sticker_set_id, int64 access_hash,
                                        string name);
 
   void load_special_sticker_set_info_from_binlog(SpecialStickerSet &sticker_set);
 
-  void load_special_sticker_set_by_type(const SpecialStickerSetType &type);
+  void load_special_sticker_set_by_type(SpecialStickerSetType type);
 
   void load_special_sticker_set(SpecialStickerSet &sticker_set);
 
-  void reload_special_sticker_set(SpecialStickerSet &sticker_set);
+  void reload_special_sticker_set_by_type(SpecialStickerSetType type, bool is_recursive = false);
+
+  void reload_special_sticker_set(SpecialStickerSet &sticker_set, int32 hash);
 
   static void add_sticker_thumbnail(Sticker *s, PhotoSize thumbnail);
 
@@ -784,7 +785,7 @@ class StickersManager final : public Actor {
   int32 recent_stickers_limit_ = 200;
   int32 favorite_stickers_limit_ = 5;
 
-  std::unordered_map<string, SpecialStickerSet> special_sticker_sets_;
+  std::unordered_map<SpecialStickerSetType, SpecialStickerSet, SpecialStickerSetTypeHash> special_sticker_sets_;
 
   struct StickerSetLoadRequest {
     Promise<Unit> promise;

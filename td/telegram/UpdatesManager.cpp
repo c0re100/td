@@ -536,6 +536,24 @@ bool UpdatesManager::is_acceptable_message_entities(
   return true;
 }
 
+bool UpdatesManager::is_acceptable_reply_markup(const tl_object_ptr<telegram_api::ReplyMarkup> &reply_markup) const {
+  if (reply_markup == nullptr || reply_markup->get_id() != telegram_api::replyInlineMarkup::ID) {
+    return true;
+  }
+  for (const auto &row : static_cast<const telegram_api::replyInlineMarkup *>(reply_markup.get())->rows_) {
+    for (const auto &button : row->buttons_) {
+      if (button->get_id() == telegram_api::keyboardButtonUserProfile::ID) {
+        auto user_profile_button = static_cast<const telegram_api::keyboardButtonUserProfile *>(button.get());
+        UserId user_id(user_profile_button->user_id_);
+        if (!is_acceptable_user(user_id) || !td_->contacts_manager_->have_input_user(user_id)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 bool UpdatesManager::is_acceptable_message_reply_header(
     const telegram_api::object_ptr<telegram_api::messageReplyHeader> &header) const {
   if (header == nullptr) {
@@ -872,7 +890,7 @@ void UpdatesManager::on_get_updates(tl_object_ptr<telegram_api::Updates> &&updat
 
       auto message = make_tl_object<telegram_api::message>(
           update->flags_, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-          false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, update->id_,
+          false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, update->id_,
           make_tl_object<telegram_api::peerUser>(from_id), make_tl_object<telegram_api::peerUser>(update->user_id_),
           std::move(update->fwd_from_), update->via_bot_id_, std::move(update->reply_to_), update->date_,
           update->message_, nullptr, nullptr, std::move(update->entities_), 0, 0, nullptr, 0, string(), 0, Auto(),
@@ -896,7 +914,7 @@ void UpdatesManager::on_get_updates(tl_object_ptr<telegram_api::Updates> &&updat
       update->flags_ |= MessagesManager::MESSAGE_FLAG_HAS_FROM_ID;
       auto message = make_tl_object<telegram_api::message>(
           update->flags_, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-          false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, update->id_,
+          false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, update->id_,
           make_tl_object<telegram_api::peerUser>(update->from_id_),
           make_tl_object<telegram_api::peerChat>(update->chat_id_), std::move(update->fwd_from_), update->via_bot_id_,
           std::move(update->reply_to_), update->date_, update->message_, nullptr, nullptr, std::move(update->entities_),
@@ -2495,7 +2513,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateServiceNotifica
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChat> update, Promise<Unit> &&promise) {
-  // nothing to do
+  td_->messages_manager_->on_dialog_info_full_invalidated(DialogId(ChatId(update->chat_id_)));
   promise.set_value(Unit());
 }
 
@@ -2832,15 +2850,14 @@ int32 UpdatesManager::get_update_qts(const telegram_api::Update *update) {
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateUserTyping> update, Promise<Unit> &&promise) {
   DialogId dialog_id(UserId(update->user_id_));
-  td_->messages_manager_->on_user_dialog_action(dialog_id, MessageId(), dialog_id,
-                                                DialogAction(std::move(update->action_)), get_short_update_date());
+  td_->messages_manager_->on_dialog_action(dialog_id, MessageId(), dialog_id, DialogAction(std::move(update->action_)),
+                                           get_short_update_date());
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChatUserTyping> update, Promise<Unit> &&promise) {
-  td_->messages_manager_->on_user_dialog_action(DialogId(ChatId(update->chat_id_)), MessageId(),
-                                                DialogId(update->from_id_), DialogAction(std::move(update->action_)),
-                                                get_short_update_date());
+  td_->messages_manager_->on_dialog_action(DialogId(ChatId(update->chat_id_)), MessageId(), DialogId(update->from_id_),
+                                           DialogAction(std::move(update->action_)), get_short_update_date());
   promise.set_value(Unit());
 }
 
@@ -2849,17 +2866,17 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannelUserTypi
   if ((update->flags_ & telegram_api::updateChannelUserTyping::TOP_MSG_ID_MASK) != 0) {
     top_thread_message_id = MessageId(ServerMessageId(update->top_msg_id_));
   }
-  td_->messages_manager_->on_user_dialog_action(DialogId(ChannelId(update->channel_id_)), top_thread_message_id,
-                                                DialogId(update->from_id_), DialogAction(std::move(update->action_)),
-                                                get_short_update_date());
+  td_->messages_manager_->on_dialog_action(DialogId(ChannelId(update->channel_id_)), top_thread_message_id,
+                                           DialogId(update->from_id_), DialogAction(std::move(update->action_)),
+                                           get_short_update_date());
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateEncryptedChatTyping> update, Promise<Unit> &&promise) {
   SecretChatId secret_chat_id(update->chat_id_);
   UserId user_id = td_->contacts_manager_->get_secret_chat_user_id(secret_chat_id);
-  td_->messages_manager_->on_user_dialog_action(DialogId(secret_chat_id), MessageId(), DialogId(user_id),
-                                                DialogAction::get_typing_action(), get_short_update_date());
+  td_->messages_manager_->on_dialog_action(DialogId(secret_chat_id), MessageId(), DialogId(user_id),
+                                           DialogAction::get_typing_action(), get_short_update_date());
   promise.set_value(Unit());
 }
 
