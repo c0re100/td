@@ -55,6 +55,8 @@ namespace td {
 
 struct BinlogEvent;
 
+struct MinChannel;
+
 class Td;
 
 class ContactsManager final : public Actor {
@@ -72,7 +74,7 @@ class ContactsManager final : public Actor {
   static ChatId get_chat_id(const tl_object_ptr<telegram_api::Chat> &chat);
   static ChannelId get_channel_id(const tl_object_ptr<telegram_api::Chat> &chat);
 
-  tl_object_ptr<telegram_api::InputUser> get_input_user(UserId user_id) const;
+  Result<tl_object_ptr<telegram_api::InputUser>> get_input_user(UserId user_id) const;
   bool have_input_user(UserId user_id) const;
 
   // TODO get_input_chat ???
@@ -263,7 +265,11 @@ class ContactsManager final : public Actor {
 
   static UserId get_anonymous_bot_user_id();
 
+  static UserId get_channel_bot_user_id();
+
   UserId add_anonymous_bot_user();
+
+  UserId add_channel_bot_user();
 
   void on_update_online_status_privacy();
 
@@ -486,8 +492,11 @@ class ContactsManager final : public Actor {
   DialogParticipantStatus get_chat_permissions(ChatId chat_id) const;
   bool is_appointed_chat_administrator(ChatId chat_id) const;
 
-  bool have_channel(ChannelId channel_id) const;
   bool have_min_channel(ChannelId channel_id) const;
+  const MinChannel *get_min_channel(ChannelId channel_id) const;
+  void add_min_channel(ChannelId channel_id, const MinChannel &min_channel);
+
+  bool have_channel(ChannelId channel_id) const;
   bool have_channel_force(ChannelId channel_id);
   bool get_channel(ChannelId channel_id, int left_tries, Promise<Unit> &&promise);
   void reload_channel(ChannelId channel_id, Promise<Unit> &&promise);
@@ -530,7 +539,7 @@ class ContactsManager final : public Actor {
   void search_dialog_participants(DialogId dialog_id, const string &query, int32 limit, DialogParticipantsFilter filter,
                                   Promise<DialogParticipants> &&promise);
 
-  vector<DialogAdministrator> get_dialog_administrators(DialogId dialog_id, int left_tries, Promise<Unit> &&promise);
+  void get_dialog_administrators(DialogId dialog_id, Promise<td_api::object_ptr<td_api::chatAdministrators>> &&promise);
 
   void get_channel_participants(ChannelId channel_id, tl_object_ptr<td_api::SupergroupMembersFilter> &&filter,
                                 string additional_query, int32 offset, int32 limit, int32 additional_limit,
@@ -1033,6 +1042,7 @@ class ContactsManager final : public Actor {
   static constexpr int32 CHAT_FLAG_WAS_MIGRATED = 1 << 6;
   static constexpr int32 CHAT_FLAG_HAS_ACTIVE_GROUP_CALL = 1 << 23;
   static constexpr int32 CHAT_FLAG_IS_GROUP_CALL_NON_EMPTY = 1 << 24;
+  static constexpr int32 CHAT_FLAG_NOFORWARDS = 1 << 25;
 
   static constexpr int32 CHAT_FULL_FLAG_HAS_PINNED_MESSAGE = 1 << 6;
   static constexpr int32 CHAT_FULL_FLAG_HAS_SCHEDULED_MESSAGES = 1 << 8;
@@ -1064,6 +1074,7 @@ class ContactsManager final : public Actor {
   static constexpr int32 CHANNEL_FLAG_IS_GROUP_CALL_NON_EMPTY = 1 << 24;
   static constexpr int32 CHANNEL_FLAG_IS_FAKE = 1 << 25;
   static constexpr int32 CHANNEL_FLAG_IS_GIGAGROUP = 1 << 26;
+  static constexpr int32 CHANNEL_FLAG_NOFORWARDS = 1 << 27;
 
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_PARTICIPANT_COUNT = 1 << 0;
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_ADMINISTRATOR_COUNT = 1 << 1;
@@ -1470,16 +1481,23 @@ class ContactsManager final : public Actor {
   void finish_get_channel_participant(ChannelId channel_id, DialogParticipant &&dialog_participant,
                                       Promise<DialogParticipant> &&promise);
 
+  td_api::object_ptr<td_api::chatAdministrators> get_chat_administrators_object(
+      const vector<DialogAdministrator> &dialog_administrators);
+
   static string get_dialog_administrators_database_key(DialogId dialog_id);
 
-  void load_dialog_administrators(DialogId dialog_id, Promise<Unit> &&promise);
-
-  void on_load_dialog_administrators_from_database(DialogId dialog_id, string value, Promise<Unit> &&promise);
+  void on_load_dialog_administrators_from_database(DialogId dialog_id, string value,
+                                                   Promise<td_api::object_ptr<td_api::chatAdministrators>> &&promise);
 
   void on_load_administrator_users_finished(DialogId dialog_id, vector<DialogAdministrator> administrators,
-                                            Result<> result, Promise<Unit> promise);
+                                            Result<> result,
+                                            Promise<td_api::object_ptr<td_api::chatAdministrators>> &&promise);
 
-  void reload_dialog_administrators(DialogId dialog_id, int64 hash, Promise<Unit> &&promise);
+  void reload_dialog_administrators(DialogId dialog_id, const vector<DialogAdministrator> &dialog_administrators,
+                                    Promise<td_api::object_ptr<td_api::chatAdministrators>> &&promise);
+
+  void on_reload_dialog_administrators(DialogId dialog_id,
+                                       Promise<td_api::object_ptr<td_api::chatAdministrators>> &&promise);
 
   void remove_dialog_suggested_action(SuggestedAction action);
 
@@ -1501,7 +1519,7 @@ class ContactsManager final : public Actor {
 
   tl_object_ptr<td_api::basicGroupFullInfo> get_basic_group_full_info_object(const ChatFull *chat_full) const;
 
-  static td_api::object_ptr<td_api::updateSupergroup> get_update_unknown_supergroup_object(ChannelId channel_id);
+  td_api::object_ptr<td_api::updateSupergroup> get_update_unknown_supergroup_object(ChannelId channel_id) const;
 
   static tl_object_ptr<td_api::supergroup> get_supergroup_object(ChannelId channel_id, const Channel *c);
 
@@ -1632,7 +1650,7 @@ class ContactsManager final : public Actor {
   mutable std::unordered_set<ChatId, ChatIdHash> unknown_chats_;
   std::unordered_map<ChatId, FileSourceId, ChatIdHash> chat_full_file_source_ids_;
 
-  std::unordered_set<ChannelId, ChannelIdHash> min_channels_;
+  std::unordered_map<ChannelId, unique_ptr<MinChannel>, ChannelIdHash> min_channels_;
   std::unordered_map<ChannelId, unique_ptr<Channel>, ChannelIdHash> channels_;
   std::unordered_map<ChannelId, unique_ptr<ChannelFull>, ChannelIdHash> channels_full_;
   mutable std::unordered_set<ChannelId, ChannelIdHash> unknown_channels_;

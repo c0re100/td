@@ -26,7 +26,6 @@
 #include "td/telegram/CountryInfoManager.h"
 #include "td/telegram/DeviceTokenManager.h"
 #include "td/telegram/DialogAction.h"
-#include "td/telegram/DialogAdministrator.h"
 #include "td/telegram/DialogEventLog.h"
 #include "td/telegram/DialogFilter.h"
 #include "td/telegram/DialogFilterId.h"
@@ -80,6 +79,7 @@
 #include "td/telegram/NotificationId.h"
 #include "td/telegram/NotificationManager.h"
 #include "td/telegram/NotificationSettings.h"
+#include "td/telegram/OptionManager.h"
 #include "td/telegram/PasswordManager.h"
 #include "td/telegram/Payments.h"
 #include "td/telegram/PhoneNumberManager.h"
@@ -146,7 +146,6 @@
 #include "td/utils/tl_parsers.h"
 #include "td/utils/utf8.h"
 
-#include <cmath>
 #include <limits>
 #include <tuple>
 #include <type_traits>
@@ -1764,30 +1763,6 @@ class UpgradeGroupChatToSupergroupChatRequest final : public RequestActor<> {
   }
 };
 
-class GetChatAdministratorsRequest final : public RequestActor<> {
-  DialogId dialog_id_;
-
-  vector<DialogAdministrator> administrators_;
-
-  void do_run(Promise<Unit> &&promise) final {
-    administrators_ = td_->contacts_manager_->get_dialog_administrators(dialog_id_, get_tries(), std::move(promise));
-  }
-
-  void do_send_result() final {
-    auto administrator_objects = transform(
-        administrators_, [contacts_manager = td_->contacts_manager_.get()](const DialogAdministrator &administrator) {
-          return administrator.get_chat_administrator_object(contacts_manager);
-        });
-    send_result(td_api::make_object<td_api::chatAdministrators>(std::move(administrator_objects)));
-  }
-
- public:
-  GetChatAdministratorsRequest(ActorShared<Td> td, uint64 request_id, int64 dialog_id)
-      : RequestActor(std::move(td), request_id), dialog_id_(dialog_id) {
-    set_tries(3);
-  }
-};
-
 class CheckChatInviteLinkRequest final : public RequestActor<> {
   string invite_link_;
 
@@ -1826,7 +1801,7 @@ class JoinChatByInviteLinkRequest final : public RequestActor<DialogId> {
 
   void do_send_result() final {
     CHECK(dialog_id_.is_valid());
-    td_->messages_manager_->force_create_dialog(dialog_id_, "join chat by invite link");
+    td_->messages_manager_->force_create_dialog(dialog_id_, "join chat via an invite link");
     send_result(td_->messages_manager_->get_chat_object(dialog_id_));
   }
 
@@ -2703,17 +2678,6 @@ void Td::on_alarm_timeout_callback(void *td_ptr, int64 alarm_id) {
   send_closure_later(td_id, &Td::on_alarm_timeout, alarm_id);
 }
 
-void Td::on_update_server_time_difference() {
-  auto diff = G()->get_server_time_difference();
-  if (std::abs(diff - last_sent_server_time_difference_) < 0.5) {
-    return;
-  }
-
-  last_sent_server_time_difference_ = diff;
-  send_update(td_api::make_object<td_api::updateOption>(
-      "unix_time", td_api::make_object<td_api::optionValueInteger>(G()->unix_time())));
-}
-
 void Td::on_alarm_timeout(int64 alarm_id) {
   if (alarm_id == ONLINE_ALARM_ID) {
     on_online_updated(false, true);
@@ -2875,6 +2839,17 @@ void Td::schedule_get_promo_data(int32 expires_in) {
 
 bool Td::is_online() const {
   return is_online_;
+}
+
+void Td::set_is_online(bool is_online) {
+  if (is_online == is_online_) {
+    return;
+  }
+
+  is_online_ = is_online;
+  if (auth_manager_ != nullptr) {  // postpone if there is no AuthManager yet
+    on_online_updated(true, true);
+  }
 }
 
 void Td::set_is_bot_online(bool is_bot_online) {
@@ -3238,146 +3213,6 @@ void Td::on_result(NetQueryPtr query) {
   query->clear();
 }
 
-bool Td::is_internal_config_option(Slice name) {
-  switch (name[0]) {
-    case 'a':
-      return name == "animated_emoji_zoom" || name == "animation_search_emojis" ||
-             name == "animation_search_provider" || name == "auth";
-    case 'b':
-      return name == "base_language_pack_version";
-    case 'c':
-      return name == "call_ring_timeout_ms" || name == "call_receive_timeout_ms" ||
-             name == "channels_read_media_period" || name == "chat_read_mark_expire_period" ||
-             name == "chat_read_mark_size_threshold";
-    case 'd':
-      return name == "dc_txt_domain_name" || name == "dice_emojis" || name == "dice_success_values";
-    case 'e':
-      return name == "edit_time_limit" || name == "emoji_sounds";
-    case 'i':
-      return name == "ignored_restriction_reasons";
-    case 'l':
-      return name == "language_pack_version";
-    case 'm':
-      return name == "my_phone_number";
-    case 'n':
-      return name == "notification_cloud_delay_ms" || name == "notification_default_delay_ms";
-    case 'o':
-      return name == "online_update_period_ms" || name == "online_cloud_timeout_ms" || name == "otherwise_relogin_days";
-    case 'r':
-      return name == "revoke_pm_inbox" || name == "revoke_time_limit" || name == "revoke_pm_time_limit" ||
-             name == "rating_e_decay" || name == "recent_stickers_limit";
-    case 's':
-      return name == "saved_animations_limit";
-    case 'v':
-      return name == "video_note_size_max";
-    case 'w':
-      return name == "webfile_dc_id";
-    default:
-      return false;
-  }
-}
-
-void Td::on_config_option_updated(const string &name) {
-  if (close_flag_) {
-    return;
-  }
-  if (name == "auth") {
-    send_closure(auth_manager_actor_, &AuthManager::on_authorization_lost,
-                 G()->shared_config().get_option_string(name));
-    return;
-  } else if (name == "saved_animations_limit") {
-    return animations_manager_->on_update_saved_animations_limit(
-        narrow_cast<int32>(G()->shared_config().get_option_integer(name)));
-  } else if (name == "animation_search_emojis") {
-    return animations_manager_->on_update_animation_search_emojis(G()->shared_config().get_option_string(name));
-  } else if (name == "animation_search_provider") {
-    return animations_manager_->on_update_animation_search_provider(G()->shared_config().get_option_string(name));
-  } else if (name == "animated_emoji_zoom") {
-    // update animated emoji zoom only at launch
-    return;
-  } else if (name == "recent_stickers_limit") {
-    return stickers_manager_->on_update_recent_stickers_limit(
-        narrow_cast<int32>(G()->shared_config().get_option_integer(name)));
-  } else if (name == "favorite_stickers_limit") {
-    stickers_manager_->on_update_favorite_stickers_limit(
-        narrow_cast<int32>(G()->shared_config().get_option_integer(name)));
-  } else if (name == "disable_animated_emoji") {
-    stickers_manager_->on_update_disable_animated_emojis();
-  } else if (name == "my_id") {
-    G()->set_my_id(G()->shared_config().get_option_integer(name));
-  } else if (name == "otherwise_relogin_days") {
-    auto days = narrow_cast<int32>(G()->shared_config().get_option_integer(name));
-    if (days > 0) {
-      vector<SuggestedAction> added_actions{SuggestedAction{SuggestedAction::Type::SetPassword, DialogId(), days}};
-      send_closure(G()->td(), &Td::send_update, get_update_suggested_actions_object(added_actions, {}));
-    }
-    return;
-  } else if (name == "session_count") {
-    G()->net_query_dispatcher().update_session_count();
-  } else if (name == "use_pfs") {
-    G()->net_query_dispatcher().update_use_pfs();
-  } else if (name == "use_storage_optimizer") {
-    send_closure(storage_manager_, &StorageManager::update_use_storage_optimizer);
-  } else if (name == "rating_e_decay") {
-    return send_closure(top_dialog_manager_actor_, &TopDialogManager::update_rating_e_decay);
-  } else if (name == "disable_contact_registered_notifications") {
-    send_closure(notification_manager_actor_,
-                 &NotificationManager::on_disable_contact_registered_notifications_changed);
-  } else if (name == "disable_top_chats") {
-    send_closure(top_dialog_manager_actor_, &TopDialogManager::update_is_enabled,
-                 !G()->shared_config().get_option_boolean(name));
-  } else if (name == "connection_parameters") {
-    if (G()->mtproto_header().set_parameters(G()->shared_config().get_option_string(name))) {
-      G()->net_query_dispatcher().update_mtproto_header();
-    }
-  } else if (name == "is_emulator") {
-    if (G()->mtproto_header().set_is_emulator(G()->shared_config().get_option_boolean(name))) {
-      G()->net_query_dispatcher().update_mtproto_header();
-    }
-  } else if (name == "localization_target") {
-    send_closure(language_pack_manager_, &LanguagePackManager::on_language_pack_changed);
-    if (G()->mtproto_header().set_language_pack(G()->shared_config().get_option_string(name))) {
-      G()->net_query_dispatcher().update_mtproto_header();
-    }
-  } else if (name == "language_pack_id") {
-    send_closure(language_pack_manager_, &LanguagePackManager::on_language_code_changed);
-    if (G()->mtproto_header().set_language_code(G()->shared_config().get_option_string(name))) {
-      G()->net_query_dispatcher().update_mtproto_header();
-    }
-  } else if (name == "language_pack_version") {
-    return send_closure(language_pack_manager_, &LanguagePackManager::on_language_pack_version_changed, false, -1);
-  } else if (name == "base_language_pack_version") {
-    return send_closure(language_pack_manager_, &LanguagePackManager::on_language_pack_version_changed, true, -1);
-  } else if (name == "utc_time_offset") {
-    if (G()->mtproto_header().set_tz_offset(static_cast<int32>(G()->shared_config().get_option_integer(name)))) {
-      G()->net_query_dispatcher().update_mtproto_header();
-    }
-  } else if (name == "notification_group_count_max") {
-    send_closure(notification_manager_actor_, &NotificationManager::on_notification_group_count_max_changed, true);
-  } else if (name == "notification_group_size_max") {
-    send_closure(notification_manager_actor_, &NotificationManager::on_notification_group_size_max_changed);
-  } else if (name == "online_cloud_timeout_ms") {
-    return send_closure(notification_manager_actor_, &NotificationManager::on_online_cloud_timeout_changed);
-  } else if (name == "notification_cloud_delay_ms") {
-    return send_closure(notification_manager_actor_, &NotificationManager::on_notification_cloud_delay_changed);
-  } else if (name == "notification_default_delay_ms") {
-    return send_closure(notification_manager_actor_, &NotificationManager::on_notification_default_delay_changed);
-  } else if (name == "ignored_restriction_reasons") {
-    return send_closure(contacts_manager_actor_, &ContactsManager::on_ignored_restriction_reasons_changed);
-  } else if (name == "dice_emojis") {
-    return send_closure(stickers_manager_actor_, &StickersManager::on_update_dice_emojis);
-  } else if (name == "dice_success_values") {
-    return send_closure(stickers_manager_actor_, &StickersManager::on_update_dice_success_values);
-  } else if (name == "emoji_sounds") {
-    return send_closure(stickers_manager_actor_, &StickersManager::on_update_emoji_sounds);
-  } else if (is_internal_config_option(name)) {
-    return;
-  }
-
-  // send_closure was already used in the callback
-  send_update(make_tl_object<td_api::updateOption>(name, G()->shared_config().get_option_value(name)));
-}
-
 void Td::on_connection_state_changed(ConnectionState new_state) {
   if (new_state == connection_state_) {
     LOG(ERROR) << "State manager sends update about unchanged state " << static_cast<int32>(new_state);
@@ -3460,7 +3295,7 @@ void Td::dec_actor_refcnt() {
       create_reference();
       close_flag_ = 3;
     } else if (close_flag_ == 3) {
-      LOG(WARNING) << "ON_ACTORS_CLOSED";
+      LOG(INFO) << "All actors were closed";
       Timer timer;
       animations_manager_.reset();
       LOG(DEBUG) << "AnimationsManager was cleared" << timer;
@@ -3494,6 +3329,8 @@ void Td::dec_actor_refcnt() {
       LOG(DEBUG) << "MessagesManager was cleared" << timer;
       notification_manager_.reset();
       LOG(DEBUG) << "NotificationManager was cleared" << timer;
+      option_manager_.reset();
+      LOG(DEBUG) << "OptionManager was cleared" << timer;
       poll_manager_.reset();
       LOG(DEBUG) << "PollManager was cleared" << timer;
       sponsored_message_manager_.reset();
@@ -3533,7 +3370,6 @@ void Td::dec_actor_refcnt() {
 }
 
 void Td::on_closed() {
-  LOG(WARNING) << "ON_CLOSED";
   close_flag_ = 5;
   send_update(
       td_api::make_object<td_api::updateAuthorizationState>(td_api::make_object<td_api::authorizationStateClosed>()));
@@ -3543,7 +3379,7 @@ void Td::on_closed() {
 void Td::dec_stop_cnt() {
   stop_cnt_--;
   if (stop_cnt_ == 0) {
-    LOG(WARNING) << "Stop Td";
+    LOG(INFO) << "Stop Td";
     set_context(std::move(old_context_));
     stop();
   }
@@ -3557,7 +3393,7 @@ void Td::dec_request_actor_refcnt() {
   request_actor_refcnt_--;
   LOG(DEBUG) << "Decrease request actor count to " << request_actor_refcnt_;
   if (request_actor_refcnt_ == 0) {
-    LOG(WARNING) << "Have no request actors";
+    LOG(INFO) << "Have no request actors";
     clear();
     dec_actor_refcnt();  // remove guard
   }
@@ -3590,11 +3426,7 @@ void Td::clear() {
 
   Timer timer;
   if (destroy_flag_) {
-    for (auto &option : G()->shared_config().get_options()) {
-      if (!is_internal_config_option(option.first)) {
-        send_update(make_tl_object<td_api::updateOption>(option.first, make_tl_object<td_api::optionValueEmpty>()));
-      }
-    }
+    OptionManager::clear_options();
     if (!auth_manager_->is_bot()) {
       notification_manager_->destroy_all_notifications();
     }
@@ -3603,11 +3435,10 @@ void Td::clear() {
       notification_manager_->flush_all_notifications();
     }
   }
-  LOG(DEBUG) << "Options was cleared" << timer;
 
   G()->net_query_creator().stop_check();
   result_handlers_.clear();
-  LOG(DEBUG) << "Handlers was cleared" << timer;
+  LOG(DEBUG) << "Handlers were cleared" << timer;
   G()->net_query_dispatcher().stop();
   LOG(DEBUG) << "NetQueryDispatcher was stopped" << timer;
   state_manager_.reset();
@@ -3620,7 +3451,7 @@ void Td::clear() {
   alarm_timeout_.cancel_timeout(PING_SERVER_ALARM_ID);
   alarm_timeout_.cancel_timeout(TERMS_OF_SERVICE_ALARM_ID);
   alarm_timeout_.cancel_timeout(PROMO_DATA_ALARM_ID);
-  LOG(DEBUG) << "Requests was answered" << timer;
+  LOG(DEBUG) << "Requests were answered" << timer;
 
   // close all pure actors
   call_manager_.reset();
@@ -3684,6 +3515,8 @@ void Td::clear() {
   LOG(DEBUG) << "MessagesManager actor was cleared" << timer;
   notification_manager_actor_.reset();
   LOG(DEBUG) << "NotificationManager actor was cleared" << timer;
+  option_manager_actor_.reset();
+  LOG(DEBUG) << "OptionManager actor was cleared" << timer;
   poll_manager_actor_.reset();
   LOG(DEBUG) << "PollManager actor was cleared" << timer;
   sponsored_message_manager_actor_.reset();
@@ -3806,9 +3639,6 @@ Status Td::init(DbKey key) {
   VLOG(td_init) << "Successfully inited database";
 
   G()->init(parameters_, actor_id(this), r_td_db.move_as_ok()).ensure();
-  last_sent_server_time_difference_ = G()->get_server_time_difference();
-  send_update(td_api::make_object<td_api::updateOption>(
-      "unix_time", td_api::make_object<td_api::optionValueInteger>(G()->unix_time())));
 
   init_options_and_network();
 
@@ -3994,11 +3824,16 @@ void Td::init_options_and_network() {
   config_manager_ = create_actor<ConfigManager>("ConfigManager", create_reference());
   G()->set_config_manager(config_manager_.get());
 
+  VLOG(td_init) << "Create OptionManager";
+  option_manager_ = make_unique<OptionManager>(this, create_reference());
+  option_manager_actor_ = register_actor("OptionManager", option_manager_.get());
+  G()->set_option_manager(option_manager_actor_.get());
+
   VLOG(td_init) << "Set ConfigShared callback";
   class ConfigSharedCallback final : public ConfigShared::Callback {
    public:
     void on_option_updated(const string &name, const string &value) const final {
-      send_closure(G()->td(), &Td::on_config_option_updated, name);
+      send_closure_later(G()->option_manager(), &OptionManager::on_option_updated, name);
     }
     ~ConfigSharedCallback() final {
       LOG(INFO) << "Destroy ConfigSharedCallback";
@@ -4147,9 +3982,9 @@ void Td::init_managers() {
   G()->set_messages_manager(messages_manager_actor_.get());
   notification_manager_ = make_unique<NotificationManager>(this, create_reference());
   notification_manager_actor_ = register_actor("NotificationManager", notification_manager_.get());
+  G()->set_notification_manager(notification_manager_actor_.get());
   poll_manager_ = make_unique<PollManager>(this, create_reference());
   poll_manager_actor_ = register_actor("PollManager", poll_manager_.get());
-  G()->set_notification_manager(notification_manager_actor_.get());
   sponsored_message_manager_ = make_unique<SponsoredMessageManager>(this, create_reference());
   sponsored_message_manager_actor_ = register_actor("SponsoredMessageManager", sponsored_message_manager_.get());
   G()->set_sponsored_message_manager(sponsored_message_manager_actor_.get());
@@ -4535,18 +4370,7 @@ void Td::on_request(uint64 id, td_api::confirmQrCodeAuthentication &request) {
 void Td::on_request(uint64 id, const td_api::getCurrentState &request) {
   vector<td_api::object_ptr<td_api::Update>> updates;
 
-  updates.push_back(
-      td_api::make_object<td_api::updateOption>("online", make_tl_object<td_api::optionValueBoolean>(is_online_)));
-  updates.push_back(td_api::make_object<td_api::updateOption>(
-      "unix_time", make_tl_object<td_api::optionValueInteger>(G()->unix_time())));
-  updates.push_back(td_api::make_object<td_api::updateOption>(
-      "version", td_api::make_object<td_api::optionValueString>(TDLIB_VERSION)));
-  for (auto &option : G()->shared_config().get_options()) {
-    if (!is_internal_config_option(option.first)) {
-      updates.push_back(td_api::make_object<td_api::updateOption>(
-          option.first, ConfigShared::get_option_value_object(option.second)));
-    }
-  }
+  option_manager_->get_current_state(updates);
 
   auto state = auth_manager_->get_current_authorization_state_object();
   if (state != nullptr) {
@@ -4878,17 +4702,10 @@ void Td::on_request(uint64 id, const td_api::getMessages &request) {
   CREATE_REQUEST(GetMessagesRequest, request.chat_id_, request.message_ids_);
 }
 
-void Td::on_request(uint64 id, const td_api::getChatSponsoredMessages &request) {
+void Td::on_request(uint64 id, const td_api::getChatSponsoredMessage &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  sponsored_message_manager_->get_dialog_sponsored_messages(DialogId(request.chat_id_), std::move(promise));
-}
-
-void Td::on_request(uint64 id, const td_api::viewSponsoredMessage &request) {
-  CHECK_IS_USER();
-  CREATE_OK_REQUEST_PROMISE();
-  sponsored_message_manager_->view_sponsored_message(DialogId(request.chat_id_), request.sponsored_message_id_,
-                                                     std::move(promise));
+  sponsored_message_manager_->get_dialog_sponsored_message(DialogId(request.chat_id_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getMessageThread &request) {
@@ -5473,11 +5290,11 @@ void Td::on_request(uint64 id, const td_api::getChatAvailableMessageSenders &req
   messages_manager_->get_dialog_send_message_as_dialog_ids(DialogId(request.chat_id_), std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::setChatDefaultMessageSender &request) {
+void Td::on_request(uint64 id, const td_api::setChatMessageSender &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
   TRY_RESULT_PROMISE(promise, message_sender_dialog_id,
-                     get_message_sender_dialog_id(this, request.default_message_sender_id_, true, false));
+                     get_message_sender_dialog_id(this, request.message_sender_id_, true, false));
   messages_manager_->set_dialog_default_send_message_as_dialog_id(DialogId(request.chat_id_), message_sender_dialog_id,
                                                                   std::move(promise));
 }
@@ -5756,9 +5573,9 @@ void Td::on_request(uint64 id, const td_api::createCall &request) {
   }
 
   UserId user_id(request.user_id_);
-  auto input_user = contacts_manager_->get_input_user(user_id);
-  if (input_user == nullptr) {
-    return send_error_raw(id, 400, "User not found");
+  auto r_input_user = contacts_manager_->get_input_user(user_id);
+  if (r_input_user.is_error()) {
+    return send_error_raw(id, r_input_user.error().code(), r_input_user.error().message());
   }
 
   if (!G()->shared_config().get_option_boolean("calls_enabled")) {
@@ -5773,7 +5590,7 @@ void Td::on_request(uint64 id, const td_api::createCall &request) {
       promise.set_value(result.ok().get_call_id_object());
     }
   });
-  send_closure(G()->call_manager(), &CallManager::create_call, user_id, std::move(input_user),
+  send_closure(G()->call_manager(), &CallManager::create_call, user_id, r_input_user.move_as_ok(),
                CallProtocol(*request.protocol_), request.is_video_, std::move(query_promise));
 }
 
@@ -6032,7 +5849,7 @@ void Td::on_request(uint64 id, const td_api::leaveGroupCall &request) {
   group_call_manager_->leave_group_call(GroupCallId(request.group_call_id_), std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::discardGroupCall &request) {
+void Td::on_request(uint64 id, const td_api::endGroupCall &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
   group_call_manager_->discard_group_call(GroupCallId(request.group_call_id_), std::move(promise));
@@ -6133,9 +5950,9 @@ void Td::on_request(uint64 id, const td_api::setChatPhoto &request) {
   messages_manager_->set_dialog_photo(DialogId(request.chat_id_), request.photo_, std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::setChatMessageTtlSetting &request) {
+void Td::on_request(uint64 id, const td_api::setChatMessageTtl &request) {
   CREATE_OK_REQUEST_PROMISE();
-  messages_manager_->set_dialog_message_ttl_setting(DialogId(request.chat_id_), request.ttl_, std::move(promise));
+  messages_manager_->set_dialog_message_ttl(DialogId(request.chat_id_), request.ttl_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::setChatPermissions &request) {
@@ -6344,7 +6161,8 @@ void Td::on_request(uint64 id, td_api::searchChatMembers &request) {
 }
 
 void Td::on_request(uint64 id, const td_api::getChatAdministrators &request) {
-  CREATE_REQUEST(GetChatAdministratorsRequest, request.chat_id_);
+  CREATE_REQUEST_PROMISE();
+  contacts_manager_->get_dialog_administrators(DialogId(request.chat_id_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::replacePrimaryChatInviteLink &request) {
@@ -6357,7 +6175,7 @@ void Td::on_request(uint64 id, td_api::createChatInviteLink &request) {
   CLEAN_INPUT_STRING(request.name_);
   CREATE_REQUEST_PROMISE();
   contacts_manager_->export_dialog_invite_link(DialogId(request.chat_id_), std::move(request.name_),
-                                               request.expire_date_, request.member_limit_,
+                                               request.expiration_date_, request.member_limit_,
                                                request.creates_join_request_, false, std::move(promise));
 }
 
@@ -6366,8 +6184,8 @@ void Td::on_request(uint64 id, td_api::editChatInviteLink &request) {
   CLEAN_INPUT_STRING(request.invite_link_);
   CREATE_REQUEST_PROMISE();
   contacts_manager_->edit_dialog_invite_link(DialogId(request.chat_id_), request.invite_link_, std::move(request.name_),
-                                             request.expire_date_, request.member_limit_, request.creates_join_request_,
-                                             std::move(promise));
+                                             request.expiration_date_, request.member_limit_,
+                                             request.creates_join_request_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::getChatInviteLink &request) {
@@ -7261,389 +7079,14 @@ void Td::on_request(uint64 id, td_api::deleteLanguagePack &request) {
 
 void Td::on_request(uint64 id, td_api::getOption &request) {
   CLEAN_INPUT_STRING(request.name_);
-
-  tl_object_ptr<td_api::OptionValue> option_value;
-  bool is_bot = auth_manager_ != nullptr && auth_manager_->is_authorized() && auth_manager_->is_bot();
-  switch (request.name_[0]) {
-    // all these options should be added to getCurrentState
-    case 'a':
-      if (!is_bot && request.name_ == "archive_and_mute_new_chats_from_unknown_users") {
-        auto promise = PromiseCreator::lambda([actor_id = actor_id(this), id](Result<Unit> &&result) {
-          // the option is already updated on success, ignore errors
-          send_closure(actor_id, &Td::send_result, id,
-                       G()->shared_config().get_option_value("archive_and_mute_new_chats_from_unknown_users"));
-        });
-        send_closure_later(config_manager_, &ConfigManager::get_global_privacy_settings, std::move(promise));
-        return;
-      }
-      break;
-    case 'c':
-      if (!is_bot && request.name_ == "can_ignore_sensitive_content_restrictions") {
-        auto promise = PromiseCreator::lambda([actor_id = actor_id(this), id](Result<Unit> &&result) {
-          // the option is already updated on success, ignore errors
-          send_closure(actor_id, &Td::send_result, id,
-                       G()->shared_config().get_option_value("can_ignore_sensitive_content_restrictions"));
-        });
-        send_closure_later(config_manager_, &ConfigManager::get_content_settings, std::move(promise));
-        return;
-      }
-      break;
-    case 'd':
-      if (!is_bot && request.name_ == "disable_contact_registered_notifications") {
-        auto promise = PromiseCreator::lambda([actor_id = actor_id(this), id](Result<Unit> &&result) {
-          // the option is already updated on success, ignore errors
-          send_closure(actor_id, &Td::send_result, id,
-                       G()->shared_config().get_option_value("disable_contact_registered_notifications"));
-        });
-        send_closure_later(notification_manager_actor_,
-                           &NotificationManager::get_disable_contact_registered_notifications, std::move(promise));
-        return;
-      }
-      break;
-    case 'i':
-      if (!is_bot && request.name_ == "ignore_sensitive_content_restrictions") {
-        auto promise = PromiseCreator::lambda([actor_id = actor_id(this), id](Result<Unit> &&result) {
-          // the option is already updated on success, ignore errors
-          send_closure(actor_id, &Td::send_result, id,
-                       G()->shared_config().get_option_value("ignore_sensitive_content_restrictions"));
-        });
-        send_closure_later(config_manager_, &ConfigManager::get_content_settings, std::move(promise));
-        return;
-      }
-      if (!is_bot && request.name_ == "is_location_visible") {
-        auto promise = PromiseCreator::lambda([actor_id = actor_id(this), id](Result<Unit> &&result) {
-          // the option is already updated on success, ignore errors
-          send_closure(actor_id, &Td::send_result, id, G()->shared_config().get_option_value("is_location_visible"));
-        });
-        send_closure_later(contacts_manager_actor_, &ContactsManager::get_is_location_visible, std::move(promise));
-        return;
-      }
-      break;
-    case 'o':
-      if (request.name_ == "online") {
-        option_value = make_tl_object<td_api::optionValueBoolean>(is_online_);
-      }
-      break;
-    case 'u':
-      if (request.name_ == "unix_time") {
-        option_value = make_tl_object<td_api::optionValueInteger>(G()->unix_time());
-      }
-      break;
-    case 'v':
-      if (request.name_ == "version") {
-        option_value = make_tl_object<td_api::optionValueString>(TDLIB_VERSION);
-      }
-      break;
-  }
-  if (option_value == nullptr) {
-    option_value = G()->shared_config().get_option_value(request.name_);
-  }
-  send_closure(actor_id(this), &Td::send_result, id, std::move(option_value));
+  CREATE_REQUEST_PROMISE();
+  option_manager_->get_option(request.name_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::setOption &request) {
   CLEAN_INPUT_STRING(request.name_);
-  int32 value_constructor_id = request.value_ == nullptr ? td_api::optionValueEmpty::ID : request.value_->get_id();
-
-  LOG(INFO) << "Set option " << request.name_;
-
-  auto set_integer_option = [&](Slice name, int64 min = 0, int64 max = std::numeric_limits<int32>::max()) {
-    if (request.name_ != name) {
-      return false;
-    }
-    if (value_constructor_id != td_api::optionValueInteger::ID &&
-        value_constructor_id != td_api::optionValueEmpty::ID) {
-      send_error_raw(id, 400, PSLICE() << "Option \"" << name << "\" must have integer value");
-      return true;
-    }
-    if (value_constructor_id == td_api::optionValueEmpty::ID) {
-      G()->shared_config().set_option_empty(name);
-    } else {
-      int64 value = static_cast<td_api::optionValueInteger *>(request.value_.get())->value_;
-      if (value < min || value > max) {
-        send_error_raw(id, 400,
-                       PSLICE() << "Option's \"" << name << "\" value " << value << " is outside of a valid range ["
-                                << min << ", " << max << "]");
-        return true;
-      }
-      G()->shared_config().set_option_integer(name, clamp(value, min, max));
-    }
-    send_closure(actor_id(this), &Td::send_result, id, make_tl_object<td_api::ok>());
-    return true;
-  };
-
-  auto set_boolean_option = [&](Slice name) {
-    if (request.name_ != name) {
-      return false;
-    }
-    if (value_constructor_id != td_api::optionValueBoolean::ID &&
-        value_constructor_id != td_api::optionValueEmpty::ID) {
-      send_error_raw(id, 400, PSLICE() << "Option \"" << name << "\" must have boolean value");
-      return true;
-    }
-    if (value_constructor_id == td_api::optionValueEmpty::ID) {
-      G()->shared_config().set_option_empty(name);
-    } else {
-      bool value = static_cast<td_api::optionValueBoolean *>(request.value_.get())->value_;
-      G()->shared_config().set_option_boolean(name, value);
-    }
-    send_closure(actor_id(this), &Td::send_result, id, make_tl_object<td_api::ok>());
-    return true;
-  };
-
-  auto set_string_option = [&](Slice name, auto check_value) {
-    if (request.name_ != name) {
-      return false;
-    }
-    if (value_constructor_id != td_api::optionValueString::ID && value_constructor_id != td_api::optionValueEmpty::ID) {
-      send_error_raw(id, 400, PSLICE() << "Option \"" << name << "\" must have string value");
-      return true;
-    }
-    if (value_constructor_id == td_api::optionValueEmpty::ID) {
-      G()->shared_config().set_option_empty(name);
-    } else {
-      const string &value = static_cast<td_api::optionValueString *>(request.value_.get())->value_;
-      if (value.empty()) {
-        G()->shared_config().set_option_empty(name);
-      } else {
-        if (check_value(value)) {
-          G()->shared_config().set_option_string(name, value);
-        } else {
-          send_error_raw(id, 400, PSLICE() << "Option \"" << name << "\" can't have specified value");
-          return true;
-        }
-      }
-    }
-    send_closure(actor_id(this), &Td::send_result, id, make_tl_object<td_api::ok>());
-    return true;
-  };
-
-  bool is_bot = auth_manager_ != nullptr && auth_manager_->is_authorized() && auth_manager_->is_bot();
-  switch (request.name_[0]) {
-    case 'a':
-      if (set_boolean_option("always_parse_markdown")) {
-        return;
-      }
-      if (!is_bot && request.name_ == "archive_and_mute_new_chats_from_unknown_users") {
-        if (value_constructor_id != td_api::optionValueBoolean::ID &&
-            value_constructor_id != td_api::optionValueEmpty::ID) {
-          return send_error_raw(id, 400,
-                                "Option \"archive_and_mute_new_chats_from_unknown_users\" must have boolean value");
-        }
-
-        auto archive_and_mute = value_constructor_id == td_api::optionValueBoolean::ID &&
-                                static_cast<td_api::optionValueBoolean *>(request.value_.get())->value_;
-        CREATE_OK_REQUEST_PROMISE();
-        send_closure_later(config_manager_, &ConfigManager::set_archive_and_mute, archive_and_mute, std::move(promise));
-        return;
-      }
-      break;
-    case 'c':
-      if (!is_bot && set_string_option("connection_parameters", [](Slice value) {
-            string value_copy = value.str();
-            auto r_json_value = get_json_value(value_copy);
-            if (r_json_value.is_error()) {
-              return false;
-            }
-            return r_json_value.ok()->get_id() == td_api::jsonValueObject::ID;
-          })) {
-        return;
-      }
-      break;
-    case 'd':
-      if (!is_bot && set_boolean_option("disable_animated_emoji")) {
-        return;
-      }
-      if (!is_bot && set_boolean_option("disable_contact_registered_notifications")) {
-        return;
-      }
-      if (!is_bot && set_boolean_option("disable_sent_scheduled_message_notifications")) {
-        return;
-      }
-      if (!is_bot && set_boolean_option("disable_top_chats")) {
-        return;
-      }
-      if (set_boolean_option("disable_persistent_network_statistics")) {
-        return;
-      }
-      if (set_boolean_option("disable_time_adjustment_protection")) {
-        return;
-      }
-      if (request.name_ == "drop_notification_ids") {
-        G()->td_db()->get_binlog_pmc()->erase("notification_id_current");
-        G()->td_db()->get_binlog_pmc()->erase("notification_group_id_current");
-        send_closure(actor_id(this), &Td::send_result, id, make_tl_object<td_api::ok>());
-        return;
-      }
-      break;
-    case 'i':
-      if (set_boolean_option("ignore_background_updates")) {
-        return;
-      }
-      if (set_boolean_option("ignore_default_disable_notification")) {
-        return;
-      }
-      if (set_boolean_option("ignore_inline_thumbnails")) {
-        return;
-      }
-      if (set_boolean_option("ignore_platform_restrictions")) {
-        return;
-      }
-      if (set_boolean_option("is_emulator")) {
-        return;
-      }
-      if (!is_bot && request.name_ == "ignore_sensitive_content_restrictions") {
-        if (!G()->shared_config().get_option_boolean("can_ignore_sensitive_content_restrictions")) {
-          return send_error_raw(id, 400,
-                                "Option \"ignore_sensitive_content_restrictions\" can't be changed by the user");
-        }
-
-        if (value_constructor_id != td_api::optionValueBoolean::ID &&
-            value_constructor_id != td_api::optionValueEmpty::ID) {
-          return send_error_raw(id, 400, "Option \"ignore_sensitive_content_restrictions\" must have boolean value");
-        }
-
-        auto ignore_sensitive_content_restrictions =
-            value_constructor_id == td_api::optionValueBoolean::ID &&
-            static_cast<td_api::optionValueBoolean *>(request.value_.get())->value_;
-        CREATE_OK_REQUEST_PROMISE();
-        send_closure_later(config_manager_, &ConfigManager::set_content_settings, ignore_sensitive_content_restrictions,
-                           std::move(promise));
-        return;
-      }
-      if (!is_bot && set_boolean_option("is_location_visible")) {
-        contacts_manager_->set_location_visibility();
-        return;
-      }
-      break;
-    case 'l':
-      if (!is_bot && set_string_option("language_pack_database_path", [](Slice value) { return true; })) {
-        return;
-      }
-      if (!is_bot && set_string_option("localization_target", LanguagePackManager::check_language_pack_name)) {
-        return;
-      }
-      if (!is_bot && set_string_option("language_pack_id", LanguagePackManager::check_language_code_name)) {
-        return;
-      }
-      break;
-    case 'm':
-      if (set_integer_option("message_unload_delay", 60, 86400)) {
-        return;
-      }
-      break;
-    case 'n':
-      if (!is_bot &&
-          set_integer_option("notification_group_count_max", NotificationManager::MIN_NOTIFICATION_GROUP_COUNT_MAX,
-                             NotificationManager::MAX_NOTIFICATION_GROUP_COUNT_MAX)) {
-        return;
-      }
-      if (!is_bot &&
-          set_integer_option("notification_group_size_max", NotificationManager::MIN_NOTIFICATION_GROUP_SIZE_MAX,
-                             NotificationManager::MAX_NOTIFICATION_GROUP_SIZE_MAX)) {
-        return;
-      }
-      break;
-    case 'o':
-      if (request.name_ == "online") {
-        if (value_constructor_id != td_api::optionValueBoolean::ID &&
-            value_constructor_id != td_api::optionValueEmpty::ID) {
-          return send_error_raw(id, 400, "Option \"online\" must have boolean value");
-        }
-        bool is_online = value_constructor_id == td_api::optionValueEmpty::ID ||
-                         static_cast<const td_api::optionValueBoolean *>(request.value_.get())->value_;
-        if (!is_bot) {
-          send_closure(G()->state_manager(), &StateManager::on_online, is_online);
-        }
-        if (is_online != is_online_) {
-          is_online_ = is_online;
-          if (auth_manager_ != nullptr) {  // postpone if there is no AuthManager yet
-            on_online_updated(true, true);
-          }
-        }
-        return send_closure(actor_id(this), &Td::send_result, id, make_tl_object<td_api::ok>());
-      }
-      break;
-    case 'p':
-      if (set_boolean_option("prefer_ipv6")) {
-        send_closure(state_manager_, &StateManager::on_network_updated);
-        return;
-      }
-      break;
-    case 'r':
-      // temporary option
-      if (set_boolean_option("reuse_uploaded_photos_by_hash")) {
-        return;
-      }
-      break;
-    case 's':
-      if (set_integer_option("session_count", 0, 50)) {
-        return;
-      }
-      if (set_integer_option("storage_max_files_size")) {
-        return;
-      }
-      if (set_integer_option("storage_max_time_from_last_access")) {
-        return;
-      }
-      if (set_integer_option("storage_max_file_count")) {
-        return;
-      }
-      if (set_integer_option("storage_immunity_delay")) {
-        return;
-      }
-      if (set_boolean_option("store_all_files_in_files_directory")) {
-        return;
-      }
-      break;
-    case 't':
-      if (set_boolean_option("test_flood_wait")) {
-        return;
-      }
-      break;
-    case 'u':
-      if (set_boolean_option("use_pfs")) {
-        return;
-      }
-      if (set_boolean_option("use_quick_ack")) {
-        return;
-      }
-      if (set_boolean_option("use_storage_optimizer")) {
-        return;
-      }
-      if (set_integer_option("utc_time_offset", -12 * 60 * 60, 14 * 60 * 60)) {
-        return;
-      }
-      break;
-    case 'X':
-    case 'x': {
-      if (request.name_.size() > 255) {
-        return send_error_raw(id, 400, "Option name is too long");
-      }
-      switch (value_constructor_id) {
-        case td_api::optionValueBoolean::ID:
-          G()->shared_config().set_option_boolean(
-              request.name_, static_cast<const td_api::optionValueBoolean *>(request.value_.get())->value_);
-          break;
-        case td_api::optionValueEmpty::ID:
-          G()->shared_config().set_option_empty(request.name_);
-          break;
-        case td_api::optionValueInteger::ID:
-          G()->shared_config().set_option_integer(
-              request.name_, static_cast<const td_api::optionValueInteger *>(request.value_.get())->value_);
-          break;
-        case td_api::optionValueString::ID:
-          G()->shared_config().set_option_string(
-              request.name_, static_cast<const td_api::optionValueString *>(request.value_.get())->value_);
-          break;
-        default:
-          UNREACHABLE();
-      }
-      return send_closure(actor_id(this), &Td::send_result, id, make_tl_object<td_api::ok>());
-    }
-  }
-
-  return send_error_raw(id, 400, "Option can't be set");
+  CREATE_OK_REQUEST_PROMISE();
+  option_manager_->set_option(request.name_, std::move(request.value_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::setPollAnswer &request) {
@@ -7842,13 +7285,12 @@ void Td::on_request(uint64 id, const td_api::deletePassportElement &request) {
 
 void Td::on_request(uint64 id, td_api::setPassportElementErrors &request) {
   CHECK_IS_BOT();
-  UserId user_id(request.user_id_);
-  auto input_user = contacts_manager_->get_input_user(user_id);
-  if (input_user == nullptr) {
-    return send_error_raw(id, 400, "User not found");
+  auto r_input_user = contacts_manager_->get_input_user(UserId(request.user_id_));
+  if (r_input_user.is_error()) {
+    return send_error_raw(id, r_input_user.error().code(), r_input_user.error().message());
   }
   CREATE_OK_REQUEST_PROMISE();
-  send_closure(secure_manager_, &SecureManager::set_secure_value_errors, this, std::move(input_user),
+  send_closure(secure_manager_, &SecureManager::set_secure_value_errors, this, r_input_user.move_as_ok(),
                std::move(request.errors_), std::move(promise));
 }
 

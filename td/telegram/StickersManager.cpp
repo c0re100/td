@@ -1368,7 +1368,9 @@ void StickersManager::load_special_sticker_set_by_type(SpecialStickerSetType typ
   }
 
   auto &sticker_set = add_special_sticker_set(type);
-  CHECK(sticker_set.is_being_loaded_);
+  if (!sticker_set.is_being_loaded_) {
+    return;
+  }
   sticker_set.is_being_loaded_ = false;
   load_special_sticker_set(sticker_set);
 }
@@ -1381,6 +1383,13 @@ void StickersManager::load_special_sticker_set(SpecialStickerSet &sticker_set) {
   sticker_set.is_being_loaded_ = true;
   LOG(INFO) << "Load " << sticker_set.type_.type_ << " " << sticker_set.id_;
   if (sticker_set.id_.is_valid()) {
+    auto s = get_sticker_set(sticker_set.id_);
+    CHECK(s != nullptr);
+    if (s->was_loaded) {
+      reload_special_sticker_set(sticker_set, s->is_loaded ? s->hash : 0);
+      return;
+    }
+
     auto promise = PromiseCreator::lambda([actor_id = actor_id(this), type = sticker_set.type_](Result<Unit> &&result) {
       send_closure(actor_id, &StickersManager::on_load_special_sticker_set, type,
                    result.is_ok() ? Status::OK() : result.move_as_error());
@@ -1439,6 +1448,8 @@ void StickersManager::on_load_special_sticker_set(const SpecialStickerSetType &t
   }
 
   if (result.is_error()) {
+    LOG(INFO) << "Failed to load special sticker set " << type.type_ << ": " << result.error();
+
     // failed to load the special sticker set; repeat after some time
     create_actor<SleepActor>("RetryLoadSpecialStickerSetActor", Random::fast(300, 600),
                              PromiseCreator::lambda([actor_id = actor_id(this), type](Result<Unit> result) mutable {
@@ -1993,23 +2004,28 @@ std::pair<FileId, int> StickersManager::get_animated_emoji_sticker(const Sticker
     return {};
   }
 
+  auto emoji_without_selectors = remove_emoji_selectors(emoji);
   // trying to find full emoji match
   for (const auto &sticker_id : it->second) {
     auto emoji_it = sticker_set->sticker_emojis_map_.find(sticker_id);
     CHECK(emoji_it != sticker_set->sticker_emojis_map_.end());
-    if (td::contains(emoji_it->second, emoji)) {
-      return {sticker_id, 0};
+    for (auto &sticker_emoji : emoji_it->second) {
+      if (remove_emoji_selectors(sticker_emoji) == emoji_without_selectors) {
+        return {sticker_id, 0};
+      }
     }
   }
 
   // trying to find match without Fitzpatrick modifiers
-  int modifier_id = get_fitzpatrick_modifier(emoji);
+  int modifier_id = get_fitzpatrick_modifier(emoji_without_selectors);
   if (modifier_id > 0) {
     for (const auto &sticker_id : it->second) {
       auto emoji_it = sticker_set->sticker_emojis_map_.find(sticker_id);
       CHECK(emoji_it != sticker_set->sticker_emojis_map_.end());
-      if (td::contains(emoji_it->second, Slice(emoji).remove_suffix(4))) {
-        return {sticker_id, modifier_id};
+      for (auto &sticker_emoji : emoji_it->second) {
+        if (remove_emoji_selectors(sticker_emoji) == Slice(emoji_without_selectors).remove_suffix(4)) {
+          return {sticker_id, modifier_id};
+        }
       }
     }
   }
@@ -5446,15 +5462,9 @@ FileId StickersManager::upload_sticker_file(UserId user_id, tl_object_ptr<td_api
     user_id = td_->contacts_manager_->get_my_id();
   }
 
-  auto input_user = td_->contacts_manager_->get_input_user(user_id);
-  if (input_user == nullptr) {
-    promise.set_error(Status::Error(400, "User not found"));
-    return FileId();
-  }
-  DialogId dialog_id(user_id);
-  auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
-  if (input_peer == nullptr) {
-    promise.set_error(Status::Error(400, "Have no access to the user"));
+  auto r_input_user = td_->contacts_manager_->get_input_user(user_id);
+  if (r_input_user.is_error()) {
+    promise.set_error(r_input_user.move_as_error());
     return FileId();
   }
 
@@ -5572,15 +5582,8 @@ void StickersManager::create_new_sticker_set(UserId user_id, string &title, stri
   if (!is_bot) {
     user_id = td_->contacts_manager_->get_my_id();
   }
-  auto input_user = td_->contacts_manager_->get_input_user(user_id);
-  if (input_user == nullptr) {
-    return promise.set_error(Status::Error(400, "User not found"));
-  }
-  DialogId dialog_id(user_id);
-  auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
-  if (input_peer == nullptr) {
-    return promise.set_error(Status::Error(400, "Have no access to the user"));
-  }
+
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(user_id));
 
   title = strip_empty_characters(title, MAX_STICKER_SET_TITLE_LENGTH);
   if (title.empty()) {
@@ -5797,10 +5800,8 @@ void StickersManager::on_new_stickers_uploaded(int64 random_id, Result<Unit> res
 
   CHECK(pending_new_sticker_set->upload_files_multipromise.promise_count() == 0);
 
-  auto input_user = td_->contacts_manager_->get_input_user(pending_new_sticker_set->user_id);
-  if (input_user == nullptr) {
-    return pending_new_sticker_set->promise.set_error(Status::Error(400, "User not found"));
-  }
+  auto &promise = pending_new_sticker_set->promise;
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(pending_new_sticker_set->user_id));
 
   bool is_masks = pending_new_sticker_set->is_masks;
   bool is_animated = pending_new_sticker_set->is_animated;
@@ -5820,15 +5821,7 @@ void StickersManager::on_new_stickers_uploaded(int64 random_id, Result<Unit> res
 
 void StickersManager::add_sticker_to_set(UserId user_id, string &short_name,
                                          tl_object_ptr<td_api::InputSticker> &&sticker, Promise<Unit> &&promise) {
-  auto input_user = td_->contacts_manager_->get_input_user(user_id);
-  if (input_user == nullptr) {
-    return promise.set_error(Status::Error(400, "User not found"));
-  }
-  DialogId dialog_id(user_id);
-  auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
-  if (input_peer == nullptr) {
-    return promise.set_error(Status::Error(400, "Have no access to the user"));
-  }
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(user_id));
 
   short_name = strip_empty_characters(short_name, MAX_STICKER_SET_SHORT_NAME_LENGTH);
   if (short_name.empty()) {
@@ -5889,15 +5882,7 @@ void StickersManager::on_added_sticker_uploaded(int64 random_id, Result<Unit> re
 
 void StickersManager::set_sticker_set_thumbnail(UserId user_id, string &short_name,
                                                 tl_object_ptr<td_api::InputFile> &&thumbnail, Promise<Unit> &&promise) {
-  auto input_user = td_->contacts_manager_->get_input_user(user_id);
-  if (input_user == nullptr) {
-    return promise.set_error(Status::Error(400, "User not found"));
-  }
-  DialogId dialog_id(user_id);
-  auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
-  if (input_peer == nullptr) {
-    return promise.set_error(Status::Error(400, "Have no access to the user"));
-  }
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(user_id));
 
   short_name = clean_username(strip_empty_characters(short_name, MAX_STICKER_SET_SHORT_NAME_LENGTH));
   if (short_name.empty()) {
@@ -6534,7 +6519,7 @@ void StickersManager::on_update_recent_stickers_limit(int32 recent_stickers_limi
       for (int is_attached = 0; is_attached < 2; is_attached++) {
         if (static_cast<int32>(recent_sticker_ids_[is_attached].size()) > recent_stickers_limit) {
           recent_sticker_ids_[is_attached].resize(recent_stickers_limit);
-          send_update_recent_stickers(is_attached);
+          send_update_recent_stickers(is_attached != 0);
         }
       }
     } else {
@@ -7236,6 +7221,9 @@ void StickersManager::load_emoji_keywords_difference(const string &language_code
 void StickersManager::on_get_emoji_keywords_difference(
     const string &language_code, int32 from_version,
     Result<telegram_api::object_ptr<telegram_api::emojiKeywordsDifference>> &&result) {
+  if (G()->close_flag()) {
+    result = G()->close_status();
+  }
   if (result.is_error()) {
     if (!G()->is_expected_error(result.error())) {
       LOG(ERROR) << "Receive " << result.error() << " from GetEmojiKeywordsDifferenceQuery";
@@ -7258,10 +7246,10 @@ void StickersManager::on_get_emoji_keywords_difference(
     keywords->version_ = version;
   }
   version = keywords->version_;
-  auto *pmc = G()->td_db()->get_sqlite_sync_pmc();
-  pmc->begin_write_transaction().ensure();
-  pmc->set(get_emoji_language_code_version_database_key(language_code), to_string(version));
-  pmc->set(get_emoji_language_code_last_difference_time_database_key(language_code), to_string(G()->unix_time()));
+  std::unordered_map<string, string> key_values;
+  key_values.emplace(get_emoji_language_code_version_database_key(language_code), to_string(version));
+  key_values.emplace(get_emoji_language_code_last_difference_time_database_key(language_code),
+                     to_string(G()->unix_time()));
   for (auto &keyword_ptr : keywords->keywords_) {
     switch (keyword_ptr->get_id()) {
       case telegram_api::emojiKeyword::ID: {
@@ -7284,10 +7272,10 @@ void StickersManager::on_get_emoji_keywords_difference(
             }
           }
           if (is_changed) {
-            pmc->set(get_language_emojis_database_key(language_code, text), implode(emojis, '$'));
+            key_values.emplace(get_language_emojis_database_key(language_code, text), implode(emojis, '$'));
           } else {
-            LOG(ERROR) << "Emoji keywords not changed for \"" << text << "\" from version " << from_version
-                       << " to version " << version;
+            LOG(INFO) << "Emoji keywords not changed for \"" << text << "\" from version " << from_version
+                      << " to version " << version;
           }
         }
         break;
@@ -7303,10 +7291,10 @@ void StickersManager::on_get_emoji_keywords_difference(
           }
         }
         if (is_changed) {
-          pmc->set(get_language_emojis_database_key(language_code, text), implode(emojis, '$'));
+          key_values.emplace(get_language_emojis_database_key(language_code, text), implode(emojis, '$'));
         } else {
-          LOG(ERROR) << "Emoji keywords not changed for \"" << text << "\" from version " << from_version
-                     << " to version " << version;
+          LOG(INFO) << "Emoji keywords not changed for \"" << text << "\" from version " << from_version
+                    << " to version " << version;
         }
         break;
       }
@@ -7314,7 +7302,19 @@ void StickersManager::on_get_emoji_keywords_difference(
         UNREACHABLE();
     }
   }
-  pmc->commit_transaction().ensure();
+  G()->td_db()->get_sqlite_pmc()->set_all(
+      std::move(key_values), PromiseCreator::lambda([actor_id = actor_id(this), language_code, version](Unit) mutable {
+        send_closure(actor_id, &StickersManager::finish_get_emoji_keywords_difference, std::move(language_code),
+                     version);
+      }));
+}
+
+void StickersManager::finish_get_emoji_keywords_difference(string language_code, int32 version) {
+  if (G()->close_flag()) {
+    return;
+  }
+
+  LOG(INFO) << "Finished to get emoji keywords difference for language " << language_code;
   emoji_language_code_versions_[language_code] = version;
   emoji_language_code_last_difference_times_[language_code] = static_cast<int32>(Time::now_cached());
 }

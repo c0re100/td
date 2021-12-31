@@ -59,6 +59,7 @@ class LinkManager;
 class MessagesManager;
 class NetStatsManager;
 class NotificationManager;
+class OptionManager;
 class PasswordManager;
 class PhoneNumberManager;
 class PollManager;
@@ -97,6 +98,8 @@ class Td final : public Actor {
   Td &operator=(Td &&) = delete;
   ~Td() final;
 
+  static constexpr const char *TDLIB_VERSION = "1.8.0";
+
   struct Options {
     std::shared_ptr<NetQueryStats> net_query_stats;
   };
@@ -115,17 +118,18 @@ class Td final : public Actor {
 
   void on_result(NetQueryPtr query);
 
-  void on_update_server_time_difference();
-
   void on_online_updated(bool force, bool send_update);
+
   void on_update_status_success(bool is_online);
 
   bool is_online() const;
 
+  void set_is_online(bool is_online);
+
   void set_is_bot_online(bool is_bot_online);
 
   template <class ActorT, class... ArgsT>
-  ActorId<ActorT> create_net_actor(ArgsT &&... args) {
+  ActorId<ActorT> create_net_actor(ArgsT &&...args) {
     LOG_CHECK(close_flag_ < 1) << close_flag_
 #if TD_CLANG || TD_GCC
                                << ' ' << __PRETTY_FUNCTION__
@@ -175,6 +179,8 @@ class Td final : public Actor {
   ActorOwn<MessagesManager> messages_manager_actor_;
   unique_ptr<NotificationManager> notification_manager_;
   ActorOwn<NotificationManager> notification_manager_actor_;
+  unique_ptr<OptionManager> option_manager_;
+  ActorOwn<OptionManager> option_manager_actor_;
   unique_ptr<PollManager> poll_manager_;
   ActorOwn<PollManager> poll_manager_actor_;
   unique_ptr<SponsoredMessageManager> sponsored_message_manager_;
@@ -234,7 +240,7 @@ class Td final : public Actor {
   };
 
   template <class HandlerT, class... Args>
-  std::shared_ptr<HandlerT> create_handler(Args &&... args) {
+  std::shared_ptr<HandlerT> create_handler(Args &&...args) {
     LOG_CHECK(close_flag_ < 2) << close_flag_
 #if TD_CLANG || TD_GCC
                                << ' ' << __PRETTY_FUNCTION__
@@ -250,7 +256,6 @@ class Td final : public Actor {
   static td_api::object_ptr<td_api::Object> static_request(td_api::object_ptr<td_api::Function> function);
 
  private:
-  static constexpr const char *TDLIB_VERSION = "1.7.10";
   static constexpr int64 ONLINE_ALARM_ID = 0;
   static constexpr int64 PING_SERVER_ALARM_ID = -1;
   static constexpr int32 PING_SERVER_TIMEOUT = 300;
@@ -311,8 +316,6 @@ class Td final : public Actor {
 
   TermsOfService pending_terms_of_service_;
 
-  double last_sent_server_time_difference_ = 1e100;
-
   struct DownloadInfo {
     int32 offset = -1;
     int32 limit = -1;
@@ -347,10 +350,6 @@ class Td final : public Actor {
   void clear_requests();
 
   void on_file_download_finished(FileId file_id);
-
-  static bool is_internal_config_option(Slice name);
-
-  void on_config_option_updated(const string &name);
 
   class OnRequest;
 
@@ -526,9 +525,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getMessages &request);
 
-  void on_request(uint64 id, const td_api::getChatSponsoredMessages &request);
-
-  void on_request(uint64 id, const td_api::viewSponsoredMessage &request);
+  void on_request(uint64 id, const td_api::getChatSponsoredMessage &request);
 
   void on_request(uint64 id, const td_api::getMessageLink &request);
 
@@ -662,7 +659,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getChatAvailableMessageSenders &request);
 
-  void on_request(uint64 id, const td_api::setChatDefaultMessageSender &request);
+  void on_request(uint64 id, const td_api::setChatMessageSender &request);
 
   void on_request(uint64 id, td_api::sendMessage &request);
 
@@ -794,7 +791,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::leaveGroupCall &request);
 
-  void on_request(uint64 id, const td_api::discardGroupCall &request);
+  void on_request(uint64 id, const td_api::endGroupCall &request);
 
   void on_request(uint64 id, td_api::getGroupCallStreamSegment &request);
 
@@ -820,7 +817,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::setChatPhoto &request);
 
-  void on_request(uint64 id, const td_api::setChatMessageTtlSetting &request);
+  void on_request(uint64 id, const td_api::setChatMessageTtl &request);
 
   void on_request(uint64 id, const td_api::setChatPermissions &request);
 

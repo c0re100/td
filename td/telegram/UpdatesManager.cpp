@@ -27,7 +27,7 @@
 #include "td/telegram/Location.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessagesManager.h"
-#include "td/telegram/MessageTtlSetting.h"
+#include "td/telegram/MessageTtl.h"
 #include "td/telegram/net/DcOptions.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/NotificationManager.h"
@@ -893,8 +893,8 @@ void UpdatesManager::on_get_updates(tl_object_ptr<telegram_api::Updates> &&updat
           false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, update->id_,
           make_tl_object<telegram_api::peerUser>(from_id), make_tl_object<telegram_api::peerUser>(update->user_id_),
           std::move(update->fwd_from_), update->via_bot_id_, std::move(update->reply_to_), update->date_,
-          update->message_, nullptr, nullptr, std::move(update->entities_), 0, 0, nullptr, 0, string(), 0, Auto(),
-          update->ttl_period_);
+          update->message_, nullptr, nullptr, std::move(update->entities_), 0, 0, nullptr, 0, string(), 0, nullptr,
+          Auto(), update->ttl_period_);
       on_pending_update(
           make_tl_object<telegram_api::updateNewMessage>(std::move(message), update->pts_, update->pts_count_), 0,
           std::move(promise), "telegram_api::updatesShortMessage");
@@ -918,7 +918,7 @@ void UpdatesManager::on_get_updates(tl_object_ptr<telegram_api::Updates> &&updat
           make_tl_object<telegram_api::peerUser>(update->from_id_),
           make_tl_object<telegram_api::peerChat>(update->chat_id_), std::move(update->fwd_from_), update->via_bot_id_,
           std::move(update->reply_to_), update->date_, update->message_, nullptr, nullptr, std::move(update->entities_),
-          0, 0, nullptr, 0, string(), 0, Auto(), update->ttl_period_);
+          0, 0, nullptr, 0, string(), 0, nullptr, Auto(), update->ttl_period_);
       on_pending_update(
           make_tl_object<telegram_api::updateNewMessage>(std::move(message), update->pts_, update->pts_count_), 0,
           std::move(promise), "telegram_api::updatesShortChatMessage");
@@ -1652,16 +1652,16 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
         return promise.set_value(Unit());
       }
     }
+  }
 
-    if (date > 0 && updates.size() == 1 && updates[0] != nullptr &&
-        updates[0]->get_id() == telegram_api::updateReadHistoryOutbox::ID) {
-      auto update = static_cast<const telegram_api::updateReadHistoryOutbox *>(updates[0].get());
-      DialogId dialog_id(update->peer_);
-      if (dialog_id.get_type() == DialogType::User) {
-        auto user_id = dialog_id.get_user_id();
-        if (user_id.is_valid()) {
-          td_->contacts_manager_->on_update_user_local_was_online(user_id, date);
-        }
+  if (date > 0 && updates.size() == 1 && updates[0] != nullptr &&
+      updates[0]->get_id() == telegram_api::updateReadHistoryOutbox::ID) {
+    auto update = static_cast<const telegram_api::updateReadHistoryOutbox *>(updates[0].get());
+    DialogId dialog_id(update->peer_);
+    if (dialog_id.get_type() == DialogType::User) {
+      auto user_id = dialog_id.get_user_id();
+      if (user_id.is_valid()) {
+        td_->contacts_manager_->on_update_user_local_was_online(user_id, date);
       }
     }
   }
@@ -2026,6 +2026,14 @@ void UpdatesManager::add_pending_pts_update(tl_object_ptr<telegram_api::Update> 
   if (running_get_difference_ || !postponed_pts_updates_.empty()) {
     LOG(INFO) << "Save pending update got while running getDifference from " << source;
     postpone_pts_update(std::move(update), new_pts, pts_count, receive_time, std::move(promise));
+    return;
+  }
+
+  // is_acceptable_update check was skipped for postponed pts updates
+  if (Slice(source) == "after get difference" && !is_acceptable_update(update.get())) {
+    LOG(INFO) << "Postpone again unacceptable pending update";
+    postpone_pts_update(std::move(update), new_pts, pts_count, receive_time, std::move(promise));
+    set_pts_gap_timeout(0.001);
     return;
   }
 
@@ -2665,11 +2673,11 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updatePeerSettings> u
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updatePeerHistoryTTL> update, Promise<Unit> &&promise) {
-  MessageTtlSetting message_ttl_setting;
+  MessageTtl message_ttl;
   if ((update->flags_ & telegram_api::updatePeerHistoryTTL::TTL_PERIOD_MASK) != 0) {
-    message_ttl_setting = MessageTtlSetting(update->ttl_period_);
+    message_ttl = MessageTtl(update->ttl_period_);
   }
-  td_->messages_manager_->on_update_dialog_message_ttl_setting(DialogId(update->peer_), message_ttl_setting);
+  td_->messages_manager_->on_update_dialog_message_ttl(DialogId(update->peer_), message_ttl);
   promise.set_value(Unit());
 }
 
@@ -3271,5 +3279,8 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updatePendingJoinRequ
 }
 
 // unsupported updates
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateMessageReactions> update, Promise<Unit> &&promise) {
+}
 
 }  // namespace td

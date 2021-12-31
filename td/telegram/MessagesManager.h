@@ -35,7 +35,7 @@
 #include "td/telegram/MessagesDb.h"
 #include "td/telegram/MessageSearchFilter.h"
 #include "td/telegram/MessageThreadInfo.h"
-#include "td/telegram/MessageTtlSetting.h"
+#include "td/telegram/MessageTtl.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/Notification.h"
@@ -135,6 +135,7 @@ class MessagesManager final : public Actor {
   static constexpr int32 SEND_MESSAGE_FLAG_HAS_SCHEDULE_DATE = 1 << 10;
   static constexpr int32 SEND_MESSAGE_FLAG_HAS_MESSAGE = 1 << 11;
   static constexpr int32 SEND_MESSAGE_FLAG_HAS_SEND_AS = 1 << 13;
+  static constexpr int32 SEND_MESSAGE_FLAG_NOFORWARDS = 1 << 14;
 
   static constexpr int32 ONLINE_MEMBER_COUNT_CACHE_EXPIRE_TIME = 30 * 60;
 
@@ -310,7 +311,7 @@ class MessagesManager final : public Actor {
   void on_update_dialog_default_send_message_as_dialog_id(DialogId dialog_id, DialogId default_send_as_dialog_id,
                                                           bool force);
 
-  void on_update_dialog_message_ttl_setting(DialogId dialog_id, MessageTtlSetting message_ttl_setting);
+  void on_update_dialog_message_ttl(DialogId dialog_id, MessageTtl message_ttl);
 
   void on_update_dialog_filters();
 
@@ -428,7 +429,7 @@ class MessagesManager final : public Actor {
 
   Result<vector<MessageId>> resend_messages(DialogId dialog_id, vector<MessageId> message_ids) TD_WARN_UNUSED_RESULT;
 
-  void set_dialog_message_ttl_setting(DialogId dialog_id, int32 ttl, Promise<Unit> &&promise);
+  void set_dialog_message_ttl(DialogId dialog_id, int32 ttl, Promise<Unit> &&promise);
 
   Status send_screenshot_taken_notification_message(DialogId dialog_id);
 
@@ -567,7 +568,7 @@ class MessagesManager final : public Actor {
 
   bool can_get_message_statistics(FullMessageId full_message_id);
 
-  DialogId get_message_sender(FullMessageId full_message_id);
+  DialogId get_dialog_message_sender(FullMessageId full_message_id);
 
   bool have_message_force(FullMessageId full_message_id, const char *source);
 
@@ -772,7 +773,7 @@ class MessagesManager final : public Actor {
   tl_object_ptr<td_api::message> get_dialog_message_by_date_object(int64 random_id);
 
   td_api::object_ptr<td_api::message> get_dialog_event_log_message_object(
-      DialogId dialog_id, tl_object_ptr<telegram_api::Message> &&message);
+      DialogId dialog_id, tl_object_ptr<telegram_api::Message> &&message, DialogId &sender_dialog_id);
 
   tl_object_ptr<td_api::message> get_message_object(FullMessageId full_message_id, const char *source);
 
@@ -1205,7 +1206,7 @@ class MessagesManager final : public Actor {
     MessageId last_pinned_message_id;
     MessageId reply_markup_message_id;
     DialogNotificationSettings notification_settings;
-    MessageTtlSetting message_ttl_setting;
+    MessageTtl message_ttl;
     unique_ptr<DraftMessage> draft_message;
     unique_ptr<DialogActionBar> action_bar;
     LogEventIdWithGeneration save_draft_message_log_event_id;
@@ -1264,6 +1265,7 @@ class MessagesManager final : public Actor {
     bool was_opened = false;
 
     bool need_restore_reply_markup = true;
+    bool need_drop_default_send_message_as_dialog_id = false;
 
     bool have_full_history = false;
     bool is_empty = false;
@@ -1286,7 +1288,7 @@ class MessagesManager final : public Actor {
     bool had_last_yet_unsent_message = false;  // whether the dialog was stored to database without last message
     bool has_active_group_call = false;
     bool is_group_call_empty = false;
-    bool is_message_ttl_setting_inited = false;
+    bool is_message_ttl_inited = false;
     bool has_expected_active_group_call_id = false;
     bool has_bots = false;
     bool is_has_bots_inited = false;
@@ -1650,11 +1652,15 @@ class MessagesManager final : public Actor {
   struct MessageSendOptions {
     bool disable_notification = false;
     bool from_background = false;
+    bool protect_content = false;
     int32 schedule_date = 0;
 
     MessageSendOptions() = default;
-    MessageSendOptions(bool disable_notification, bool from_background, int32 schedule_date)
-        : disable_notification(disable_notification), from_background(from_background), schedule_date(schedule_date) {
+    MessageSendOptions(bool disable_notification, bool from_background, bool protect_content, int32 schedule_date)
+        : disable_notification(disable_notification)
+        , from_background(from_background)
+        , protect_content(protect_content)
+        , schedule_date(schedule_date) {
     }
   };
 
@@ -1836,7 +1842,7 @@ class MessagesManager final : public Actor {
 
   bool can_edit_message(DialogId dialog_id, const Message *m, bool is_editing, bool only_reply_markup = false) const;
 
-  static bool can_overflow_message_id(DialogId dialog_id);
+  static bool has_qts_messages(DialogId dialog_id);
 
   bool can_report_dialog(DialogId dialog_id) const;
 
@@ -2003,6 +2009,8 @@ class MessagesManager final : public Actor {
 
   int32 get_unload_dialog_delay() const;
 
+  int32 get_next_unload_dialog_delay() const;
+
   void unload_dialog(DialogId dialog_id);
 
   void delete_all_dialog_messages(Dialog *d, bool remove_from_dialog_list, bool is_permanently_deleted);
@@ -2059,7 +2067,7 @@ class MessagesManager final : public Actor {
   static void find_newer_messages(const Message *m, MessageId min_message_id, vector<MessageId> &message_ids);
 
   void find_unloadable_messages(const Dialog *d, int32 unload_before_date, const Message *m,
-                                vector<MessageId> &message_ids, int32 &left_to_unload) const;
+                                vector<MessageId> &message_ids, bool &has_left_to_unload_messages) const;
 
   void on_pending_message_views_timeout(DialogId dialog_id);
 
@@ -2395,9 +2403,9 @@ class MessagesManager final : public Actor {
 
   void send_update_chat_video_chat(const Dialog *d);
 
-  void send_update_chat_default_message_sender_id(const Dialog *d);
+  void send_update_chat_message_sender(const Dialog *d);
 
-  void send_update_chat_message_ttl_setting(const Dialog *d);
+  void send_update_chat_message_ttl(const Dialog *d);
 
   void send_update_chat_has_scheduled_messages(Dialog *d, bool from_deletion);
 
@@ -2580,7 +2588,7 @@ class MessagesManager final : public Actor {
   void fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_database_message, MessageId last_database_message_id,
                       int64 order, int32 last_clear_history_date, MessageId last_clear_history_message_id,
                       DialogId default_join_group_call_as_dialog_id, DialogId default_send_message_as_dialog_id,
-                      bool is_loaded_from_database);
+                      bool need_drop_default_send_message_as_dialog_id, bool is_loaded_from_database);
 
   void add_dialog_last_database_message(Dialog *d, unique_ptr<Message> &&last_database_message);
 
@@ -2596,7 +2604,7 @@ class MessagesManager final : public Actor {
 
   td_api::object_ptr<td_api::videoChat> get_video_chat_object(const Dialog *d) const;
 
-  td_api::object_ptr<td_api::MessageSender> get_default_sender_id_object(const Dialog *d) const;
+  td_api::object_ptr<td_api::MessageSender> get_default_message_sender_object(const Dialog *d) const;
 
   td_api::object_ptr<td_api::chat> get_chat_object(const Dialog *d) const;
 
@@ -3106,9 +3114,9 @@ class MessagesManager final : public Actor {
     return !LOG_IS_STRIPPED(ERROR) && false;
   }
 
-  static void dump_debug_message_op(const Dialog *d, int priority = 0);
+  void add_message_dependencies(Dependencies &dependencies, const Message *m);
 
-  static void add_message_dependencies(Dependencies &dependencies, const Message *m);
+  static void dump_debug_message_op(const Dialog *d, int priority = 0);
 
   static void save_send_message_log_event(DialogId dialog_id, const Message *m);
 
@@ -3512,8 +3520,8 @@ class MessagesManager final : public Actor {
   std::unordered_map<DialogId, vector<DialogId>, DialogIdHash>
       pending_add_default_join_group_call_as_dialog_id_;  // dialog_id -> dependent dialogs
 
-  std::unordered_map<DialogId, vector<DialogId>, DialogIdHash>
-      pending_add_default_send_message_as_dialog_id_;  // dialog_id -> dependent dialogs
+  std::unordered_map<DialogId, vector<std::pair<DialogId, bool>>, DialogIdHash>
+      pending_add_default_send_message_as_dialog_id_;  // dialog_id -> [dependent dialog, need_drop]
 
   struct MessageIds {
     std::unordered_set<MessageId, MessageIdHash> message_ids;

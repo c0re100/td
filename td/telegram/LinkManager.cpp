@@ -266,7 +266,8 @@ class LinkManager::InternalLinkProxy final : public InternalLink {
 
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
     CHECK(type_ != nullptr);
-    auto proxy_type = [type = type_.get()]() -> td_api::object_ptr<td_api::ProxyType> {
+    auto type = type_.get();
+    auto proxy_type = [type]() -> td_api::object_ptr<td_api::ProxyType> {
       switch (type->get_id()) {
         case td_api::proxyTypeSocks5::ID: {
           auto type_socks = static_cast<const td_api::proxyTypeSocks5 *>(type);
@@ -883,10 +884,10 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
       }
     }
   } else if (path.size() == 1 && path[0] == "privatepost") {
-    // privatepost?channel=123456789&msg_id=12345&single&thread=<thread_id>&comment=<message_id>&t=<media_timestamp>
-    if (has_arg("channel") && has_arg("msg_id")) {
+    // privatepost?channel=123456789&post=12345&single&thread=<thread_id>&comment=<message_id>&t=<media_timestamp>
+    if (has_arg("channel") && has_arg("post")) {
       return td::make_unique<InternalLinkMessage>(
-          PSTRING() << "tg:privatepost" << copy_arg("channel") << copy_arg("msg_id") << copy_arg("single")
+          PSTRING() << "tg:privatepost" << copy_arg("channel") << copy_arg("post") << copy_arg("single")
                     << copy_arg("thread") << copy_arg("comment") << copy_arg("t"));
     }
   } else if (path.size() == 1 && path[0] == "bg") {
@@ -941,10 +942,9 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
     if (path.size() >= 3 && to_integer<int64>(path[1]) > 0 && to_integer<int64>(path[2]) > 0) {
       // /c/123456789/12345?single&thread=<thread_id>&comment=<message_id>&t=<media_timestamp>
       is_first_arg = false;
-      return td::make_unique<InternalLinkMessage>(PSTRING()
-                                                  << "tg:privatepost?channel=" << to_integer<int64>(path[1])
-                                                  << "&msg_id=" << to_integer<int64>(path[2]) << copy_arg("single")
-                                                  << copy_arg("thread") << copy_arg("comment") << copy_arg("t"));
+      return td::make_unique<InternalLinkMessage>(
+          PSTRING() << "tg:privatepost?channel=" << to_integer<int64>(path[1]) << "&post=" << to_integer<int64>(path[2])
+                    << copy_arg("single") << copy_arg("thread") << copy_arg("comment") << copy_arg("t"));
     }
   } else if (path[0] == "login") {
     if (path.size() >= 2 && !path[1].empty()) {
@@ -1235,6 +1235,17 @@ string LinkManager::get_dialog_invite_link_hash(Slice invite_link) {
   return get_url_query_hash(link_info.is_tg_, url_query);
 }
 
+string LinkManager::get_dialog_invite_link(Slice hash, bool is_internal) {
+  if (!is_base64url_characters(hash)) {
+    return string();
+  }
+  if (is_internal) {
+    return PSTRING() << "tg:join?invite=" << hash;
+  } else {
+    return PSTRING() << G()->shared_config().get_option_string("t_me_url", "https://t.me/") << '+' << hash;
+  }
+}
+
 UserId LinkManager::get_link_user_id(Slice url) {
   string lower_cased_url = to_lower(url);
   url = lower_cased_url;
@@ -1296,7 +1307,7 @@ Result<MessageLinkInfo> LinkManager::get_message_link_info(Slice url) {
   bool for_comment = false;
   if (link_info.is_tg_) {
     // resolve?domain=username&post=12345&single&t=123&comment=12&thread=21
-    // privatepost?channel=123456789&msg_id=12345&single&t=123&comment=12&thread=21
+    // privatepost?channel=123456789&post=12345&single&t=123&comment=12&thread=21
 
     bool is_resolve = false;
     if (begins_with(url, "resolve")) {
@@ -1323,16 +1334,13 @@ Result<MessageLinkInfo> LinkManager::get_message_link_info(Slice url) {
         if (key_value.first == "domain") {
           username = key_value.second;
         }
-        if (key_value.first == "post") {
-          message_id_slice = key_value.second;
-        }
       } else {
         if (key_value.first == "channel") {
           channel_id_slice = key_value.second;
         }
-        if (key_value.first == "msg_id") {
-          message_id_slice = key_value.second;
-        }
+      }
+      if (key_value.first == "post") {
+        message_id_slice = key_value.second;
       }
       if (key_value.first == "t") {
         media_timestamp_slice = key_value.second;

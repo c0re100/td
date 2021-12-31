@@ -184,28 +184,20 @@ class SafePromise;
 template <class T = Unit>
 class Promise;
 
-constexpr std::false_type is_promise_interface(...);
+template <class T>
+struct is_promise_interface : std::false_type {};
+
+template <class U>
+struct is_promise_interface<PromiseInterface<U>> : std::true_type {};
+
+template <class U>
+struct is_promise_interface<Promise<U>> : std::true_type {};
 
 template <class T>
-constexpr std::true_type is_promise_interface(const PromiseInterface<T> &promise);
+struct is_promise_interface_ptr : std::false_type {};
 
-template <class T>
-constexpr std::true_type is_promise_interface(const Promise<T> &promise);
-
-template <class F>
-constexpr bool is_promise_interface() {
-  return decltype(is_promise_interface(std::declval<F>()))::value;
-}
-
-constexpr std::false_type is_promise_interface_ptr(...);
-
-template <class T>
-constexpr std::true_type is_promise_interface_ptr(const unique_ptr<T> &promise);
-
-template <class F>
-constexpr bool is_promise_interface_ptr() {
-  return decltype(is_promise_interface_ptr(std::declval<F>()))::value;
-}
+template <class U>
+struct is_promise_interface_ptr<unique_ptr<U>> : std::true_type {};
 
 template <class T = void, class F = void, std::enable_if_t<std::is_same<T, void>::value, bool> has_t = false>
 auto lambda_promise(F &&f) {
@@ -217,21 +209,26 @@ auto lambda_promise(F &&f) {
   return detail::LambdaPromise<T, std::decay_t<F>>(std::forward<F>(f));
 }
 
-template <class T, class F, std::enable_if_t<is_promise_interface<F>(), bool> from_promise_interface = true>
+template <class T, class F,
+          std::enable_if_t<is_promise_interface<std::decay_t<F>>::value, bool> from_promise_interface = true>
 auto &&promise_interface(F &&f) {
   return std::forward<F>(f);
 }
 
-template <class T, class F, std::enable_if_t<!is_promise_interface<F>(), bool> from_promise_interface = false>
+template <class T, class F,
+          std::enable_if_t<!is_promise_interface<std::decay_t<F>>::value, bool> from_promise_interface = false>
 auto promise_interface(F &&f) {
   return lambda_promise<T>(std::forward<F>(f));
 }
 
-template <class T, class F, std::enable_if_t<is_promise_interface_ptr<F>(), bool> from_promise_interface = true>
+template <class T, class F,
+          std::enable_if_t<is_promise_interface_ptr<std::decay_t<F>>::value, bool> from_promise_interface = true>
 auto promise_interface_ptr(F &&f) {
   return std::forward<F>(f);
 }
-template <class T, class F, std::enable_if_t<!is_promise_interface_ptr<F>(), bool> from_promise_interface = false>
+
+template <class T, class F,
+          std::enable_if_t<!is_promise_interface_ptr<std::decay_t<F>>::value, bool> from_promise_interface = false>
 auto promise_interface_ptr(F &&f) {
   return td::make_unique<std::decay_t<decltype(promise_interface<T>(std::forward<F>(f)))>>(
       promise_interface<T>(std::forward<F>(f)));
@@ -404,7 +401,7 @@ template <class PromiseT>
 class CancellablePromise final : public PromiseT {
  public:
   template <class... ArgsT>
-  CancellablePromise(CancellationToken cancellation_token, ArgsT &&... args)
+  CancellablePromise(CancellationToken cancellation_token, ArgsT &&...args)
       : PromiseT(std::forward<ArgsT>(args)...), cancellation_token_(std::move(cancellation_token)) {
   }
   bool is_cancellable() const final {
@@ -421,7 +418,7 @@ class CancellablePromise final : public PromiseT {
 template <class... ArgsT>
 class JoinPromise final : public PromiseInterface<Unit> {
  public:
-  explicit JoinPromise(ArgsT &&... arg) : promises_(std::forward<ArgsT>(arg)...) {
+  explicit JoinPromise(ArgsT &&...arg) : promises_(std::forward<ArgsT>(arg)...) {
   }
   void set_value(Unit &&) final {
     tuple_for_each(promises_, [](auto &promise) { promise.set_value(Unit()); });
@@ -438,7 +435,7 @@ class JoinPromise final : public PromiseInterface<Unit> {
 class SendClosure {
  public:
   template <class... ArgsT>
-  void operator()(ArgsT &&... args) const {
+  void operator()(ArgsT &&...args) const {
     send_closure(std::forward<ArgsT>(args)...);
   }
 };
@@ -453,7 +450,7 @@ class SendClosure {
 //}
 
 template <class... ArgsT>
-auto promise_send_closure(ArgsT &&... args) {
+auto promise_send_closure(ArgsT &&...args) {
   return [t = std::make_tuple(std::forward<ArgsT>(args)...)](auto &&res) mutable {
     call_tuple(SendClosure(), std::tuple_cat(std::move(t), std::make_tuple(std::forward<decltype(res)>(res))));
   };
@@ -679,7 +676,7 @@ class PromiseFuture {
 template <ActorSendType send_type, class T, class ActorAT, class ActorBT, class ResultT, class... DestArgsT,
           class... ArgsT>
 FutureActor<T> send_promise(ActorId<ActorAT> actor_id, ResultT (ActorBT::*func)(PromiseActor<T> &&, DestArgsT...),
-                            ArgsT &&... args) {
+                            ArgsT &&...args) {
   PromiseFuture<T> pf;
   Scheduler::instance()->send_closure<send_type>(
       std::move(actor_id), create_immediate_closure(func, pf.move_promise(), std::forward<ArgsT>(args)...));
@@ -716,7 +713,7 @@ class PromiseCreator {
   }
 
   template <class... ArgsT>
-  static Promise<> join(ArgsT &&... args) {
+  static Promise<> join(ArgsT &&...args) {
     return Promise<>(td::make_unique<detail::JoinPromise<ArgsT...>>(std::forward<ArgsT>(args)...));
   }
 

@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.7.10 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.0 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -361,7 +361,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageSearchFilter.cpp
   td/telegram/MessageSender.cpp
   td/telegram/MessagesManager.cpp
-  td/telegram/MessageTtlSetting.cpp
+  td/telegram/MessageTtl.cpp
   td/telegram/misc.cpp
   td/telegram/net/AuthDataShared.cpp
   td/telegram/net/ConnectionCreator.cpp
@@ -385,6 +385,7 @@ set(TDLIB_SOURCE
   td/telegram/NotificationManager.cpp
   td/telegram/NotificationSettings.cpp
   td/telegram/NotificationType.cpp
+  td/telegram/OptionManager.cpp
   td/telegram/Payments.cpp
   td/telegram/PasswordManager.cpp
   td/telegram/PhoneNumberManager.cpp
@@ -565,7 +566,8 @@ set(TDLIB_SOURCE
   td/telegram/MessageSearchFilter.h
   td/telegram/MessageSender.h
   td/telegram/MessagesManager.h
-  td/telegram/MessageTtlSetting.h
+  td/telegram/MessageTtl.h
+  td/telegram/MinChannel.h
   td/telegram/misc.h
   td/telegram/net/AuthDataShared.h
   td/telegram/net/ConnectionCreator.h
@@ -599,6 +601,7 @@ set(TDLIB_SOURCE
   td/telegram/NotificationManager.h
   td/telegram/NotificationSettings.h
   td/telegram/NotificationType.h
+  td/telegram/OptionManager.h
   td/telegram/PasswordManager.h
   td/telegram/Payments.h
   td/telegram/PhoneNumberManager.h
@@ -672,6 +675,8 @@ set(TDLIB_SOURCE
   td/telegram/Game.hpp
   td/telegram/InputMessageText.hpp
   td/telegram/MessageEntity.hpp
+  td/telegram/MessageReplyInfo.hpp
+  td/telegram/MinChannel.hpp
   td/telegram/NotificationSettings.hpp
   td/telegram/Payments.hpp
   td/telegram/Photo.hpp

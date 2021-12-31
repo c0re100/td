@@ -10,7 +10,10 @@
 
 #include "td/actor/PromiseFuture.h"
 
+#include "td/utils/common.h"
+
 #include <memory>
+#include <unordered_map>
 
 namespace td {
 
@@ -18,12 +21,17 @@ class SqliteKeyValueAsyncInterface {
  public:
   virtual ~SqliteKeyValueAsyncInterface() = default;
 
-  virtual void set(string key, string value, Promise<> promise) = 0;
-  virtual void erase(string key, Promise<> promise) = 0;
-  virtual void erase_by_prefix(string key_prefix, Promise<> promise) = 0;
+  virtual void set(string key, string value, Promise<Unit> promise) = 0;
+
+  virtual void set_all(std::unordered_map<string, string> key_values, Promise<Unit> promise) = 0;
+
+  virtual void erase(string key, Promise<Unit> promise) = 0;
+
+  virtual void erase_by_prefix(string key_prefix, Promise<Unit> promise) = 0;
 
   virtual void get(string key, Promise<string> promise) = 0;
-  virtual void close(Promise<> promise) = 0;
+
+  virtual void close(Promise<Unit> promise) = 0;
 };
 
 unique_ptr<SqliteKeyValueAsyncInterface> create_sqlite_key_value_async(std::shared_ptr<SqliteKeyValueSafe> kv,
