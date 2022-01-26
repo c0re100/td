@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -753,7 +753,7 @@ Status Session::on_message_result_ok(uint64 id, BufferSlice packet, size_t origi
         auto dropped_size = dropped_size_;
         dropped_size_ = 0;
         return Status::Error(
-            2, PSLICE() << "Too much dropped packets " << tag("total_size", format::as_size(dropped_size)));
+            2, PSLICE() << "Too many dropped packets " << tag("total_size", format::as_size(dropped_size)));
       }
     }
     return Status::OK();
@@ -1158,8 +1158,8 @@ void Session::connection_open_finish(ConnectionInfo *info,
   info->created_at_ = Time::now_cached();
   info->wakeup_at_ = Time::now_cached() + 10;
   if (unknown_queries_.size() > MAX_INFLIGHT_QUERIES) {
-    LOG(ERROR) << "With current limits `Too much queries with unknown state` error must be impossible";
-    on_session_failed(Status::Error("Too much queries with unknown state"));
+    LOG(ERROR) << "With current limits `Too many queries with unknown state` error must be impossible";
+    on_session_failed(Status::Error("Too many queries with unknown state"));
     return;
   }
   if (info->ask_info_) {

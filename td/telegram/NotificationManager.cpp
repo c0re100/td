@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -3255,7 +3255,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     loc_args.clear();
   }
   if (loc_args.size() > 1) {
-    return Status::Error("Receive too much arguments");
+    return Status::Error("Receive too many arguments");
   }
 
   if (loc_args.size() == 1) {

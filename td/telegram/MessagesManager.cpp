@@ -1,5 +1,5 @@
 ﻿//
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -3900,11 +3900,12 @@ class SetTypingQuery final : public Td::ResultHandler {
     if (message_id.is_valid()) {
       flags |= telegram_api::messages_setTyping::TOP_MSG_ID_MASK;
     }
-    auto net_query = G()->net_query_creator().create(telegram_api::messages_setTyping(
+    auto query = G()->net_query_creator().create(telegram_api::messages_setTyping(
         flags, std::move(input_peer), message_id.get_server_message_id().get(), std::move(action)));
-    auto result = net_query.get_weak();
+    query->total_timeout_limit_ = 2;
+    auto result = query.get_weak();
     generation_ = result.generation();
-    send_query(std::move(net_query));
+    send_query(std::move(query));
     return result;
   }
 
@@ -24533,7 +24534,7 @@ Result<vector<MessageId>> MessagesManager::send_message_group(
     tl_object_ptr<td_api::messageSendOptions> &&options,
     vector<tl_object_ptr<td_api::InputMessageContent>> &&input_message_contents) {
   if (input_message_contents.size() > MAX_GROUPED_MESSAGES) {
-    return Status::Error(400, "Too much messages to send as an album");
+    return Status::Error(400, "Too many messages to send as an album");
   }
   if (input_message_contents.empty()) {
     return Status::Error(400, "There are no messages to send");
@@ -27045,7 +27046,7 @@ Result<MessagesManager::ForwardedMessages> MessagesManager::get_forwarded_messag
     vector<MessageCopyOptions> &&copy_options) {
   CHECK(copy_options.size() == message_ids.size());
   if (message_ids.size() > 100) {  // TODO replace with const from config or implement mass-forward
-    return Status::Error(400, "Too much messages to forward");
+    return Status::Error(400, "Too many messages to forward");
   }
   if (message_ids.empty()) {
     return Status::Error(400, "There are no messages to forward");
@@ -31778,14 +31779,19 @@ void MessagesManager::send_dialog_action(DialogId dialog_id, MessageId top_threa
     return;
   }
 
+  auto new_query_ref =
+      td_->create_handler<SetTypingQuery>(std::move(promise))
+          ->send(dialog_id, std::move(input_peer), top_thread_message_id, action.get_input_send_message_action());
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+
   auto &query_ref = set_typing_query_[dialog_id];
-  if (!query_ref.empty() && !td_->auth_manager_->is_bot()) {
+  if (!query_ref.empty()) {
     LOG(INFO) << "Cancel previous send chat action query";
     cancel_query(query_ref);
   }
-  query_ref =
-      td_->create_handler<SetTypingQuery>(std::move(promise))
-          ->send(dialog_id, std::move(input_peer), top_thread_message_id, action.get_input_send_message_action());
+  query_ref = std::move(new_query_ref);
 }
 
 void MessagesManager::after_set_typing_query(DialogId dialog_id, int32 generation) {

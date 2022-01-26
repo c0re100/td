@@ -629,7 +629,7 @@ chatJoinRequestsInfo total_count:int32 user_ids:vector<int53> = ChatJoinRequests
 //@status Status of the current user in the group
 //@is_active True, if the group is active
 //@upgraded_to_supergroup_id Identifier of the supergroup to which this group was upgraded; 0 if none
-basicGroup id:int53 access_hash:int64 member_count:int32 status:ChatMemberStatus is_active:Bool upgraded_to_supergroup_id:int32 = BasicGroup;
+basicGroup id:int53 access_hash:int64 member_count:int32 status:ChatMemberStatus is_active:Bool upgraded_to_supergroup_id:int53 = BasicGroup;
 
 //@description Contains full information about a basic group
 //@photo Chat photo; may be null
@@ -2841,7 +2841,7 @@ checkChatUsernameResultUsernameInvalid = CheckChatUsernameResult;
 //@description The username is occupied
 checkChatUsernameResultUsernameOccupied = CheckChatUsernameResult;
 
-//@description The user has too much chats with username, one of them must be made private first
+//@description The user has too many chats with username, one of them must be made private first
 checkChatUsernameResultPublicChatsTooMuch = CheckChatUsernameResult;
 
 //@description The user can't be a member of a public supergroup

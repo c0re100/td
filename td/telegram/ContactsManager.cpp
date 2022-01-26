@@ -1,5 +1,5 @@
 ﻿//
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2021
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -4417,9 +4417,11 @@ bool ContactsManager::have_input_peer_user(UserId user_id, AccessRights access_r
 
 bool ContactsManager::have_input_peer_user(const User *u, AccessRights access_rights) {
   if (u == nullptr) {
+    LOG(DEBUG) << "Have no user";
     return false;
   }
   if (u->access_hash == -1 || u->is_min_access_hash) {
+    LOG(DEBUG) << "Have user without access hash";
     return false;
   }
   if (access_rights == AccessRights::Know) {
@@ -4429,6 +4431,7 @@ bool ContactsManager::have_input_peer_user(const User *u, AccessRights access_ri
     return true;
   }
   if (u->is_deleted) {
+    LOG(DEBUG) << "Have a deleted user";
     return false;
   }
   return true;
@@ -4457,6 +4460,7 @@ bool ContactsManager::have_input_peer_chat(ChatId chat_id, AccessRights access_r
 
 bool ContactsManager::have_input_peer_chat(const Chat *c, AccessRights access_rights) {
   if (c == nullptr) {
+    LOG(DEBUG) << "Have no basic group";
     return false;
   }
   if (access_rights == AccessRights::Know) {
@@ -4466,9 +4470,11 @@ bool ContactsManager::have_input_peer_chat(const Chat *c, AccessRights access_ri
     return true;
   }
   if (c->status.is_left()) {
+    LOG(DEBUG) << "Have left basic group";
     return false;
   }
   if (access_rights == AccessRights::Write && !c->is_active) {
+    LOG(DEBUG) << "Have inactive basic group";
     return false;
   }
   return true;
@@ -4505,6 +4511,7 @@ tl_object_ptr<telegram_api::InputPeer> ContactsManager::get_input_peer_channel(C
 bool ContactsManager::have_input_peer_channel(const Channel *c, ChannelId channel_id, AccessRights access_rights,
                                               bool from_linked) const {
   if (c == nullptr) {
+    LOG(DEBUG) << "Have no supergroup";
     return false;
   }
   if (access_rights == AccessRights::Know) {
@@ -4514,6 +4521,7 @@ bool ContactsManager::have_input_peer_channel(const Channel *c, ChannelId channe
     return true;
   }
   if (c->status.is_banned()) {
+    LOG(DEBUG) << "Was banned in a supergroup";
     return false;
   }
   if (c->status.is_member()) {
@@ -4549,6 +4557,7 @@ bool ContactsManager::have_input_peer_channel(const Channel *c, ChannelId channe
       }
     }
   }
+  LOG(DEBUG) << "Have no access to a private supergroup";
   return false;
 }
 
@@ -4558,6 +4567,7 @@ bool ContactsManager::have_input_encrypted_peer(SecretChatId secret_chat_id, Acc
 
 bool ContactsManager::have_input_encrypted_peer(const SecretChat *secret_chat, AccessRights access_rights) {
   if (secret_chat == nullptr) {
+    LOG(DEBUG) << "Have no secret chat";
     return false;
   }
   if (access_rights == AccessRights::Know) {
@@ -13966,8 +13976,7 @@ bool ContactsManager::get_user(UserId user_id, int left_tries, Promise<Unit> &&p
     get_user_force(user_id);
   }
 
-  // TODO support loading user from database and merging it with min-user in memory
-  if (!have_min_user(user_id)) {
+  if (td_->auth_manager_->is_bot() ? !have_user(user_id) : !have_min_user(user_id)) {
     // TODO UserLoader
     if (left_tries > 2 && G()->parameters().use_chat_info_db) {
       send_closure_later(actor_id(this), &ContactsManager::load_user_from_database, nullptr, user_id,
