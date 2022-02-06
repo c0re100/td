@@ -19,6 +19,7 @@
 #include "td/telegram/Photo.h"
 #include "td/telegram/PhotoSizeSource.h"
 #include "td/telegram/secret_api.h"
+#include "td/telegram/StickerFormat.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
@@ -124,10 +125,19 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       if ((video->flags_ & telegram_api::documentAttributeVideo::ROUND_MESSAGE_MASK) != 0) {
         // video note without sound
         animated = nullptr;
+      } else if (sticker != nullptr) {
+        // sticker
+        type_attributes--;
+        animated = nullptr;
+        video = nullptr;
       } else {
         // video animation
         video = nullptr;
       }
+    } else if (sticker != nullptr) {
+      // some stickers uploaded before release
+      type_attributes--;
+      video = nullptr;
     }
   }
   if (animated != nullptr && audio != nullptr) {
@@ -145,6 +155,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
   FileType file_type = FileType::Document;
   Slice default_extension;
   bool supports_streaming = false;
+  StickerFormat sticker_format = StickerFormat::Unknown;
   PhotoFormat thumbnail_format = PhotoFormat::Jpeg;
   if (type_attributes == 1 || default_document_type != Document::Type::General) {  // not a general document
     if (animated != nullptr || default_document_type == Document::Type::Animation) {
@@ -170,6 +181,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     } else if (sticker != nullptr || default_document_type == Document::Type::Sticker) {
       document_type = Document::Type::Sticker;
       file_type = FileType::Sticker;
+      sticker_format = StickerFormat::Webp;
       default_extension = Slice("webp");
       owner_dialog_id = DialogId();
       file_name.clear();
@@ -223,22 +235,21 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
   PhotoSize thumbnail;
   AnimationSize animated_thumbnail;
   FileEncryptionKey encryption_key;
-  bool is_animated_sticker = false;
   bool is_web = false;
   bool is_web_no_proxy = false;
   string url;
   FileLocationSource source = FileLocationSource::FromServer;
 
-  auto fix_animated_sticker_type = [&] {
+  auto fix_tgs_sticker_type = [&] {
     if (mime_type != "application/x-tgsticker") {
       return;
     }
 
-    is_animated_sticker = true;
+    sticker_format = StickerFormat::Tgs;
+    default_extension = Slice("tgs");
     if (document_type == Document::Type::General) {
       document_type = Document::Type::Sticker;
       file_type = FileType::Sticker;
-      default_extension = Slice("tgs");
       owner_dialog_id = DialogId();
       file_name.clear();
       thumbnail_format = PhotoFormat::Webp;
@@ -258,7 +269,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     if (document_type == Document::Type::Sticker && StickersManager::has_webp_thumbnail(document->thumbs_)) {
       thumbnail_format = PhotoFormat::Webp;
     }
-    fix_animated_sticker_type();
+    fix_tgs_sticker_type();
 
     if (owner_dialog_id.get_type() == DialogType::SecretChat) {
       // secret_api::decryptedMessageMediaExternalDocument
@@ -309,8 +320,8 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       return {};
     }
 
-    // do not allow encrypted animated stickers
-    // fix_animated_sticker_type();
+    // do not allow encrypted TGS stickers
+    // fix_tgs_sticker_type();
 
     if (document_type != Document::Type::VoiceNote) {
       thumbnail = get_secret_thumbnail_photo_size(td_->file_manager_.get(), std::move(document->thumb_),
@@ -367,8 +378,16 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         UNREACHABLE();
     }
 
-    // do not allow web animated stickers
-    // fix_animated_sticker_type();
+    // do not allow web TGS stickers
+    // fix_tgs_sticker_type();
+  }
+  if (document_type == Document::Type::Sticker && mime_type == "video/webm") {
+    sticker_format = StickerFormat::Webm;
+    default_extension = Slice("webm");
+  }
+  if (file_type == FileType::Encrypted && document_type == Document::Type::Sticker &&
+      size > get_max_sticker_file_size(sticker_format, false)) {
+    document_type = Document::Type::General;
   }
 
   LOG(DEBUG) << "Receive document with ID = " << id << " of type " << document_type;
@@ -446,7 +465,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         minithumbnail = string();
       }
       td_->stickers_manager_->create_sticker(file_id, std::move(minithumbnail), std::move(thumbnail), dimensions,
-                                             std::move(sticker), is_animated_sticker, load_data_multipromise_ptr);
+                                             std::move(sticker), sticker_format, load_data_multipromise_ptr);
       break;
     case Document::Type::Video:
       td_->videos_manager_->create_video(file_id, std::move(minithumbnail), std::move(thumbnail),

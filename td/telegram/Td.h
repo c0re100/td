@@ -98,7 +98,7 @@ class Td final : public Actor {
   Td &operator=(Td &&) = delete;
   ~Td() final;
 
-  static constexpr const char *TDLIB_VERSION = "1.8.0";
+  static constexpr const char *TDLIB_VERSION = "1.8.1";
 
   struct Options {
     std::shared_ptr<NetQueryStats> net_query_stats;
@@ -533,6 +533,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::getMessageLinkInfo &request);
 
+  void on_request(uint64 id, td_api::translateText &request);
+
   void on_request(uint64 id, const td_api::getFile &request);
 
   void on_request(uint64 id, td_api::getRemoteFile &request);
@@ -643,6 +645,12 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getChatScheduledMessages &request);
 
+  void on_request(uint64 id, const td_api::getMessageAvailableReactions &request);
+
+  void on_request(uint64 id, td_api::setMessageReaction &request);
+
+  void on_request(uint64 id, td_api::getMessageAddedReactions &request);
+
   void on_request(uint64 id, td_api::getMessagePublicForwards &request);
 
   void on_request(uint64 id, const td_api::removeNotification &request);
@@ -656,6 +664,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::deleteChatMessagesByDate &request);
 
   void on_request(uint64 id, const td_api::readAllChatMentions &request);
+
+  void on_request(uint64 id, const td_api::readAllChatReactions &request);
 
   void on_request(uint64 id, const td_api::getChatAvailableMessageSenders &request);
 
@@ -836,6 +846,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::toggleChatDefaultDisableNotification &request);
 
   void on_request(uint64 id, const td_api::setPinnedChats &request);
+
+  void on_request(uint64 id, td_api::setChatAvailableReactions &request);
 
   void on_request(uint64 id, td_api::setChatClientData &request);
 

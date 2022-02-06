@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.0 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.1 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -356,6 +356,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageContentType.cpp
   td/telegram/MessageEntity.cpp
   td/telegram/MessageId.cpp
+  td/telegram/MessageReaction.cpp
   td/telegram/MessageReplyInfo.cpp
   td/telegram/MessagesDb.cpp
   td/telegram/MessageSearchFilter.cpp
@@ -409,6 +410,7 @@ set(TDLIB_SOURCE
   td/telegram/SpecialStickerSetType.cpp
   td/telegram/SponsoredMessageManager.cpp
   td/telegram/StateManager.cpp
+  td/telegram/StickerFormat.cpp
   td/telegram/StickersManager.cpp
   td/telegram/StorageManager.cpp
   td/telegram/SuggestedAction.cpp
@@ -560,6 +562,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageEntity.h
   td/telegram/MessageId.h
   td/telegram/MessageLinkInfo.h
+  td/telegram/MessageReaction.h
   td/telegram/MessageReplyInfo.h
   td/telegram/MessageThreadInfo.h
   td/telegram/MessagesDb.h
@@ -635,6 +638,7 @@ set(TDLIB_SOURCE
   td/telegram/SpecialStickerSetType.h
   td/telegram/SponsoredMessageManager.h
   td/telegram/StateManager.h
+  td/telegram/StickerFormat.h
   td/telegram/StickerSetId.h
   td/telegram/StickersManager.h
   td/telegram/StorageManager.h
@@ -675,6 +679,7 @@ set(TDLIB_SOURCE
   td/telegram/Game.hpp
   td/telegram/InputMessageText.hpp
   td/telegram/MessageEntity.hpp
+  td/telegram/MessageReaction.hpp
   td/telegram/MessageReplyInfo.hpp
   td/telegram/MinChannel.hpp
   td/telegram/NotificationSettings.hpp

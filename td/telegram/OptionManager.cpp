@@ -24,8 +24,11 @@
 #include "td/telegram/SuggestedAction.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/telegram_api.h"
 #include "td/telegram/TopDialogManager.h"
 
+#include "td/utils/buffer.h"
+#include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
@@ -34,6 +37,36 @@
 #include <limits>
 
 namespace td {
+
+class SetDefaultReactionQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit SetDefaultReactionQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(const string &reaction) {
+    send_query(G()->net_query_creator().create(telegram_api::messages_setDefaultReaction(reaction)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_setDefaultReaction>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    if (result_ptr.ok()) {
+      promise_.set_value(Unit());
+    } else {
+      on_error(Status::Error(400, "Receive false"));
+    }
+  }
+
+  void on_error(Status status) final {
+    LOG(INFO) << "Failed to set default reaction: " << status;
+    promise_.set_error(std::move(status));
+  }
+};
 
 OptionManager::OptionManager(Td *td, ActorShared<> parent) : td_(td), parent_(std::move(parent)) {
   send_unix_time_update();
@@ -80,11 +113,12 @@ bool OptionManager::is_internal_option(Slice name) {
     case 'b':
       return name == "base_language_pack_version";
     case 'c':
-      return name == "call_ring_timeout_ms" || name == "call_receive_timeout_ms" ||
+      return name == "call_receive_timeout_ms" || name == "call_ring_timeout_ms" ||
              name == "channels_read_media_period" || name == "chat_read_mark_expire_period" ||
              name == "chat_read_mark_size_threshold";
     case 'd':
-      return name == "dc_txt_domain_name" || name == "dice_emojis" || name == "dice_success_values";
+      return name == "dc_txt_domain_name" || name == "default_reaction_needs_sync" || name == "dice_emojis" ||
+             name == "dice_success_values";
     case 'e':
       return name == "edit_time_limit" || name == "emoji_sounds";
     case 'i':
@@ -96,10 +130,10 @@ bool OptionManager::is_internal_option(Slice name) {
     case 'n':
       return name == "notification_cloud_delay_ms" || name == "notification_default_delay_ms";
     case 'o':
-      return name == "online_update_period_ms" || name == "online_cloud_timeout_ms" || name == "otherwise_relogin_days";
+      return name == "online_cloud_timeout_ms" || name == "online_update_period_ms" || name == "otherwise_relogin_days";
     case 'r':
-      return name == "revoke_pm_inbox" || name == "revoke_time_limit" || name == "revoke_pm_time_limit" ||
-             name == "rating_e_decay" || name == "recent_stickers_limit";
+      return name == "rating_e_decay" || name == "reactions_uniq_max" || name == "recent_stickers_limit" ||
+             name == "revoke_pm_inbox" || name == "revoke_time_limit" || name == "revoke_pm_time_limit";
     case 's':
       return name == "saved_animations_limit" || name == "session_count";
     case 'v':
@@ -144,6 +178,9 @@ void OptionManager::on_option_updated(const string &name) {
       }
       break;
     case 'd':
+      if (name == "default_reaction_needs_sync" && G()->shared_config().get_option_boolean(name)) {
+        set_default_reaction();
+      }
       if (name == "dice_emojis") {
         send_closure(td_->stickers_manager_actor_, &StickersManager::on_update_dice_emojis);
       }
@@ -342,7 +379,7 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
     if (value_constructor_id != td_api::optionValueInteger::ID &&
         value_constructor_id != td_api::optionValueEmpty::ID) {
       promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have integer value"));
-      return true;
+      return false;
     }
     if (value_constructor_id == td_api::optionValueEmpty::ID) {
       G()->shared_config().set_option_empty(option_name);
@@ -352,7 +389,7 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
         promise.set_error(Status::Error(400, PSLICE() << "Option's \"" << name << "\" value " << int_value
                                                       << " is outside of the valid range [" << min_value << ", "
                                                       << max_value << "]"));
-        return true;
+        return false;
       }
       G()->shared_config().set_option_integer(name, int_value);
     }
@@ -367,7 +404,7 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
     if (value_constructor_id != td_api::optionValueBoolean::ID &&
         value_constructor_id != td_api::optionValueEmpty::ID) {
       promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have boolean value"));
-      return true;
+      return false;
     }
     if (value_constructor_id == td_api::optionValueEmpty::ID) {
       G()->shared_config().set_option_empty(name);
@@ -385,7 +422,7 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
     }
     if (value_constructor_id != td_api::optionValueString::ID && value_constructor_id != td_api::optionValueEmpty::ID) {
       promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have string value"));
-      return true;
+      return false;
     }
     if (value_constructor_id == td_api::optionValueEmpty::ID) {
       G()->shared_config().set_option_empty(name);
@@ -398,7 +435,7 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
           G()->shared_config().set_option_string(name, str_value);
         } else {
           promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" can't have specified value"));
-          return true;
+          return false;
         }
       }
     }
@@ -439,6 +476,12 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
       }
       break;
     case 'd':
+      if (!is_bot && set_string_option("default_reaction", [td = td_](Slice value) {
+            return td->stickers_manager_->is_active_reaction(value.str());
+          })) {
+        G()->shared_config().set_option_boolean("default_reaction_needs_sync", true);
+        return;
+      }
       if (!is_bot && set_boolean_option("disable_animated_emoji")) {
         return;
       }
@@ -621,7 +664,9 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
     }
   }
 
-  promise.set_error(Status::Error(400, "Option can't be set"));
+  if (promise) {
+    promise.set_error(Status::Error(400, "Option can't be set"));
+  }
 }
 
 td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_value_object(Slice value) {
@@ -661,6 +706,25 @@ void OptionManager::get_current_state(vector<td_api::object_ptr<td_api::Update>>
       updates.push_back(
           td_api::make_object<td_api::updateOption>(option.first, get_option_value_object(option.second)));
     }
+  }
+}
+
+void OptionManager::set_default_reaction() {
+  auto promise = PromiseCreator::lambda([actor_id = actor_id(this)](Result<Unit> &&result) {
+    send_closure(actor_id, &OptionManager::on_set_default_reaction, result.is_ok());
+  });
+  td_->create_handler<SetDefaultReactionQuery>(std::move(promise))
+      ->send(G()->shared_config().get_option_string("default_reaction"));
+}
+
+void OptionManager::on_set_default_reaction(bool success) {
+  if (G()->close_flag() && !success) {
+    return;
+  }
+
+  G()->shared_config().set_option_empty("default_reaction_needs_sync");
+  if (!success) {
+    send_closure(G()->config_manager(), &ConfigManager::reget_app_config, Promise<Unit>());
   }
 }
 

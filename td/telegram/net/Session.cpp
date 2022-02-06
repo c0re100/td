@@ -35,6 +35,7 @@
 #include "td/utils/Random.h"
 #include "td/utils/Slice.h"
 #include "td/utils/SliceBuilder.h"
+#include "td/utils/Span.h"
 #include "td/utils/Time.h"
 #include "td/utils/Timer.h"
 #include "td/utils/tl_parsers.h"
@@ -799,24 +800,29 @@ void Session::on_message_result_error(uint64 id, int error_code, string message)
 
   // UNAUTHORIZED
   if (error_code == 401 && message != "SESSION_PASSWORD_NEEDED") {
-    if (auth_data_.use_pfs() && (message == CSlice("AUTH_KEY_PERM_EMPTY") || !is_main_)) {
-      LOG(INFO) << "Receive 401, " << message << " in session " << auth_data_.get_session_id() << " for auth key "
+    if (auth_data_.use_pfs() && message == CSlice("AUTH_KEY_PERM_EMPTY")) {
+      LOG(INFO) << "Receive AUTH_KEY_PERM_EMPTY in session " << auth_data_.get_session_id() << " for auth key "
                 << auth_data_.get_tmp_auth_key().id();
       // temporary key can be dropped any time
       auth_data_.drop_tmp_auth_key();
       on_tmp_auth_key_updated();
       error_code = 500;
     } else {
-      bool can_drop_main_auth_key_without_logging_out = is_cdn_;
-      if (!is_main_) {
-        CHECK(!auth_data_.use_pfs());
-        if (G()->net_query_dispatcher().get_main_dc_id().get_raw_id() != raw_dc_id_) {
-          can_drop_main_auth_key_without_logging_out = true;
-        }
+      if (auth_data_.use_pfs() && !is_main_) {
+        // temporary key can be dropped any time
+        auth_data_.drop_tmp_auth_key();
+        on_tmp_auth_key_updated();
+        error_code = 500;
       }
+
+      bool can_drop_main_auth_key_without_logging_out = is_cdn_;
+      if (!is_main_ && G()->net_query_dispatcher().get_main_dc_id().get_raw_id() != raw_dc_id_) {
+        can_drop_main_auth_key_without_logging_out = true;
+      }
+      LOG(INFO) << "Receive 401, " << message << " in session " << auth_data_.get_session_id() << " for auth key "
+                << auth_data_.get_auth_key().id() << ", PFS = " << auth_data_.use_pfs() << ", is_main = " << is_main_
+                << ", can_drop_main_auth_key_without_logging_out = " << can_drop_main_auth_key_without_logging_out;
       if (can_drop_main_auth_key_without_logging_out) {
-        LOG(INFO) << "Receive 401, " << message << " in session " << auth_data_.get_session_id() << " for auth key "
-                  << auth_data_.get_auth_key().id();
         auth_data_.drop_main_auth_key();
         on_auth_key_updated();
         error_code = 500;
@@ -987,14 +993,17 @@ void Session::connection_send_query(ConnectionInfo *info, NetQueryPtr &&net_quer
     return return_query(std::move(net_query));
   }
 
-  uint64 invoke_after_id = 0;
-  NetQueryRef invoke_after = net_query->invoke_after();
-  if (!invoke_after.empty()) {
-    invoke_after_id = invoke_after->message_id();
-    if (invoke_after->session_id() != auth_data_.get_session_id() || invoke_after_id == 0) {
+  Span<NetQueryRef> invoke_after = net_query->invoke_after();
+  std::vector<uint64> invoke_after_ids;
+  for (auto &ref : invoke_after) {
+    auto invoke_after_id = ref->message_id();
+    if (ref->session_id() != auth_data_.get_session_id() || invoke_after_id == 0) {
       net_query->set_error_resend_invoke_after();
       return return_query(std::move(net_query));
     }
+    invoke_after_ids.push_back(invoke_after_id);
+  }
+  if (!invoke_after.empty()) {
     if (!unknown_queries_.empty()) {
       pending_invoke_after_queries_.push_back(std::move(net_query));
       return;
@@ -1005,7 +1014,7 @@ void Session::connection_send_query(ConnectionInfo *info, NetQueryPtr &&net_quer
   if (!immediately_fail_query) {
     auto r_message_id =
         info->connection_->send_query(net_query->query().clone(), net_query->gzip_flag() == NetQuery::GzipFlag::On,
-                                      message_id, invoke_after_id, static_cast<bool>(net_query->quick_ack_promise_));
+                                      message_id, invoke_after_ids, static_cast<bool>(net_query->quick_ack_promise_));
 
     net_query->on_net_write(net_query->query().size());
 
@@ -1019,7 +1028,7 @@ void Session::connection_send_query(ConnectionInfo *info, NetQueryPtr &&net_quer
     }
   }
   VLOG(net_query) << "Send query to connection " << net_query << " [msg_id:" << format::as_hex(message_id) << "]"
-                  << tag("invoke_after", format::as_hex(invoke_after_id));
+                  << tag("invoke_after", transform(invoke_after_ids, [](auto id) { return format::as_hex(id); }));
   net_query->set_message_id(message_id);
   net_query->cancel_slot_.clear_event();
   LOG_CHECK(sent_queries_.find(message_id) == sent_queries_.end()) << message_id;

@@ -12,6 +12,8 @@
 
 #include "td/utils/common.h"
 #include "td/utils/Random.h"
+#include "td/utils/Slice.h"
+#include "td/utils/Span.h"
 
 #include <limits>
 #include <unordered_map>
@@ -46,7 +48,7 @@ class SequenceDispatcher final : public NetQueryCallback {
 
   ActorShared<Parent> parent_;
   size_t id_offset_ = 1;
-  std::vector<Data> data_;
+  vector<Data> data_;
   size_t finish_i_ = 0;  // skip state_ == State::Finish
   size_t next_i_ = 0;
   size_t last_sent_i_ = std::numeric_limits<size_t>::max();
@@ -73,9 +75,12 @@ class SequenceDispatcher final : public NetQueryCallback {
   void tear_down() final;
 };
 
-class MultiSequenceDispatcher final : public SequenceDispatcher::Parent {
+class MultiSequenceDispatcherOld final : public SequenceDispatcher::Parent {
  public:
-  void send_with_callback(NetQueryPtr query, ActorShared<NetQueryCallback> callback, uint64 sequence_id);
+  void send_with_callback(NetQueryPtr query, ActorShared<NetQueryCallback> callback, Span<uint64> chains);
+  static ActorOwn<MultiSequenceDispatcherOld> create(Slice name) {
+    return create_actor<MultiSequenceDispatcherOld>(name);
+  }
 
  private:
   struct Data {
@@ -86,5 +91,15 @@ class MultiSequenceDispatcher final : public SequenceDispatcher::Parent {
   void on_result() final;
   void ready_to_close() final;
 };
+
+using ChainId = uint64;
+using ChainIds = vector<ChainId>;
+class MultiSequenceDispatcherNew : public NetQueryCallback {
+ public:
+  virtual void send_with_callback(NetQueryPtr query, ActorShared<NetQueryCallback> callback, Span<uint64> chains) = 0;
+  static ActorOwn<MultiSequenceDispatcherNew> create(Slice name);
+};
+
+using MultiSequenceDispatcher = MultiSequenceDispatcherOld;
 
 }  // namespace td

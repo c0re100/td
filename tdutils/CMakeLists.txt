@@ -184,6 +184,7 @@ set(TDUTILS_SOURCE
   td/utils/BufferedUdp.h
   td/utils/ByteFlow.h
   td/utils/CancellationToken.h
+  td/utils/ChainScheduler.h
   td/utils/ChangesProcessor.h
   td/utils/check.h
   td/utils/Closure.h
@@ -289,6 +290,7 @@ endif()
 set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/bitmask.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/buffer.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/ChainScheduler.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/ConcurrentHashMap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/crypto.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/Enumerator.cpp
