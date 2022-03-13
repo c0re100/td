@@ -40,21 +40,24 @@ string get_restriction_reason_description(const vector<RestrictionReason> &restr
 #endif
   }();
 
-  if (!platform.empty()) {
-    for (auto &restriction_reason : restriction_reasons) {
-      if (restriction_reason.platform_ == platform) {
-        return restriction_reason.reason_+"-"+restriction_reason.platform_+": "+restriction_reason.description_;
-      }
-    }
-  }
+  //if (!platform.empty()) {
+  //  for (auto &restriction_reason : restriction_reasons) {
+  //    if (restriction_reason.platform_ == platform) {
+  //      return restriction_reason.reason_+"-"+restriction_reason.platform_+": "+restriction_reason.description_;
+  //    }
+  //  }
+  //}
+
+  string reason;
 
   for (auto &restriction_reason : restriction_reasons) {
-    if (!restriction_reason.reason_.empty()) {
-      return restriction_reason.reason_+"-"+restriction_reason.platform_+": "+restriction_reason.description_;
-    }
+    //if (!restriction_reason.reason_.empty()) {
+      reason +=
+          restriction_reason.reason_ + "-" + restriction_reason.platform_ + ": " + restriction_reason.description_ + "\n";
+    //}
   }
 
-  return string();
+  return reason;
 }
 
 vector<RestrictionReason> get_restriction_reasons(Slice legacy_restriction_reason) {
