@@ -1270,9 +1270,14 @@ static Slice fix_url(Slice str) {
   return full_url;
 }
 
-const std::unordered_set<Slice, SliceHash> &get_valid_short_usernames() {
-  static const std::unordered_set<Slice, SliceHash> valid_usernames{"gif",  "wiki", "vid",  "bing", "pic",
-                                                                    "bold", "imdb", "coub", "like", "vote"};
+const FlatHashSet<Slice, SliceHash> &get_valid_short_usernames() {
+  static const FlatHashSet<Slice, SliceHash> valid_usernames = [] {
+    FlatHashSet<Slice, SliceHash> result;
+    for (auto username : {"gif", "wiki", "vid", "bing", "pic", "bold", "imdb", "coub", "like", "vote"}) {
+      result.insert(Slice(username));
+    }
+    return result;
+  }();
   return valid_usernames;
 }
 
@@ -4141,7 +4146,7 @@ void add_formatted_text_dependencies(Dependencies &dependencies, const Formatted
   }
   for (auto &entity : text->entities) {
     if (entity.user_id.is_valid()) {
-      dependencies.user_ids.insert(entity.user_id);
+      dependencies.add(entity.user_id);
     }
   }
 }

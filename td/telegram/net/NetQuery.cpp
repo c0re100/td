@@ -6,12 +6,16 @@
 //
 #include "td/telegram/net/NetQuery.h"
 
+#include "td/telegram/ChainId.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/telegram_api.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/as.h"
 #include "td/utils/misc.h"
 #include "td/utils/SliceBuilder.h"
+
+#include <algorithm>
 
 namespace td {
 
@@ -19,6 +23,12 @@ int VERBOSITY_NAME(net_query) = VERBOSITY_NAME(INFO);
 
 int64 NetQuery::get_my_id() {
   return G()->get_my_id();
+}
+
+void NetQuery::set_chain_ids(vector<ChainId> &&chain_ids) {
+  chain_ids_ = transform(chain_ids, [](ChainId chain_id) { return chain_id.get() == 0 ? 1 : chain_id.get(); });
+  td::unique(chain_ids_);
+  // LOG(ERROR) << chain_ids_;
 }
 
 void NetQuery::on_net_write(size_t size) {

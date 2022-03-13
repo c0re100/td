@@ -17,11 +17,11 @@
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
+#include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
 #include "td/utils/Status.h"
 
 #include <algorithm>
-#include <unordered_set>
 #include <utility>
 
 namespace td {
@@ -52,7 +52,10 @@ class GetMessagesReactionsQuery final : public Td::ResultHandler {
     LOG(INFO) << "Receive result for GetMessagesReactionsQuery: " << to_string(ptr);
     if (ptr->get_id() == telegram_api::updates::ID) {
       auto &updates = static_cast<telegram_api::updates *>(ptr.get())->updates_;
-      std::unordered_set<MessageId, MessageIdHash> skipped_message_ids(message_ids_.begin(), message_ids_.end());
+      FlatHashSet<MessageId, MessageIdHash> skipped_message_ids;
+      for (auto message_id : message_ids_) {
+        skipped_message_ids.insert(message_id);
+      }
       for (const auto &update : updates) {
         if (update->get_id() == telegram_api::updateMessageReactions::ID) {
           auto update_message_reactions = static_cast<const telegram_api::updateMessageReactions *>(update.get());
@@ -62,21 +65,22 @@ class GetMessagesReactionsQuery final : public Td::ResultHandler {
         }
       }
       for (auto message_id : skipped_message_ids) {
-        td_->messages_manager_->on_update_message_reactions({dialog_id_, message_id}, nullptr);
+        td_->messages_manager_->update_message_reactions({dialog_id_, message_id}, nullptr);
       }
     }
     td_->updates_manager_->on_get_updates(std::move(ptr), Promise<Unit>());
+    td_->messages_manager_->try_reload_message_reactions(dialog_id_, true);
   }
 
   void on_error(Status status) final {
     td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetMessagesReactionsQuery");
+    td_->messages_manager_->try_reload_message_reactions(dialog_id_, true);
   }
 };
 
 class SendReactionQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   DialogId dialog_id_;
-  MessageId message_id_;
 
  public:
   explicit SendReactionQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
@@ -84,7 +88,6 @@ class SendReactionQuery final : public Td::ResultHandler {
 
   void send(FullMessageId full_message_id, string reaction, bool is_big) {
     dialog_id_ = full_message_id.get_dialog_id();
-    message_id_ = full_message_id.get_message_id();
 
     auto input_peer = td_->messages_manager_->get_input_peer(dialog_id_, AccessRights::Read);
     if (input_peer == nullptr) {
@@ -100,8 +103,10 @@ class SendReactionQuery final : public Td::ResultHandler {
       }
     }
 
-    send_query(G()->net_query_creator().create(telegram_api::messages_sendReaction(
-        flags, false /*ignored*/, std::move(input_peer), message_id_.get_server_message_id().get(), reaction)));
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_sendReaction(flags, false /*ignored*/, std::move(input_peer),
+                                            full_message_id.get_message_id().get_server_message_id().get(), reaction),
+        {{dialog_id_}, {full_message_id}}));
   }
 
   void on_result(BufferSlice packet) final {
@@ -152,8 +157,10 @@ class GetMessageReactionsListQuery final : public Td::ResultHandler {
       flags |= telegram_api::messages_getMessageReactionsList::OFFSET_MASK;
     }
 
-    send_query(G()->net_query_creator().create(telegram_api::messages_getMessageReactionsList(
-        flags, std::move(input_peer), message_id_.get_server_message_id().get(), reaction_, offset_, limit)));
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_getMessageReactionsList(
+            flags, std::move(input_peer), message_id_.get_server_message_id().get(), reaction_, offset_, limit),
+        {{full_message_id}}));
   }
 
   void on_result(BufferSlice packet) final {
@@ -169,23 +176,35 @@ class GetMessageReactionsListQuery final : public Td::ResultHandler {
     td_->contacts_manager_->on_get_chats(std::move(ptr->chats_), "GetMessageReactionsListQuery");
 
     int32 total_count = ptr->count_;
-    if (total_count < static_cast<int32>(ptr->reactions_.size())) {
+    auto received_reaction_count = static_cast<int32>(ptr->reactions_.size());
+    if (total_count < received_reaction_count) {
       LOG(ERROR) << "Receive invalid total_count in " << to_string(ptr);
-      total_count = static_cast<int32>(ptr->reactions_.size());
+      total_count = received_reaction_count;
     }
 
     vector<td_api::object_ptr<td_api::addedReaction>> reactions;
-    for (auto &reaction : ptr->reactions_) {
+    FlatHashMap<string, vector<DialogId>> recent_reactions;
+    for (const auto &reaction : ptr->reactions_) {
       DialogId dialog_id(reaction->peer_id_);
-      if (!dialog_id.is_valid() || (!reaction_.empty() && reaction_ != reaction->reaction_)) {
+      if (!dialog_id.is_valid() ||
+          (reaction_.empty() ? reaction->reaction_.empty() : reaction_ != reaction->reaction_)) {
         LOG(ERROR) << "Receive unexpected " << to_string(reaction);
         continue;
+      }
+
+      if (offset_.empty()) {
+        recent_reactions[reaction->reaction_].push_back(dialog_id);
       }
 
       auto message_sender = get_min_message_sender_object(td_, dialog_id, "GetMessageReactionsListQuery");
       if (message_sender != nullptr) {
         reactions.push_back(td_api::make_object<td_api::addedReaction>(reaction->reaction_, std::move(message_sender)));
       }
+    }
+
+    if (offset_.empty()) {
+      td_->messages_manager_->on_get_message_reaction_list({dialog_id_, message_id_}, reaction_,
+                                                           std::move(recent_reactions), total_count);
     }
 
     promise_.set_value(
@@ -272,10 +291,11 @@ unique_ptr<MessageReactions> MessageReactions::get_message_reactions(
   result->can_get_added_reactions_ = reactions->can_see_list_;
   result->is_min_ = reactions->min_;
 
-  std::unordered_set<string> reaction_strings;
-  std::unordered_set<DialogId, DialogIdHash> recent_choosers;
+  FlatHashSet<string> reaction_strings;
+  FlatHashSet<DialogId, DialogIdHash> recent_choosers;
   for (auto &reaction_count : reactions->results_) {
-    if (reaction_count->count_ <= 0 || reaction_count->count_ >= MessageReaction::MAX_CHOOSE_COUNT) {
+    if (reaction_count->count_ <= 0 || reaction_count->count_ >= MessageReaction::MAX_CHOOSE_COUNT ||
+        reaction_count->reaction_.empty()) {
       LOG(ERROR) << "Receive reaction " << reaction_count->reaction_ << " with invalid count "
                  << reaction_count->count_;
       continue;
@@ -368,10 +388,11 @@ void MessageReactions::update_from(const MessageReactions &old_reactions) {
         }
       }
     }
+    unread_reactions_ = old_reactions.unread_reactions_;
   }
 }
 
-void MessageReactions::sort_reactions(const std::unordered_map<string, size_t> &active_reaction_pos) {
+void MessageReactions::sort_reactions(const FlatHashMap<string, size_t> &active_reaction_pos) {
   std::sort(reactions_.begin(), reactions_.end(),
             [&active_reaction_pos](const MessageReaction &lhs, const MessageReaction &rhs) {
               if (lhs.get_choose_count() != rhs.get_choose_count()) {

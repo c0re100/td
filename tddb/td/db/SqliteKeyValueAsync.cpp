@@ -24,7 +24,7 @@ class SqliteKeyValueAsync final : public SqliteKeyValueAsyncInterface {
   void set(string key, string value, Promise<Unit> promise) final {
     send_closure_later(impl_, &Impl::set, std::move(key), std::move(value), std::move(promise));
   }
-  void set_all(std::unordered_map<string, string> key_values, Promise<Unit> promise) final {
+  void set_all(FlatHashMap<string, string> key_values, Promise<Unit> promise) final {
     send_closure_later(impl_, &Impl::set_all, std::move(key_values), std::move(promise));
   }
   void erase(string key, Promise<Unit> promise) final {
@@ -51,6 +51,7 @@ class SqliteKeyValueAsync final : public SqliteKeyValueAsyncInterface {
       if (it != buffer_.end()) {
         it->second = std::move(value);
       } else {
+        CHECK(!key.empty());
         buffer_.emplace(std::move(key), std::move(value));
       }
       if (promise) {
@@ -60,7 +61,7 @@ class SqliteKeyValueAsync final : public SqliteKeyValueAsyncInterface {
       do_flush(false /*force*/);
     }
 
-    void set_all(std::unordered_map<string, string> key_values, Promise<Unit> promise) {
+    void set_all(FlatHashMap<string, string> key_values, Promise<Unit> promise) {
       do_flush(true /*force*/);
       kv_->set_all(key_values);
       promise.set_value(Unit());
@@ -71,6 +72,7 @@ class SqliteKeyValueAsync final : public SqliteKeyValueAsyncInterface {
       if (it != buffer_.end()) {
         it->second = optional<string>();
       } else {
+        CHECK(!key.empty());
         buffer_.emplace(std::move(key), optional<string>());
       }
       if (promise) {
@@ -108,8 +110,8 @@ class SqliteKeyValueAsync final : public SqliteKeyValueAsyncInterface {
 
     static constexpr double MAX_PENDING_QUERIES_DELAY = 0.01;
     static constexpr size_t MAX_PENDING_QUERIES_COUNT = 100;
-    std::unordered_map<string, optional<string>> buffer_;
-    std::vector<Promise<Unit>> buffer_promises_;
+    FlatHashMap<string, optional<string>> buffer_;
+    vector<Promise<Unit>> buffer_promises_;
     size_t cnt_ = 0;
 
     double wakeup_at_ = 0;

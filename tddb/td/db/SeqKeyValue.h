@@ -23,7 +23,7 @@ class SeqKeyValue {
   ~SeqKeyValue() = default;
 
   SeqNo set(Slice key, Slice value) {
-    auto it_ok = map_.insert({key.str(), value.str()});
+    auto it_ok = map_.emplace(key.str(), value.str());
     if (!it_ok.second) {
       if (it_ok.first->second == value) {
         return 0;

@@ -22,6 +22,8 @@
 #include "td/utils/buffer.h"
 #include "td/utils/CancellationToken.h"
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
+#include "td/utils/FlatHashSet.h"
 #include "td/utils/List.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
@@ -32,8 +34,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace td {
@@ -122,8 +122,8 @@ class Session final
   double last_success_timestamp_ = 0;  // time when auth_key and Session definitely was valid
   size_t dropped_size_ = 0;
 
-  std::unordered_set<uint64> unknown_queries_;
-  std::vector<int64> to_cancel_;
+  FlatHashSet<uint64> unknown_queries_;
+  vector<int64> to_cancel_;
 
   // Do not invalidate iterators of these two containers!
   // TODO: better data structures
@@ -174,7 +174,7 @@ class Session final
     size_t ref_cnt;
     std::vector<uint64> message_ids;
   };
-  std::unordered_map<uint64, ContainerInfo> sent_containers_;
+  FlatHashMap<uint64, ContainerInfo> sent_containers_;
 
   friend class GenAuthKeyActor;
   struct HandshakeInfo {

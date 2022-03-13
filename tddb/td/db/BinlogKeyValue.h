@@ -13,6 +13,7 @@
 
 #include "td/actor/PromiseFuture.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
@@ -120,7 +121,7 @@ class BinlogKeyValue final : public KeyValueSyncInterface {
   SeqNo set(string key, string value) final {
     auto lock = rw_mutex_.lock_write().move_as_ok();
     uint64 old_id = 0;
-    auto it_ok = map_.insert({key, {value, 0}});
+    auto it_ok = map_.emplace(key, std::make_pair(value, 0));
     if (!it_ok.second) {
       if (it_ok.first->second.first == value) {
         return 0;
@@ -197,7 +198,7 @@ class BinlogKeyValue final : public KeyValueSyncInterface {
     std::unordered_map<string, string> res;
     for (const auto &kv : map_) {
       if (begins_with(kv.first, prefix)) {
-        res[kv.first.substr(prefix.size())] = kv.second.first;
+        res.emplace(kv.first.substr(prefix.size()), kv.second.first);
       }
     }
     return res;
@@ -207,22 +208,21 @@ class BinlogKeyValue final : public KeyValueSyncInterface {
     auto lock = rw_mutex_.lock_write().move_as_ok();
     std::unordered_map<string, string> res;
     for (const auto &kv : map_) {
-      res[kv.first] = kv.second.first;
+      res.emplace(kv.first, kv.second.first);
     }
     return res;
   }
 
   void erase_by_prefix(Slice prefix) final {
     auto lock = rw_mutex_.lock_write().move_as_ok();
-    std::vector<uint64> ids;
-    for (auto it = map_.begin(); it != map_.end();) {
-      if (begins_with(it->first, prefix)) {
-        ids.push_back(it->second.second);
-        it = map_.erase(it);
-      } else {
-        ++it;
+    vector<uint64> ids;
+    table_remove_if(map_, [&](const auto &it) {
+      if (begins_with(it.first, prefix)) {
+        ids.push_back(it.second.second);
+        return true;
       }
-    }
+      return false;
+    });
     auto seq_no = binlog_->next_id(narrow_cast<int32>(ids.size()));
     lock.reset();
     for (auto id : ids) {

@@ -25,12 +25,13 @@ NetQueryCreator::NetQueryCreator(std::shared_ptr<NetQueryStats> net_query_stats)
   object_pool_.set_check_empty(true);
 }
 
-NetQueryPtr NetQueryCreator::create(const telegram_api::Function &function, DcId dc_id, NetQuery::Type type) {
-  return create(UniqueId::next(), function, dc_id, type, NetQuery::AuthFlag::On);
+NetQueryPtr NetQueryCreator::create(const telegram_api::Function &function, vector<ChainId> chain_ids, DcId dc_id,
+                                    NetQuery::Type type) {
+  return create(UniqueId::next(), function, std::move(chain_ids), dc_id, type, NetQuery::AuthFlag::On);
 }
 
-NetQueryPtr NetQueryCreator::create(uint64 id, const telegram_api::Function &function, DcId dc_id, NetQuery::Type type,
-                                    NetQuery::AuthFlag auth_flag) {
+NetQueryPtr NetQueryCreator::create(uint64 id, const telegram_api::Function &function, vector<ChainId> &&chain_ids,
+                                    DcId dc_id, NetQuery::Type type, NetQuery::AuthFlag auth_flag) {
   LOG(INFO) << "Create query " << to_string(function);
   auto storer = DefaultStorer<telegram_api::Function>(function);
   BufferSlice slice(storer.size());
@@ -60,7 +61,7 @@ NetQueryPtr NetQueryCreator::create(uint64 id, const telegram_api::Function &fun
     }
   }
 
-  double total_timeout_limit = 60;
+  int32 total_timeout_limit = 60;
   if (!G()->close_flag()) {
     auto td = G()->td();
     if (!td.empty()) {
@@ -78,6 +79,7 @@ NetQueryPtr NetQueryCreator::create(uint64 id, const telegram_api::Function &fun
   auto query = object_pool_.create(NetQuery::State::Query, id, std::move(slice), BufferSlice(), dc_id, type, auth_flag,
                                    gzip_flag, tl_constructor, total_timeout_limit, net_query_stats_.get());
   query->set_cancellation_token(query.generation());
+  query->set_chain_ids(std::move(chain_ids));
   return query;
 }
 

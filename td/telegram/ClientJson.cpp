@@ -10,6 +10,7 @@
 #include "td/telegram/td_api_json.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/port/thread_local.h"
 #include "td/utils/SliceBuilder.h"
@@ -119,7 +120,7 @@ static ClientManager *get_manager() {
 }
 
 static std::mutex extra_mutex;
-static std::unordered_map<int64, string> extra;
+static FlatHashMap<int64, string> extra;
 static std::atomic<uint64> extra_id{1};
 
 int json_create_client_id() {

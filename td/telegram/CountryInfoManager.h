@@ -13,11 +13,11 @@
 #include "td/actor/PromiseFuture.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 
 #include <mutex>
-#include <unordered_map>
 
 namespace td {
 
@@ -76,9 +76,9 @@ class CountryInfoManager final : public Actor {
 
   static int32 manager_count_;
 
-  static std::unordered_map<string, unique_ptr<CountryList>> countries_;
+  static FlatHashMap<string, unique_ptr<CountryList>> countries_;
 
-  std::unordered_map<string, vector<Promise<Unit>>> pending_load_country_queries_;
+  FlatHashMap<string, vector<Promise<Unit>>> pending_load_country_queries_;
 
   Td *td_;
   ActorShared<> parent_;

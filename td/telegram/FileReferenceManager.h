@@ -14,18 +14,18 @@
 #include "td/telegram/FullMessageId.h"
 #include "td/telegram/PhotoSizeSource.h"
 #include "td/telegram/SetWithPosition.h"
+#include "td/telegram/td_api.h"
 #include "td/telegram/UserId.h"
 
 #include "td/actor/actor.h"
 #include "td/actor/PromiseFuture.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/logging.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/Variant.h"
-
-#include <unordered_map>
 
 namespace td {
 
@@ -55,6 +55,10 @@ class FileReferenceManager final : public Actor {
 
   using NodeId = FileId;
   void repair_file_reference(NodeId node_id, Promise<> promise);
+
+  void get_file_search_text(FileSourceId file_source_id, string unique_file_id, Promise<string> promise);
+
+  td_api::object_ptr<td_api::message> get_message_object(FileSourceId file_source_id) const;
 
   static void reload_photo(PhotoSizeSource source, Promise<Unit> promise);
 
@@ -150,7 +154,7 @@ class FileReferenceManager final : public Actor {
 
   int64 query_generation_{0};
 
-  std::unordered_map<NodeId, Node, FileIdHash> nodes_;
+  FlatHashMap<NodeId, Node, FileIdHash> nodes_;
 
   void run_node(NodeId node);
   void send_query(Destination dest, FileSourceId file_source_id);

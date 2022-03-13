@@ -34,6 +34,8 @@ namespace td {
 
 extern int VERBOSITY_NAME(net_query);
 
+class ChainId;
+
 class NetQuery;
 using NetQueryPtr = ObjectPool<NetQuery>::OwnerPtr;
 using NetQueryRef = ObjectPool<NetQuery>::WeakPtr;
@@ -203,11 +205,11 @@ class NetQuery final : public TsListNode<NetQueryDebug> {
   void set_invoke_after(std::vector<NetQueryRef> refs) {
     invoke_after_ = std::move(refs);
   }
-  void set_session_rand(uint32 session_rand) {
-    session_rand_ = session_rand;
-  }
   uint32 session_rand() const {
-    return session_rand_;
+    if (in_sequence_dispacher_ && !chain_ids_.empty()) {
+      return static_cast<uint32>(chain_ids_[0] >> 10);
+    }
+    return 0;
   }
 
   void cancel(int32 cancellation_token) {
@@ -276,6 +278,18 @@ class NetQuery final : public TsListNode<NetQueryDebug> {
     priority_ = priority;
   }
 
+  Span<uint64> get_chain_ids() const {
+    return chain_ids_;
+  }
+  void set_chain_ids(vector<ChainId> &&chain_ids);
+
+  void set_in_sequence_dispatcher(bool in_sequence_dispacher) {
+    in_sequence_dispacher_ = in_sequence_dispacher;
+  }
+  bool in_sequence_dispatcher() const {
+    return in_sequence_dispacher_;
+  }
+
  private:
   State state_ = State::Empty;
   Type type_ = Type::Common;
@@ -290,9 +304,10 @@ class NetQuery final : public TsListNode<NetQueryDebug> {
   BufferSlice answer_;
   int32 tl_constructor_ = 0;
 
-  std::vector<NetQueryRef> invoke_after_;
-  uint32 session_rand_ = 0;
+  vector<NetQueryRef> invoke_after_;
+  vector<uint64> chain_ids_;
 
+  bool in_sequence_dispacher_ = false;
   bool may_be_lost_ = false;
   int8 priority_{0};
 
@@ -331,19 +346,19 @@ class NetQuery final : public TsListNode<NetQueryDebug> {
   static int32 tl_magic(const BufferSlice &buffer_slice);
 
  public:
-  double next_timeout_ = 1;          // for NetQueryDelayer
-  double total_timeout_ = 0;         // for NetQueryDelayer/SequenceDispatcher
-  double total_timeout_limit_ = 60;  // for NetQueryDelayer/SequenceDispatcher and to be set by caller
-  double last_timeout_ = 0;          // for NetQueryDelayer/SequenceDispatcher
-  string source_;                    // for NetQueryDelayer/SequenceDispatcher
-  bool need_resend_on_503_ = true;   // for NetQueryDispatcher and to be set by caller
-  int32 dispatch_ttl_ = -1;          // for NetQueryDispatcher and to be set by caller
-  Slot cancel_slot_;                 // for Session and to be set by caller
-  Promise<> quick_ack_promise_;      // for Session and to be set by caller
-  int32 file_type_ = -1;             // to be set by caller
+  int32 next_timeout_ = 1;          // for NetQueryDelayer
+  int32 total_timeout_ = 0;         // for NetQueryDelayer/SequenceDispatcher
+  int32 total_timeout_limit_ = 60;  // for NetQueryDelayer/SequenceDispatcher and to be set by caller
+  int32 last_timeout_ = 0;          // for NetQueryDelayer/SequenceDispatcher
+  string source_;                   // for NetQueryDelayer/SequenceDispatcher
+  int32 dispatch_ttl_ = -1;         // for NetQueryDispatcher and to be set by caller
+  int32 file_type_ = -1;            // to be set by caller
+  Slot cancel_slot_;                // for Session and to be set by caller
+  Promise<> quick_ack_promise_;     // for Session and to be set by caller
+  bool need_resend_on_503_ = true;  // for NetQueryDispatcher and to be set by caller
 
   NetQuery(State state, uint64 id, BufferSlice &&query, BufferSlice &&answer, DcId dc_id, Type type, AuthFlag auth_flag,
-           GzipFlag gzip_flag, int32 tl_constructor, double total_timeout_limit, NetQueryStats *stats)
+           GzipFlag gzip_flag, int32 tl_constructor, int32 total_timeout_limit, NetQueryStats *stats)
       : state_(state)
       , type_(type)
       , auth_flag_(auth_flag)

@@ -18,6 +18,7 @@
 #include "td/actor/SchedulerLocalStorage.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/logging.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
@@ -26,9 +27,9 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
 
 namespace td {
+
 class AnimationsManager;
 class BackgroundManager;
 class CallManager;
@@ -36,6 +37,7 @@ class ConfigManager;
 class ConfigShared;
 class ConnectionCreator;
 class ContactsManager;
+class DownloadManager;
 class FileManager;
 class FileReferenceManager;
 class GameManager;
@@ -203,6 +205,13 @@ class Global final : public ActorContext {
   }
   void set_contacts_manager(ActorId<ContactsManager> contacts_manager) {
     contacts_manager_ = contacts_manager;
+  }
+
+  ActorId<DownloadManager> download_manager() const {
+    return download_manager_;
+  }
+  void set_download_manager(ActorId<DownloadManager> download_manager) {
+    download_manager_ = std::move(download_manager);
   }
 
   ActorId<FileManager> file_manager() const {
@@ -437,6 +446,7 @@ class Global final : public ActorContext {
   ActorId<CallManager> call_manager_;
   ActorId<ConfigManager> config_manager_;
   ActorId<ContactsManager> contacts_manager_;
+  ActorId<DownloadManager> download_manager_;
   ActorId<FileManager> file_manager_;
   ActorId<FileReferenceManager> file_reference_manager_;
   ActorId<GameManager> game_manager_;
@@ -492,7 +502,7 @@ class Global final : public ActorContext {
 
   static int64 get_location_key(double latitude, double longitude);
 
-  std::unordered_map<int64, int64> location_access_hashes_;
+  FlatHashMap<int64, int64> location_access_hashes_;
 
   int32 to_unix_time(double server_time) const;
 

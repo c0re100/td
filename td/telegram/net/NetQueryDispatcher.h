@@ -25,6 +25,7 @@
 namespace td {
 
 class DcAuthManager;
+class MultiSequenceDispatcher;
 class NetQueryDelayer;
 class PublicRsaKeyShared;
 class PublicRsaKeyWatchdog;
@@ -63,6 +64,7 @@ class NetQueryDispatcher {
   bool need_destroy_auth_key_{false};
   ActorOwn<NetQueryDelayer> delayer_;
   ActorOwn<DcAuthManager> dc_auth_manager_;
+  ActorOwn<MultiSequenceDispatcher> sequence_dispatcher_;
   struct Dc {
     DcId id_;
     std::atomic<bool> is_valid_{false};

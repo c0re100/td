@@ -25,12 +25,13 @@
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/crypto.h"
+#include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
+#include "td/utils/misc.h"
 #include "td/utils/Random.h"
 #include "td/utils/SliceBuilder.h"
 
 #include <tuple>
-#include <unordered_set>
 
 namespace td {
 
@@ -253,7 +254,7 @@ void CallActor::rate_call(int32 rating, string comment, vector<td_api::object_pt
     comment.clear();
   }
 
-  std::unordered_set<string> tags;
+  FlatHashSet<string> tags;
   for (auto &problem : problems) {
     if (problem == nullptr) {
       continue;
@@ -636,7 +637,9 @@ void CallActor::try_send_request_query() {
   auto timeout = static_cast<double>(call_receive_timeout_ms) * 0.001;
   LOG(INFO) << "Set call timeout to " << timeout;
   set_timeout_in(timeout);
-  query->total_timeout_limit_ = max(timeout, 10.0);
+  query->total_timeout_limit_ =
+      static_cast<int32>(clamp(call_receive_timeout_ms + 999, static_cast<int64>(10000), static_cast<int64>(100000))) /
+      1000;
   request_query_ref_ = query.get_weak();
   send_with_promise(std::move(query),
                     PromiseCreator::lambda([actor_id = actor_id(this)](Result<NetQueryPtr> r_net_query) {

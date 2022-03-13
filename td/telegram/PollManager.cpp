@@ -8,6 +8,7 @@
 
 #include "td/telegram/AccessRights.h"
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/ChainId.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/Dependencies.h"
 #include "td/telegram/DialogId.h"
@@ -16,10 +17,8 @@
 #include "td/telegram/logevent/LogEventHelper.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
-#include "td/telegram/net/NetActor.h"
 #include "td/telegram/PollId.hpp"
 #include "td/telegram/PollManager.hpp"
-#include "td/telegram/SequenceDispatcher.h"
 #include "td/telegram/StateManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
@@ -45,7 +44,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <unordered_map>
 
 namespace td {
 
@@ -138,15 +136,16 @@ class GetPollVotersQuery final : public Td::ResultHandler {
   }
 };
 
-class SetPollAnswerActor final : public NetActorOnce {
+class SendVoteQuery final : public Td::ResultHandler {
   Promise<tl_object_ptr<telegram_api::Updates>> promise_;
   DialogId dialog_id_;
 
  public:
-  explicit SetPollAnswerActor(Promise<tl_object_ptr<telegram_api::Updates>> &&promise) : promise_(std::move(promise)) {
+  explicit SendVoteQuery(Promise<tl_object_ptr<telegram_api::Updates>> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(FullMessageId full_message_id, vector<BufferSlice> &&options, uint64 generation, NetQueryRef *query_ref) {
+  void send(FullMessageId full_message_id, vector<BufferSlice> &&options, PollId poll_id, uint64 generation,
+            NetQueryRef *query_ref) {
     dialog_id_ = full_message_id.get_dialog_id();
     auto input_peer = td_->messages_manager_->get_input_peer(dialog_id_, AccessRights::Read);
     if (input_peer == nullptr) {
@@ -156,11 +155,10 @@ class SetPollAnswerActor final : public NetActorOnce {
 
     auto message_id = full_message_id.get_message_id().get_server_message_id().get();
     auto query = G()->net_query_creator().create(
-        telegram_api::messages_sendVote(std::move(input_peer), message_id, std::move(options)));
+        telegram_api::messages_sendVote(std::move(input_peer), message_id, std::move(options)),
+        {{poll_id}, {dialog_id_}});
     *query_ref = query.get_weak();
-    auto sequence_id = -1;
-    send_closure(td_->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
-                 std::move(query), actor_shared(this), sequence_id);
+    send_query(std::move(query));
   }
 
   void on_result(BufferSlice packet) final {
@@ -170,25 +168,25 @@ class SetPollAnswerActor final : public NetActorOnce {
     }
 
     auto result = result_ptr.move_as_ok();
-    LOG(INFO) << "Receive sendVote result: " << to_string(result);
+    LOG(INFO) << "Receive result for SendVoteQuery: " << to_string(result);
     promise_.set_value(std::move(result));
   }
 
   void on_error(Status status) final {
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "SetPollAnswerActor");
+    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "SendVoteQuery");
     promise_.set_error(std::move(status));
   }
 };
 
-class StopPollActor final : public NetActorOnce {
+class StopPollQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   DialogId dialog_id_;
 
  public:
-  explicit StopPollActor(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  explicit StopPollQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(FullMessageId full_message_id, unique_ptr<ReplyMarkup> &&reply_markup) {
+  void send(FullMessageId full_message_id, unique_ptr<ReplyMarkup> &&reply_markup, PollId poll_id) {
     dialog_id_ = full_message_id.get_dialog_id();
     auto input_peer = td_->messages_manager_->get_input_peer(dialog_id_, AccessRights::Edit);
     if (input_peer == nullptr) {
@@ -207,16 +205,11 @@ class StopPollActor final : public NetActorOnce {
     poll->flags_ |= telegram_api::poll::CLOSED_MASK;
     auto input_media = telegram_api::make_object<telegram_api::inputMediaPoll>(0, std::move(poll),
                                                                                vector<BufferSlice>(), string(), Auto());
-    auto query = G()->net_query_creator().create(telegram_api::messages_editMessage(
-        flags, false /*ignored*/, std::move(input_peer), message_id, string(), std::move(input_media),
-        std::move(input_reply_markup), vector<tl_object_ptr<telegram_api::MessageEntity>>(), 0));
-    if (td_->auth_manager_->is_bot()) {
-      send_query(std::move(query));
-    } else {
-      auto sequence_id = -1;
-      send_closure(td_->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
-                   std::move(query), actor_shared(this), sequence_id);
-    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_editMessage(flags, false /*ignored*/, std::move(input_peer), message_id, string(),
+                                           std::move(input_media), std::move(input_reply_markup),
+                                           vector<tl_object_ptr<telegram_api::MessageEntity>>(), 0),
+        {{poll_id}, {dialog_id_}}));
   }
 
   void on_result(BufferSlice packet) final {
@@ -226,7 +219,7 @@ class StopPollActor final : public NetActorOnce {
     }
 
     auto result = result_ptr.move_as_ok();
-    LOG(INFO) << "Receive result for StopPoll: " << to_string(result);
+    LOG(INFO) << "Receive result for StopPollQuery: " << to_string(result);
     td_->updates_manager_->on_get_updates(std::move(result), std::move(promise_));
   }
 
@@ -234,7 +227,7 @@ class StopPollActor final : public NetActorOnce {
     if (!td_->auth_manager_->is_bot() && status.message() == "MESSAGE_NOT_MODIFIED") {
       return promise_.set_value(Unit());
     }
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "StopPollActor");
+    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "StopPollQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -344,6 +337,7 @@ void PollManager::save_poll(const Poll *poll, PollId poll_id) {
 }
 
 void PollManager::on_load_poll_from_database(PollId poll_id, string value) {
+  CHECK(poll_id.is_valid());
   loaded_from_database_polls_.insert(poll_id);
 
   LOG(INFO) << "Successfully loaded " << poll_id << " of size " << value.size() << " from database";
@@ -384,7 +378,7 @@ PollManager::Poll *PollManager::get_poll_force(PollId poll_id) {
   if (!G()->parameters().use_message_db) {
     return nullptr;
   }
-  if (loaded_from_database_polls_.count(poll_id)) {
+  if (!poll_id.is_valid() || loaded_from_database_polls_.count(poll_id)) {
     return nullptr;
   }
 
@@ -448,9 +442,9 @@ vector<int32> PollManager::get_vote_percentage(const vector<int32> &voter_counts
     int32 pos = -1;
     int32 count = 0;
   };
-  std::unordered_map<int32, Option> options;
+  FlatHashMap<int32, Option> options;
   for (size_t i = 0; i < result.size(); i++) {
-    auto &option = options[voter_counts[i]];
+    auto &option = options[voter_counts[i] + 1];
     if (option.pos == -1) {
       option.pos = narrow_cast<int32>(i);
     }
@@ -710,7 +704,7 @@ void PollManager::set_poll_answer(PollId poll_id, FullMessageId full_message_id,
     return promise.set_error(Status::Error(400, "Can't revote in a quiz"));
   }
 
-  std::unordered_map<size_t, int> affected_option_ids;
+  FlatHashMap<size_t, int> affected_option_ids;
   vector<string> options;
   for (auto &option_id : option_ids) {
     auto index = static_cast<size_t>(option_id);
@@ -719,19 +713,19 @@ void PollManager::set_poll_answer(PollId poll_id, FullMessageId full_message_id,
     }
     options.push_back(poll->options[index].data);
 
-    affected_option_ids[index]++;
+    affected_option_ids[index + 1]++;
   }
   for (size_t option_index = 0; option_index < poll->options.size(); option_index++) {
     if (poll->options[option_index].is_chosen) {
       if (poll->is_quiz) {
         return promise.set_error(Status::Error(400, "Can't revote in a quiz"));
       }
-      affected_option_ids[option_index]++;
+      affected_option_ids[option_index + 1]++;
     }
   }
-  for (auto it : affected_option_ids) {
+  for (const auto &it : affected_option_ids) {
     if (it.second == 1) {
-      invalidate_poll_option_voters(poll, poll_id, it.first);
+      invalidate_poll_option_voters(poll, poll_id, it.first - 1);
     }
   }
 
@@ -762,6 +756,14 @@ class PollManager::SetPollAnswerLogEvent {
 void PollManager::do_set_poll_answer(PollId poll_id, FullMessageId full_message_id, vector<string> &&options,
                                      uint64 log_event_id, Promise<Unit> &&promise) {
   LOG(INFO) << "Set answer in " << poll_id << " from " << full_message_id;
+  if (!poll_id.is_valid() || !full_message_id.get_dialog_id().is_valid() ||
+      !full_message_id.get_message_id().is_valid()) {
+    CHECK(log_event_id != 0);
+    LOG(ERROR) << "Invalid SetPollAnswer log event";
+    binlog_erase(G()->td_db()->get_binlog(), log_event_id);
+    return;
+  }
+
   auto &pending_answer = pending_answers_[poll_id];
   if (!pending_answer.promises_.empty() && pending_answer.options_ == options) {
     pending_answer.promises_.push_back(std::move(promise));
@@ -822,8 +824,8 @@ void PollManager::do_set_poll_answer(PollId poll_id, FullMessageId full_message_
       [poll_id, generation, actor_id = actor_id(this)](Result<tl_object_ptr<telegram_api::Updates>> &&result) {
         send_closure(actor_id, &PollManager::on_set_poll_answer, poll_id, generation, std::move(result));
       });
-  send_closure(td_->create_net_actor<SetPollAnswerActor>(std::move(query_promise)), &SetPollAnswerActor::send,
-               full_message_id, std::move(sent_options), generation, &pending_answer.query_ref_);
+  td_->create_handler<SendVoteQuery>(std::move(query_promise))
+      ->send(full_message_id, std::move(sent_options), poll_id, generation, &pending_answer.query_ref_);
 }
 
 void PollManager::on_set_poll_answer(PollId poll_id, uint64 generation,
@@ -1125,6 +1127,8 @@ class PollManager::StopPollLogEvent {
 void PollManager::do_stop_poll(PollId poll_id, FullMessageId full_message_id, unique_ptr<ReplyMarkup> &&reply_markup,
                                uint64 log_event_id, Promise<Unit> &&promise) {
   LOG(INFO) << "Stop " << poll_id << " from " << full_message_id;
+  CHECK(poll_id.is_valid());
+
   if (log_event_id == 0 && G()->parameters().use_message_db && reply_markup == nullptr) {
     StopPollLogEvent log_event{poll_id, full_message_id};
     log_event_id =
@@ -1135,8 +1139,7 @@ void PollManager::do_stop_poll(PollId poll_id, FullMessageId full_message_id, un
   CHECK(is_inserted);
   auto new_promise = get_erase_log_event_promise(log_event_id, std::move(promise));
 
-  send_closure(td_->create_net_actor<StopPollActor>(std::move(new_promise)), &StopPollActor::send, full_message_id,
-               std::move(reply_markup));
+  td_->create_handler<StopPollQuery>(std::move(new_promise))->send(full_message_id, std::move(reply_markup), poll_id);
 }
 
 void PollManager::stop_local_poll(PollId poll_id) {
@@ -1352,7 +1355,7 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
     return PollId();
   }
   if (poll_server != nullptr) {
-    std::unordered_set<Slice, SliceHash> option_data;
+    FlatHashSet<Slice, SliceHash> option_data;
     for (auto &answer : poll_server->answers_) {
       if (answer->option_.empty()) {
         LOG(ERROR) << "Receive " << poll_id << " with an empty option data: " << to_string(poll_server);
@@ -1693,8 +1696,8 @@ void PollManager::on_binlog_events(vector<BinlogEvent> &&events) {
         auto dialog_id = log_event.full_message_id_.get_dialog_id();
 
         Dependencies dependencies;
-        add_dialog_dependencies(dependencies, dialog_id);  // do not load the dialog itself
-        resolve_dependencies_force(td_, dependencies, "SetPollAnswerLogEvent");
+        dependencies.add_dialog_dependencies(dialog_id);  // do not load the dialog itself
+        dependencies.resolve_force(td_, "SetPollAnswerLogEvent");
 
         do_set_poll_answer(log_event.poll_id_, log_event.full_message_id_, std::move(log_event.options_), event.id_,
                            Auto());
@@ -1712,8 +1715,8 @@ void PollManager::on_binlog_events(vector<BinlogEvent> &&events) {
         auto dialog_id = log_event.full_message_id_.get_dialog_id();
 
         Dependencies dependencies;
-        add_dialog_dependencies(dependencies, dialog_id);  // do not load the dialog itself
-        resolve_dependencies_force(td_, dependencies, "StopPollLogEvent");
+        dependencies.add_dialog_dependencies(dialog_id);  // do not load the dialog itself
+        dependencies.resolve_force(td_, "StopPollLogEvent");
 
         do_stop_poll(log_event.poll_id_, log_event.full_message_id_, nullptr, event.id_, Auto());
         break;

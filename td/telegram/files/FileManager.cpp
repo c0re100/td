@@ -7,6 +7,7 @@
 #include "td/telegram/files/FileManager.h"
 
 #include "td/telegram/ConfigShared.h"
+#include "td/telegram/DownloadManager.h"
 #include "td/telegram/FileReferenceManager.h"
 #include "td/telegram/files/FileData.h"
 #include "td/telegram/files/FileDb.h"
@@ -47,7 +48,6 @@
 #include <limits>
 #include <numeric>
 #include <tuple>
-#include <unordered_set>
 #include <utility>
 
 namespace td {
@@ -180,6 +180,7 @@ void FileNode::init_ready_size() {
 
 void FileNode::set_download_offset(int64 download_offset) {
   if (download_offset < 0 || download_offset > MAX_FILE_SIZE) {
+    // KEEP_DOWNLOAD_OFFSET is handled here
     return;
   }
   if (download_offset == download_offset_) {
@@ -193,18 +194,42 @@ void FileNode::set_download_offset(int64 download_offset) {
   recalc_ready_prefix_size(-1, -1);
   on_info_changed();
 }
-void FileNode::set_download_limit(int64 download_limit) {
-  if (download_limit < 0) {
-    return;
+
+int64 FileNode::get_download_limit() const {
+  if (ignore_download_limit_) {
+    return 0;
   }
-  if (download_limit == download_limit_) {
+  return private_download_limit_;
+}
+
+void FileNode::update_effective_download_limit(int64 old_download_limit) {
+  if (get_download_limit() == old_download_limit) {
     return;
   }
 
-  VLOG(update_file) << "File " << main_file_id_ << " has changed download_limit from " << download_limit_ << " to "
-                    << download_limit;
-  download_limit_ = download_limit;
+  // There should be no false positives here
+  // When we use IGNORE_DOWNLOAD_LIMIT, set_download_limit will be ignored
+  // And in case we turn off ignore_download_limit, set_download_limit will not change effective download limit
+  VLOG(update_file) << "File " << main_file_id_ << " has changed download_limit from " << old_download_limit << " to "
+                    << get_download_limit() << " (limit=" << private_download_limit_
+                    << ";ignore=" << ignore_download_limit_ << ")";
   is_download_limit_dirty_ = true;
+}
+
+void FileNode::set_download_limit(int64 download_limit) {
+  if (download_limit < 0) {
+    // KEEP_DOWNLOAD_LIMIT is handled here
+    return;
+  }
+  auto old_download_limit = get_download_limit();
+  private_download_limit_ = download_limit;
+  update_effective_download_limit(old_download_limit);
+}
+
+void FileNode::set_ignore_download_limit(bool ignore_download_limit) {
+  auto old_download_limit = get_download_limit();
+  ignore_download_limit_ = ignore_download_limit;
+  update_effective_download_limit(old_download_limit);
 }
 
 void FileNode::drop_local_location() {
@@ -801,7 +826,7 @@ FileManager::FileManager(unique_ptr<Context> context) : context_(std::move(conte
   next_file_id();
   next_file_node_id();
 
-  std::unordered_set<string> dir_paths;
+  FlatHashSet<string> dir_paths;
   for (int32 i = 0; i < MAX_FILE_TYPE; i++) {
     dir_paths.insert(get_files_dir(static_cast<FileType>(i)));
   }
@@ -838,7 +863,7 @@ FileManager::~FileManager() {
 }
 
 string FileManager::fix_file_extension(Slice file_name, Slice file_type, Slice file_extension) {
-  return (file_name.empty() ? file_type : file_name).str() + "." + file_extension.str();
+  return PSTRING() << (file_name.empty() ? file_type : file_name) << '.' << file_extension;
 }
 
 string FileManager::get_file_name(FileType file_type, Slice path) {
@@ -866,7 +891,8 @@ string FileManager::get_file_name(FileType file_type, Slice path) {
       break;
     case FileType::Video:
     case FileType::VideoNote:
-      if (extension != "mov" && extension != "3gp" && extension != "mpeg4" && extension != "mp4") {
+      if (extension != "mov" && extension != "3gp" && extension != "mpeg4" && extension != "mp4" &&
+          extension != "mkv") {
         return fix_file_extension(file_name, "video", "mp4");
       }
       break;
@@ -1002,6 +1028,7 @@ Status FileManager::check_local_location(FileNodePtr node) {
     status = check_partial_local_location(node->local_.partial());
   }
   if (status.is_error()) {
+    send_closure(G()->download_manager(), &DownloadManager::remove_file_if_finished, node->main_file_id_);
     node->drop_local_location();
     try_flush_node(node, "check_local_location");
   }
@@ -1092,6 +1119,7 @@ void FileManager::on_file_unlink(const FullLocalFileLocation &location) {
   auto file_id = it->second;
   auto file_node = get_sync_file_node(file_id);
   CHECK(file_node);
+  send_closure(G()->download_manager(), &DownloadManager::remove_file_if_finished, file_node->main_file_id_);
   file_node->drop_local_location();
   try_flush_node_info(file_node, "on_file_unlink");
 }
@@ -1758,8 +1786,8 @@ void FileManager::on_file_reference_repaired(FileId file_id, FileSourceId file_s
   promise.set_result(std::move(result));
 }
 
-std::unordered_set<FileId, FileIdHash> FileManager::get_main_file_ids(const vector<FileId> &file_ids) {
-  std::unordered_set<FileId, FileIdHash> result;
+FlatHashSet<FileId, FileIdHash> FileManager::get_main_file_ids(const vector<FileId> &file_ids) {
+  FlatHashSet<FileId, FileIdHash> result;
   for (auto file_id : file_ids) {
     auto node = get_file_node(file_id);
     if (node) {
@@ -1807,6 +1835,10 @@ void FileManager::try_flush_node_info(FileNodePtr node, const char *source) {
       if (info->send_updates_flag_) {
         VLOG(update_file) << "Send UpdateFile about file " << file_id << " from " << source;
         context_->on_file_updated(file_id);
+      }
+      if (info->download_callback_) {
+        // For DownloadManager. For everybody else it is just an empty function call (I hope).
+        info->download_callback_->on_progress(file_id);
       }
     }
     node->on_info_flushed();
@@ -2113,6 +2145,7 @@ void FileManager::delete_file(FileId file_id, Promise<Unit> promise, const char 
 
   auto file_view = FileView(node);
 
+  send_closure(G()->download_manager(), &DownloadManager::remove_file_if_finished, file_view.file_id());
   // TODO review delete condition
   if (file_view.has_local_location()) {
     if (begins_with(file_view.local_location().path_, get_files_dir(file_view.get_type()))) {
@@ -2198,8 +2231,13 @@ void FileManager::download(FileId file_id, std::shared_ptr<DownloadCallback> cal
     CHECK(new_priority == 0);
     file_info->download_callback_->on_download_error(file_id, Status::Error(200, "Canceled"));
   }
+  file_info->ignore_download_limit = limit == IGNORE_DOWNLOAD_LIMIT;
   file_info->download_priority_ = narrow_cast<int8>(new_priority);
   file_info->download_callback_ = std::move(callback);
+
+  if (file_info->download_callback_) {
+    file_info->download_callback_->on_progress(file_id);
+  }
   // TODO: send current progress?
 
   run_generate(node);
@@ -2210,11 +2248,13 @@ void FileManager::download(FileId file_id, std::shared_ptr<DownloadCallback> cal
 
 void FileManager::run_download(FileNodePtr node, bool force_update_priority) {
   int8 priority = 0;
+  bool ignore_download_limit = false;
   for (auto id : node->file_ids_) {
     auto *info = get_file_id_info(id);
     if (info->download_priority_ > priority) {
       priority = info->download_priority_;
     }
+    ignore_download_limit |= info->ignore_download_limit;
   }
 
   auto old_priority = node->download_priority_;
@@ -2242,6 +2282,7 @@ void FileManager::run_download(FileNodePtr node, bool force_update_priority) {
     return;
   }
   node->set_download_priority(priority);
+  node->set_ignore_download_limit(ignore_download_limit);
   bool need_update_offset = node->is_download_offset_dirty_;
   node->is_download_offset_dirty_ = false;
 
@@ -2256,7 +2297,7 @@ void FileManager::run_download(FileNodePtr node, bool force_update_priority) {
     }
     if (need_update_limit || need_update_offset) {
       auto download_offset = node->download_offset_;
-      auto download_limit = node->download_limit_;
+      auto download_limit = node->get_download_limit();
       if (file_view.is_encrypted_any()) {
         CHECK(download_offset <= MAX_FILE_SIZE);
         CHECK(download_limit <= std::numeric_limits<int32>::max());
@@ -2325,7 +2366,7 @@ void FileManager::run_download(FileNodePtr node, bool force_update_priority) {
             << node->remote_.full.value() << " with suggested name " << node->suggested_path() << " and encyption key "
             << node->encryption_key_;
   auto download_offset = node->download_offset_;
-  auto download_limit = node->download_limit_;
+  auto download_limit = node->get_download_limit();
   if (file_view.is_encrypted_any()) {
     CHECK(download_offset <= MAX_FILE_SIZE);
     CHECK(download_limit <= std::numeric_limits<int32>::max());
@@ -3877,5 +3918,9 @@ void FileManager::hangup() {
 void FileManager::tear_down() {
   parent_.reset();
 }
+
+constexpr int64 FileManager::KEEP_DOWNLOAD_LIMIT;
+constexpr int64 FileManager::KEEP_DOWNLOAD_OFFSET;
+constexpr int64 FileManager::IGNORE_DOWNLOAD_LIMIT;
 
 }  // namespace td

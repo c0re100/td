@@ -28,6 +28,7 @@ if (CRC32C_FOUND)
   set(TD_HAVE_CRC32C 1)
 endif()
 
+find_package(ABSL QUIET)
 if (ABSL_FOUND)
   set(TD_HAVE_ABSL 1)
 endif()
@@ -95,6 +96,7 @@ set(TDUTILS_SOURCE
   td/utils/FileLog.cpp
   td/utils/filesystem.cpp
   td/utils/find_boundary.cpp
+  td/utils/FlatHashTable.cpp
   td/utils/Gzip.cpp
   td/utils/GzipByteFlow.cpp
   td/utils/Hints.cpp
@@ -202,7 +204,12 @@ set(TDUTILS_SOURCE
   td/utils/ExitGuard.h
   td/utils/FileLog.h
   td/utils/filesystem.h
+  td/utils/fixed_vector.h
   td/utils/find_boundary.h
+  td/utils/FlatHashMap.h
+  td/utils/FlatHashMapChunks.h
+  td/utils/FlatHashSet.h
+  td/utils/FlatHashTable.h
   td/utils/FloodControlFast.h
   td/utils/FloodControlStrict.h
   td/utils/format.h
@@ -211,6 +218,7 @@ set(TDUTILS_SOURCE
   td/utils/Hash.h
   td/utils/HashMap.h
   td/utils/HashSet.h
+  td/utils/HashTableUtils.h
   td/utils/HazardPointers.h
   td/utils/Heap.h
   td/utils/Hints.h
@@ -220,6 +228,7 @@ set(TDUTILS_SOURCE
   td/utils/JsonBuilder.h
   td/utils/List.h
   td/utils/logging.h
+  td/utils/MapNode.h
   td/utils/MemoryLog.h
   td/utils/misc.h
   td/utils/MovableValue.h
@@ -240,6 +249,7 @@ set(TDUTILS_SOURCE
   td/utils/queue.h
   td/utils/Random.h
   td/utils/ScopeGuard.h
+  td/utils/SetNode.h
   td/utils/SharedObjectPool.h
   td/utils/SharedSlice.h
   td/utils/Slice-decl.h
@@ -298,6 +308,7 @@ set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/filesystem.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/gzip.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/HazardPointers.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/HashSet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/heap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/HttpUrl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/json.cpp
@@ -353,7 +364,7 @@ if (CRC32C_FOUND)
   target_link_libraries(tdutils PRIVATE crc32c)
 endif()
 if (ABSL_FOUND)
-  target_link_libraries(tdutils SYSTEM PUBLIC absl::flat_hash_map absl::flat_hash_set absl::hash)
+  target_link_libraries(tdutils PUBLIC absl::flat_hash_map absl::flat_hash_set absl::hash)
 endif()
 
 if (WIN32)
@@ -383,3 +394,14 @@ install(TARGETS tdutils EXPORT TdTargets
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 )
+
+if (TD_TEST_FOLLY)
+  find_package(benchmark QUIET)
+  find_package(folly QUIET)
+  find_package(gflags QUIET)
+
+  if (ABSL_FOUND AND benchmark_FOUND AND folly_FOUND)
+    add_executable(benchmark-hashset test/hashset_benchmark.cpp)
+    target_link_libraries(benchmark-hashset PRIVATE tdutils benchmark::benchmark Folly::folly absl::flat_hash_map absl::hash)
+  endif()
+endif()

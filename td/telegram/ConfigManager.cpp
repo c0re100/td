@@ -48,6 +48,7 @@
 #include "td/utils/common.h"
 #include "td/utils/crypto.h"
 #include "td/utils/emoji.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/format.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
@@ -63,7 +64,6 @@
 
 #include <functional>
 #include <memory>
-#include <unordered_map>
 #include <utility>
 
 namespace td {
@@ -261,33 +261,45 @@ static ActorOwn<> get_simple_config_dns(Slice address, Slice host, Promise<Simpl
     name = is_test ? "tapv3.stel.com" : "apv3.stel.com";
   }
   auto get_config = [](HttpQuery &http_query) -> Result<string> {
-    VLOG(config_recoverer) << "Receive DNS response " << http_query.content_;
-    TRY_RESULT(json, json_decode(http_query.content_));
-    if (json.type() != JsonValue::Type::Object) {
-      return Status::Error("Expected JSON object");
-    }
-    auto &answer_object = json.get_object();
-    TRY_RESULT(answer, get_json_object_field(answer_object, "Answer", JsonValue::Type::Array, false));
-    auto &answer_array = answer.get_array();
-    vector<string> parts;
-    for (auto &answer_part : answer_array) {
-      if (answer_part.type() != JsonValue::Type::Object) {
+    auto get_data = [](JsonValue &answer) -> Result<string> {
+      auto &answer_array = answer.get_array();
+      vector<string> parts;
+      for (auto &answer_part : answer_array) {
+        if (answer_part.type() != JsonValue::Type::Object) {
+          return Status::Error("Expected JSON object");
+        }
+        auto &data_object = answer_part.get_object();
+        TRY_RESULT(part, get_json_object_string_field(data_object, "data", false));
+        parts.push_back(std::move(part));
+      }
+      if (parts.size() != 2) {
+        return Status::Error("Expected data in two parts");
+      }
+      string data;
+      if (parts[0].size() < parts[1].size()) {
+        data = parts[1] + parts[0];
+      } else {
+        data = parts[0] + parts[1];
+      }
+      return data;
+    };
+    if (!http_query.get_arg("Answer").empty()) {
+      VLOG(config_recoverer) << "Receive DNS response " << http_query.get_arg("Answer");
+      TRY_RESULT(answer, json_decode(http_query.get_arg("Answer")));
+      if (answer.type() != JsonValue::Type::Array) {
+        return Status::Error("Expected JSON array");
+      }
+      return get_data(answer);
+    } else {
+      VLOG(config_recoverer) << "Receive DNS response " << http_query.content_;
+      TRY_RESULT(json, json_decode(http_query.content_));
+      if (json.type() != JsonValue::Type::Object) {
         return Status::Error("Expected JSON object");
       }
-      auto &data_object = answer_part.get_object();
-      TRY_RESULT(part, get_json_object_string_field(data_object, "data", false));
-      parts.push_back(std::move(part));
+      auto &answer_object = json.get_object();
+      TRY_RESULT(answer, get_json_object_field(answer_object, "Answer", JsonValue::Type::Array, false));
+      return get_data(answer);
     }
-    if (parts.size() != 2) {
-      return Status::Error("Expected data in two parts");
-    }
-    string data;
-    if (parts[0].size() < parts[1].size()) {
-      data = parts[1] + parts[0];
-    } else {
-      data = parts[0] + parts[1];
-    }
-    return data;
   };
   return get_simple_config_impl(std::move(promise), scheduler_id,
                                 PSTRING() << "https://" << address << "?name=" << url_encode(name) << "&type=TXT",
@@ -800,10 +812,9 @@ class ConfigRecoverer final : public Actor {
     if (need_simple_config) {
       ref_cnt_++;
       VLOG(config_recoverer) << "Ask simple config with turn " << simple_config_turn_;
-      auto promise =
-          PromiseCreator::lambda([actor_id = actor_shared(this)](Result<SimpleConfigResult> r_simple_config) {
-            send_closure(actor_id, &ConfigRecoverer::on_simple_config, std::move(r_simple_config), false);
-          });
+      auto promise = PromiseCreator::lambda([self = actor_shared(this)](Result<SimpleConfigResult> r_simple_config) {
+        send_closure(self, &ConfigRecoverer::on_simple_config, std::move(r_simple_config), false);
+      });
       auto get_simple_config = [&] {
         switch (simple_config_turn_ % 10) {
           case 6:
@@ -1495,8 +1506,8 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   vector<tl_object_ptr<telegram_api::jsonObjectValue>> new_values;
   string ignored_restriction_reasons;
   vector<string> dice_emojis;
-  std::unordered_map<string, size_t> dice_emoji_index;
-  std::unordered_map<string, string> dice_emoji_success_value;
+  FlatHashMap<string, size_t> dice_emoji_index;
+  FlatHashMap<string, string> dice_emoji_success_value;
   vector<string> emoji_sounds;
   string animation_search_provider;
   string animation_search_emojis;
@@ -1560,7 +1571,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
           auto success_values = std::move(static_cast<telegram_api::jsonObject *>(value)->value_);
           for (auto &success_value : success_values) {
             CHECK(success_value != nullptr);
-            if (success_value->value_->get_id() == telegram_api::jsonObject::ID) {
+            if (!success_value->key_.empty() && success_value->value_->get_id() == telegram_api::jsonObject::ID) {
               int32 dice_value = -1;
               int32 frame_start = -1;
               for (auto &dice_key_value :
@@ -1785,11 +1796,12 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   if (!dice_emojis.empty()) {
     vector<string> dice_success_values(dice_emojis.size());
     for (auto &it : dice_emoji_success_value) {
-      if (dice_emoji_index.find(it.first) == dice_emoji_index.end()) {
+      auto dice_emoji_it = dice_emoji_index.find(it.first);
+      if (dice_emoji_it == dice_emoji_index.end()) {
         LOG(ERROR) << "Can't find emoji " << it.first;
         continue;
       }
-      dice_success_values[dice_emoji_index[it.first]] = it.second;
+      dice_success_values[dice_emoji_it->second] = it.second;
     }
     shared_config.set_option_string("dice_success_values", implode(dice_success_values, ','));
     shared_config.set_option_string("dice_emojis", implode(dice_emojis, '\x01'));

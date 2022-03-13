@@ -83,10 +83,11 @@ class FileDownloadGenerateActor final : public FileGenerateActor {
     };
 
     send_closure(G()->file_manager(), &FileManager::download, file_id_, std::make_shared<Callback>(actor_id(this)), 1,
-                 -1, -1);
+                 FileManager::KEEP_DOWNLOAD_OFFSET, FileManager::KEEP_DOWNLOAD_LIMIT);
   }
   void hangup() final {
-    send_closure(G()->file_manager(), &FileManager::download, file_id_, nullptr, 0, -1, -1);
+    send_closure(G()->file_manager(), &FileManager::download, file_id_, nullptr, 0, FileManager::KEEP_DOWNLOAD_OFFSET,
+                 FileManager::KEEP_DOWNLOAD_LIMIT);
     stop();
   }
 
@@ -200,7 +201,7 @@ class MapDownloadGenerateActor final : public FileGenerateActor {
 
     LOG(INFO) << "Download " << conversion_;
     auto query =
-        G()->net_query_creator().create(telegram_api::upload_getWebFile(r_input_web_file.move_as_ok(), 0, 1 << 20),
+        G()->net_query_creator().create(telegram_api::upload_getWebFile(r_input_web_file.move_as_ok(), 0, 1 << 20), {},
                                         G()->get_webfile_dc_id(), NetQuery::Type::DownloadSmall);
     G()->net_query_dispatcher().dispatch_with_callback(std::move(query), {net_callback_.get(), 0});
   }

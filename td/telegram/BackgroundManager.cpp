@@ -675,6 +675,7 @@ BackgroundId BackgroundManager::set_background(const td_api::InputBackground *in
       }
       auto file_id = r_file_id.move_as_ok();
       LOG(INFO) << "Receive file " << file_id << " for input background";
+      CHECK(file_id.is_valid());
 
       auto it = file_id_to_background_id_.find(file_id);
       if (it != file_id_to_background_id_.end()) {
@@ -975,7 +976,11 @@ void BackgroundManager::add_background(const Background &background, bool replac
   LOG(INFO) << "Add " << background.id << " of " << background.type;
 
   CHECK(background.id.is_valid());
-  auto *result = &backgrounds_[background.id];
+  auto &result_ptr = backgrounds_[background.id];
+  if (result_ptr == nullptr) {
+    result_ptr = make_unique<Background>();
+  }
+  auto *result = result_ptr.get();
 
   FileSourceId file_source_id;
   auto it = background_id_to_file_source_id_.find(background.id);
@@ -1039,9 +1044,9 @@ void BackgroundManager::add_background(const Background &background, bool replac
       for (auto file_id : Document(Document::Type::General, result->file_id).get_file_ids(td_)) {
         td_->file_manager_->add_file_source(file_id, result->file_source_id);
       }
-    }
 
-    file_id_to_background_id_.emplace(result->file_id, result->id);
+      file_id_to_background_id_.emplace(result->file_id, result->id);
+    }
   } else {
     // if file_source_id is valid, then this is a new background with result->file_id == FileId()
     // then background.file_id == FileId(), then this is a fill background, which can't have file_source_id
@@ -1054,7 +1059,7 @@ BackgroundManager::Background *BackgroundManager::get_background_ref(BackgroundI
   if (p == backgrounds_.end()) {
     return nullptr;
   } else {
-    return &p->second;
+    return p->second.get();
   }
 }
 
@@ -1063,7 +1068,7 @@ const BackgroundManager::Background *BackgroundManager::get_background(Backgroun
   if (p == backgrounds_.end()) {
     return nullptr;
   } else {
-    return &p->second;
+    return p->second.get();
   }
 }
 
@@ -1261,6 +1266,10 @@ td_api::object_ptr<td_api::backgrounds> BackgroundManager::get_backgrounds_objec
 }
 
 FileSourceId BackgroundManager::get_background_file_source_id(BackgroundId background_id, int64 access_hash) {
+  if (!background_id.is_valid()) {
+    return FileSourceId();
+  }
+
   Background *background = get_background_ref(background_id);
   if (background != nullptr) {
     if (!background->file_source_id.is_valid()) {

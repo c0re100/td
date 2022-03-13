@@ -8,6 +8,7 @@
 
 #include "td/telegram/Global.h"
 #include "td/telegram/LanguagePackManager.h"
+#include "td/telegram/misc.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/telegram_api.h"
 
@@ -163,6 +164,9 @@ void CountryInfoManager::do_get_countries(string language_code, bool is_recursiv
   if (is_recursive) {
     return promise.set_error(Status::Error(500, "Requested data is inaccessible"));
   }
+  if (language_code.empty()) {
+    return promise.set_error(Status::Error(400, "Invalid language code specified"));
+  }
   load_country_list(language_code, 0,
                     PromiseCreator::lambda([actor_id = actor_id(this), language_code,
                                             promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -176,7 +180,7 @@ void CountryInfoManager::do_get_countries(string language_code, bool is_recursiv
 
 void CountryInfoManager::get_phone_number_info(string phone_number_prefix,
                                                Promise<td_api::object_ptr<td_api::phoneNumberInfo>> &&promise) {
-  td::remove_if(phone_number_prefix, [](char c) { return c < '0' || c > '9'; });
+  clean_phone_number(phone_number_prefix);
   if (phone_number_prefix.empty()) {
     return promise.set_value(td_api::make_object<td_api::phoneNumberInfo>(nullptr, string(), string()));
   }
@@ -203,6 +207,9 @@ void CountryInfoManager::do_get_phone_number_info(string phone_number_prefix, st
   if (is_recursive) {
     return promise.set_error(Status::Error(500, "Requested data is inaccessible"));
   }
+  if (language_code.empty()) {
+    return promise.set_error(Status::Error(400, "Invalid language code specified"));
+  }
   load_country_list(language_code, 0,
                     PromiseCreator::lambda([actor_id = actor_id(this), phone_number_prefix, language_code,
                                             promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -216,7 +223,7 @@ void CountryInfoManager::do_get_phone_number_info(string phone_number_prefix, st
 
 td_api::object_ptr<td_api::phoneNumberInfo> CountryInfoManager::get_phone_number_info_sync(const string &language_code,
                                                                                            string phone_number_prefix) {
-  td::remove_if(phone_number_prefix, [](char c) { return !is_digit(c); });
+  clean_phone_number(phone_number_prefix);
   if (phone_number_prefix.empty()) {
     return td_api::make_object<td_api::phoneNumberInfo>(nullptr, string(), string());
   }
@@ -537,6 +544,6 @@ const CountryInfoManager::CountryList *CountryInfoManager::get_country_list(Coun
 
 int32 CountryInfoManager::manager_count_ = 0;
 std::mutex CountryInfoManager::country_mutex_;
-std::unordered_map<string, unique_ptr<CountryInfoManager::CountryList>> CountryInfoManager::countries_;
+FlatHashMap<string, unique_ptr<CountryInfoManager::CountryList>> CountryInfoManager::countries_;
 
 }  // namespace td

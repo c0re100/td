@@ -195,4 +195,23 @@ detail::reversion_wrapper<T> reversed(T &iterable) {
   return {iterable};
 }
 
+template <class TableT, class FuncT>
+void table_remove_if(TableT &table, FuncT &&func) {
+  for (auto it = table.begin(); it != table.end();) {
+    if (func(*it)) {
+      it = table.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+template <class NodeT, class HashT, class EqT>
+class FlatHashTable;
+
+template <class NodeT, class HashT, class EqT, class FuncT>
+void table_remove_if(FlatHashTable<NodeT, HashT, EqT> &table, FuncT &&func) {
+  table.remove_if(func);
+}
+
 }  // namespace td

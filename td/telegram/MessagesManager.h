@@ -52,7 +52,6 @@
 #include "td/telegram/secret_api.h"
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/SecretInputMedia.h"
-#include "td/telegram/SequenceDispatcher.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
@@ -67,6 +66,8 @@
 #include "td/utils/buffer.h"
 #include "td/utils/ChangesProcessor.h"
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
+#include "td/utils/FlatHashSet.h"
 #include "td/utils/Heap.h"
 #include "td/utils/Hints.h"
 #include "td/utils/logging.h"
@@ -86,7 +87,7 @@
 namespace td {
 
 struct BinlogEvent;
-struct Dependencies;
+class Dependencies;
 class DialogActionBar;
 class DialogFilter;
 class DraftMessage;
@@ -158,6 +159,8 @@ class MessagesManager final : public Actor {
 
   static DialogId get_message_dialog_id(const tl_object_ptr<telegram_api::Message> &message_ptr);
 
+  static FullMessageId get_full_message_id(const tl_object_ptr<telegram_api::Message> &message_ptr, bool is_scheduled);
+
   tl_object_ptr<telegram_api::InputPeer> get_input_peer(DialogId dialog_id, AccessRights access_rights) const;
 
   static tl_object_ptr<telegram_api::InputPeer> get_input_peer_force(DialogId dialog_id);
@@ -224,6 +227,9 @@ class MessagesManager final : public Actor {
                                      int32 min_date, int32 max_date, int64 random_id, int32 total_count,
                                      vector<tl_object_ptr<telegram_api::Message>> &&messages, Promise<Unit> &&promise);
   void on_failed_messages_search(int64 random_id);
+
+  void on_get_outgoing_document_messages(vector<tl_object_ptr<telegram_api::Message>> &&messages,
+                                         Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
 
   void on_get_scheduled_server_messages(DialogId dialog_id, uint32 generation,
                                         vector<tl_object_ptr<telegram_api::Message>> &&messages, bool is_not_modified);
@@ -337,12 +343,18 @@ class MessagesManager final : public Actor {
   void on_update_message_forward_count(FullMessageId full_message_id, int32 forward_count);
 
   void on_update_message_reactions(FullMessageId full_message_id,
-                                   tl_object_ptr<telegram_api::messageReactions> &&reactions);
+                                   tl_object_ptr<telegram_api::messageReactions> &&reactions, Promise<Unit> &&promise);
+
+  void update_message_reactions(FullMessageId full_message_id, unique_ptr<MessageReactions> &&reactions);
+
+  void try_reload_message_reactions(DialogId dialog_id, bool is_finished);
+
+  void on_get_message_reaction_list(FullMessageId full_message_id, const string &reaction,
+                                    FlatHashMap<string, vector<DialogId>> reactions, int32 total_count);
 
   void on_update_message_interaction_info(FullMessageId full_message_id, int32 view_count, int32 forward_count,
-                                          bool has_reply_info, tl_object_ptr<telegram_api::messageReplies> &&reply_info,
-                                          bool has_reactions,
-                                          tl_object_ptr<telegram_api::messageReactions> &&reactions);
+                                          bool has_reply_info,
+                                          tl_object_ptr<telegram_api::messageReplies> &&reply_info);
 
   void on_update_live_location_viewed(FullMessageId full_message_id);
 
@@ -414,10 +426,11 @@ class MessagesManager final : public Actor {
       tl_object_ptr<td_api::messageSendOptions> &&options, tl_object_ptr<td_api::ReplyMarkup> &&reply_markup,
       tl_object_ptr<td_api::InputMessageContent> &&input_message_content) TD_WARN_UNUSED_RESULT;
 
-  Result<vector<MessageId>> send_message_group(
+  Result<td_api::object_ptr<td_api::messages>> send_message_group(
       DialogId dialog_id, MessageId top_thread_message_id, MessageId reply_to_message_id,
       tl_object_ptr<td_api::messageSendOptions> &&options,
-      vector<tl_object_ptr<td_api::InputMessageContent>> &&input_message_contents) TD_WARN_UNUSED_RESULT;
+      vector<tl_object_ptr<td_api::InputMessageContent>> &&input_message_contents,
+      bool only_preview) TD_WARN_UNUSED_RESULT;
 
   Result<MessageId> send_bot_start_message(UserId bot_user_id, DialogId dialog_id,
                                            const string &parameter) TD_WARN_UNUSED_RESULT;
@@ -681,6 +694,8 @@ class MessagesManager final : public Actor {
   Status view_messages(DialogId dialog_id, MessageId top_thread_message_id, const vector<MessageId> &message_ids,
                        bool force_read) TD_WARN_UNUSED_RESULT;
 
+  void finish_get_message_views(DialogId dialog_id, const vector<MessageId> &message_ids);
+
   Status open_message_content(FullMessageId full_message_id) TD_WARN_UNUSED_RESULT;
 
   void click_animated_emoji_message(FullMessageId full_message_id,
@@ -753,6 +768,9 @@ class MessagesManager final : public Actor {
 
   std::pair<int32, vector<FullMessageId>> search_call_messages(MessageId from_message_id, int32 limit, bool only_missed,
                                                                int64 &random_id, bool use_db, Promise<Unit> &&promise);
+
+  void search_outgoing_document_messages(const string &query, int32 limit,
+                                         Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
 
   void search_dialog_recent_location_messages(DialogId dialog_id, int32 limit,
                                               Promise<td_api::object_ptr<td_api::messages>> &&promise);
@@ -916,7 +934,7 @@ class MessagesManager final : public Actor {
                                vector<tl_object_ptr<telegram_api::User>> users,
                                vector<tl_object_ptr<telegram_api::Chat>> chats);
 
-  FileSourceId get_message_file_source_id(FullMessageId full_message_id);
+  FileSourceId get_message_file_source_id(FullMessageId full_message_id, bool force = false);
 
   struct MessagePushNotificationInfo {
     NotificationGroupId group_id;
@@ -974,9 +992,10 @@ class MessagesManager final : public Actor {
 
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
 
-  ActorOwn<MultiSequenceDispatcher> sequence_dispatcher_;
+  void add_message_file_to_downloads(FullMessageId full_message_id, FileId file_id, int32 priority,
+                                     Promise<td_api::object_ptr<td_api::file>> promise);
 
-  static uint64 get_sequence_dispatcher_id(DialogId dialog_id, MessageContentType message_content_type);
+  void get_message_file_search_text(FullMessageId full_message_id, string unique_file_id, Promise<string> promise);
 
  private:
   class PendingPtsUpdate {
@@ -1127,6 +1146,9 @@ class MessagesManager final : public Actor {
     bool have_next = false;
     bool from_database = false;
 
+    bool has_get_message_views_query = false;
+    bool need_view_counter_increment = false;
+
     DialogId real_forward_from_dialog_id;    // for resend_message
     MessageId real_forward_from_message_id;  // for resend_message
 
@@ -1143,6 +1165,7 @@ class MessagesManager final : public Actor {
     MessageReplyInfo reply_info;
     unique_ptr<MessageReactions> reactions;
     unique_ptr<DraftMessage> thread_draft_message;
+    uint32 available_reactions_generation = 0;
     int32 interaction_info_update_date = 0;
 
     int32 legacy_layer = 0;
@@ -1231,6 +1254,7 @@ class MessagesManager final : public Actor {
     MessageId reply_markup_message_id;
     DialogNotificationSettings notification_settings;
     vector<string> available_reactions;
+    uint32 available_reactions_generation = 0;
     MessageTtl message_ttl;
     unique_ptr<DraftMessage> draft_message;
     unique_ptr<DialogActionBar> action_bar;
@@ -1339,22 +1363,22 @@ class MessagesManager final : public Actor {
                                          // application start, used to guarantee that all assigned message identifiers
                                          // are different
 
-    std::unordered_map<MessageId, std::set<MessageId>, MessageIdHash>
+    FlatHashMap<MessageId, std::set<MessageId>, MessageIdHash>
         yet_unsent_thread_message_ids;  // top_thread_message_id -> yet unsent message IDs
 
-    std::unordered_map<ScheduledServerMessageId, int32, ScheduledServerMessageIdHash> scheduled_message_date;
+    FlatHashMap<ScheduledServerMessageId, int32, ScheduledServerMessageIdHash> scheduled_message_date;
 
-    std::unordered_map<MessageId, MessageId, MessageIdHash> yet_unsent_message_id_to_persistent_message_id;
+    FlatHashMap<MessageId, MessageId, MessageIdHash> yet_unsent_message_id_to_persistent_message_id;
 
-    std::unordered_map<int32, MessageId> last_assigned_scheduled_message_id;  // date -> message_id
+    FlatHashMap<int32, MessageId> last_assigned_scheduled_message_id;  // date -> message_id
 
-    std::unordered_set<MessageId, MessageIdHash> deleted_message_ids;
-    std::unordered_set<ScheduledServerMessageId, ScheduledServerMessageIdHash> deleted_scheduled_server_message_ids;
+    FlatHashSet<MessageId, MessageIdHash> deleted_message_ids;
+    FlatHashSet<ScheduledServerMessageId, ScheduledServerMessageIdHash> deleted_scheduled_server_message_ids;
 
-    std::vector<std::pair<DialogId, MessageId>> pending_new_message_notifications;
-    std::vector<std::pair<DialogId, MessageId>> pending_new_mention_notifications;
+    vector<std::pair<DialogId, MessageId>> pending_new_message_notifications;
+    vector<std::pair<DialogId, MessageId>> pending_new_mention_notifications;
 
-    std::unordered_map<NotificationId, MessageId, NotificationIdHash> notification_id_to_message_id;
+    FlatHashMap<NotificationId, MessageId, NotificationIdHash> notification_id_to_message_id;
 
     string client_data;
 
@@ -1364,8 +1388,8 @@ class MessagesManager final : public Actor {
     MessageId suffix_load_query_message_id_;
     std::vector<std::pair<Promise<>, std::function<bool(const Message *)>>> suffix_load_queries_;
 
-    std::unordered_map<MessageId, int64, MessageIdHash> pending_viewed_live_locations;  // message_id -> task_id
-    std::unordered_set<MessageId, MessageIdHash> pending_viewed_message_ids;
+    FlatHashMap<MessageId, int64, MessageIdHash> pending_viewed_live_locations;  // message_id -> task_id
+    FlatHashSet<MessageId, MessageIdHash> pending_viewed_message_ids;
 
     unique_ptr<Message> messages;
     unique_ptr<Message> scheduled_messages;
@@ -1442,7 +1466,7 @@ class MessagesManager final : public Actor {
 
     vector<Promise<Unit>> load_list_queries_;
 
-    std::unordered_map<DialogId, int64, DialogIdHash> pinned_dialog_id_orders_;
+    FlatHashMap<DialogId, int64, DialogIdHash> pinned_dialog_id_orders_;
     vector<DialogDate> pinned_dialogs_;
     bool are_pinned_dialogs_inited_ = false;
 
@@ -1761,7 +1785,8 @@ class MessagesManager final : public Actor {
   static constexpr int32 MIN_READ_HISTORY_DELAY = 3;  // seconds
   static constexpr int32 MAX_SAVE_DIALOG_DELAY = 0;   // seconds
 
-  static constexpr int32 LIVE_LOCATION_VIEW_PERIOD = 60;  // seconds, server-side limit
+  static constexpr int32 LIVE_LOCATION_VIEW_PERIOD = 60;      // seconds, server-side limit
+  static constexpr int32 UPDATE_VIEWED_MESSAGES_PERIOD = 15;  // seconds
 
   static constexpr int32 USERNAME_CACHE_EXPIRE_TIME = 3 * 86400;
   static constexpr int32 USERNAME_CACHE_EXPIRE_TIME_SHORT = 900;
@@ -1778,8 +1803,6 @@ class MessagesManager final : public Actor {
   static constexpr const char *DELETE_MESSAGE_USER_REQUEST_SOURCE = "user request";
 
   static constexpr bool DROP_SEND_MESSAGE_UPDATES = false;
-
-  static FullMessageId get_full_message_id(const tl_object_ptr<telegram_api::Message> &message_ptr, bool is_scheduled);
 
   static int32 get_message_date(const tl_object_ptr<telegram_api::Message> &message_ptr);
 
@@ -1984,6 +2007,8 @@ class MessagesManager final : public Actor {
 
   void on_media_message_ready_to_send(DialogId dialog_id, MessageId message_id, Promise<Message *> &&promise);
 
+  void send_secret_message(DialogId dialog_id, const Message *m, SecretInputMedia media);
+
   void on_yet_unsent_media_queue_updated(DialogId dialog_id);
 
   static void save_send_bot_start_message_log_event(UserId bot_user_id, DialogId dialog_id, const string &parameter,
@@ -2102,7 +2127,7 @@ class MessagesManager final : public Actor {
 
   void update_message_interaction_info(FullMessageId full_message_id, int32 view_count, int32 forward_count,
                                        bool has_reply_info, tl_object_ptr<telegram_api::messageReplies> &&reply_info,
-                                       bool has_reactions, tl_object_ptr<telegram_api::messageReactions> &&reactions);
+                                       bool has_reactions, unique_ptr<MessageReactions> &&reactions);
 
   bool is_active_message_reply_info(DialogId dialog_id, const MessageReplyInfo &info) const;
 
@@ -2122,7 +2147,7 @@ class MessagesManager final : public Actor {
   vector<td_api::object_ptr<td_api::unreadReaction>> get_unread_reactions_object(DialogId dialog_id,
                                                                                  const Message *m) const;
 
-  bool update_message_interaction_info(DialogId dialog_id, Message *m, int32 view_count, int32 forward_count,
+  bool update_message_interaction_info(Dialog *d, Message *m, int32 view_count, int32 forward_count,
                                        bool has_reply_info, MessageReplyInfo &&reply_info, bool has_reactions,
                                        unique_ptr<MessageReactions> &&reactions, const char *source);
 
@@ -2176,6 +2201,8 @@ class MessagesManager final : public Actor {
                                       const char *source);
 
   void on_update_dialog_online_member_count_timeout(DialogId dialog_id);
+
+  void on_update_viewed_messages_timeout(DialogId dialog_id);
 
   bool delete_newer_server_messages_at_the_end(Dialog *d, MessageId max_message_id);
 
@@ -2621,7 +2648,9 @@ class MessagesManager final : public Actor {
 
   void set_dialog_available_reactions(Dialog *d, vector<string> &&available_reactions);
 
-  void update_dialog_message_reactions_visibility(Dialog *d);
+  void set_dialog_available_reactions_generation(Dialog *d, uint32 new_generation);
+
+  void hide_dialog_message_reactions(Dialog *d);
 
   vector<string> get_active_reactions(const vector<string> &available_reactions) const;
 
@@ -2631,6 +2660,14 @@ class MessagesManager final : public Actor {
   vector<string> get_dialog_active_reactions(const Dialog *d) const;
 
   vector<string> get_message_active_reactions(const Dialog *d, const Message *m) const;
+
+  static bool need_poll_dialog_message_reactions(const Dialog *d);
+
+  static bool need_poll_message_reactions(const Dialog *d, const Message *m);
+
+  void queue_message_reactions_reload(FullMessageId full_message_id);
+
+  void queue_message_reactions_reload(DialogId dialog_id, const vector<MessageId> &message_ids);
 
   bool is_dialog_action_unneeded(DialogId dialog_id) const;
 
@@ -2816,8 +2853,8 @@ class MessagesManager final : public Actor {
   Message *on_get_message_from_database(Dialog *d, const MessagesDbDialogMessage &message, bool is_scheduled,
                                         const char *source);
 
-  Message *on_get_message_from_database(Dialog *d, DialogId dialog_id, MessageId message_id, const BufferSlice &value,
-                                        bool is_scheduled, const char *source);
+  Message *on_get_message_from_database(Dialog *d, MessageId message_id, const BufferSlice &value, bool is_scheduled,
+                                        const char *source);
 
   void get_dialog_message_by_date_from_server(const Dialog *d, int32 date, int64 random_id, bool after_database_search,
                                               Promise<Unit> &&promise);
@@ -3094,6 +3131,8 @@ class MessagesManager final : public Actor {
 
   static void on_preload_folder_dialog_list_timeout_callback(void *messages_manager_ptr, int64 folder_id_int);
 
+  static void on_update_viewed_messages_timeout_callback(void *messages_manager_ptr, int64 dialog_id_int);
+
   void load_secret_thumbnail(FileId thumbnail_file_id);
 
   void on_upload_media(FileId file_id, tl_object_ptr<telegram_api::InputFile> input_file,
@@ -3167,7 +3206,7 @@ class MessagesManager final : public Actor {
 
   string get_message_search_text(const Message *m) const;
 
-  unique_ptr<Message> parse_message(DialogId dialog_id, MessageId expected_message_id, const BufferSlice &value,
+  unique_ptr<Message> parse_message(Dialog *d, MessageId expected_message_id, const BufferSlice &value,
                                     bool is_scheduled);
 
   unique_ptr<Dialog> parse_dialog(DialogId dialog_id, const BufferSlice &value, const char *source);
@@ -3273,20 +3312,20 @@ class MessagesManager final : public Actor {
 
   double last_channel_pts_jump_warning_time_ = 0;
 
-  std::unordered_map<FileId, std::pair<FullMessageId, FileId>, FileIdHash>
+  FlatHashMap<FileId, std::pair<FullMessageId, FileId>, FileIdHash>
       being_uploaded_files_;  // file_id -> message, thumbnail_file_id
   struct UploadedThumbnailInfo {
     FullMessageId full_message_id;
     FileId file_id;                                     // original file file_id
     tl_object_ptr<telegram_api::InputFile> input_file;  // original file InputFile
   };
-  std::unordered_map<FileId, UploadedThumbnailInfo, FileIdHash> being_uploaded_thumbnails_;  // thumbnail_file_id -> ...
+  FlatHashMap<FileId, UploadedThumbnailInfo, FileIdHash> being_uploaded_thumbnails_;  // thumbnail_file_id -> ...
   struct UploadedSecretThumbnailInfo {
     FullMessageId full_message_id;
     FileId file_id;                                              // original file file_id
     tl_object_ptr<telegram_api::InputEncryptedFile> input_file;  // original file InputEncryptedFile
   };
-  std::unordered_map<FileId, UploadedSecretThumbnailInfo, FileIdHash>
+  FlatHashMap<FileId, UploadedSecretThumbnailInfo, FileIdHash>
       being_loaded_secret_thumbnails_;  // thumbnail_file_id -> ...
 
   // TTL
@@ -3325,12 +3364,11 @@ class MessagesManager final : public Actor {
   bool ttl_db_has_query_;
   Slot ttl_db_slot_;
 
-  std::unordered_map<int64, FullMessageId> being_sent_messages_;  // message_random_id -> message
+  FlatHashMap<int64, FullMessageId> being_sent_messages_;  // message_random_id -> message
 
-  std::unordered_map<FullMessageId, MessageId, FullMessageIdHash>
-      update_message_ids_;  // new_message_id -> temporary_id
-  std::unordered_map<DialogId, std::unordered_map<ScheduledServerMessageId, MessageId, ScheduledServerMessageIdHash>,
-                     DialogIdHash>
+  FlatHashMap<FullMessageId, MessageId, FullMessageIdHash> update_message_ids_;  // new_message_id -> temporary_id
+  FlatHashMap<DialogId, FlatHashMap<ScheduledServerMessageId, MessageId, ScheduledServerMessageIdHash>,
+              DialogIdHash>
       update_scheduled_message_ids_;  // new_message_id -> temporary_id
 
   const char *debug_add_message_to_dialog_fail_reason_ = "";
@@ -3351,7 +3389,7 @@ class MessagesManager final : public Actor {
         , promise(std::move(promise)) {
     }
   };
-  std::unordered_map<FileId, UploadedDialogPhotoInfo, FileIdHash> being_uploaded_dialog_photos_;
+  FlatHashMap<FileId, UploadedDialogPhotoInfo, FileIdHash> being_uploaded_dialog_photos_;
 
   struct UploadedImportedMessagesInfo {
     DialogId dialog_id;
@@ -3367,7 +3405,7 @@ class MessagesManager final : public Actor {
         , promise(std::move(promise)) {
     }
   };
-  std::unordered_map<FileId, unique_ptr<UploadedImportedMessagesInfo>, FileIdHash> being_uploaded_imported_messages_;
+  FlatHashMap<FileId, unique_ptr<UploadedImportedMessagesInfo>, FileIdHash> being_uploaded_imported_messages_;
 
   struct UploadedImportedMessageAttachmentInfo {
     DialogId dialog_id;
@@ -3380,7 +3418,7 @@ class MessagesManager final : public Actor {
         : dialog_id(dialog_id), import_id(import_id), is_reupload(is_reupload), promise(std::move(promise)) {
     }
   };
-  std::unordered_map<FileId, unique_ptr<UploadedImportedMessageAttachmentInfo>, FileIdHash>
+  FlatHashMap<FileId, unique_ptr<UploadedImportedMessageAttachmentInfo>, FileIdHash>
       being_uploaded_imported_message_attachments_;
 
   struct PendingMessageImport {
@@ -3389,7 +3427,7 @@ class MessagesManager final : public Actor {
     int64 import_id = 0;
     Promise<Unit> promise;
   };
-  std::unordered_map<int64, unique_ptr<PendingMessageImport>> pending_message_imports_;
+  FlatHashMap<int64, unique_ptr<PendingMessageImport>> pending_message_imports_;
 
   struct PendingMessageGroupSend {
     DialogId dialog_id;
@@ -3398,25 +3436,24 @@ class MessagesManager final : public Actor {
     vector<bool> is_finished;
     vector<Status> results;
   };
-  std::unordered_map<int64, PendingMessageGroupSend> pending_message_group_sends_;  // media_album_id -> ...
+  FlatHashMap<int64, PendingMessageGroupSend> pending_message_group_sends_;  // media_album_id -> ...
 
-  std::unordered_map<MessageId, DialogId, MessageIdHash> message_id_to_dialog_id_;
-  std::unordered_map<MessageId, DialogId, MessageIdHash> last_clear_history_message_id_to_dialog_id_;
+  FlatHashMap<MessageId, DialogId, MessageIdHash> message_id_to_dialog_id_;
+  FlatHashMap<MessageId, DialogId, MessageIdHash> last_clear_history_message_id_to_dialog_id_;
 
   bool created_public_broadcasts_inited_ = false;
   vector<ChannelId> created_public_broadcasts_;
 
-  std::unordered_map<int64, DialogId> created_dialogs_;                                // random_id -> dialog_id
-  std::unordered_map<DialogId, Promise<Unit>, DialogIdHash> pending_created_dialogs_;  // dialog_id -> promise
+  FlatHashMap<int64, DialogId> created_dialogs_;                                // random_id -> dialog_id
+  FlatHashMap<DialogId, Promise<Unit>, DialogIdHash> pending_created_dialogs_;  // dialog_id -> promise
 
   bool running_get_difference_ = false;  // true after before_get_difference and false after after_get_difference
 
-  std::unordered_map<DialogId, unique_ptr<Dialog>, DialogIdHash> dialogs_;
+  FlatHashMap<DialogId, unique_ptr<Dialog>, DialogIdHash> dialogs_;
 
-  std::unordered_set<DialogId, DialogIdHash>
-      loaded_dialogs_;  // dialogs loaded from database, but not added to dialogs_
+  FlatHashSet<DialogId, DialogIdHash> loaded_dialogs_;  // dialogs loaded from database, but not added to dialogs_
 
-  std::unordered_set<DialogId, DialogIdHash> postponed_chat_read_inbox_updates_;
+  FlatHashSet<DialogId, DialogIdHash> postponed_chat_read_inbox_updates_;
 
   struct PendingGetMessageRequest {
     MessageId message_id;
@@ -3429,9 +3466,9 @@ class MessagesManager final : public Actor {
     }
   };
 
-  std::unordered_map<string, vector<Promise<Unit>>> search_public_dialogs_queries_;
-  std::unordered_map<string, vector<DialogId>> found_public_dialogs_;     // TODO time bound cache
-  std::unordered_map<string, vector<DialogId>> found_on_server_dialogs_;  // TODO time bound cache
+  FlatHashMap<string, vector<Promise<Unit>>> search_public_dialogs_queries_;
+  FlatHashMap<string, vector<DialogId>> found_public_dialogs_;     // TODO time bound cache
+  FlatHashMap<string, vector<DialogId>> found_on_server_dialogs_;  // TODO time bound cache
 
   struct CommonDialogs {
     vector<DialogId> dialog_ids;
@@ -3439,35 +3476,35 @@ class MessagesManager final : public Actor {
     int32 total_count = 0;
     bool is_outdated = false;
   };
-  std::unordered_map<UserId, CommonDialogs, UserIdHash> found_common_dialogs_;
+  FlatHashMap<UserId, CommonDialogs, UserIdHash> found_common_dialogs_;
 
-  std::unordered_map<int64, FullMessageId> get_dialog_message_by_date_results_;
+  FlatHashMap<int64, FullMessageId> get_dialog_message_by_date_results_;
 
-  std::unordered_map<int64, td_api::object_ptr<td_api::messageCalendar>> found_dialog_message_calendars_;
-  std::unordered_map<int64, std::pair<int32, vector<MessageId>>>
-      found_dialog_messages_;                                            // random_id -> [total_count, [message_id]...]
-  std::unordered_map<int64, DialogId> found_dialog_messages_dialog_id_;  // random_id -> dialog_id
-  std::unordered_map<int64, std::pair<int32, vector<FullMessageId>>>
+  FlatHashMap<int64, td_api::object_ptr<td_api::messageCalendar>> found_dialog_message_calendars_;
+  FlatHashMap<int64, std::pair<int32, vector<MessageId>>>
+      found_dialog_messages_;                                     // random_id -> [total_count, [message_id]...]
+  FlatHashMap<int64, DialogId> found_dialog_messages_dialog_id_;  // random_id -> dialog_id
+  FlatHashMap<int64, std::pair<int32, vector<FullMessageId>>>
       found_messages_;  // random_id -> [total_count, [full_message_id]...]
-  std::unordered_map<int64, std::pair<int32, vector<FullMessageId>>>
+  FlatHashMap<int64, std::pair<int32, vector<FullMessageId>>>
       found_call_messages_;  // random_id -> [total_count, [full_message_id]...]
 
-  std::unordered_map<int64, FoundMessages> found_fts_messages_;  // random_id -> FoundMessages
+  FlatHashMap<int64, FoundMessages> found_fts_messages_;  // random_id -> FoundMessages
 
   struct MessageEmbeddingCodes {
-    std::unordered_map<MessageId, string, MessageIdHash> embedding_codes_;
+    FlatHashMap<MessageId, string, MessageIdHash> embedding_codes_;
   };
-  std::unordered_map<DialogId, MessageEmbeddingCodes, DialogIdHash> message_embedding_codes_[2];
+  FlatHashMap<DialogId, MessageEmbeddingCodes, DialogIdHash> message_embedding_codes_[2];
 
-  std::unordered_map<DialogId, vector<Promise<Unit>>, DialogIdHash> get_dialog_notification_settings_queries_;
+  FlatHashMap<DialogId, vector<Promise<Unit>>, DialogIdHash> get_dialog_notification_settings_queries_;
 
-  std::unordered_map<DialogId, vector<Promise<Unit>>, DialogIdHash> get_dialog_queries_;
-  std::unordered_map<DialogId, uint64, DialogIdHash> get_dialog_query_log_event_id_;
+  FlatHashMap<DialogId, vector<Promise<Unit>>, DialogIdHash> get_dialog_queries_;
+  FlatHashMap<DialogId, uint64, DialogIdHash> get_dialog_query_log_event_id_;
 
-  std::unordered_map<FullMessageId, int32, FullMessageIdHash> replied_by_yet_unsent_messages_;
+  FlatHashMap<FullMessageId, int32, FullMessageIdHash> replied_by_yet_unsent_messages_;
 
   // full_message_id -> replies with media timestamps
-  std::unordered_map<FullMessageId, std::unordered_set<MessageId, MessageIdHash>, FullMessageIdHash>
+  FlatHashMap<FullMessageId, FlatHashSet<MessageId, MessageIdHash>, FullMessageIdHash>
       replied_by_media_timestamp_messages_;
 
   struct ActiveDialogAction {
@@ -3485,13 +3522,13 @@ class MessagesManager final : public Actor {
     }
   };
 
-  std::unordered_map<DialogId, std::vector<ActiveDialogAction>, DialogIdHash> active_dialog_actions_;
+  FlatHashMap<DialogId, std::vector<ActiveDialogAction>, DialogIdHash> active_dialog_actions_;
 
   ScopeNotificationSettings users_notification_settings_;
   ScopeNotificationSettings chats_notification_settings_;
   ScopeNotificationSettings channels_notification_settings_;
 
-  std::unordered_map<NotificationGroupId, DialogId, NotificationGroupIdHash> notification_group_id_to_dialog_id_;
+  FlatHashMap<NotificationGroupId, DialogId, NotificationGroupIdHash> notification_group_id_to_dialog_id_;
 
   uint64 current_message_edit_generation_ = 0;
 
@@ -3514,11 +3551,11 @@ class MessagesManager final : public Actor {
   vector<RecommendedDialogFilter> recommended_dialog_filters_;
   vector<Promise<Unit>> dialog_filter_reload_queries_;
 
-  std::unordered_map<DialogId, string, DialogIdHash> active_get_channel_differencies_;
-  std::unordered_map<DialogId, uint64, DialogIdHash> get_channel_difference_to_log_event_id_;
-  std::unordered_map<DialogId, int32, DialogIdHash> channel_get_difference_retry_timeouts_;
-  std::unordered_map<DialogId, std::multimap<int32, PendingPtsUpdate>, DialogIdHash> postponed_channel_updates_;
-  std::unordered_set<DialogId, DialogIdHash> is_channel_difference_finished_;
+  FlatHashMap<DialogId, string, DialogIdHash> active_get_channel_differencies_;
+  FlatHashMap<DialogId, uint64, DialogIdHash> get_channel_difference_to_log_event_id_;
+  FlatHashMap<DialogId, int32, DialogIdHash> channel_get_difference_retry_timeouts_;
+  FlatHashMap<DialogId, std::multimap<int32, PendingPtsUpdate>, DialogIdHash> postponed_channel_updates_;
+  FlatHashSet<DialogId, DialogIdHash> is_channel_difference_finished_;
 
   MultiTimeout channel_get_difference_timeout_{"ChannelGetDifferenceTimeout"};
   MultiTimeout channel_get_difference_retry_timeout_{"ChannelGetDifferenceRetryTimeout"};
@@ -3533,25 +3570,26 @@ class MessagesManager final : public Actor {
   MultiTimeout active_dialog_action_timeout_{"ActiveDialogActionTimeout"};
   MultiTimeout update_dialog_online_member_count_timeout_{"UpdateDialogOnlineMemberCountTimeout"};
   MultiTimeout preload_folder_dialog_list_timeout_{"PreloadFolderDialogListTimeout"};
+  MultiTimeout update_viewed_messages_timeout_{"UpdateViewedMessagesTimeout"};
 
   Timeout reload_dialog_filters_timeout_;
 
   Hints dialogs_hints_;  // search dialogs by title and username
 
-  std::unordered_set<FullMessageId, FullMessageIdHash> active_live_location_full_message_ids_;
+  FlatHashSet<FullMessageId, FullMessageIdHash> active_live_location_full_message_ids_;
   bool are_active_live_location_messages_loaded_ = false;
   vector<Promise<Unit>> load_active_live_location_messages_queries_;
 
-  std::unordered_map<DialogId, vector<Promise<Unit>>, DialogIdHash> load_scheduled_messages_from_database_queries_;
+  FlatHashMap<DialogId, vector<Promise<Unit>>, DialogIdHash> load_scheduled_messages_from_database_queries_;
 
   struct ResolvedUsername {
     DialogId dialog_id;
     double expires_at;
   };
 
-  std::unordered_map<string, ResolvedUsername> resolved_usernames_;
-  std::unordered_map<string, DialogId> inaccessible_resolved_usernames_;
-  std::unordered_set<string> reload_voice_chat_on_search_usernames_;
+  FlatHashMap<string, ResolvedUsername> resolved_usernames_;
+  FlatHashMap<string, DialogId> inaccessible_resolved_usernames_;
+  FlatHashSet<string> reload_voice_chat_on_search_usernames_;
 
   struct GetDialogsTask {
     DialogListId dialog_list_id;
@@ -3561,7 +3599,7 @@ class MessagesManager final : public Actor {
     Promise<td_api::object_ptr<td_api::chats>> promise;
   };
 
-  std::unordered_map<int64, GetDialogsTask> get_dialogs_tasks_;
+  FlatHashMap<int64, GetDialogsTask> get_dialogs_tasks_;
   int64 current_get_dialogs_task_id_ = 0;
 
   struct PendingOnGetDialogs {
@@ -3573,27 +3611,26 @@ class MessagesManager final : public Actor {
   };
 
   vector<PendingOnGetDialogs> pending_on_get_dialogs_;
-  std::unordered_map<DialogId, PendingOnGetDialogs, DialogIdHash> pending_channel_on_get_dialogs_;
+  FlatHashMap<DialogId, PendingOnGetDialogs, DialogIdHash> pending_channel_on_get_dialogs_;
 
-  std::unordered_map<DialogId, vector<Promise<Unit>>, DialogIdHash> run_after_get_channel_difference_;
+  FlatHashMap<DialogId, vector<Promise<Unit>>, DialogIdHash> run_after_get_channel_difference_;
 
   ChangesProcessor<unique_ptr<PendingSecretMessage>> pending_secret_messages_;
 
-  std::unordered_map<DialogId, vector<DialogId>, DialogIdHash>
-      pending_add_dialog_last_database_message_dependent_dialogs_;
-  std::unordered_map<DialogId, std::pair<int32, unique_ptr<Message>>, DialogIdHash>
+  FlatHashMap<DialogId, vector<DialogId>, DialogIdHash> pending_add_dialog_last_database_message_dependent_dialogs_;
+  FlatHashMap<DialogId, std::pair<int32, unique_ptr<Message>>, DialogIdHash>
       pending_add_dialog_last_database_message_;  // dialog -> dependency counter + message
 
-  std::unordered_map<DialogId, vector<DialogId>, DialogIdHash>
+  FlatHashMap<DialogId, vector<DialogId>, DialogIdHash>
       pending_add_default_join_group_call_as_dialog_id_;  // dialog_id -> dependent dialogs
 
-  std::unordered_map<DialogId, vector<std::pair<DialogId, bool>>, DialogIdHash>
+  FlatHashMap<DialogId, vector<std::pair<DialogId, bool>>, DialogIdHash>
       pending_add_default_send_message_as_dialog_id_;  // dialog_id -> [dependent dialog, need_drop]
 
   struct MessageIds {
-    std::unordered_set<MessageId, MessageIdHash> message_ids;
+    FlatHashSet<MessageId, MessageIdHash> message_ids;
   };
-  std::unordered_map<DialogId, MessageIds, DialogIdHash> dialog_bot_command_message_ids_;
+  FlatHashMap<DialogId, MessageIds, DialogIdHash> dialog_bot_command_message_ids_;
 
   struct CallsDbState {
     std::array<MessageId, 2> first_calls_database_message_id_by_index;
@@ -3609,38 +3646,50 @@ class MessagesManager final : public Actor {
   CallsDbState calls_db_state_;
 
   int64 viewed_live_location_task_id_ = 0;
-  std::unordered_map<int64, FullMessageId> viewed_live_location_tasks_;  // task_id -> task
+  FlatHashMap<int64, FullMessageId> viewed_live_location_tasks_;  // task_id -> task
 
-  std::unordered_map<uint64, std::map<MessageId, Promise<Message *>>> yet_unsent_media_queues_;
+  FlatHashMap<uint64, std::map<MessageId, Promise<Message *>>> yet_unsent_media_queues_;
 
-  std::unordered_map<DialogId, NetQueryRef, DialogIdHash> set_typing_query_;
+  FlatHashMap<DialogId, NetQueryRef, DialogIdHash> set_typing_query_;
 
-  std::unordered_map<FullMessageId, FileSourceId, FullMessageIdHash> full_message_id_to_file_source_id_;
+  FlatHashMap<FullMessageId, FileSourceId, FullMessageIdHash> full_message_id_to_file_source_id_;
 
-  std::unordered_map<DialogId, int32, DialogIdHash> last_outgoing_forwarded_message_date_;
+  FlatHashMap<DialogId, int32, DialogIdHash> last_outgoing_forwarded_message_date_;
+
+  struct ViewedMessagesInfo {
+    FlatHashMap<MessageId, uint64, MessageIdHash> message_id_to_view_id;
+    std::map<uint64, MessageId> recently_viewed_messages;
+    uint64 current_view_id = 0;
+  };
+  FlatHashMap<DialogId, unique_ptr<ViewedMessagesInfo>, DialogIdHash> dialog_viewed_messages_;
 
   struct OnlineMemberCountInfo {
     int32 online_member_count = 0;
-    double updated_time = 0;
+    double update_time = 0;
     bool is_update_sent = false;
   };
+  FlatHashMap<DialogId, OnlineMemberCountInfo, DialogIdHash> dialog_online_member_counts_;
 
-  std::unordered_map<DialogId, OnlineMemberCountInfo, DialogIdHash> dialog_online_member_counts_;
+  struct ReactionsToReload {
+    FlatHashSet<MessageId, MessageIdHash> message_ids;
+    bool is_request_sent = false;
+  };
+  FlatHashMap<DialogId, ReactionsToReload, DialogIdHash> being_reloaded_reactions_;
 
-  std::unordered_map<DialogId, std::pair<bool, bool>, DialogIdHash> pending_dialog_group_call_updates_;
+  FlatHashMap<DialogId, std::pair<bool, bool>, DialogIdHash> pending_dialog_group_call_updates_;
 
-  std::unordered_map<string, int32> auth_notification_id_date_;
+  FlatHashMap<string, int32> auth_notification_id_date_;
 
-  std::unordered_map<DialogId, MessageId, DialogIdHash> previous_repaired_read_inbox_max_message_id_;
+  FlatHashMap<DialogId, MessageId, DialogIdHash> previous_repaired_read_inbox_max_message_id_;
 
   struct PendingReaction {
     int32 query_count = 0;
     bool was_updated = false;
   };
-  std::unordered_map<FullMessageId, PendingReaction, FullMessageIdHash> pending_reactions_;
+  FlatHashMap<FullMessageId, PendingReaction, FullMessageIdHash> pending_reactions_;
 
   vector<string> active_reactions_;
-  std::unordered_map<string, size_t> active_reaction_pos_;
+  FlatHashMap<string, size_t> active_reaction_pos_;
 
   uint32 scheduled_messages_sync_generation_ = 1;
 

@@ -34,6 +34,7 @@ Choose your preferred programming language to see examples of usage and a detail
 - [Elixir](#elixir)
 - [1С](#1s)
 - [C](#c)
+- [G](#g)
 - [Other](#other)
 
 <a name="python"></a>
@@ -283,6 +284,13 @@ See [TDLib bindings for 1С:Enterprise](https://github.com/Infactum/telegram-nat
 TDLib can be used from the C programming language through the [JSON](https://github.com/tdlib/td#using-json) interface and can be linked statically or dynamically.
 
 You can also try to use our [C](https://github.com/tdlib/td/blob/master/td/telegram/td_c_client.h) client, which was used by the private TDLib-based version of [telegram-cli](https://github.com/vysheng/tg).
+
+<a name="g"></a>
+## Using TDLib from G projects
+
+TDLib can be used from the G graphical programming language in LabVIEW development environment.
+
+See [TDLib bindings for LabVIEW](https://github.com/IvanLisRus/Telegram-Client_TDLib) for examples of such usage.
 
 <a name="other"></a>
 ## Using TDLib from other programming languages

@@ -294,6 +294,7 @@ Status TdDb::init_sqlite(int32 scheduler_id, const TdParameters &parameters, con
   bool use_file_db = parameters.use_file_db;
   bool use_dialog_db = parameters.use_message_db;
   bool use_message_db = parameters.use_message_db;
+  bool use_downloads_db = parameters.use_file_db;
   if (!use_sqlite) {
     unlink(sql_database_path).ignore();
     return Status::OK();
@@ -354,6 +355,8 @@ Status TdDb::init_sqlite(int32 scheduler_id, const TdParameters &parameters, con
     binlog_pmc.erase_by_prefix("unread_dialog_count");
     binlog_pmc.erase("sponsored_dialog_id");
     binlog_pmc.erase_by_prefix("top_dialogs");
+    binlog_pmc.erase("dlds_counter");
+    binlog_pmc.erase_by_prefix("dlds#");
   }
   if (user_version == 0) {
     binlog_pmc.erase("next_contacts_sync_date");
@@ -375,7 +378,7 @@ Status TdDb::init_sqlite(int32 scheduler_id, const TdParameters &parameters, con
     dialog_db_async_ = create_dialog_db_async(dialog_db_sync_safe_, scheduler_id);
   }
 
-  if (use_message_db) {
+  if (use_downloads_db) {
     messages_db_sync_safe_ = create_messages_db_sync(sql_connection_);
     messages_db_async_ = create_messages_db_async(messages_db_sync_safe_, scheduler_id);
   }

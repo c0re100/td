@@ -23,6 +23,7 @@
 #include "td/utils/base64.h"
 #include "td/utils/common.h"
 #include "td/utils/filesystem.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/logging.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/thread.h"
@@ -34,7 +35,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <unordered_map>
 
 template <class ContainerT>
 static typename ContainerT::value_type &rand_elem(ContainerT &cont) {
@@ -457,7 +457,7 @@ TEST(DB, key_value_set_all) {
   int queries_n = 100;
   while (queries_n-- > 0) {
     int cnt = td::Random::fast(0, 10);
-    std::unordered_map<td::string, td::string> key_values;
+    td::FlatHashMap<td::string, td::string> key_values;
     for (int i = 0; i < cnt; i++) {
       auto key = rand_elem(keys);
       auto value = rand_elem(values);

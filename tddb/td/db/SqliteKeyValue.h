@@ -9,11 +9,11 @@
 #include "td/db/SqliteDb.h"
 #include "td/db/SqliteStatement.h"
 
+#include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/Slice.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
-
-#include <unordered_map>
 
 namespace td {
 
@@ -41,7 +41,7 @@ class SqliteKeyValue {
 
   void set(Slice key, Slice value);
 
-  void set_all(const std::unordered_map<string, string> &key_values);
+  void set_all(const FlatHashMap<string, string> &key_values);
 
   string get(Slice key);
 
@@ -61,9 +61,10 @@ class SqliteKeyValue {
 
   void erase_by_prefix(Slice prefix);
 
-  std::unordered_map<string, string> get_all() {
-    std::unordered_map<string, string> res;
+  FlatHashMap<string, string> get_all() {
+    FlatHashMap<string, string> res;
     get_by_prefix("", [&](Slice key, Slice value) {
+      CHECK(!key.empty());
       res.emplace(key.str(), value.str());
       return true;
     });

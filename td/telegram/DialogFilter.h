@@ -12,10 +12,9 @@
 #include "td/telegram/telegram_api.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
-
-#include <unordered_map>
 
 namespace td {
 
@@ -75,8 +74,8 @@ class DialogFilter {
   static bool are_flags_equal(const DialogFilter &lhs, const DialogFilter &rhs);
 
  private:
-  static std::unordered_map<string, string> emoji_to_icon_name_;
-  static std::unordered_map<string, string> icon_name_to_emoji_;
+  static FlatHashMap<string, string> emoji_to_icon_name_;
+  static FlatHashMap<string, string> icon_name_to_emoji_;
 
   static void init_icon_names();
 

@@ -11,9 +11,9 @@
 #include "td/actor/PromiseFuture.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 
 #include <memory>
-#include <unordered_map>
 
 namespace td {
 
@@ -23,7 +23,7 @@ class SqliteKeyValueAsyncInterface {
 
   virtual void set(string key, string value, Promise<Unit> promise) = 0;
 
-  virtual void set_all(std::unordered_map<string, string> key_values, Promise<Unit> promise) = 0;
+  virtual void set_all(FlatHashMap<string, string> key_values, Promise<Unit> promise) = 0;
 
   virtual void erase(string key, Promise<Unit> promise) = 0;
 

@@ -18,9 +18,8 @@
 
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/Status.h"
-
-#include <unordered_map>
 
 namespace td {
 
@@ -142,7 +141,7 @@ class AnimationsManager final : public Actor {
   Td *td_;
   ActorShared<> parent_;
 
-  std::unordered_map<FileId, unique_ptr<Animation>, FileIdHash> animations_;
+  FlatHashMap<FileId, unique_ptr<Animation>, FileIdHash> animations_;
 
   int32 saved_animations_limit_ = 200;
   vector<FileId> saved_animation_ids_;

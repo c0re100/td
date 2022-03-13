@@ -8,17 +8,15 @@
 
 #include "td/telegram/AccessRights.h"
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/ChainId.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/InlineQueriesManager.h"
-#include "td/telegram/MessageContentType.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/net/DcId.h"
-#include "td/telegram/net/NetActor.h"
 #include "td/telegram/net/NetQueryCreator.h"
-#include "td/telegram/SequenceDispatcher.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/UpdatesManager.h"
 
@@ -28,16 +26,16 @@
 
 namespace td {
 
-class SetGameScoreActor final : public NetActorOnce {
+class SetGameScoreQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   DialogId dialog_id_;
 
  public:
-  explicit SetGameScoreActor(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  explicit SetGameScoreQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
   void send(DialogId dialog_id, MessageId message_id, bool edit_message,
-            tl_object_ptr<telegram_api::InputUser> input_user, int32 score, bool force, uint64 sequence_dispatcher_id) {
+            tl_object_ptr<telegram_api::InputUser> input_user, int32 score, bool force) {
     int32 flags = 0;
     if (edit_message) {
       flags |= telegram_api::messages_setGameScore::EDIT_MESSAGE_MASK;
@@ -50,19 +48,14 @@ class SetGameScoreActor final : public NetActorOnce {
 
     auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Edit);
     if (input_peer == nullptr) {
-      on_error(Status::Error(400, "Can't access the chat"));
-      stop();
-      return;
+      return on_error(Status::Error(400, "Can't access the chat"));
     }
 
     CHECK(input_user != nullptr);
-    auto query = G()->net_query_creator().create(
+    send_query(G()->net_query_creator().create(
         telegram_api::messages_setGameScore(flags, false /*ignored*/, false /*ignored*/, std::move(input_peer),
-                                            message_id.get_server_message_id().get(), std::move(input_user), score));
-
-    query->debug("send to MultiSequenceDispatcher");
-    send_closure(td_->messages_manager_->sequence_dispatcher_, &MultiSequenceDispatcher::send_with_callback,
-                 std::move(query), actor_shared(this), sequence_dispatcher_id);
+                                            message_id.get_server_message_id().get(), std::move(input_user), score),
+        {{dialog_id}}));
   }
 
   void on_result(BufferSlice packet) final {
@@ -77,8 +70,8 @@ class SetGameScoreActor final : public NetActorOnce {
   }
 
   void on_error(Status status) final {
-    LOG(INFO) << "Receive error for SetGameScore: " << status;
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "SetGameScoreActor");
+    LOG(INFO) << "Receive error for SetGameScoreQuery: " << status;
+    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "SetGameScoreQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -107,7 +100,7 @@ class SetInlineGameScoreQuery final : public Td::ResultHandler {
     send_query(G()->net_query_creator().create(
         telegram_api::messages_setInlineGameScore(flags, false /*ignored*/, false /*ignored*/,
                                                   std::move(input_bot_inline_message_id), std::move(input_user), score),
-        dc_id));
+        {}, dc_id));
   }
 
   void on_result(BufferSlice packet) final {
@@ -178,7 +171,7 @@ class GetInlineGameHighScoresQuery final : public Td::ResultHandler {
     auto dc_id = DcId::internal(InlineQueriesManager::get_inline_message_dc_id(input_bot_inline_message_id));
     send_query(G()->net_query_creator().create(
         telegram_api::messages_getInlineGameHighScores(std::move(input_bot_inline_message_id), std::move(input_user)),
-        dc_id));
+        {}, dc_id));
   }
 
   void on_result(BufferSlice packet) final {
@@ -233,9 +226,8 @@ void GameManager::set_game_score(FullMessageId full_message_id, bool edit_messag
         }
         send_closure(actor_id, &GameManager::on_set_game_score, full_message_id, std::move(promise));
       });
-  send_closure(td_->create_net_actor<SetGameScoreActor>(std::move(query_promise)), &SetGameScoreActor::send, dialog_id,
-               full_message_id.get_message_id(), edit_message, r_input_user.move_as_ok(), score, force,
-               MessagesManager::get_sequence_dispatcher_id(dialog_id, MessageContentType::None));
+  td_->create_handler<SetGameScoreQuery>(std::move(query_promise))
+      ->send(dialog_id, full_message_id.get_message_id(), edit_message, r_input_user.move_as_ok(), score, force);
 }
 
 void GameManager::on_set_game_score(FullMessageId full_message_id,

@@ -19,6 +19,7 @@
 #include "td/telegram/DialogId.h"
 #include "td/telegram/DialogInviteLink.h"
 #include "td/telegram/DialogParticipant.h"
+#include "td/telegram/DownloadManager.h"
 #include "td/telegram/FolderId.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/GroupCallManager.h"
@@ -1063,14 +1064,14 @@ vector<tl_object_ptr<telegram_api::Update>> *UpdatesManager::get_updates(telegra
       get_updates(static_cast<const telegram_api::Updates *>(updates_ptr)));
 }
 
-std::unordered_set<int64> UpdatesManager::get_sent_messages_random_ids(const telegram_api::Updates *updates_ptr) {
-  std::unordered_set<int64> random_ids;
+FlatHashSet<int64> UpdatesManager::get_sent_messages_random_ids(const telegram_api::Updates *updates_ptr) {
+  FlatHashSet<int64> random_ids;
   auto updates = get_updates(updates_ptr);
   if (updates != nullptr) {
     for (auto &update : *updates) {
       if (update->get_id() == telegram_api::updateMessageID::ID) {
         int64 random_id = static_cast<const telegram_api::updateMessageID *>(update.get())->random_id_;
-        if (!random_ids.insert(random_id).second) {
+        if (random_id != 0 && !random_ids.insert(random_id).second) {
           LOG(ERROR) << "Receive twice updateMessageID for " << random_id;
         }
       }
@@ -1204,17 +1205,28 @@ vector<DialogId> UpdatesManager::get_chat_dialog_ids(const telegram_api::Updates
   return dialog_ids;
 }
 
-int32 UpdatesManager::get_update_edit_message_pts(const telegram_api::Updates *updates_ptr) {
+int32 UpdatesManager::get_update_edit_message_pts(const telegram_api::Updates *updates_ptr,
+                                                  FullMessageId full_message_id) {
   int32 pts = 0;
   auto updates = get_updates(updates_ptr);
   if (updates != nullptr) {
     for (auto &update : *updates) {
       int32 update_pts = [&] {
         switch (update->get_id()) {
-          case telegram_api::updateEditMessage::ID:
-            return static_cast<const telegram_api::updateEditMessage *>(update.get())->pts_;
-          case telegram_api::updateEditChannelMessage::ID:
-            return static_cast<const telegram_api::updateEditChannelMessage *>(update.get())->pts_;
+          case telegram_api::updateEditMessage::ID: {
+            auto update_ptr = static_cast<const telegram_api::updateEditMessage *>(update.get());
+            if (MessagesManager::get_full_message_id(update_ptr->message_, false) == full_message_id) {
+              return update_ptr->pts_;
+            }
+            return 0;
+          }
+          case telegram_api::updateEditChannelMessage::ID: {
+            auto update_ptr = static_cast<const telegram_api::updateEditChannelMessage *>(update.get());
+            if (MessagesManager::get_full_message_id(update_ptr->message_, false) == full_message_id) {
+              return update_ptr->pts_;
+            }
+            return 0;
+          }
           default:
             return 0;
         }
@@ -1231,6 +1243,8 @@ int32 UpdatesManager::get_update_edit_message_pts(const telegram_api::Updates *u
   if (pts == -1) {
     LOG(ERROR) << "Receive multiple edit message updates in " << to_string(*updates_ptr);
     pts = 0;
+  } else if (pts == 0) {
+    LOG(ERROR) << "Receive no edit message updates for " << full_message_id << " in " << to_string(*updates_ptr);
   }
   return pts;
 }
@@ -1549,6 +1563,7 @@ void UpdatesManager::after_get_difference() {
 
   td_->animations_manager_->after_get_difference();
   td_->contacts_manager_->after_get_difference();
+  td_->download_manager_->after_get_difference();
   td_->inline_queries_manager_->after_get_difference();
   td_->messages_manager_->after_get_difference();
   td_->stickers_manager_->after_get_difference();
@@ -2703,8 +2718,8 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannelWebPage>
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateMessageReactions> update, Promise<Unit> &&promise) {
   td_->messages_manager_->on_update_message_reactions(
-      {DialogId(update->peer_), MessageId(ServerMessageId(update->msg_id_))}, std::move(update->reactions_));
-  promise.set_value(Unit());
+      {DialogId(update->peer_), MessageId(ServerMessageId(update->msg_id_))}, std::move(update->reactions_),
+      std::move(promise));
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateFolderPeers> update, Promise<Unit> &&promise) {

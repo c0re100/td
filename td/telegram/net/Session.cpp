@@ -619,6 +619,8 @@ void Session::on_session_failed(Status status) {
 }
 
 void Session::on_container_sent(uint64 container_id, vector<uint64> msg_ids) {
+  CHECK(container_id != 0);
+
   td::remove_if(msg_ids, [&](uint64 msg_id) {
     auto it = sent_queries_.find(msg_id);
     if (it == sent_queries_.end()) {
@@ -642,10 +644,11 @@ void Session::on_message_ack_impl(uint64 id, int32 type) {
   auto cit = sent_containers_.find(id);
   if (cit != sent_containers_.end()) {
     auto container_info = std::move(cit->second);
+    sent_containers_.erase(cit);
+
     for (auto message_id : container_info.message_ids) {
       on_message_ack_impl_inner(message_id, type, true);
     }
-    sent_containers_.erase(cit);
     return;
   }
 
@@ -723,6 +726,7 @@ void Session::mark_as_unknown(uint64 id, Query *query) {
   }
   VLOG(net_query) << "Mark as unknown " << tag("msg_id", id) << query->query;
   query->unknown = true;
+  CHECK(id != 0);
   unknown_queries_.insert(id);
 }
 
@@ -839,9 +843,14 @@ void Session::on_message_result_error(uint64 id, int error_code, string message)
       }
     }
   }
+  if (error_code == 400 && (message == "CONNECTION_NOT_INITED" || message == "CONNECTION_LAYER_INVALID")) {
+    LOG(WARNING) << "Receive " << message;
+    auth_data_.on_connection_not_inited();
+    error_code = 500;
+  }
 
   if (id == 0) {
-    LOG(WARNING) << "Session got error update";
+    LOG(ERROR) << "Received an error update";
     return;
   }
 
@@ -897,10 +906,11 @@ void Session::on_message_failed(uint64 id, Status status) {
   auto cit = sent_containers_.find(id);
   if (cit != sent_containers_.end()) {
     auto container_info = std::move(cit->second);
+    sent_containers_.erase(cit);
+
     for (auto message_id : container_info.message_ids) {
       on_message_failed_inner(message_id, true);
     }
-    sent_containers_.erase(cit);
     return;
   }
 
@@ -1028,10 +1038,10 @@ void Session::connection_send_query(ConnectionInfo *info, NetQueryPtr &&net_quer
     }
   }
   VLOG(net_query) << "Send query to connection " << net_query << " [msg_id:" << format::as_hex(message_id) << "]"
-                  << tag("invoke_after", transform(invoke_after_ids, [](auto id) { return format::as_hex(id); }));
+                  << tag("invoke_after",
+                         transform(invoke_after_ids, [](auto id) { return PSTRING() << format::as_hex(id); }));
   net_query->set_message_id(message_id);
   net_query->cancel_slot_.clear_event();
-  LOG_CHECK(sent_queries_.find(message_id) == sent_queries_.end()) << message_id;
   {
     auto lock = net_query->lock();
     net_query->get_data_unsafe().unknown_state_ = false;
@@ -1043,6 +1053,7 @@ void Session::connection_send_query(ConnectionInfo *info, NetQueryPtr &&net_quer
   }
   auto status = sent_queries_.emplace(
       message_id, Query{message_id, std::move(net_query), main_connection_.connection_id_, Time::now_cached()});
+  LOG_CHECK(status.second) << message_id;
   sent_queries_list_.put(status.first->second.get_list_node());
   if (!status.second) {
     LOG(FATAL) << "Duplicate message_id [message_id = " << message_id << "]";
@@ -1214,7 +1225,7 @@ bool Session::connection_send_check_main_key(ConnectionInfo *info) {
   LOG(INFO) << "Check main key";
   being_checked_main_auth_key_id_ = key_id;
   last_check_query_id_ = UniqueId::next(UniqueId::BindKey);
-  NetQueryPtr query = G()->net_query_creator().create(last_check_query_id_, telegram_api::help_getNearestDc(),
+  NetQueryPtr query = G()->net_query_creator().create(last_check_query_id_, telegram_api::help_getNearestDc(), {},
                                                       DcId::main(), NetQuery::Type::Common, NetQuery::AuthFlag::On);
   query->dispatch_ttl_ = 0;
   query->set_callback(actor_shared(this));
@@ -1252,7 +1263,7 @@ bool Session::connection_send_bind_key(ConnectionInfo *info) {
   LOG(INFO) << "Bind key: " << tag("tmp", key_id) << tag("perm", static_cast<uint64>(perm_auth_key_id));
   NetQueryPtr query = G()->net_query_creator().create(
       last_bind_query_id_,
-      telegram_api::auth_bindTempAuthKey(perm_auth_key_id, nonce, expires_at, std::move(encrypted)), DcId::main(),
+      telegram_api::auth_bindTempAuthKey(perm_auth_key_id, nonce, expires_at, std::move(encrypted)), {}, DcId::main(),
       NetQuery::Type::Common, NetQuery::AuthFlag::On);
   query->dispatch_ttl_ = 0;
   query->set_callback(actor_shared(this));
@@ -1338,14 +1349,14 @@ void Session::create_gen_auth_key_actor(HandshakeId handshake_id) {
       PSLICE() << get_name() << "::GenAuthKey", get_name(), std::move(info.handshake_),
       td::make_unique<AuthKeyHandshakeContext>(DhCache::instance(), shared_auth_data_->public_rsa_key()),
       PromiseCreator::lambda(
-          [self = actor_id(this), guard = callback_](Result<unique_ptr<mtproto::RawConnection>> r_connection) {
+          [actor_id = actor_id(this), guard = callback_](Result<unique_ptr<mtproto::RawConnection>> r_connection) {
             if (r_connection.is_error()) {
               if (r_connection.error().code() != 1) {
                 LOG(WARNING) << "Failed to open connection: " << r_connection.error();
               }
               return;
             }
-            send_closure(self, &Session::connection_add, r_connection.move_as_ok());
+            send_closure(actor_id, &Session::connection_add, r_connection.move_as_ok());
           }),
       PromiseCreator::lambda([self = actor_shared(this, handshake_id + 1),
                               handshake_perf = PerfWarningTimer("handshake", 1000.1),
