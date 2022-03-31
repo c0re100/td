@@ -7,6 +7,7 @@
 #include "td/telegram/ContactsManager.h"
 
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/ChannelParticipantFilter.h"
 #include "td/telegram/ConfigShared.h"
 #include "td/telegram/Dependencies.h"
 #include "td/telegram/DialogInviteLink.h"
@@ -2807,7 +2808,7 @@ class GetChannelParticipantsQuery final : public Td::ResultHandler {
       : promise_(std::move(promise)) {
   }
 
-  void send(ChannelId channel_id, const ChannelParticipantsFilter &filter, int32 offset, int32 limit) {
+  void send(ChannelId channel_id, const ChannelParticipantFilter &filter, int32 offset, int32 limit) {
     auto input_channel = td_->contacts_manager_->get_input_channel(channel_id);
     if (input_channel == nullptr) {
       return promise_.set_error(Status::Error(400, "Supergroup not found"));
@@ -5724,15 +5725,16 @@ UserId ContactsManager::search_user_by_phone_number(string phone_number, Promise
 
 void ContactsManager::on_resolved_phone_number(const string &phone_number, UserId user_id) {
   if (!user_id.is_valid()) {
-    resolved_phone_numbers_.emplace(phone_number, user_id);  // negative cache
+    resolved_phone_numbers_.emplace(phone_number, UserId());  // negative cache
     return;
   }
 
   auto it = resolved_phone_numbers_.find(phone_number);
   if (it != resolved_phone_numbers_.end()) {
     if (it->second != user_id) {
-      LOG(ERROR) << "Resolve phone number \"" << phone_number << "\" to " << user_id << ", but have it in "
-                 << it->second;
+      LOG(WARNING) << "Resolve phone number \"" << phone_number << "\" to " << user_id << ", but have it in "
+                   << it->second;
+      it->second = user_id;
     }
     return;
   }
@@ -11177,8 +11179,7 @@ void ContactsManager::on_update_user_phone_number(User *u, UserId user_id, strin
   if (u->phone_number != phone_number) {
     if (!u->phone_number.empty()) {
       auto it = resolved_phone_numbers_.find(u->phone_number);
-      CHECK(it != resolved_phone_numbers_.end());
-      if (it->second == user_id) {
+      if (it != resolved_phone_numbers_.end() && it->second == user_id) {
         resolved_phone_numbers_.erase(it);
       }
     }
@@ -12039,7 +12040,7 @@ bool ContactsManager::is_user_contact(const User *u, UserId user_id, bool is_mut
 }
 
 void ContactsManager::on_get_channel_participants(
-    ChannelId channel_id, ChannelParticipantsFilter filter, int32 offset, int32 limit, string additional_query,
+    ChannelId channel_id, ChannelParticipantFilter &&filter, int32 offset, int32 limit, string additional_query,
     int32 additional_limit, tl_object_ptr<telegram_api::channels_channelParticipants> &&channel_participants,
     Promise<DialogParticipants> &&promise) {
   TRY_STATUS_PROMISE(promise, G()->close_status());
@@ -15215,7 +15216,7 @@ void ContactsManager::do_get_dialog_participant(DialogId dialog_id, DialogId par
 
 DialogParticipants ContactsManager::search_private_chat_participants(UserId my_user_id, UserId peer_user_id,
                                                                      const string &query, int32 limit,
-                                                                     DialogParticipantsFilter filter) const {
+                                                                     DialogParticipantFilter filter) const {
   vector<DialogId> dialog_ids;
   if (filter.is_dialog_participant_suitable(td_, DialogParticipant::private_member(my_user_id, peer_user_id))) {
     dialog_ids.push_back(DialogId(my_user_id));
@@ -15233,7 +15234,7 @@ DialogParticipants ContactsManager::search_private_chat_participants(UserId my_u
 }
 
 void ContactsManager::search_dialog_participants(DialogId dialog_id, const string &query, int32 limit,
-                                                 DialogParticipantsFilter filter,
+                                                 DialogParticipantFilter filter,
                                                  Promise<DialogParticipants> &&promise) {
   LOG(INFO) << "Receive searchChatMembers request to search for \"" << query << "\" in " << dialog_id << " with filter "
             << filter;
@@ -15311,7 +15312,7 @@ void ContactsManager::finish_get_chat_participant(ChatId chat_id, UserId user_id
 }
 
 void ContactsManager::search_chat_participants(ChatId chat_id, const string &query, int32 limit,
-                                               DialogParticipantsFilter filter, Promise<DialogParticipants> &&promise) {
+                                               DialogParticipantFilter filter, Promise<DialogParticipants> &&promise) {
   if (limit < 0) {
     return promise.set_error(Status::Error(400, "Parameter limit must be non-negative"));
   }
@@ -15329,7 +15330,7 @@ void ContactsManager::search_chat_participants(ChatId chat_id, const string &que
 }
 
 void ContactsManager::do_search_chat_participants(ChatId chat_id, const string &query, int32 limit,
-                                                  DialogParticipantsFilter filter,
+                                                  DialogParticipantFilter filter,
                                                   Promise<DialogParticipants> &&promise) {
   TRY_STATUS_PROMISE(promise, G()->close_status());
 
@@ -15414,9 +15415,9 @@ void ContactsManager::get_channel_participants(ChannelId channel_id,
     return promise.set_error(Status::Error(400, "Member list is inaccessible"));
   }
 
-  ChannelParticipantsFilter participants_filter(filter);
+  ChannelParticipantFilter participant_filter(filter);
   auto get_channel_participants_promise = PromiseCreator::lambda(
-      [actor_id = actor_id(this), channel_id, filter = participants_filter,
+      [actor_id = actor_id(this), channel_id, filter = participant_filter,
        additional_query = std::move(additional_query), offset, limit, additional_limit, promise = std::move(promise)](
           Result<tl_object_ptr<telegram_api::channels_channelParticipants>> &&result) mutable {
         if (result.is_error()) {
@@ -15427,7 +15428,7 @@ void ContactsManager::get_channel_participants(ChannelId channel_id,
         }
       });
   td_->create_handler<GetChannelParticipantsQuery>(std::move(get_channel_participants_promise))
-      ->send(channel_id, participants_filter, offset, limit);
+      ->send(channel_id, participant_filter, offset, limit);
 }
 
 td_api::object_ptr<td_api::chatAdministrators> ContactsManager::get_chat_administrators_object(
@@ -15656,7 +15657,7 @@ void ContactsManager::on_chat_update(telegram_api::chat &chat, const char *sourc
     if (is_creator) {
       return DialogParticipantStatus::Creator(!has_left, false, string());
     } else if (chat.admin_rights_ != nullptr) {
-      return get_dialog_participant_status(false, std::move(chat.admin_rights_), string());
+      return DialogParticipantStatus(false, std::move(chat.admin_rights_), string());
     } else if (was_kicked) {
       return DialogParticipantStatus::Banned(0);
     } else if (has_left) {
@@ -15838,9 +15839,9 @@ void ContactsManager::on_chat_update(telegram_api::channel &channel, const char 
                           (channel.admin_rights_->flags_ & telegram_api::chatAdminRights::ANONYMOUS_MASK) != 0;
       return DialogParticipantStatus::Creator(!has_left, is_anonymous, string());
     } else if (channel.admin_rights_ != nullptr) {
-      return get_dialog_participant_status(false, std::move(channel.admin_rights_), string());
+      return DialogParticipantStatus(false, std::move(channel.admin_rights_), string());
     } else if (channel.banned_rights_ != nullptr) {
-      return get_dialog_participant_status(!has_left, std::move(channel.banned_rights_));
+      return DialogParticipantStatus(!has_left, std::move(channel.banned_rights_));
     } else if (has_left) {
       return DialogParticipantStatus::Left();
     } else {

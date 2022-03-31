@@ -33,6 +33,7 @@
 #include "td/telegram/DialogListId.h"
 #include "td/telegram/DialogLocation.h"
 #include "td/telegram/DialogParticipant.h"
+#include "td/telegram/DialogParticipantFilter.h"
 #include "td/telegram/DialogSource.h"
 #include "td/telegram/DocumentsManager.h"
 #include "td/telegram/DownloadManager.h"
@@ -6187,7 +6188,8 @@ void Td::on_request(uint64 id, const td_api::leaveChat &request) {
         return promise.set_value(Unit());
       }
 
-      new_status = DialogParticipantStatus::Creator(false, status.is_anonymous(), status.get_rank());
+      auto rank = status.get_rank();
+      new_status = DialogParticipantStatus::Creator(false, status.is_anonymous(), std::move(rank));
     }
   }
   contacts_manager_->set_dialog_participant_status(dialog_id, DialogId(contacts_manager_->get_my_id()),
@@ -6265,7 +6267,7 @@ void Td::on_request(uint64 id, td_api::searchChatMembers &request) {
         }
       });
   contacts_manager_->search_dialog_participants(DialogId(request.chat_id_), request.query_, request.limit_,
-                                                DialogParticipantsFilter(request.filter_), std::move(query_promise));
+                                                DialogParticipantFilter(request.filter_), std::move(query_promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getChatAdministrators &request) {

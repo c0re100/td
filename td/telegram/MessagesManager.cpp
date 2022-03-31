@@ -429,6 +429,10 @@ class GetDiscussionMessageQuery final : public Td::ResultHandler {
     if (expected_dialog_id_ == dialog_id_) {
       td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetDiscussionMessageQuery");
     }
+    if (status.message() == "MSG_ID_INVALID") {
+      td_->messages_manager_->get_message_from_server({dialog_id_, message_id_}, Promise<Unit>(),
+                                                      "GetDiscussionMessageQuery");
+    }
     promise_.set_error(std::move(status));
   }
 };
@@ -10033,8 +10037,7 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
         for (const auto &debug_message : messages) {
           error += to_string(debug_message);
         }
-        // TODO move to ERROR
-        LOG(FATAL) << error;
+        LOG(ERROR) << error;
         promise.set_value(Unit());
         return;
       }
@@ -10056,6 +10059,26 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
         first_received_message_id >= d->first_database_message_id) {
       // it is likely that there are no more history messages on the server
       have_full_history = true;
+    }
+  }
+
+  if (d->last_new_message_id.is_valid()) {
+    // remove too new messages from response
+    while (!messages.empty()) {
+      if (get_message_dialog_id(messages[0]) == dialog_id &&
+          get_message_id(messages[0], false) <= d->last_new_message_id) {
+        // the message is old enough
+        break;
+      }
+
+      LOG(INFO) << "Ignore too new " << get_message_id(messages[0], false);
+      messages.erase(messages.begin());
+      if (messages.empty()) {
+        // received no suitable messages; try again
+        return promise.set_value(Unit());
+      } else {
+        last_received_message_id = get_message_id(messages[0], false);
+      }
     }
   }
 
@@ -13324,7 +13347,7 @@ void MessagesManager::on_message_ttl_expired_impl(Dialog *d, Message *m) {
   remove_message_notification_id(d, m, true, true);
   update_message_contains_unread_mention(d, m, false, "on_message_ttl_expired_impl");
   remove_message_unread_reactions(d, m, "on_message_ttl_expired_impl");
-  unregister_message_reply(d, m);
+  unregister_message_reply(d->dialog_id, m);
   m->noforwards = false;
   m->contains_mention = false;
   m->reply_to_message_id = MessageId();
@@ -16486,7 +16509,7 @@ void MessagesManager::on_message_deleted(Dialog *d, Message *m, bool is_permanen
   ttl_period_unregister_message(d->dialog_id, m);
   delete_bot_command_message_id(d->dialog_id, m->message_id);
   unregister_message_content(td_, m->content.get(), {d->dialog_id, m->message_id}, "on_message_deleted");
-  unregister_message_reply(d, m);
+  unregister_message_reply(d->dialog_id, m);
   if (m->notification_id.is_valid()) {
     delete_notification_id_to_message_id_correspondence(d, m->notification_id, m->message_id);
   }
@@ -16533,7 +16556,7 @@ unique_ptr<MessagesManager::Message> MessagesManager::do_delete_scheduled_messag
   cancel_send_deleted_message(d->dialog_id, result.get(), is_permanently_deleted);
 
   unregister_message_content(td_, result->content.get(), {d->dialog_id, message_id}, "do_delete_scheduled_message");
-  unregister_message_reply(d, m);
+  unregister_message_reply(d->dialog_id, m);
 
   return result;
 }
@@ -24074,8 +24097,7 @@ void MessagesManager::on_get_history_from_database(DialogId dialog_id, MessageId
       break;
     }
     if (message->message_id >= last_received_message_id) {
-      // TODO move to ERROR
-      LOG(FATAL) << "Receive " << message->message_id << " after " << last_received_message_id
+      LOG(ERROR) << "Receive " << message->message_id << " after " << last_received_message_id
                  << " from database in the history of " << dialog_id << " from " << from_message_id << " with offset "
                  << offset << ", limit " << limit << ", from_the_end = " << from_the_end;
       break;
@@ -27830,25 +27852,25 @@ void MessagesManager::update_message_max_reply_media_timestamp_in_replied_messag
   }
 }
 
-void MessagesManager::register_message_reply(const Dialog *d, const Message *m) {
+void MessagesManager::register_message_reply(DialogId dialog_id, const Message *m) {
   if (!m->reply_to_message_id.is_valid() || td_->auth_manager_->is_bot()) {
     return;
   }
 
   if (has_media_timestamps(get_message_content_text(m->content.get()), 0, std::numeric_limits<int32>::max())) {
-    LOG(INFO) << "Register " << m->message_id << " in " << d->dialog_id << " as reply to " << m->reply_to_message_id;
-    FullMessageId full_message_id{d->dialog_id, m->reply_to_message_id};
+    LOG(INFO) << "Register " << m->message_id << " in " << dialog_id << " as reply to " << m->reply_to_message_id;
+    FullMessageId full_message_id{dialog_id, m->reply_to_message_id};
     bool is_inserted = replied_by_media_timestamp_messages_[full_message_id].insert(m->message_id).second;
     CHECK(is_inserted);
   }
 }
 
-void MessagesManager::reregister_message_reply(const Dialog *d, const Message *m) {
+void MessagesManager::reregister_message_reply(DialogId dialog_id, const Message *m) {
   if (!m->reply_to_message_id.is_valid() || td_->auth_manager_->is_bot()) {
     return;
   }
 
-  auto it = replied_by_media_timestamp_messages_.find({d->dialog_id, m->reply_to_message_id});
+  auto it = replied_by_media_timestamp_messages_.find({dialog_id, m->reply_to_message_id});
   bool was_registered = it != replied_by_media_timestamp_messages_.end() && it->second.count(m->message_id) > 0;
   bool need_register =
       has_media_timestamps(get_message_content_text(m->content.get()), 0, std::numeric_limits<int32>::max());
@@ -27856,21 +27878,21 @@ void MessagesManager::reregister_message_reply(const Dialog *d, const Message *m
     return;
   }
   if (was_registered) {
-    unregister_message_reply(d, m);
+    unregister_message_reply(dialog_id, m);
   } else {
-    register_message_reply(d, m);
+    register_message_reply(dialog_id, m);
   }
 }
 
-void MessagesManager::unregister_message_reply(const Dialog *d, const Message *m) {
-  auto it = replied_by_media_timestamp_messages_.find({d->dialog_id, m->reply_to_message_id});
+void MessagesManager::unregister_message_reply(DialogId dialog_id, const Message *m) {
+  auto it = replied_by_media_timestamp_messages_.find({dialog_id, m->reply_to_message_id});
   if (it == replied_by_media_timestamp_messages_.end()) {
     return;
   }
 
   auto is_deleted = it->second.erase(m->message_id) > 0;
   if (is_deleted) {
-    LOG(INFO) << "Unregister " << m->message_id << " in " << d->dialog_id << " as reply to " << m->reply_to_message_id;
+    LOG(INFO) << "Unregister " << m->message_id << " in " << dialog_id << " as reply to " << m->reply_to_message_id;
     if (it->second.empty()) {
       replied_by_media_timestamp_messages_.erase(it);
     }
@@ -28382,7 +28404,7 @@ Result<MessagesManager::ForwardedMessages> MessagesManager::get_forwarded_messag
   if (get_dialog_has_protected_content(from_dialog_id)) {
     for (const auto &copy_option : copy_options) {
       if (!copy_option.send_copy || !td_->auth_manager_->is_bot()) {
-        return Status::Error(400, "Administrators of the chat restricted message forwarding");
+        return Status::Error(400, "Message has protected content and can't be forwarded");
       }
     }
   }
@@ -30494,7 +30516,7 @@ void MessagesManager::remove_message_dialog_notifications(Dialog *d, MessageId m
     set_dialog_last_notification(d->dialog_id, group_info, 0, NotificationId(),
                                  "remove_message_dialog_notifications 2");
   } else {
-    LOG(FATAL) << "TODO support notification deletion up to " << max_message_id << " if will be ever needed";
+    LOG(FATAL) << "TODO support notification deletion up to " << max_message_id << " if it would be ever needed";
   }
 
   send_closure_later(G()->notification_manager(), &NotificationManager::remove_notification_group, group_info.group_id,
@@ -30527,7 +30549,7 @@ void MessagesManager::send_update_message_content(const Dialog *d, Message *m, b
   if (is_message_in_dialog) {
     delete_bot_command_message_id(d->dialog_id, m->message_id);
     try_add_bot_command_message_id(d->dialog_id, m);
-    reregister_message_reply(d, m);
+    reregister_message_reply(d->dialog_id, m);
     update_message_max_reply_media_timestamp(d, m, false);  // because the message reply can be just registered
     update_message_max_own_media_timestamp(d, m);
   }
@@ -31475,6 +31497,8 @@ void MessagesManager::on_send_message_fail(int64 random_id, Status error) {
         error_message = "Failed to get HTTP URL content";
       } else if (error.message() == "WEBPAGE_MEDIA_EMPTY") {
         error_message = "Wrong type of the web page content";
+      } else if (error.message() == "CHAT_FORWARDS_RESTRICTED") {
+        error_message = "Message has protected content and can't be forwarded";
       } else if (error.message() == "MEDIA_EMPTY") {
         auto content_type = m->content->get_type();
         if (content_type == MessageContentType::Game) {
@@ -34942,7 +34966,7 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
 
   register_message_content(td_, m->content.get(), {dialog_id, m->message_id}, "add_message_to_dialog");
 
-  register_message_reply(d, m);
+  register_message_reply(dialog_id, m);
 
   if (*need_update && m->message_id.is_server() && message_content_type == MessageContentType::PinMessage) {
     auto pinned_message_id = get_message_content_pinned_message_id(m->content.get());
@@ -35168,7 +35192,7 @@ MessagesManager::Message *MessagesManager::add_scheduled_message_to_dialog(Dialo
   update_message_max_reply_media_timestamp(d, message.get(), false);
   update_message_max_own_media_timestamp(d, message.get());
 
-  register_message_reply(d, m);
+  register_message_reply(dialog_id, m);
 
   if (from_update) {
     update_sent_message_contents(dialog_id, m);
@@ -35782,14 +35806,21 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
     // can change message tree and invalidate reference to old_message
     if (new_message->reply_to_message_id == MessageId() || replace_legacy) {
       LOG(DEBUG) << "Drop message reply_to_message_id";
-      unregister_message_reply(d, old_message);
+      unregister_message_reply(dialog_id, old_message);
       old_message->reply_to_message_id = MessageId();
-      update_message_max_reply_media_timestamp(d, old_message, true);
+      update_message_max_reply_media_timestamp(d, old_message, is_message_in_dialog);
       need_send_update = true;
     } else if (is_new_available) {
-      LOG(ERROR) << message_id << " in " << dialog_id << " has changed message it is reply to from "
-                 << old_message->reply_to_message_id << " to " << new_message->reply_to_message_id
-                 << ", message content type is " << old_content_type << '/' << new_content_type;
+      if (message_id.is_yet_unsent() && old_message->reply_to_message_id == MessageId()) {
+        CHECK(!is_message_in_dialog);
+        CHECK(new_message->reply_to_message_id.is_valid());
+        CHECK(new_message->reply_to_message_id.is_server());
+        old_message->reply_to_message_id = new_message->reply_to_message_id;
+      } else {
+        LOG(ERROR) << message_id << " in " << dialog_id << " has changed message it is reply to from "
+                   << old_message->reply_to_message_id << " to " << new_message->reply_to_message_id
+                   << ", message content type is " << old_content_type << '/' << new_content_type;
+      }
     }
   }
   if (old_message->reply_in_dialog_id != new_message->reply_in_dialog_id) {
@@ -38504,8 +38535,7 @@ void MessagesManager::on_get_channel_difference(
         for (const auto &message : difference->new_messages_) {
           auto message_id = get_message_id(message, false);
           if (message_id <= cur_message_id) {
-            // TODO move to ERROR
-            LOG(FATAL) << "Receive " << cur_message_id << " after " << message_id << " in channelDifference of "
+            LOG(ERROR) << "Receive " << cur_message_id << " after " << message_id << " in channelDifference of "
                        << dialog_id << " with pts " << request_pts << " and limit " << request_limit << ": "
                        << to_string(difference);
             after_get_channel_difference(dialog_id, false);
