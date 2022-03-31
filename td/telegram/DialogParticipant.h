@@ -317,7 +317,7 @@ class DialogParticipantStatus {
   }
 
   bool can_delete_messages() const {
-    return get_administrator_rights().can_edit_messages();
+    return get_administrator_rights().can_delete_messages();
   }
 
   bool can_invite_users() const {
