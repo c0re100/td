@@ -11124,7 +11124,8 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
   vector<MessageId> deleted_scheduled_server_message_ids;
   for (auto message_id : input_message_ids) {
     if (!message_id.is_valid() && !message_id.is_valid_scheduled()) {
-      return promise.set_error(Status::Error(400, "Invalid message identifier"));
+      // return promise.set_error(Status::Error(400, "Invalid message identifier"));
+      continue;
     }
 
     message_id = get_persistent_message_id(d, message_id);
