@@ -11136,6 +11136,8 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
         if (m->message_id.is_scheduled_server()) {
           deleted_scheduled_server_message_ids.push_back(m->message_id);
         }
+      } else if (!can_delete_message(dialog_id, m)) {
+        continue;
       } else {
         if (m->message_id.is_server() || is_secret) {
           deleted_server_message_ids.push_back(m->message_id);
