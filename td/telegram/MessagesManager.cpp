@@ -11188,7 +11188,7 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
     }
   }
 
-  if (cant_delete_message_ids.size() > 0) {
+  if (cant_delete_message_ids.size() > 0 && deleted_message_ids.size() > 0) {
     LOG(ERROR) << "Can't delete messages " << cant_delete_message_ids << " from " << dialog_id << " but "
                << deleted_message_ids << " deleted successfully";
   }
