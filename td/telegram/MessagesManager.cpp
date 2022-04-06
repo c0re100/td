@@ -11122,9 +11122,11 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
   vector<MessageId> deleted_server_message_ids;
 
   vector<MessageId> deleted_scheduled_server_message_ids;
+  vector<int64> cant_delete_message_ids;
   for (auto message_id : input_message_ids) {
     if (!message_id.is_valid() && !message_id.is_valid_scheduled()) {
       // return promise.set_error(Status::Error(400, "Invalid message identifier"));
+      cant_delete_message_ids.push_back(message_id.get());
       continue;
     }
 
@@ -11137,6 +11139,7 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
           deleted_scheduled_server_message_ids.push_back(m->message_id);
         }
       } else if (!can_delete_message(dialog_id, m)) {
+        cant_delete_message_ids.push_back(message_id.get());
         continue;
       } else {
         if (m->message_id.is_server() || is_secret) {
@@ -11183,6 +11186,11 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
       need_update_chat_has_scheduled_messages |= m->message_id.is_scheduled();
       deleted_message_ids.push_back(m->message_id.get());
     }
+  }
+
+  if (cant_delete_message_ids.size() > 0) {
+    LOG(ERROR) << "Can't delete messages " << cant_delete_message_ids << " from " << dialog_id << " but "
+               << deleted_message_ids << " deleted successfully";
   }
 
   if (need_update_dialog_pos) {
