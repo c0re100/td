@@ -11189,8 +11189,10 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
   }
 
   if (cant_delete_message_ids.size() > 0 && deleted_message_ids.size() > 0) {
-    LOG(ERROR) << "Can't delete messages " << cant_delete_message_ids << " from " << dialog_id << " but "
+    SliceBuilder sb;
+    sb << "Can't delete messages " << cant_delete_message_ids << " from " << dialog_id << " but "
                << deleted_message_ids << " deleted successfully";
+	return mpas.get_promise().set_error(Status::Error(400, sb.as_cslice().str()));
   }
 
   if (need_update_dialog_pos) {
