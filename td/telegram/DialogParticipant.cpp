@@ -200,10 +200,10 @@ RestrictedRights::RestrictedRights(const td_api::object_ptr<td_api::chatPermissi
   bool can_send_polls = rights->can_send_polls_;
   bool can_send_media = rights->can_send_media_messages_;
   bool can_send_messages = rights->can_send_messages_ || can_send_media || can_send_polls ||
-                           rights->can_send_other_messages_ || rights->can_add_web_page_previews_;
-  *this = RestrictedRights(can_send_messages, can_send_media, rights->can_send_other_messages_,
-                           rights->can_send_other_messages_, rights->can_send_other_messages_,
-                           rights->can_send_other_messages_, rights->can_add_web_page_previews_, can_send_polls,
+                           rights->can_send_stickers_ || rights->can_add_web_page_previews_;
+  *this = RestrictedRights(can_send_messages, can_send_media, rights->can_send_stickers_,
+                           rights->can_send_animations_, rights->can_send_games_,
+                           rights->can_use_inline_bots_, rights->can_add_web_page_previews_, can_send_polls,
                            rights->can_change_info_, rights->can_invite_users_, rights->can_pin_messages_);
 }
 
