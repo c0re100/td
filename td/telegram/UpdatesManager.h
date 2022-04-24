@@ -387,6 +387,9 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateMessageReactions> update, Promise<Unit> &&promise);
 
+  void on_update(tl_object_ptr<telegram_api::updateAttachMenuBots> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateWebViewResultSent> update, Promise<Unit> &&promise);
+
   void on_update(tl_object_ptr<telegram_api::updateFolderPeers> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateUserTyping> update, Promise<Unit> &&promise);
@@ -401,6 +404,7 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updatePeerBlocked> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateBotCommands> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateBotMenuButton> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateChatParticipants> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateChatParticipantAdd> update, Promise<Unit> &&promise);
@@ -505,6 +509,8 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateTheme> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updatePendingJoinRequests> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateSavedRingtones> update, Promise<Unit> &&promise);
 
   // unsupported updates
 };

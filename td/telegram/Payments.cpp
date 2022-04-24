@@ -14,8 +14,10 @@
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/PasswordManager.h"
+#include "td/telegram/PhotoSize.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/ThemeManager.h"
 #include "td/telegram/UpdatesManager.h"
 
 #include "td/utils/algorithm.h"
@@ -1145,24 +1147,14 @@ void answer_pre_checkout_query(Td *td, int64 pre_checkout_query_id, const string
   td->create_handler<SetBotPreCheckoutAnswerQuery>(std::move(promise))->send(pre_checkout_query_id, error_message);
 }
 
-void get_payment_form(Td *td, FullMessageId full_message_id, const td_api::object_ptr<td_api::paymentFormTheme> &theme,
+void get_payment_form(Td *td, FullMessageId full_message_id, const td_api::object_ptr<td_api::themeParameters> &theme,
                       Promise<tl_object_ptr<td_api::paymentForm>> &&promise) {
   TRY_RESULT_PROMISE(promise, server_message_id, td->messages_manager_->get_invoice_message_id(full_message_id));
 
   tl_object_ptr<telegram_api::dataJSON> theme_parameters;
   if (theme != nullptr) {
     theme_parameters = make_tl_object<telegram_api::dataJSON>(string());
-    theme_parameters->data_ = json_encode<string>(json_object([&theme](auto &o) {
-      auto get_color = [](int32 color) {
-        return static_cast<int64>(static_cast<uint32>(color) | 0x000000FF);
-      };
-      o("bg_color", get_color(theme->background_color_));
-      o("text_color", get_color(theme->text_color_));
-      o("hint_color", get_color(theme->hint_color_));
-      o("link_color", get_color(theme->link_color_));
-      o("button_color", get_color(theme->button_color_));
-      o("button_text_color", get_color(theme->button_text_color_));
-    }));
+    theme_parameters->data_ = ThemeManager::get_theme_parameters_json_string(theme, false);
   }
   td->create_handler<GetPaymentFormQuery>(std::move(promise))
       ->send(full_message_id.get_dialog_id(), server_message_id, std::move(theme_parameters));

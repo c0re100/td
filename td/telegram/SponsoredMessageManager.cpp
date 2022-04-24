@@ -205,8 +205,7 @@ void SponsoredMessageManager::get_dialog_sponsored_message(
   if (!td_->messages_manager_->have_dialog_force(dialog_id, "get_dialog_sponsored_message")) {
     return promise.set_error(Status::Error(400, "Chat not found"));
   }
-  if (dialog_id.get_type() != DialogType::Channel ||
-      td_->contacts_manager_->get_channel_type(dialog_id.get_channel_id()) != ContactsManager::ChannelType::Broadcast) {
+  if (dialog_id.get_type() != DialogType::Channel) {
     return promise.set_value(nullptr);
   }
 
@@ -244,9 +243,7 @@ void SponsoredMessageManager::on_get_dialog_sponsored_messages(
   }
   if (result.is_error()) {
     dialog_sponsored_messages_.erase(dialog_id);
-    for (auto &promise : promises) {
-      promise.set_error(result.error().clone());
-    }
+    fail_promises(promises, result.move_as_error());
     return;
   }
 

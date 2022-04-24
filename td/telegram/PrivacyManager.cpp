@@ -159,7 +159,7 @@ void PrivacyManager::UserPrivacySettingRule::set_chat_ids(const vector<int64> &d
         break;
       case DialogType::Channel: {
         auto channel_id = dialog_id.get_channel_id();
-        if (td->contacts_manager_->get_channel_type(channel_id) != ContactsManager::ChannelType::Megagroup) {
+        if (!td->contacts_manager_->is_megagroup_channel(channel_id)) {
           LOG(ERROR) << "Ignore broadcast " << channel_id;
           break;
         }
@@ -487,19 +487,19 @@ void PrivacyManager::update_privacy(tl_object_ptr<telegram_api::updatePrivacy> u
 }
 
 void PrivacyManager::on_get_result(UserPrivacySetting user_privacy_setting,
-                                   Result<UserPrivacySettingRules> privacy_rules) {
+                                   Result<UserPrivacySettingRules> r_privacy_rules) {
   auto &info = get_info(user_privacy_setting);
   auto promises = std::move(info.get_promises);
   reset_to_empty(info.get_promises);
   for (auto &promise : promises) {
-    if (privacy_rules.is_error()) {
-      promise.set_error(privacy_rules.error().clone());
+    if (r_privacy_rules.is_error()) {
+      promise.set_error(r_privacy_rules.error().clone());
     } else {
-      promise.set_value(privacy_rules.ok().get_user_privacy_setting_rules_object());
+      promise.set_value(r_privacy_rules.ok().get_user_privacy_setting_rules_object());
     }
   }
-  if (privacy_rules.is_ok()) {
-    do_update_privacy(user_privacy_setting, privacy_rules.move_as_ok(), false);
+  if (r_privacy_rules.is_ok()) {
+    do_update_privacy(user_privacy_setting, r_privacy_rules.move_as_ok(), false);
   }
 }
 

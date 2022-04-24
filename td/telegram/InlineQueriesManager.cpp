@@ -28,6 +28,8 @@
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/Payments.h"
 #include "td/telegram/Photo.h"
+#include "td/telegram/PhotoFormat.h"
+#include "td/telegram/PhotoSize.h"
 #include "td/telegram/ReplyMarkup.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
@@ -35,6 +37,8 @@
 #include "td/telegram/TdDb.h"
 #include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.hpp"
+#include "td/telegram/ThemeManager.h"
+#include "td/telegram/UpdatesManager.h"
 #include "td/telegram/Venue.h"
 #include "td/telegram/VideosManager.h"
 #include "td/telegram/VoiceNotesManager.h"
@@ -45,6 +49,7 @@
 #include "td/utils/HttpUrl.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/Random.h"
 #include "td/utils/Slice.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Time.h"
@@ -151,9 +156,105 @@ class SetInlineBotResultsQuery final : public Td::ResultHandler {
 
     bool result = result_ptr.ok();
     if (!result) {
-      LOG(INFO) << "Sending answer to an inline query has failed";
+      LOG(ERROR) << "Sending answer to an inline query has failed";
     }
     promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class RequestSimpleWebViewQuery final : public Td::ResultHandler {
+  Promise<string> promise_;
+
+ public:
+  explicit RequestSimpleWebViewQuery(Promise<string> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(tl_object_ptr<telegram_api::InputUser> &&input_user, const string &url,
+            const td_api::object_ptr<td_api::themeParameters> &theme) {
+    tl_object_ptr<telegram_api::dataJSON> theme_parameters;
+    int32 flags = 0;
+    if (theme != nullptr) {
+      flags |= telegram_api::messages_requestSimpleWebView::THEME_PARAMS_MASK;
+
+      theme_parameters = make_tl_object<telegram_api::dataJSON>(string());
+      theme_parameters->data_ = ThemeManager::get_theme_parameters_json_string(theme, false);
+    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_requestSimpleWebView(flags, std::move(input_user), url, std::move(theme_parameters))));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_requestSimpleWebView>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for RequestSimpleWebViewQuery: " << to_string(ptr);
+    promise_.set_value(std::move(ptr->url_));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class SendWebViewDataQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit SendWebViewDataQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(tl_object_ptr<telegram_api::InputUser> &&input_user, int64 random_id, const string &button_text,
+            const string &data) {
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_sendWebViewData(std::move(input_user), random_id, button_text, data)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_sendWebViewData>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for SendWebViewDataQuery: " << to_string(ptr);
+    td_->updates_manager_->on_get_updates(std::move(ptr), std::move(promise_));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class SendWebViewResultMessageQuery final : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::sentWebAppMessage>> promise_;
+
+ public:
+  explicit SendWebViewResultMessageQuery(Promise<td_api::object_ptr<td_api::sentWebAppMessage>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send(const string &bot_query_id, tl_object_ptr<telegram_api::InputBotInlineResult> &&result) {
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_sendWebViewResultMessage(bot_query_id, std::move(result))));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_sendWebViewResultMessage>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for SendWebViewResultMessageQuery: " << to_string(ptr);
+    promise_.set_value(td_api::make_object<td_api::sentWebAppMessage>(
+        InlineQueriesManager::get_inline_message_id(std::move(ptr->msg_id_))));
   }
 
   void on_error(Status status) final {
@@ -367,9 +468,7 @@ void InlineQueriesManager::answer_inline_query(
     int64 inline_query_id, bool is_personal, vector<td_api::object_ptr<td_api::InputInlineQueryResult>> &&input_results,
     int32 cache_time, const string &next_offset, const string &switch_pm_text, const string &switch_pm_parameter,
     Promise<Unit> &&promise) const {
-  if (!td_->auth_manager_->is_bot()) {
-    return promise.set_error(Status::Error(400, "Method can be used by bots only"));
-  }
+  CHECK(td_->auth_manager_->is_bot());
 
   if (!switch_pm_text.empty()) {
     if (switch_pm_parameter.empty()) {
@@ -396,6 +495,40 @@ void InlineQueriesManager::answer_inline_query(
   td_->create_handler<SetInlineBotResultsQuery>(std::move(promise))
       ->send(inline_query_id, is_gallery && !force_vertical, is_personal, std::move(results), cache_time, next_offset,
              switch_pm_text, switch_pm_parameter);
+}
+
+void InlineQueriesManager::get_simple_web_view_url(UserId bot_user_id, string &&url,
+                                                   const td_api::object_ptr<td_api::themeParameters> &theme,
+                                                   Promise<string> &&promise) {
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(bot_user_id));
+  TRY_RESULT_PROMISE(promise, bot_data, td_->contacts_manager_->get_bot_data(bot_user_id));
+
+  td_->create_handler<RequestSimpleWebViewQuery>(std::move(promise))->send(std::move(input_user), url, theme);
+}
+
+void InlineQueriesManager::send_web_view_data(UserId bot_user_id, string &&button_text, string &&data,
+                                              Promise<Unit> &&promise) const {
+  TRY_RESULT_PROMISE(promise, bot_data, td_->contacts_manager_->get_bot_data(bot_user_id));
+
+  int64 random_id;
+  do {
+    random_id = Random::secure_int64();
+  } while (random_id == 0);
+
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(bot_user_id));
+
+  td_->create_handler<SendWebViewDataQuery>(std::move(promise))
+      ->send(std::move(input_user), random_id, button_text, data);
+}
+
+void InlineQueriesManager::answer_web_view_query(
+    const string &web_view_query_id, td_api::object_ptr<td_api::InputInlineQueryResult> &&input_result,
+    Promise<td_api::object_ptr<td_api::sentWebAppMessage>> &&promise) const {
+  CHECK(td_->auth_manager_->is_bot());
+
+  TRY_RESULT_PROMISE(promise, result, get_input_bot_inline_result(std::move(input_result), nullptr, nullptr));
+
+  td_->create_handler<SendWebViewResultMessageQuery>(std::move(promise))->send(web_view_query_id, std::move(result));
 }
 
 Result<tl_object_ptr<telegram_api::InputBotInlineResult>> InlineQueriesManager::get_input_bot_inline_result(
@@ -1331,8 +1464,7 @@ void InlineQueriesManager::on_get_inline_query_results(DialogId dialog_id, UserI
             break;
           }
           if (dialog_type == DialogType::Channel &&
-              td_->contacts_manager_->get_channel_type(dialog_id.get_channel_id()) ==
-                  ContactsManager::ChannelType::Broadcast) {
+              td_->contacts_manager_->is_broadcast_channel(dialog_id.get_channel_id())) {
             continue;
           }
           if (dialog_type == DialogType::SecretChat) {

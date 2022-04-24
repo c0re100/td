@@ -8,11 +8,13 @@
 
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/files/FileManager.h"
+#include "td/telegram/PhotoFormat.h"
 #include "td/telegram/secret_api.h"
 #include "td/telegram/Td.h"
 
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/PathView.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 
@@ -23,7 +25,9 @@ AudiosManager::AudiosManager(Td *td) : td_(td) {
 
 int32 AudiosManager::get_audio_duration(FileId file_id) const {
   auto it = audios_.find(file_id);
-  CHECK(it != audios_.end());
+  if (it == audios_.end()) {
+    return 0;
+  }
   return it->second->duration;
 }
 
@@ -41,6 +45,28 @@ tl_object_ptr<td_api::audio> AudiosManager::get_audio_object(FileId file_id) con
       get_minithumbnail_object(audio->minithumbnail),
       get_thumbnail_object(td_->file_manager_.get(), audio->thumbnail, PhotoFormat::Jpeg),
       td_->file_manager_->get_file_object(file_id));
+}
+
+td_api::object_ptr<td_api::notificationSound> AudiosManager::get_notification_sound_object(FileId file_id) const {
+  if (!file_id.is_valid()) {
+    return nullptr;
+  }
+
+  auto it = audios_.find(file_id);
+  CHECK(it != audios_.end());
+  auto audio = it->second.get();
+  CHECK(audio != nullptr);
+  auto file_view = td_->file_manager_->get_file_view(file_id);
+  CHECK(!file_view.empty());
+  CHECK(file_view.get_type() == FileType::Ringtone);
+  CHECK(file_view.has_remote_location());
+  auto document_id = file_view.remote_location().get_id();
+  auto title = audio->title;
+  if (title.empty() && !audio->file_name.empty()) {
+    title = PathView(audio->file_name).file_name_without_extension().str();
+  }
+  return td_api::make_object<td_api::notificationSound>(document_id, audio->duration, audio->date, title,
+                                                        audio->performer, td_->file_manager_->get_file_object(file_id));
 }
 
 FileId AudiosManager::on_get_audio(unique_ptr<Audio> new_audio, bool replace) {
@@ -65,6 +91,9 @@ FileId AudiosManager::on_get_audio(unique_ptr<Audio> new_audio, bool replace) {
     if (a->file_name != new_audio->file_name) {
       LOG(DEBUG) << "Audio " << file_id << " file name has changed";
       a->file_name = std::move(new_audio->file_name);
+    }
+    if (a->date != new_audio->date) {
+      a->date = new_audio->date;
     }
     if (a->minithumbnail != new_audio->minithumbnail) {
       a->minithumbnail = std::move(new_audio->minithumbnail);
@@ -158,7 +187,8 @@ void AudiosManager::delete_audio_thumbnail(FileId file_id) {
 }
 
 void AudiosManager::create_audio(FileId file_id, string minithumbnail, PhotoSize thumbnail, string file_name,
-                                 string mime_type, int32 duration, string title, string performer, bool replace) {
+                                 string mime_type, int32 duration, string title, string performer, int32 date,
+                                 bool replace) {
   auto a = make_unique<Audio>();
   a->file_id = file_id;
   a->file_name = std::move(file_name);
@@ -166,6 +196,7 @@ void AudiosManager::create_audio(FileId file_id, string minithumbnail, PhotoSize
   a->duration = max(duration, 0);
   a->title = std::move(title);
   a->performer = std::move(performer);
+  a->date = date;
   if (!td_->auth_manager_->is_bot()) {
     a->minithumbnail = std::move(minithumbnail);
   }

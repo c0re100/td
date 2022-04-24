@@ -8,6 +8,7 @@
 
 #include "td/telegram/Account.h"
 #include "td/telegram/AnimationsManager.h"
+#include "td/telegram/AttachMenuManager.h"
 #include "td/telegram/AudiosManager.h"
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/AutoDownloadSettings.h"
@@ -15,10 +16,12 @@
 #include "td/telegram/BackgroundManager.h"
 #include "td/telegram/BackgroundType.h"
 #include "td/telegram/BotCommand.h"
+#include "td/telegram/BotMenuButton.h"
 #include "td/telegram/CallbackQueriesManager.h"
 #include "td/telegram/CallId.h"
 #include "td/telegram/CallManager.h"
 #include "td/telegram/ChannelId.h"
+#include "td/telegram/ChannelType.h"
 #include "td/telegram/ChatId.h"
 #include "td/telegram/ConfigManager.h"
 #include "td/telegram/ConfigShared.h"
@@ -83,6 +86,7 @@
 #include "td/telegram/NotificationId.h"
 #include "td/telegram/NotificationManager.h"
 #include "td/telegram/NotificationSettings.h"
+#include "td/telegram/NotificationSettingsManager.h"
 #include "td/telegram/OptionManager.h"
 #include "td/telegram/PasswordManager.h"
 #include "td/telegram/Payments.h"
@@ -2020,7 +2024,8 @@ class GetScopeNotificationSettingsRequest final : public RequestActor<> {
   const ScopeNotificationSettings *notification_settings_ = nullptr;
 
   void do_run(Promise<Unit> &&promise) final {
-    notification_settings_ = td_->messages_manager_->get_scope_notification_settings(scope_, std::move(promise));
+    notification_settings_ =
+        td_->notification_settings_manager_->get_scope_notification_settings(scope_, std::move(promise));
   }
 
   void do_send_result() final {
@@ -2550,10 +2555,9 @@ class GetSavedAnimationsRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(
-        make_tl_object<td_api::animations>(transform(std::move(animation_ids_), [td_ = td_](FileId animation_id) {
-          return td_->animations_manager_->get_animation_object(animation_id);
-        })));
+    send_result(make_tl_object<td_api::animations>(transform(animation_ids_, [td = td_](FileId animation_id) {
+      return td->animations_manager_->get_animation_object(animation_id);
+    })));
   }
 
  public:
@@ -2585,6 +2589,57 @@ class RemoveSavedAnimationRequest final : public RequestOnceActor {
  public:
   RemoveSavedAnimationRequest(ActorShared<Td> td, uint64 request_id, tl_object_ptr<td_api::InputFile> &&input_file)
       : RequestOnceActor(std::move(td), request_id), input_file_(std::move(input_file)) {
+    set_tries(3);
+  }
+};
+
+class GetSavedNotificationSoundRequest final : public RequestActor<> {
+  int64 ringtone_id_;
+  FileId ringtone_file_id_;
+
+  void do_run(Promise<Unit> &&promise) final {
+    ringtone_file_id_ = td_->notification_settings_manager_->get_saved_ringtone(ringtone_id_, std::move(promise));
+  }
+
+  void do_send_result() final {
+    send_result(td_->audios_manager_->get_notification_sound_object(ringtone_file_id_));
+  }
+
+ public:
+  GetSavedNotificationSoundRequest(ActorShared<Td> td, uint64 request_id, int64 ringtone_id)
+      : RequestActor(std::move(td), request_id), ringtone_id_(ringtone_id) {
+  }
+};
+
+class GetSavedNotificationSoundsRequest final : public RequestActor<> {
+  vector<FileId> ringtone_file_ids_;
+
+  void do_run(Promise<Unit> &&promise) final {
+    ringtone_file_ids_ = td_->notification_settings_manager_->get_saved_ringtones(std::move(promise));
+  }
+
+  void do_send_result() final {
+    send_result(td_api::make_object<td_api::notificationSounds>(
+        transform(ringtone_file_ids_, [td = td_](FileId ringtone_file_id) {
+          return td->audios_manager_->get_notification_sound_object(ringtone_file_id);
+        })));
+  }
+
+ public:
+  GetSavedNotificationSoundsRequest(ActorShared<Td> td, uint64 request_id) : RequestActor(std::move(td), request_id) {
+  }
+};
+
+class RemoveSavedNotificationSoundRequest final : public RequestOnceActor {
+  int64 ringtone_id_;
+
+  void do_run(Promise<Unit> &&promise) final {
+    td_->notification_settings_manager_->remove_saved_ringtone(ringtone_id_, std::move(promise));
+  }
+
+ public:
+  RemoveSavedNotificationSoundRequest(ActorShared<Td> td, uint64 request_id, int64 ringtone_id)
+      : RequestOnceActor(std::move(td), request_id), ringtone_id_(ringtone_id) {
     set_tries(3);
   }
 };
@@ -2926,6 +2981,7 @@ bool Td::is_synchronous_request(int32 id) {
     case td_api::getChatFilterDefaultIconName::ID:
     case td_api::getJsonValue::ID:
     case td_api::getJsonString::ID:
+    case td_api::getThemeParametersJsonString::ID:
     case td_api::getPushReceiverId::ID:
     case td_api::setLogStream::ID:
     case td_api::getLogStream::ID:
@@ -3157,6 +3213,7 @@ td_api::object_ptr<td_api::Object> Td::static_request(td_api::object_ptr<td_api:
       case td_api::getChatFilterDefaultIconName::ID:
       case td_api::getJsonValue::ID:
       case td_api::getJsonString::ID:
+      case td_api::getThemeParametersJsonString::ID:
       case td_api::testReturnError::ID:
         return true;
       default:
@@ -3320,6 +3377,8 @@ void Td::dec_actor_refcnt() {
       Timer timer;
       animations_manager_.reset();
       LOG(DEBUG) << "AnimationsManager was cleared" << timer;
+      attach_menu_manager_.reset();
+      LOG(DEBUG) << "AttachMenuManager was cleared" << timer;
       audios_manager_.reset();
       LOG(DEBUG) << "AudiosManager was cleared" << timer;
       auth_manager_.reset();
@@ -3352,6 +3411,8 @@ void Td::dec_actor_refcnt() {
       LOG(DEBUG) << "MessagesManager was cleared" << timer;
       notification_manager_.reset();
       LOG(DEBUG) << "NotificationManager was cleared" << timer;
+      notification_settings_manager_.reset();
+      LOG(DEBUG) << "NotificationSettingsManager was cleared" << timer;
       option_manager_.reset();
       LOG(DEBUG) << "OptionManager was cleared" << timer;
       poll_manager_.reset();
@@ -3514,6 +3575,8 @@ void Td::clear() {
   // clear actors which are unique pointers
   animations_manager_actor_.reset();
   LOG(DEBUG) << "AnimationsManager actor was cleared" << timer;
+  attach_menu_manager_actor_.reset();
+  LOG(DEBUG) << "AttachMenuManager actor was cleared" << timer;
   auth_manager_actor_.reset();
   LOG(DEBUG) << "AuthManager actor was cleared" << timer;
   background_manager_actor_.reset();
@@ -3540,6 +3603,8 @@ void Td::clear() {
   LOG(DEBUG) << "MessagesManager actor was cleared" << timer;
   notification_manager_actor_.reset();
   LOG(DEBUG) << "NotificationManager actor was cleared" << timer;
+  notification_settings_manager_actor_.reset();
+  LOG(DEBUG) << "NotificationSettingsManager actor was cleared" << timer;
   option_manager_actor_.reset();
   LOG(DEBUG) << "OptionManager actor was cleared" << timer;
   poll_manager_actor_.reset();
@@ -3768,6 +3833,9 @@ Status Td::init(DbKey key) {
   send_closure_later(notification_manager_actor_, &NotificationManager::on_binlog_events,
                      std::move(events.to_notification_manager));
 
+  send_closure_later(notification_settings_manager_actor_, &NotificationSettingsManager::on_binlog_events,
+                     std::move(events.to_notification_settings_manager));
+
   send_closure(secret_chats_manager_, &SecretChatsManager::binlog_replay_finish);
 
   VLOG(td_init) << "Ping datacenter";
@@ -3807,37 +3875,6 @@ void Td::init_options_and_network() {
 
   VLOG(td_init) << "Create ConfigShared";
   G()->set_shared_config(td::make_unique<ConfigShared>(G()->td_db()->get_config_pmc_shared()));
-
-  if (G()->shared_config().have_option("language_database_path")) {
-    G()->shared_config().set_option_string("language_pack_database_path",
-                                           G()->shared_config().get_option_string("language_database_path"));
-    G()->shared_config().set_option_empty("language_database_path");
-  }
-  if (G()->shared_config().have_option("language_pack")) {
-    G()->shared_config().set_option_string("localization_target",
-                                           G()->shared_config().get_option_string("language_pack"));
-    G()->shared_config().set_option_empty("language_pack");
-  }
-  if (G()->shared_config().have_option("language_code")) {
-    G()->shared_config().set_option_string("language_pack_id", G()->shared_config().get_option_string("language_code"));
-    G()->shared_config().set_option_empty("language_code");
-  }
-  if (!G()->shared_config().have_option("message_text_length_max")) {
-    G()->shared_config().set_option_integer("message_text_length_max", 4096);
-  }
-  if (!G()->shared_config().have_option("message_caption_length_max")) {
-    G()->shared_config().set_option_integer("message_caption_length_max", 1024);
-  }
-  if (!G()->shared_config().have_option("suggested_video_note_length")) {
-    G()->shared_config().set_option_integer("suggested_video_note_length", 384);
-  }
-  if (!G()->shared_config().have_option("suggested_video_note_video_bitrate")) {
-    G()->shared_config().set_option_integer("suggested_video_note_video_bitrate", 1000);
-  }
-  if (!G()->shared_config().have_option("suggested_video_note_audio_bitrate")) {
-    G()->shared_config().set_option_integer("suggested_video_note_audio_bitrate", 64);
-  }
-  G()->shared_config().set_option_integer("utc_time_offset", Clocks::tz_offset());
 
   init_connection_creator();
 
@@ -3983,6 +4020,8 @@ void Td::init_managers() {
   animations_manager_ = make_unique<AnimationsManager>(this, create_reference());
   animations_manager_actor_ = register_actor("AnimationsManager", animations_manager_.get());
   G()->set_animations_manager(animations_manager_actor_.get());
+  attach_menu_manager_ = make_unique<AttachMenuManager>(this, create_reference());
+  attach_menu_manager_actor_ = register_actor("AttachMenuManager", attach_menu_manager_.get());
   background_manager_ = make_unique<BackgroundManager>(this, create_reference());
   background_manager_actor_ = register_actor("BackgroundManager", background_manager_.get());
   G()->set_background_manager(background_manager_actor_.get());
@@ -4011,6 +4050,10 @@ void Td::init_managers() {
   notification_manager_ = make_unique<NotificationManager>(this, create_reference());
   notification_manager_actor_ = register_actor("NotificationManager", notification_manager_.get());
   G()->set_notification_manager(notification_manager_actor_.get());
+  notification_settings_manager_ = make_unique<NotificationSettingsManager>(this, create_reference());
+  notification_settings_manager_actor_ =
+      register_actor("NotificationSettingsManager", notification_settings_manager_.get());
+  G()->set_notification_settings_manager(notification_settings_manager_actor_.get());
   poll_manager_ = make_unique<PollManager>(this, create_reference());
   poll_manager_actor_ = register_actor("PollManager", poll_manager_.get());
   sponsored_message_manager_ = make_unique<SponsoredMessageManager>(this, create_reference());
@@ -4066,6 +4109,7 @@ void Td::send_update(tl_object_ptr<td_api::Update> &&object) {
     case td_api::updateInstalledStickerSets::ID:
     case td_api::updateRecentStickers::ID:
     case td_api::updateSavedAnimations::ID:
+    case td_api::updateSavedNotificationSounds::ID:
     case td_api::updateUserStatus::ID:
       VLOG(td_requests) << "Sending update: " << oneline(to_string(object));
       break;
@@ -4417,7 +4461,11 @@ void Td::on_request(uint64 id, const td_api::getCurrentState &request) {
 
     animations_manager_->get_current_state(updates);
 
+    attach_menu_manager_->get_current_state(updates);
+
     stickers_manager_->get_current_state(updates);
+
+    notification_settings_manager_->get_current_state(updates);
 
     messages_manager_->get_current_state(updates);
 
@@ -6111,6 +6159,19 @@ void Td::on_request(uint64 id, const td_api::setPinnedChats &request) {
                           transform(request.chat_ids_, [](int64 chat_id) { return DialogId(chat_id); })));
 }
 
+void Td::on_request(uint64 id, const td_api::getAttachmentMenuBot &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  attach_menu_manager_->get_attach_menu_bot(UserId(request.bot_user_id_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::toggleBotIsAddedToAttachmentMenu &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  attach_menu_manager_->toggle_bot_is_added_to_attach_menu(UserId(request.bot_user_id_), request.is_added_,
+                                                           std::move(promise));
+}
+
 void Td::on_request(uint64 id, td_api::setChatAvailableReactions &request) {
   for (auto &reaction : request.available_reactions_) {
     CLEAN_INPUT_STRING(reaction);
@@ -6180,7 +6241,7 @@ void Td::on_request(uint64 id, const td_api::joinChat &request) {
 void Td::on_request(uint64 id, const td_api::leaveChat &request) {
   CREATE_OK_REQUEST_PROMISE();
   DialogId dialog_id(request.chat_id_);
-  auto new_status = DialogParticipantStatus::Left();
+  td_api::object_ptr<td_api::ChatMemberStatus> new_status = td_api::make_object<td_api::chatMemberStatusLeft>();
   if (dialog_id.get_type() == DialogType::Channel && messages_manager_->have_dialog_force(dialog_id, "leaveChat")) {
     auto status = contacts_manager_->get_channel_status(dialog_id.get_channel_id());
     if (status.is_creator()) {
@@ -6188,8 +6249,8 @@ void Td::on_request(uint64 id, const td_api::leaveChat &request) {
         return promise.set_value(Unit());
       }
 
-      auto rank = status.get_rank();
-      new_status = DialogParticipantStatus::Creator(false, status.is_anonymous(), std::move(rank));
+      new_status =
+          td_api::make_object<td_api::chatMemberStatusCreator>(status.get_rank(), status.is_anonymous(), false);
     }
   }
   contacts_manager_->set_dialog_participant_status(dialog_id, DialogId(contacts_manager_->get_my_id()),
@@ -6210,12 +6271,12 @@ void Td::on_request(uint64 id, const td_api::addChatMembers &request) {
                                              std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::setChatMemberStatus &request) {
+void Td::on_request(uint64 id, td_api::setChatMemberStatus &request) {
   CREATE_OK_REQUEST_PROMISE();
   TRY_RESULT_PROMISE(promise, participant_dialog_id,
                      get_message_sender_dialog_id(this, request.member_id_, false, false));
   contacts_manager_->set_dialog_participant_status(DialogId(request.chat_id_), participant_dialog_id,
-                                                   get_dialog_participant_status(request.status_), std::move(promise));
+                                                   std::move(request.status_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::banChatMember &request) {
@@ -6765,6 +6826,34 @@ void Td::on_request(uint64 id, td_api::getCommands &request) {
   get_commands(this, std::move(request.scope_), std::move(request.language_code_), std::move(promise));
 }
 
+void Td::on_request(uint64 id, td_api::setMenuButton &request) {
+  CHECK_IS_BOT();
+  CREATE_OK_REQUEST_PROMISE();
+  set_menu_button(this, UserId(request.user_id_), std::move(request.menu_button_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getMenuButton &request) {
+  CHECK_IS_BOT();
+  CREATE_REQUEST_PROMISE();
+  get_menu_button(this, UserId(request.user_id_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::setDefaultGroupAdministratorRights &request) {
+  CHECK_IS_BOT();
+  CREATE_OK_REQUEST_PROMISE();
+  set_default_group_administrator_rights(
+      this, AdministratorRights(request.default_group_administrator_rights_, ChannelType::Megagroup),
+      std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::setDefaultChannelAdministratorRights &request) {
+  CHECK_IS_BOT();
+  CREATE_OK_REQUEST_PROMISE();
+  set_default_channel_administrator_rights(
+      this, AdministratorRights(request.default_channel_administrator_rights_, ChannelType::Broadcast),
+      std::move(promise));
+}
+
 void Td::on_request(uint64 id, const td_api::setLocation &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
@@ -7058,6 +7147,27 @@ void Td::on_request(uint64 id, td_api::removeSavedAnimation &request) {
   CREATE_REQUEST(RemoveSavedAnimationRequest, std::move(request.animation_));
 }
 
+void Td::on_request(uint64 id, const td_api::getSavedNotificationSound &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST(GetSavedNotificationSoundRequest, request.notification_sound_id_);
+}
+
+void Td::on_request(uint64 id, const td_api::getSavedNotificationSounds &request) {
+  CHECK_IS_USER();
+  CREATE_NO_ARGS_REQUEST(GetSavedNotificationSoundsRequest);
+}
+
+void Td::on_request(uint64 id, td_api::addSavedNotificationSound &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  notification_settings_manager_->add_saved_ringtone(std::move(request.sound_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::removeSavedNotificationSound &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST(RemoveSavedNotificationSoundRequest, request.notification_sound_id_);
+}
+
 void Td::on_request(uint64 id, const td_api::getChatNotificationSettingsExceptions &request) {
   CHECK_IS_USER();
   bool filter_scope = false;
@@ -7137,7 +7247,7 @@ void Td::on_request(uint64 id, td_api::setScopeNotificationSettings &request) {
   if (request.scope_ == nullptr) {
     return send_error_raw(id, 400, "Scope must be non-empty");
   }
-  answer_ok_query(id, messages_manager_->set_scope_notification_settings(
+  answer_ok_query(id, notification_settings_manager_->set_scope_notification_settings(
                           get_notification_settings_scope(request.scope_), std::move(request.notification_settings_)));
 }
 
@@ -7310,6 +7420,53 @@ void Td::on_request(uint64 id, td_api::answerInlineQuery &request) {
   inline_queries_manager_->answer_inline_query(
       request.inline_query_id_, request.is_personal_, std::move(request.results_), request.cache_time_,
       request.next_offset_, request.switch_pm_text_, request.switch_pm_parameter_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::getWebAppUrl &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.url_);
+  CREATE_REQUEST_PROMISE();
+  auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<string> result) mutable {
+    if (result.is_error()) {
+      promise.set_error(result.move_as_error());
+    } else {
+      promise.set_value(td_api::make_object<td_api::httpUrl>(result.move_as_ok()));
+    }
+  });
+  inline_queries_manager_->get_simple_web_view_url(UserId(request.bot_user_id_), std::move(request.url_),
+                                                   std::move(request.theme_), std::move(query_promise));
+}
+
+void Td::on_request(uint64 id, td_api::sendWebAppData &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.button_text_);
+  CLEAN_INPUT_STRING(request.data_);
+  CREATE_OK_REQUEST_PROMISE();
+  inline_queries_manager_->send_web_view_data(UserId(request.bot_user_id_), std::move(request.button_text_),
+                                              std::move(request.data_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::openWebApp &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.url_);
+  CREATE_REQUEST_PROMISE();
+  attach_menu_manager_->request_web_view(DialogId(request.chat_id_), UserId(request.bot_user_id_),
+                                         MessageId(request.reply_to_message_id_), std::move(request.url_),
+                                         std::move(request.theme_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::closeWebApp &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  attach_menu_manager_->close_web_view(request.web_app_launch_id_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::answerWebAppQuery &request) {
+  CHECK_IS_BOT();
+  CLEAN_INPUT_STRING(request.web_app_query_id_);
+  CREATE_REQUEST_PROMISE();
+  inline_queries_manager_->answer_web_view_query(request.web_app_query_id_, std::move(request.result_),
+                                                 std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::getCallbackQueryAnswer &request) {
@@ -7846,6 +8003,10 @@ void Td::on_request(uint64 id, const td_api::getJsonString &request) {
   UNREACHABLE();
 }
 
+void Td::on_request(uint64 id, const td_api::getThemeParametersJsonString &request) {
+  UNREACHABLE();
+}
+
 void Td::on_request(uint64 id, const td_api::setLogStream &request) {
   UNREACHABLE();
 }
@@ -8025,6 +8186,10 @@ td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::getJsonValue &r
 
 td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getJsonString &request) {
   return td_api::make_object<td_api::text>(get_json_string(request.json_value_.get()));
+}
+
+td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getThemeParametersJsonString &request) {
+  return td_api::make_object<td_api::text>(ThemeManager::get_theme_parameters_json_string(request.theme_, true));
 }
 
 td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::setLogStream &request) {

@@ -17,7 +17,7 @@
 #include "td/telegram/files/FileManager.h"
 #include "td/telegram/files/FileType.h"
 #include "td/telegram/Global.h"
-#include "td/telegram/Photo.h"
+#include "td/telegram/PhotoFormat.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
 #include "td/telegram/TdParameters.h"
@@ -565,9 +565,7 @@ void BackgroundManager::on_load_background_from_database(string name, string val
     }
   }
 
-  for (auto &promise : promises) {
-    promise.set_value(Unit());
-  }
+  set_promises(promises);
 }
 
 td_api::object_ptr<td_api::updateSelectedBackground> BackgroundManager::get_update_selected_background_object(

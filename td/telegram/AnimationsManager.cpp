@@ -17,6 +17,7 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/misc.h"
+#include "td/telegram/PhotoFormat.h"
 #include "td/telegram/secret_api.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
@@ -587,11 +588,7 @@ void AnimationsManager::on_load_saved_animations_finished(vector<FileId> &&saved
   saved_animation_ids_ = std::move(saved_animation_ids);
   are_saved_animations_loaded_ = true;
   send_update_saved_animations(from_database);
-  auto promises = std::move(load_saved_animations_queries_);
-  load_saved_animations_queries_.clear();
-  for (auto &promise : promises) {
-    promise.set_value(Unit());
-  }
+  set_promises(load_saved_animations_queries_);
 }
 
 void AnimationsManager::on_get_saved_animations(
@@ -636,11 +633,7 @@ void AnimationsManager::on_get_saved_animations(
   }
 
   if (is_repair) {
-    auto promises = std::move(repair_saved_animations_queries_);
-    repair_saved_animations_queries_.clear();
-    for (auto &promise : promises) {
-      promise.set_value(Unit());
-    }
+    set_promises(repair_saved_animations_queries_);
   } else {
     on_load_saved_animations_finished(std::move(saved_animation_ids));
 
@@ -656,12 +649,7 @@ void AnimationsManager::on_get_saved_animations_failed(bool is_repair, Status er
     are_saved_animations_being_loaded_ = false;
     next_saved_animations_load_time_ = Time::now_cached() + Random::fast(5, 10);
   }
-  auto &queries = is_repair ? repair_saved_animations_queries_ : load_saved_animations_queries_;
-  auto promises = std::move(queries);
-  queries.clear();
-  for (auto &promise : promises) {
-    promise.set_error(error.clone());
-  }
+  fail_promises(is_repair ? repair_saved_animations_queries_ : load_saved_animations_queries_, std::move(error));
 }
 
 int64 AnimationsManager::get_saved_animations_hash(const char *source) const {

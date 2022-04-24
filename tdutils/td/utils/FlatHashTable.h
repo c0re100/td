@@ -308,18 +308,28 @@ class FlatHashTable {
 
   template <class... ArgsT>
   std::pair<NodePointer, bool> emplace(KeyT key, ArgsT &&...args) {
-    try_grow();
     CHECK(!is_hash_table_key_empty(key));
+    if (unlikely(bucket_count_mask_ == 0)) {
+      CHECK(used_node_count_ == 0);
+      resize(8);
+    }
     auto bucket = calc_bucket(key);
     while (true) {
       auto &node = nodes_[bucket];
-      if (EqT()(node.key(), key)) {
-        return {NodePointer(&node), false};
-      }
       if (node.empty()) {
+        if (unlikely(used_node_count_ * 5 >= bucket_count_mask_ * 3)) {
+          resize(2 * bucket_count_);
+          CHECK(used_node_count_ * 5 < bucket_count_mask_ * 3);
+          return emplace(std::move(key), std::forward<ArgsT>(args)...);
+        }
+        invalidate_iterators();
+
         node.emplace(std::move(key), std::forward<ArgsT>(args)...);
         used_node_count_++;
         return {NodePointer(&node), true};
+      }
+      if (EqT()(node.key(), key)) {
+        return {NodePointer(&node), false};
       }
       next_bucket(bucket);
     }
@@ -467,21 +477,14 @@ class FlatHashTable {
     auto bucket = calc_bucket(key);
     while (true) {
       auto &node = nodes_[bucket];
-      if (EqT()(node.key(), key)) {
-        return &node;
-      }
       if (node.empty()) {
         return nullptr;
       }
+      if (EqT()(node.key(), key)) {
+        return &node;
+      }
       next_bucket(bucket);
     }
-  }
-
-  void try_grow() {
-    if (unlikely(used_node_count_ * 5 >= bucket_count_mask_ * 3)) {
-      resize(2 * bucket_count_mask_ + 2 + 6 * (bucket_count_mask_ == 0));
-    }
-    invalidate_iterators();
   }
 
   void try_shrink() {

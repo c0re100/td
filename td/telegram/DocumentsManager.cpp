@@ -16,7 +16,6 @@
 #include "td/telegram/files/FileType.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
-#include "td/telegram/Photo.h"
 #include "td/telegram/PhotoSizeSource.h"
 #include "td/telegram/secret_api.h"
 #include "td/telegram/StickerFormat.h"
@@ -66,7 +65,8 @@ tl_object_ptr<td_api::document> DocumentsManager::get_document_object(FileId fil
 
 Document DocumentsManager::on_get_document(RemoteDocument remote_document, DialogId owner_dialog_id,
                                            MultiPromiseActor *load_data_multipromise_ptr,
-                                           Document::Type default_document_type, bool is_background, bool is_pattern) {
+                                           Document::Type default_document_type, bool is_background, bool is_pattern,
+                                           bool is_ringtone) {
   tl_object_ptr<telegram_api::documentAttributeAnimated> animated;
   tl_object_ptr<telegram_api::documentAttributeVideo> video;
   tl_object_ptr<telegram_api::documentAttributeAudio> audio;
@@ -225,10 +225,20 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     }
   }
 
+  if (is_ringtone) {
+    if (document_type != Document::Type::Audio) {
+      LOG(ERROR) << "Receive notification tone of type " << document_type;
+      document_type = Document::Type::Audio;
+    }
+    file_type = FileType::Ringtone;
+    default_extension = Slice("mp3");
+  }
+
   int64 id;
   int64 access_hash;
   int32 dc_id;
   int32 size;
+  int32 date = 0;
   string mime_type;
   string file_reference;
   string minithumbnail;
@@ -263,6 +273,9 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     access_hash = document->access_hash_;
     dc_id = document->dc_id_;
     size = document->size_;
+    if (is_ringtone) {
+      date = document->date_;
+    }
     mime_type = std::move(document->mime_type_);
     file_reference = document->file_reference_.as_slice().str();
 
@@ -452,7 +465,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         performer = std::move(audio->performer_);
       }
       td_->audios_manager_->create_audio(file_id, std::move(minithumbnail), std::move(thumbnail), std::move(file_name),
-                                         std::move(mime_type), duration, std::move(title), std::move(performer),
+                                         std::move(mime_type), duration, std::move(title), std::move(performer), date,
                                          !is_web);
       break;
     }

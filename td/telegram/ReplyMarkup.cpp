@@ -54,6 +54,9 @@ static StringBuilder &operator<<(StringBuilder &string_builder, const KeyboardBu
     case KeyboardButton::Type::RequestPollRegular:
       string_builder << "RequestPollRegular";
       break;
+    case KeyboardButton::Type::WebView:
+      string_builder << "WebView";
+      break;
     default:
       UNREACHABLE();
   }
@@ -93,6 +96,9 @@ static StringBuilder &operator<<(StringBuilder &string_builder, const InlineKeyb
       break;
     case InlineKeyboardButton::Type::User:
       string_builder << "User " << keyboard_button.user_id.get();
+      break;
+    case InlineKeyboardButton::Type::WebView:
+      string_builder << "WebView";
       break;
     default:
       UNREACHABLE();
@@ -214,6 +220,13 @@ static KeyboardButton get_keyboard_button(tl_object_ptr<telegram_api::KeyboardBu
       button.text = std::move(keyboard_button->text_);
       break;
     }
+    case telegram_api::keyboardButtonSimpleWebView::ID: {
+      auto keyboard_button = move_tl_object_as<telegram_api::keyboardButtonSimpleWebView>(keyboard_button_ptr);
+      button.type = KeyboardButton::Type::WebView;
+      button.text = std::move(keyboard_button->text_);
+      button.url = std::move(keyboard_button->url_);
+      break;
+    }
     default:
       LOG(ERROR) << "Unsupported keyboard button: " << to_string(keyboard_button_ptr);
   }
@@ -276,6 +289,13 @@ static InlineKeyboardButton get_inline_keyboard_button(
       button.type = InlineKeyboardButton::Type::User;
       button.text = std::move(keyboard_button->text_);
       button.user_id = UserId(keyboard_button->user_id_);
+      break;
+    }
+    case telegram_api::keyboardButtonWebView::ID: {
+      auto keyboard_button = move_tl_object_as<telegram_api::keyboardButtonWebView>(keyboard_button_ptr);
+      button.type = InlineKeyboardButton::Type::WebView;
+      button.text = std::move(keyboard_button->text_);
+      button.data = std::move(keyboard_button->url_);
       break;
     }
     default:
@@ -420,6 +440,25 @@ static Result<KeyboardButton> get_keyboard_button(tl_object_ptr<td_api::keyboard
       }
       break;
     }
+    case td_api::keyboardButtonTypeWebApp::ID: {
+      if (!request_buttons_allowed) {
+        return Status::Error(400, "Web app can be used in private chats only");
+      }
+
+      auto button_type = move_tl_object_as<td_api::keyboardButtonTypeWebApp>(button->type_);
+      auto user_id = LinkManager::get_link_user_id(button_type->url_);
+      if (user_id.is_valid()) {
+        return Status::Error(400, "Link to a user can't be used in web app URL buttons");
+      }
+      auto r_url = LinkManager::check_link(button_type->url_, true, !G()->is_test_dc());
+      if (r_url.is_error()) {
+        return Status::Error(400, PSLICE() << "Inline keyboard button web app URL '" << button_type->url_
+                                           << "' is invalid: " << r_url.error().message());
+      }
+      current_button.type = KeyboardButton::Type::WebView;
+      current_button.url = std::move(button_type->url_);
+      break;
+    }
     default:
       UNREACHABLE();
   }
@@ -452,7 +491,8 @@ static Result<InlineKeyboardButton> get_inline_keyboard_button(tl_object_ptr<td_
       }
       auto r_url = LinkManager::check_link(button_type->url_);
       if (r_url.is_error()) {
-        return Status::Error(400, "Inline keyboard button URL is invalid");
+        return Status::Error(400, PSLICE() << "Inline keyboard button URL '" << button_type->url_
+                                           << "' is invalid: " << r_url.error().message());
       }
       current_button.type = InlineKeyboardButton::Type::Url;
       current_button.data = r_url.move_as_ok();
@@ -499,9 +539,10 @@ static Result<InlineKeyboardButton> get_inline_keyboard_button(tl_object_ptr<td_
       if (user_id.is_valid()) {
         return Status::Error(400, "Link to a user can't be used in login URL buttons");
       }
-      auto r_url = LinkManager::check_link(button_type->url_);
+      auto r_url = LinkManager::check_link(button_type->url_, true);
       if (r_url.is_error()) {
-        return Status::Error(400, "Inline keyboard button login URL is invalid");
+        return Status::Error(400, PSLICE() << "Inline keyboard button login URL '" << button_type->url_
+                                           << "' is invalid: " << r_url.error().message());
       }
       current_button.type = InlineKeyboardButton::Type::UrlAuth;
       current_button.data = r_url.move_as_ok();
@@ -525,6 +566,24 @@ static Result<InlineKeyboardButton> get_inline_keyboard_button(tl_object_ptr<td_
       current_button.user_id = UserId(button_type->user_id_);
       if (!current_button.user_id.is_valid()) {
         return Status::Error(400, "Invalid user_id specified");
+      }
+      break;
+    }
+    case td_api::inlineKeyboardButtonTypeWebApp::ID: {
+      auto button_type = move_tl_object_as<td_api::inlineKeyboardButtonTypeWebApp>(button->type_);
+      auto user_id = LinkManager::get_link_user_id(button_type->url_);
+      if (user_id.is_valid()) {
+        return Status::Error(400, "Link to a user can't be used in web app URL buttons");
+      }
+      auto r_url = LinkManager::check_link(button_type->url_, true, !G()->is_test_dc());
+      if (r_url.is_error()) {
+        return Status::Error(400, PSLICE() << "Inline keyboard button web app URL '" << button_type->url_
+                                           << "' is invalid: " << r_url.error().message());
+      }
+      current_button.type = InlineKeyboardButton::Type::WebView;
+      current_button.data = r_url.move_as_ok();
+      if (!clean_input_string(current_button.data)) {
+        return Status::Error(400, "Inline keyboard button web app URL must be encoded in UTF-8");
       }
       break;
     }
@@ -662,6 +721,8 @@ static tl_object_ptr<telegram_api::KeyboardButton> get_keyboard_button(const Key
       return make_tl_object<telegram_api::keyboardButtonRequestPoll>(1, true, keyboard_button.text);
     case KeyboardButton::Type::RequestPollRegular:
       return make_tl_object<telegram_api::keyboardButtonRequestPoll>(1, false, keyboard_button.text);
+    case KeyboardButton::Type::WebView:
+      return make_tl_object<telegram_api::keyboardButtonSimpleWebView>(keyboard_button.text, keyboard_button.url);
     default:
       UNREACHABLE();
       return nullptr;
@@ -721,6 +782,8 @@ static tl_object_ptr<telegram_api::KeyboardButton> get_inline_keyboard_button(
       return make_tl_object<telegram_api::inputKeyboardButtonUserProfile>(keyboard_button.text,
                                                                           r_input_user.move_as_ok());
     }
+    case InlineKeyboardButton::Type::WebView:
+      return make_tl_object<telegram_api::keyboardButtonWebView>(keyboard_button.text, keyboard_button.data);
     default:
       UNREACHABLE();
       return nullptr;
@@ -798,6 +861,9 @@ static tl_object_ptr<td_api::keyboardButton> get_keyboard_button_object(const Ke
     case KeyboardButton::Type::RequestPollRegular:
       type = make_tl_object<td_api::keyboardButtonTypeRequestPoll>(true, false);
       break;
+    case KeyboardButton::Type::WebView:
+      type = make_tl_object<td_api::keyboardButtonTypeWebApp>(keyboard_button.url);
+      break;
     default:
       UNREACHABLE();
       return nullptr;
@@ -838,6 +904,9 @@ static tl_object_ptr<td_api::inlineKeyboardButton> get_inline_keyboard_button_ob
       type = make_tl_object<td_api::inlineKeyboardButtonTypeUser>(
           G()->td().get_actor_unsafe()->contacts_manager_->get_user_id_object(keyboard_button.user_id,
                                                                               "get_inline_keyboard_button_object"));
+      break;
+    case InlineKeyboardButton::Type::WebView:
+      type = make_tl_object<td_api::inlineKeyboardButtonTypeWebApp>(keyboard_button.data);
       break;
     default:
       UNREACHABLE();

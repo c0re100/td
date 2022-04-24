@@ -393,6 +393,72 @@ class ResetWebAuthorizationsQuery final : public Td::ResultHandler {
   }
 };
 
+class SetBotGroupDefaultAdminRightsQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit SetBotGroupDefaultAdminRightsQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(AdministratorRights administrator_rights) {
+    send_query(G()->net_query_creator().create(
+        telegram_api::bots_setBotGroupDefaultAdminRights(administrator_rights.get_chat_admin_rights())));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::bots_setBotGroupDefaultAdminRights>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    bool result = result_ptr.move_as_ok();
+    LOG_IF(WARNING, !result) << "Failed to set group default administrator rights";
+    td_->contacts_manager_->invalidate_user_full(td_->contacts_manager_->get_my_id());
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    if (status.message() == "RIGHTS_NOT_MODIFIED") {
+      return promise_.set_value(Unit());
+    }
+    td_->contacts_manager_->invalidate_user_full(td_->contacts_manager_->get_my_id());
+    promise_.set_error(std::move(status));
+  }
+};
+
+class SetBotBroadcastDefaultAdminRightsQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit SetBotBroadcastDefaultAdminRightsQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(AdministratorRights administrator_rights) {
+    send_query(G()->net_query_creator().create(
+        telegram_api::bots_setBotBroadcastDefaultAdminRights(administrator_rights.get_chat_admin_rights())));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::bots_setBotBroadcastDefaultAdminRights>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    bool result = result_ptr.move_as_ok();
+    LOG_IF(WARNING, !result) << "Failed to set channel default administrator rights";
+    td_->contacts_manager_->invalidate_user_full(td_->contacts_manager_->get_my_id());
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    if (status.message() == "RIGHTS_NOT_MODIFIED") {
+      return promise_.set_value(Unit());
+    }
+    td_->contacts_manager_->invalidate_user_full(td_->contacts_manager_->get_my_id());
+    promise_.set_error(std::move(status));
+  }
+};
+
 void set_account_ttl(Td *td, int32 account_ttl, Promise<Unit> &&promise) {
   td->create_handler<SetAccountTtlQuery>(std::move(promise))->send(account_ttl);
 }
@@ -451,6 +517,17 @@ void disconnect_website(Td *td, int64 website_id, Promise<Unit> &&promise) {
 
 void disconnect_all_websites(Td *td, Promise<Unit> &&promise) {
   td->create_handler<ResetWebAuthorizationsQuery>(std::move(promise))->send();
+}
+
+void set_default_group_administrator_rights(Td *td, AdministratorRights administrator_rights, Promise<Unit> &&promise) {
+  td->contacts_manager_->invalidate_user_full(td->contacts_manager_->get_my_id());
+  td->create_handler<SetBotGroupDefaultAdminRightsQuery>(std::move(promise))->send(administrator_rights);
+}
+
+void set_default_channel_administrator_rights(Td *td, AdministratorRights administrator_rights,
+                                              Promise<Unit> &&promise) {
+  td->contacts_manager_->invalidate_user_full(td->contacts_manager_->get_my_id());
+  td->create_handler<SetBotBroadcastDefaultAdminRightsQuery>(std::move(promise))->send(administrator_rights);
 }
 
 }  // namespace td

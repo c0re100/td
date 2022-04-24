@@ -47,7 +47,7 @@ class LinkManager final : public Actor {
   };
 
   // checks whether the link is a valid tg, ton or HTTP(S) URL and returns it in a canonical form
-  static Result<string> check_link(Slice link);
+  static Result<string> check_link(Slice link, bool http_only = false, bool https_only = false);
 
   // checks whether the link is a supported tg or t.me link and parses it
   static unique_ptr<InternalLink> parse_internal_link(Slice link);
@@ -82,8 +82,10 @@ class LinkManager final : public Actor {
   void tear_down() final;
 
   class InternalLinkActiveSessions;
+  class InternalLinkAttachMenuBot;
   class InternalLinkAuthenticationCode;
   class InternalLinkBackground;
+  class InternalLinkBotAddToChannel;
   class InternalLinkBotStart;
   class InternalLinkBotStartInGroup;
   class InternalLinkChangePhoneNumber;
