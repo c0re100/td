@@ -5764,6 +5764,13 @@ void Td::on_request(uint64 id, td_api::sendCallDebugInformation &request) {
                std::move(request.debug_information_), std::move(promise));
 }
 
+void Td::on_request(uint64 id, td_api::sendCallLog &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  send_closure(G()->call_manager(), &CallManager::send_call_log, CallId(request.call_id_), std::move(request.log_file_),
+               std::move(promise));
+}
+
 void Td::on_request(uint64 id, const td_api::getVideoChatAvailableParticipants &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
@@ -6568,7 +6575,7 @@ void Td::on_request(uint64 id, td_api::uploadFile &request) {
 
   auto file_type = request.file_type_ == nullptr ? FileType::Temp : get_file_type(*request.file_type_);
   bool is_secret = file_type == FileType::Encrypted || file_type == FileType::EncryptedThumbnail;
-  bool is_secure = file_type == FileType::Secure;
+  bool is_secure = file_type == FileType::SecureEncrypted;
   auto r_file_id = file_manager_->get_input_file_id(file_type, request.file_, DialogId(), false, is_secret,
                                                     !is_secure && !is_secret, is_secure);
   if (r_file_id.is_error()) {
@@ -8057,6 +8064,9 @@ td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::parseTextEntiti
   }
 
   auto r_entities = [&]() -> Result<vector<MessageEntity>> {
+    if (utf8_length(request.text_) > 65536) {
+      return Status::Error("Text is too long");
+    }
     switch (request.parse_mode_->get_id()) {
       case td_api::textParseModeHTML::ID:
         return parse_html(request.text_);

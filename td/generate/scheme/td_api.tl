@@ -2346,8 +2346,8 @@ callStateReady protocol:callProtocol servers:vector<callServer> config:string en
 //@description The call is hanging up after discardCall has been called
 callStateHangingUp = CallState;
 
-//@description The call has ended successfully @reason The reason, why the call has ended @need_rating True, if the call rating must be sent to the server @need_debug_information True, if the call debug information must be sent to the server
-callStateDiscarded reason:CallDiscardReason need_rating:Bool need_debug_information:Bool = CallState;
+//@description The call has ended successfully @reason The reason, why the call has ended @need_rating True, if the call rating must be sent to the server @need_debug_information True, if the call debug information must be sent to the server @need_log True, if the call log must be sent to the server
+callStateDiscarded reason:CallDiscardReason need_rating:Bool need_debug_information:Bool need_log:Bool = CallState;
 
 //@description The call has ended with an error @error Error. An error with the code 4005000 will be returned if an outgoing call is missed because of an expired timeout
 callStateError error:error = CallState;
@@ -3180,8 +3180,8 @@ notificationSounds notification_sounds:vector<notificationSound> = NotificationS
 
 
 //@description Contains information about a notification @id Unique persistent identifier of this notification @date Notification date
-//@sound_id Identifier of the notification sound to be played; 0 if sound is disabled @type Notification type
-notification id:int32 date:int32 sound_id:int64 type:NotificationType = Notification;
+//@is_silent True, if the notification was explicitly sent without sound @type Notification type
+notification id:int32 date:int32 is_silent:Bool type:NotificationType = Notification;
 
 //@description Describes a group of notifications @id Unique persistent auto-incremented from 1 identifier of the notification group @type Type of the group
 //@chat_id Identifier of a chat to which all notifications in the group belong
@@ -3288,18 +3288,73 @@ userPrivacySettingAllowFindingByPhoneNumber = UserPrivacySetting;
 accountTtl days:int32 = AccountTtl;
 
 
+//@class SessionType @description Represents the type of a session
+
+//@description The session is running on an Android device
+sessionTypeAndroid = SessionType;
+
+//@description The session is running on a generic Apple device
+sessionTypeApple = SessionType;
+
+//@description The session is running on the Brave browser
+sessionTypeBrave = SessionType;
+
+//@description The session is running on the Chrome browser
+sessionTypeChrome = SessionType;
+
+//@description The session is running on the Edge browser
+sessionTypeEdge = SessionType;
+
+//@description The session is running on the Firefox browser
+sessionTypeFirefox = SessionType;
+
+//@description The session is running on an iPad device
+sessionTypeIpad = SessionType;
+
+//@description The session is running on an iPhone device
+sessionTypeIphone = SessionType;
+
+//@description The session is running on a Linux device
+sessionTypeLinux = SessionType;
+
+//@description The session is running on a Mac device
+sessionTypeMac = SessionType;
+
+//@description The session is running on the Opera browser
+sessionTypeOpera = SessionType;
+
+//@description The session is running on the Safari browser
+sessionTypeSafari = SessionType;
+
+//@description The session is running on an Ubuntu device
+sessionTypeUbuntu = SessionType;
+
+//@description The session is running on an unknown type of device
+sessionTypeUnknown = SessionType;
+
+//@description The session is running on the Vivaldi browser
+sessionTypeVivaldi = SessionType;
+
+//@description The session is running on a Windows device
+sessionTypeWindows = SessionType;
+
+//@description The session is running on an Xbox console
+sessionTypeXbox = SessionType;
+
+
 //@description Contains information about one session in a Telegram application used by the current user. Sessions must be shown to the user in the returned order
 //@id Session identifier @is_current True, if this session is the current session
 //@is_password_pending True, if a password is needed to complete authorization of the session
 //@can_accept_secret_chats True, if incoming secret chats can be accepted by the session
 //@can_accept_calls True, if incoming calls can be accepted by the session
+//@type Session type based on the system and application version, which can be used to display a corresponding icon
 //@api_id Telegram API identifier, as provided by the application @application_name Name of the application, as provided by the application
 //@application_version The version of the application, as provided by the application @is_official_application True, if the application is an official application or uses the api_id of an official application
 //@device_model Model of the device the application has been run or is running on, as provided by the application @platform Operating system the application has been run or is running on, as provided by the application
 //@system_version Version of the operating system the application has been run or is running on, as provided by the application @log_in_date Point in time (Unix timestamp) when the user has logged in
 //@last_active_date Point in time (Unix timestamp) when the session was last used @ip IP address from which the session was created, in human-readable format
 //@country A two-letter country code for the country from which the session was created, based on the IP address @region Region code from which the session was created, based on the IP address
-session id:int64 is_current:Bool is_password_pending:Bool can_accept_secret_chats:Bool can_accept_calls:Bool api_id:int32 application_name:string application_version:string is_official_application:Bool device_model:string platform:string system_version:string log_in_date:int32 last_active_date:int32 ip:string country:string region:string = Session;
+session id:int64 is_current:Bool is_password_pending:Bool can_accept_secret_chats:Bool can_accept_calls:Bool type:SessionType api_id:int32 application_name:string application_version:string is_official_application:Bool device_model:string platform:string system_version:string log_in_date:int32 last_active_date:int32 ip:string country:string region:string = Session;
 
 //@description Contains a list of sessions @sessions List of sessions @inactive_session_ttl_days Number of days of inactivity before sessions will automatically be terminated; 1-366 days
 sessions sessions:vector<session> inactive_session_ttl_days:int32 = Sessions;
@@ -5428,8 +5483,11 @@ discardCall call_id:int32 is_disconnected:Bool duration:int32 is_video:Bool conn
 //@description Sends a call rating @call_id Call identifier @rating Call rating; 1-5 @comment An optional user comment if the rating is less than 5 @problems List of the exact types of problems with the call, specified by the user
 sendCallRating call_id:int32 rating:int32 comment:string problems:vector<CallProblem> = Ok;
 
-//@description Sends debug information for a call @call_id Call identifier @debug_information Debug information in application-specific format
+//@description Sends debug information for a call to Telegram servers @call_id Call identifier @debug_information Debug information in application-specific format
 sendCallDebugInformation call_id:int32 debug_information:string = Ok;
+
+//@description Sends log file for a call to Telegram servers @call_id Call identifier @log_file Call log file. Only inputFileLocal and inputFileGenerated are supported
+sendCallLog call_id:int32 log_file:InputFile = Ok;
 
 
 //@description Returns list of participant identifiers, on whose behalf a video chat in the chat can be joined @chat_id Chat identifier
@@ -5596,7 +5654,7 @@ changeImportedContacts contacts:vector<contact> = ImportedContacts;
 clearImportedContacts = Ok;
 
 
-//@description Searches a user by their phone number @phone_number Phone number to search for
+//@description Searches a user by their phone number. Returns a 404 error if the user can't be found @phone_number Phone number to search for
 searchUserByPhoneNumber phone_number:string = User;
 
 //@description Shares the phone number of the current user with a mutual contact. Supposed to be called when the user clicks on chatActionBarSharePhoneNumber @user_id Identifier of the user with whom to share the phone number. The user must be a mutual contact

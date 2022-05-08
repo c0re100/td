@@ -177,6 +177,8 @@ UpdatesManager::UpdatesManager(Td *td, ActorShared<> parent) : td_(td), parent_(
 
 void UpdatesManager::tear_down() {
   parent_.reset();
+
+  LOG(DEBUG) << "Have " << being_processed_updates_ << " unprocessed updates to apply";
 }
 
 void UpdatesManager::hangup_shared() {
@@ -1192,19 +1194,12 @@ vector<DialogId> UpdatesManager::get_chat_dialog_ids(const telegram_api::Updates
   vector<DialogId> dialog_ids;
   dialog_ids.reserve(chats->size());
   for (const auto &chat : *chats) {
-    auto chat_id = ContactsManager::get_chat_id(chat);
-    if (chat_id.is_valid()) {
-      dialog_ids.push_back(DialogId(chat_id));
-      continue;
+    auto dialog_id = ContactsManager::get_dialog_id(chat);
+    if (dialog_id.is_valid()) {
+      dialog_ids.push_back(dialog_id);
+    } else {
+      LOG(ERROR) << "Can't find identifier of " << oneline(to_string(chat));
     }
-
-    auto channel_id = ContactsManager::get_channel_id(chat);
-    if (channel_id.is_valid()) {
-      dialog_ids.push_back(DialogId(channel_id));
-      continue;
-    }
-
-    LOG(ERROR) << "Can't find identifier of " << oneline(to_string(chat));
   }
   return dialog_ids;
 }
@@ -1709,6 +1704,7 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
   }
 
   MultiPromiseActorSafe mpas{"OnPendingUpdatesMultiPromiseActor"};
+  being_processed_updates_++;
   mpas.add_promise([actor_id = create_reference(), promise = std::move(promise)](Result<Unit> &&result) mutable {
     send_closure(actor_id, &UpdatesManager::on_pending_updates_processed, std::move(result), std::move(promise));
   });
@@ -1821,7 +1817,7 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
 
   LOG(INFO) << "Gap in seq has found. Receive " << updates.size() << " updates [" << seq_begin << ", " << seq_end
             << "] from " << source << ", but seq = " << seq_;
-  LOG_IF(WARNING, pending_seq_updates_.find(seq_begin) != pending_seq_updates_.end())
+  LOG_IF(WARNING, pending_seq_updates_.count(seq_begin) > 0)
       << "Already have pending updates with seq = " << seq_begin << ", but receive it again from " << source;
 
   pending_seq_updates_.emplace(
@@ -1831,6 +1827,7 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
 }
 
 void UpdatesManager::on_pending_updates_processed(Result<Unit> result, Promise<Unit> promise) {
+  being_processed_updates_--;
   promise.set_result(std::move(result));
 }
 

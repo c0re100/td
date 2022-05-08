@@ -57,8 +57,7 @@ ProfilePhoto get_profile_photo(FileManager *file_manager, UserId user_id, int64 
 tl_object_ptr<td_api::profilePhoto> get_profile_photo_object(FileManager *file_manager,
                                                              const ProfilePhoto &profile_photo);
 
-bool operator==(const ProfilePhoto &lhs, const ProfilePhoto &rhs);
-bool operator!=(const ProfilePhoto &lhs, const ProfilePhoto &rhs);
+bool need_update_profile_photo(const ProfilePhoto &from, const ProfilePhoto &to);
 
 StringBuilder &operator<<(StringBuilder &string_builder, const ProfilePhoto &profile_photo);
 
@@ -69,12 +68,17 @@ tl_object_ptr<td_api::chatPhotoInfo> get_chat_photo_info_object(FileManager *fil
 
 DialogPhoto as_fake_dialog_photo(const Photo &photo, DialogId dialog_id);
 
+DialogPhoto as_dialog_photo(FileManager *file_manager, DialogId dialog_id, int64 dialog_access_hash,
+                            const Photo &photo);
+
 ProfilePhoto as_profile_photo(FileManager *file_manager, UserId user_id, int64 user_access_hash, const Photo &photo);
+
+bool is_same_dialog_photo(FileManager *file_manager, DialogId dialog_id, const Photo &photo,
+                          const DialogPhoto &dialog_photo);
 
 vector<FileId> dialog_photo_get_file_ids(const DialogPhoto &dialog_photo);
 
-bool operator==(const DialogPhoto &lhs, const DialogPhoto &rhs);
-bool operator!=(const DialogPhoto &lhs, const DialogPhoto &rhs);
+bool need_update_dialog_photo(const DialogPhoto &from, const DialogPhoto &to);
 
 StringBuilder &operator<<(StringBuilder &string_builder, const DialogPhoto &dialog_photo);
 

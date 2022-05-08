@@ -923,9 +923,10 @@ string FileManager::get_file_name(FileType file_type, Slice path) {
     case FileType::Encrypted:
     case FileType::Temp:
     case FileType::EncryptedThumbnail:
-    case FileType::Secure:
-    case FileType::SecureRaw:
+    case FileType::SecureEncrypted:
+    case FileType::SecureDecrypted:
     case FileType::DocumentAsFile:
+    case FileType::CallLog:
       break;
     default:
       UNREACHABLE();
@@ -2558,8 +2559,7 @@ void FileManager::resume_upload(FileId file_id, std::vector<int> bad_parts, std:
     node->set_upload_pause(FileId());
   }
   FileView file_view(node);
-  if (file_view.has_active_upload_remote_location() && file_view.get_type() != FileType::Thumbnail &&
-      file_view.get_type() != FileType::EncryptedThumbnail && file_view.get_type() != FileType::Background) {
+  if (file_view.has_active_upload_remote_location() && can_reuse_remote_file(file_view.get_type())) {
     LOG(INFO) << "File " << file_id << " is already uploaded";
     if (callback) {
       callback->on_upload_ok(file_id, nullptr);
@@ -2796,7 +2796,7 @@ void FileManager::run_upload(FileNodePtr node, std::vector<int> bad_parts) {
                 << ", generate_id = " << node->generate_id_ << ", generate_was_update = " << node->generate_was_update_;
       return;
     }
-    if (file_view.has_generate_location() && file_view.generate_location().file_type_ == FileType::Secure) {
+    if (file_view.has_generate_location() && file_view.generate_location().file_type_ == FileType::SecureEncrypted) {
       // Can't upload secure file before its size is known
       LOG(INFO) << "Can't upload secure file " << node->main_file_id_ << " before it's size is known";
       return;
@@ -2815,7 +2815,7 @@ void FileManager::run_upload(FileNodePtr node, std::vector<int> bad_parts) {
   }
 
   // create encryption key if necessary
-  if (file_view.has_local_location() && file_view.local_location().file_type_ == FileType::Secure &&
+  if (file_view.has_local_location() && file_view.local_location().file_type_ == FileType::SecureEncrypted &&
       file_view.encryption_key().empty()) {
     CHECK(!node->file_ids_.empty());
     bool success = set_encryption_key(node->file_ids_[0], FileEncryptionKey::create_secure_key());
@@ -2831,8 +2831,7 @@ void FileManager::run_upload(FileNodePtr node, std::vector<int> bad_parts) {
 
   CHECK(node->upload_id_ == 0);
   if (file_view.has_alive_remote_location() && !file_view.has_active_upload_remote_location() &&
-      file_view.get_type() != FileType::Thumbnail && file_view.get_type() != FileType::EncryptedThumbnail &&
-      file_view.get_type() != FileType::Background) {
+      can_reuse_remote_file(file_view.get_type())) {
     QueryId id = queries_container_.create(Query{file_id, Query::Type::UploadWaitFileReference});
     node->upload_id_ = id;
     if (node->upload_was_update_file_reference_) {
@@ -2881,12 +2880,6 @@ void FileManager::upload(FileId file_id, std::shared_ptr<UploadCallback> callbac
 
 void FileManager::cancel_upload(FileId file_id) {
   return resume_upload(file_id, std::vector<int>(), nullptr, 0, 0);
-}
-
-static bool is_document_type(FileType type) {
-  return type == FileType::Document || type == FileType::Sticker || type == FileType::Audio ||
-         type == FileType::Animation || type == FileType::VoiceNote || type == FileType::Background ||
-         type == FileType::DocumentAsFile || type == FileType::Ringtone;
 }
 
 static bool is_background_type(FileType type) {
@@ -2962,7 +2955,7 @@ Result<FileId> FileManager::from_persistent_id_v23(Slice binary, FileType file_t
     return Status::Error(400, "Wrong remote file identifier specified: can't unserialize it");
   }
   auto &real_file_type = remote_location.file_type_;
-  if (is_document_type(real_file_type) && is_document_type(file_type)) {
+  if (is_document_file_type(real_file_type) && is_document_file_type(file_type)) {
     real_file_type = file_type;
   } else if (is_background_type(real_file_type) && is_background_type(file_type)) {
     // type of file matches, but real type is in the stored remote location
@@ -3082,7 +3075,7 @@ Result<FileId> FileManager::check_input_file_id(FileType type, Result<FileId> re
   LOG(INFO) << "Checking file " << file_id << " of type " << type << "/" << real_type;
   if (!is_encrypted && !is_secure) {
     if (real_type != type && !(real_type == FileType::Temp && file_view.has_url()) &&
-        !(is_document_type(real_type) && is_document_type(type)) &&
+        !(is_document_file_type(real_type) && is_document_file_type(type)) &&
         !(is_background_type(real_type) && is_background_type(type)) &&
         !(file_view.is_encrypted() && type == FileType::Ringtone)) {
       // TODO: send encrypted file to unencrypted chat
@@ -3155,7 +3148,7 @@ Result<FileId> FileManager::get_input_file_id(FileType type, const tl_object_ptr
     get_by_hash = false;
   }
 
-  auto new_type = is_encrypted ? FileType::Encrypted : (is_secure ? FileType::Secure : type);
+  auto new_type = is_encrypted ? FileType::Encrypted : (is_secure ? FileType::SecureEncrypted : type);
 
   auto r_file_id = [&]() -> Result<FileId> {
     switch (file->get_id()) {
@@ -3392,13 +3385,14 @@ FileId FileManager::next_file_id() {
     empty_file_ids_.pop_back();
     return FileId{res, 0};
   }
+  CHECK(file_id_info_.size() <= static_cast<size_t>(std::numeric_limits<int32>::max()));
   FileId res(static_cast<int32>(file_id_info_.size()), 0);
-  // LOG(ERROR) << "NEXT file_id " << res;
   file_id_info_.push_back({});
   return res;
 }
 
 FileManager::FileNodeId FileManager::next_file_node_id() {
+  CHECK(file_nodes_.size() <= static_cast<size_t>(std::numeric_limits<FileNodeId>::max()));
   auto res = static_cast<FileNodeId>(file_nodes_.size());
   file_nodes_.emplace_back(nullptr);
   return res;
@@ -3924,6 +3918,10 @@ void FileManager::hangup() {
 
 void FileManager::tear_down() {
   parent_.reset();
+
+  LOG(DEBUG) << "Have " << file_id_info_.size() << " files with " << file_nodes_.size() << " file nodes, "
+             << local_location_to_file_id_.size() << " local locations and " << remote_location_info_.size()
+             << " remote locations to free";
 }
 
 constexpr int64 FileManager::KEEP_DOWNLOAD_LIMIT;

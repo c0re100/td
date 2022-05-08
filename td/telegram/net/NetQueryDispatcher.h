@@ -51,13 +51,12 @@ class NetQueryDispatcher {
   void update_use_pfs();
   void update_mtproto_header();
 
-  void update_valid_dc(DcId dc_id);
-
   DcId get_main_dc_id() const {
     return DcId::internal(main_dc_id_.load(std::memory_order_relaxed));
   }
 
   void set_main_dc_id(int32 new_main_dc_id);
+  void check_authorization_is_ok();
 
  private:
   std::atomic<bool> stop_flag_{false};

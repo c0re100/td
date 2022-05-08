@@ -818,7 +818,7 @@ class MessagesManager final : public Actor {
   tl_object_ptr<td_api::messages> get_messages_object(int32 total_count, const vector<FullMessageId> &full_message_ids,
                                                       bool skip_not_found, const char *source);
 
-  void process_pts_update(tl_object_ptr<telegram_api::Update> &&update);
+  void process_pts_update(tl_object_ptr<telegram_api::Update> &&update_ptr);
 
   void skip_old_pending_pts_update(tl_object_ptr<telegram_api::Update> &&update, int32 new_pts, int32 old_pts,
                                    int32 pts_count, const char *source);
@@ -1842,6 +1842,8 @@ class MessagesManager final : public Actor {
 
   void delete_update_message_id(DialogId dialog_id, MessageId message_id);
 
+  void get_dialog_message_count_from_server(DialogId dialog_id, MessageSearchFilter filter, Promise<int32> &&promise);
+
   FullMessageId on_get_message(MessageInfo &&message_info, bool from_update, bool is_channel_message,
                                bool have_previous, bool have_next, const char *source);
 
@@ -1915,9 +1917,9 @@ class MessagesManager final : public Actor {
   void add_postponed_channel_update(DialogId dialog_id, tl_object_ptr<telegram_api::Update> &&update, int32 new_pts,
                                     int32 pts_count, Promise<Unit> &&promise);
 
-  void process_channel_update(tl_object_ptr<telegram_api::Update> &&update);
+  void process_channel_update(tl_object_ptr<telegram_api::Update> &&update_ptr);
 
-  void on_message_edited(FullMessageId full_message_id, int32 pts);
+  void on_message_edited(FullMessageId full_message_id, int32 pts, bool had_message);
 
   void delete_messages_from_updates(const vector<MessageId> &message_ids);
 
@@ -2028,6 +2030,15 @@ class MessagesManager final : public Actor {
   bool can_save_message(DialogId dialog_id, const Message *m) const;
 
   bool can_get_message_statistics(DialogId dialog_id, const Message *m) const;
+
+  struct CanDeleteDialog {
+    bool for_self_;
+    bool for_all_users_;
+
+    CanDeleteDialog(bool for_self, bool for_all_users) : for_self_(for_self), for_all_users_(for_all_users) {
+    }
+  };
+  CanDeleteDialog can_delete_dialog(const Dialog *d) const;
 
   static bool can_delete_channel_message(const DialogParticipantStatus &status, const Message *m, bool is_bot);
 
@@ -2355,7 +2366,7 @@ class MessagesManager final : public Actor {
 
   void send_update_new_message(const Dialog *d, const Message *m);
 
-  static bool is_from_mention_notification_group(const Dialog *d, const Message *m);
+  static bool is_from_mention_notification_group(const Message *m);
 
   static bool is_message_notification_active(const Dialog *d, const Message *m);
 
@@ -2447,7 +2458,7 @@ class MessagesManager final : public Actor {
 
   void send_update_chat_unread_mention_count(const Dialog *d);
 
-  void send_update_chat_unread_reaction_count(const Dialog *d);
+  void send_update_chat_unread_reaction_count(const Dialog *d, const char *source);
 
   void send_update_chat_position(DialogListId dialog_list_id, const Dialog *d, const char *source) const;
 
@@ -3417,6 +3428,7 @@ class MessagesManager final : public Actor {
   bool running_get_difference_ = false;  // true after before_get_difference and false after after_get_difference
 
   FlatHashMap<DialogId, unique_ptr<Dialog>, DialogIdHash> dialogs_;
+  int64 added_message_count_ = 0;
 
   FlatHashSet<DialogId, DialogIdHash> loaded_dialogs_;  // dialogs loaded from database, but not added to dialogs_
 

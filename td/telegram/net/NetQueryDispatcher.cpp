@@ -272,13 +272,10 @@ void NetQueryDispatcher::update_mtproto_header() {
   }
 }
 
-void NetQueryDispatcher::update_valid_dc(DcId dc_id) {
-  wait_dc_init(dc_id, true).ignore();
-}
-
 bool NetQueryDispatcher::is_dc_inited(int32 raw_dc_id) {
   return dcs_[raw_dc_id - 1].is_valid_.load(std::memory_order_relaxed);
 }
+
 int32 NetQueryDispatcher::get_session_count() {
   return max(narrow_cast<int32>(G()->shared_config().get_option_integer("session_count")), 1);
 }
@@ -350,6 +347,10 @@ void NetQueryDispatcher::set_main_dc_id(int32 new_main_dc_id) {
   send_closure_later(dc_auth_manager_, &DcAuthManager::update_main_dc,
                      DcId::internal(main_dc_id_.load(std::memory_order_relaxed)));
   G()->td_db()->get_binlog_pmc()->set("main_dc_id", to_string(main_dc_id_.load(std::memory_order_relaxed)));
+}
+
+void NetQueryDispatcher::check_authorization_is_ok() {
+  send_closure(dc_auth_manager_, &DcAuthManager::check_authorization_is_ok);
 }
 
 }  // namespace td

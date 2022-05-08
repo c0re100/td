@@ -31,11 +31,19 @@ Global::Global() = default;
 
 Global::~Global() = default;
 
+void Global::log_out(Slice reason) {
+  CHECK(shared_config_ != nullptr);
+  if (!shared_config_->have_option("auth")) {
+    shared_config_->set_option_string("auth", reason);
+  }
+}
+
 void Global::close_all(Promise<> on_finished) {
   td_db_->close_all(std::move(on_finished));
   state_manager_.clear();
   parameters_ = TdParameters();
 }
+
 void Global::close_and_destroy_all(Promise<> on_finished) {
   td_db_->close_and_destroy_all(std::move(on_finished));
   state_manager_.clear();

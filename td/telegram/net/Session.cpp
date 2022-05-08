@@ -6,7 +6,6 @@
 //
 #include "td/telegram/net/Session.h"
 
-#include "td/telegram/ConfigShared.h"
 #include "td/telegram/DhCache.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/net/DcAuthManager.h"
@@ -183,6 +182,7 @@ Session::Session(unique_ptr<Callback> callback, std::shared_ptr<AuthDataShared> 
   }
   last_activity_timestamp_ = Time::now();
   last_success_timestamp_ = Time::now() - 366 * 86400;
+  last_bind_success_timestamp_ = Time::now() - 366 * 86400;
 }
 
 bool Session::can_destroy_auth_key() const {
@@ -287,7 +287,8 @@ void Session::on_bind_result(NetQueryPtr query) {
     if (status.code() == 400 && status.message() == "ENCRYPTED_MESSAGE_INVALID") {
       auto auth_key_age = G()->server_time() - auth_data_.get_main_auth_key().created_at();
       bool has_immunity = !G()->is_server_time_reliable() || auth_key_age < 60 ||
-                          (auth_key_age > 86400 && last_success_timestamp_ > Time::now() - 86400);
+                          (auth_key_age > 86400 &&
+                           (use_pfs_ ? last_bind_success_timestamp_ : last_success_timestamp_) > Time::now() - 86400);
       if (!use_pfs_) {
         if (has_immunity) {
           LOG(WARNING) << "Do not drop main key, because it was created too recently";
@@ -295,6 +296,7 @@ void Session::on_bind_result(NetQueryPtr query) {
           LOG(WARNING) << "Drop main key because check with temporary key failed";
           auth_data_.drop_main_auth_key();
           on_auth_key_updated();
+          G()->log_out("Main authorization key is invalid");
         }
       } else {
         if (has_immunity) {
@@ -317,6 +319,7 @@ void Session::on_bind_result(NetQueryPtr query) {
   if (status.is_ok()) {
     LOG(INFO) << "Bound temp auth key " << auth_data_.get_tmp_auth_key().id();
     auth_data_.on_bind();
+    last_bind_success_timestamp_ = Time::now();
     on_tmp_auth_key_updated();
   } else if (status.error().message() == "DispatchTtlError") {
     LOG(INFO) << "Resend bind auth key " << auth_data_.get_tmp_auth_key().id() << " request after DispatchTtlError";
@@ -539,6 +542,7 @@ void Session::on_closed(Status status) {
         LOG(WARNING) << "Invalidate main key";
         auth_data_.drop_main_auth_key();
         on_auth_key_updated();
+        G()->log_out("Main PFS authorization key is invalid");
       }
       yield();
     }
@@ -579,7 +583,9 @@ void Session::on_closed(Status status) {
 void Session::on_session_created(uint64 unique_id, uint64 first_id) {
   // TODO: use unique_id
   LOG(INFO) << "New session " << unique_id << " created with first message_id " << first_id;
-  last_success_timestamp_ = Time::now();
+  if (!use_pfs_) {
+    last_success_timestamp_ = Time::now();
+  }
   if (is_main_) {
     LOG(DEBUG) << "Sending updatesTooLong to force getDifference";
     BufferSlice packet(4);
@@ -735,7 +741,9 @@ Status Session::on_update(BufferSlice packet) {
     return Status::Error("Receive at update from CDN connection");
   }
 
-  last_success_timestamp_ = Time::now();
+  if (!use_pfs_) {
+    last_success_timestamp_ = Time::now();
+  }
   last_activity_timestamp_ = Time::now();
   callback_->on_update(std::move(packet));
   return Status::OK();
@@ -837,7 +845,7 @@ void Session::on_message_result_error(uint64 id, int error_code, string message)
                  "write to recover@telegram.org your phone number and other details to recover the account.";
         }
         auth_data_.set_auth_flag(false);
-        G()->shared_config().set_option_string("auth", message);
+        G()->log_out(message);
         shared_auth_data_->set_auth_key(auth_data_.get_main_auth_key());
         on_session_failed(Status::OK());
       }
@@ -863,6 +871,7 @@ void Session::on_message_result_error(uint64 id, int error_code, string message)
   }
   auto it = sent_queries_.find(id);
   if (it == sent_queries_.end()) {
+    current_info_->connection_->force_ack();
     return;
   }
 
