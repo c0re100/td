@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.3 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.4 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -278,10 +278,12 @@ set(TDLIB_SOURCE
 
   td/telegram/Account.cpp
   td/telegram/AnimationsManager.cpp
+  td/telegram/Application.cpp
   td/telegram/AttachMenuManager.cpp
   td/telegram/AudiosManager.cpp
   td/telegram/AuthManager.cpp
   td/telegram/AutoDownloadSettings.cpp
+  td/telegram/AvailableReaction.cpp
   td/telegram/BackgroundManager.cpp
   td/telegram/BackgroundType.cpp
   td/telegram/BotCommand.cpp
@@ -316,6 +318,7 @@ set(TDLIB_SOURCE
   td/telegram/DialogParticipant.cpp
   td/telegram/DialogParticipantFilter.cpp
   td/telegram/DialogSource.cpp
+  td/telegram/Dimensions.cpp
   td/telegram/Document.cpp
   td/telegram/DocumentsManager.cpp
   td/telegram/DownloadManager.cpp
@@ -404,6 +407,7 @@ set(TDLIB_SOURCE
   td/telegram/PhotoSize.cpp
   td/telegram/PhotoSizeSource.cpp
   td/telegram/PollManager.cpp
+  td/telegram/Premium.cpp
   td/telegram/QueryCombiner.cpp
   td/telegram/RecentDialogList.cpp
   td/telegram/ReplyMarkup.cpp
@@ -412,6 +416,7 @@ set(TDLIB_SOURCE
   td/telegram/SecretChatActor.cpp
   td/telegram/SecretChatDb.cpp
   td/telegram/SecretChatsManager.cpp
+  td/telegram/SecretInputMedia.cpp
   td/telegram/SecureManager.cpp
   td/telegram/SecureStorage.cpp
   td/telegram/SecureValue.cpp
@@ -471,10 +476,12 @@ set(TDLIB_SOURCE
   td/telegram/Account.h
   td/telegram/AffectedHistory.h
   td/telegram/AnimationsManager.h
+  td/telegram/Application.h
   td/telegram/AttachMenuManager.h
   td/telegram/AudiosManager.h
   td/telegram/AuthManager.h
   td/telegram/AutoDownloadSettings.h
+  td/telegram/AvailableReaction.h
   td/telegram/BackgroundId.h
   td/telegram/BackgroundManager.h
   td/telegram/BackgroundType.h
@@ -517,6 +524,7 @@ set(TDLIB_SOURCE
   td/telegram/DialogParticipant.h
   td/telegram/DialogParticipantFilter.h
   td/telegram/DialogSource.h
+  td/telegram/Dimensions.h
   td/telegram/Document.h
   td/telegram/DocumentsManager.h
   td/telegram/DownloadManager.h
@@ -634,6 +642,7 @@ set(TDLIB_SOURCE
   td/telegram/PhotoSizeSource.h
   td/telegram/PollId.h
   td/telegram/PollManager.h
+  td/telegram/Premium.h
   td/telegram/PrivacyManager.h
   td/telegram/PtsManager.h
   td/telegram/PublicDialogType.h
@@ -690,6 +699,7 @@ set(TDLIB_SOURCE
   td/telegram/AuthManager.hpp
   td/telegram/BackgroundType.hpp
   td/telegram/DialogFilter.hpp
+  td/telegram/Dimensions.hpp
   td/telegram/Document.hpp
   td/telegram/DocumentsManager.hpp
   td/telegram/DraftMessage.hpp

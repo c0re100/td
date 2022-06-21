@@ -22,6 +22,7 @@
 #include "td/telegram/net/NetType.h"
 #include "td/telegram/net/PublicRsaKeyShared.h"
 #include "td/telegram/net/Session.h"
+#include "td/telegram/Premium.h"
 #include "td/telegram/StateManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
@@ -908,7 +909,7 @@ void ConfigManager::start_up() {
 
   auto expire_time = load_config_expire_time();
   if (expire_time.is_in_past() || true) {
-    request_config();
+    request_config(false);
   } else {
     expire_time_ = expire_time;
     set_timeout_in(expire_time_.in());
@@ -934,7 +935,7 @@ void ConfigManager::hangup() {
 
 void ConfigManager::loop() {
   if (expire_time_ && expire_time_.is_in_past()) {
-    request_config();
+    request_config(reopen_sessions_after_get_config_);
     expire_time_ = {};
   }
 }
@@ -945,17 +946,17 @@ void ConfigManager::try_stop() {
   }
 }
 
-void ConfigManager::request_config() {
+void ConfigManager::request_config(bool reopen_sessions) {
   if (G()->close_flag()) {
     return;
   }
 
-  if (config_sent_cnt_ != 0) {
+  if (config_sent_cnt_ != 0 && !reopen_sessions) {
     return;
   }
 
   lazy_request_flood_control_.add_event(static_cast<int32>(Timestamp::now().at()));
-  request_config_from_dc_impl(DcId::main());
+  request_config_from_dc_impl(DcId::main(), reopen_sessions);
 }
 
 void ConfigManager::lazy_request_config() {
@@ -1085,11 +1086,13 @@ void ConfigManager::on_dc_options_update(DcOptions dc_options) {
   send_closure(config_recoverer_, &ConfigRecoverer::on_dc_options_update, std::move(dc_options));
 }
 
-void ConfigManager::request_config_from_dc_impl(DcId dc_id) {
+void ConfigManager::request_config_from_dc_impl(DcId dc_id, bool reopen_sessions) {
   config_sent_cnt_++;
+  reopen_sessions_after_get_config_ |= reopen_sessions;
   auto query = G()->net_query_creator().create_unauth(telegram_api::help_getConfig(), dc_id);
   query->total_timeout_limit_ = 60 * 60 * 24;
-  G()->net_query_dispatcher().dispatch_with_callback(std::move(query), actor_shared(this, 8));
+  G()->net_query_dispatcher().dispatch_with_callback(std::move(query),
+                                                     actor_shared(this, 8 + static_cast<uint64>(reopen_sessions)));
 }
 
 void ConfigManager::do_set_ignore_sensitive_content_restrictions(bool ignore_sensitive_content_restrictions) {
@@ -1256,7 +1259,7 @@ void ConfigManager::on_result(NetQueryPtr res) {
     return;
   }
 
-  CHECK(token == 8);
+  CHECK(token == 8 || token == 9);
   CHECK(config_sent_cnt_ > 0);
   config_sent_cnt_--;
   auto r_config = fetch_result<telegram_api::help_getConfig>(std::move(res));
@@ -1269,6 +1272,9 @@ void ConfigManager::on_result(NetQueryPtr res) {
   } else {
     on_dc_options_update(DcOptions());
     process_config(r_config.move_as_ok());
+    if (token == 9) {
+      G()->net_query_dispatcher().update_mtproto_header();
+    }
   }
 }
 
@@ -1472,12 +1478,20 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   double animated_emoji_zoom = 0.0;
   string default_reaction;
   int64 reactions_uniq_max = 0;
+  vector<string> premium_features;
+  auto &premium_limit_keys = get_premium_limit_keys();
+  string premium_bot_username;
+  string premium_invoice_slug;
+  bool is_premium_available = false;
+  int32 stickers_premium_by_emoji_num = 0;
+  int32 stickers_normal_by_emoji_per_premium_num = 2;
   if (config->get_id() == telegram_api::jsonObject::ID) {
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
       telegram_api::JSONValue *value = key_value->value_.get();
-      if (key == "test" || key == "wallet_enabled" || key == "wallet_blockchain_name" || key == "wallet_config" ||
-          key == "stickers_emoji_cache_time") {
+      if (key == "message_animated_emoji_max" || key == "stickers_emoji_cache_time" || key == "test" ||
+          key == "upload_max_fileparts_default" || key == "upload_max_fileparts_premium" ||
+          key == "wallet_blockchain_name" || key == "wallet_config" || key == "wallet_enabled") {
         continue;
       }
       if (key == "ignore_restriction_reasons") {
@@ -1733,6 +1747,59 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         G()->shared_config().set_option_integer("notification_sound_count_max", setting_value);
         continue;
       }
+      if (key == "premium_promo_order") {
+        if (value->get_id() == telegram_api::jsonArray::ID) {
+          auto features = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
+          for (auto &feature : features) {
+            auto premium_feature = get_json_value_string(std::move(feature), key);
+            if (!td::contains(premium_feature, ',')) {
+              premium_features.push_back(std::move(premium_feature));
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected premium_promo_order " << to_string(*value);
+        }
+        continue;
+      }
+      bool is_premium_limit_key = false;
+      for (auto premium_limit_key : premium_limit_keys) {
+        if (begins_with(key, premium_limit_key)) {
+          auto suffix = key.substr(premium_limit_key.size());
+          if (suffix == "_limit_default" || suffix == "_limit_premium") {
+            auto setting_value = get_json_value_int(std::move(key_value->value_), key);
+            if (setting_value > 0) {
+              G()->shared_config().set_option_integer(key, setting_value);
+            } else {
+              LOG(ERROR) << "Receive invalid value " << setting_value << " for " << key;
+            }
+            is_premium_limit_key = true;
+            break;
+          }
+        }
+      }
+      if (is_premium_limit_key) {
+        continue;
+      }
+      if (key == "premium_bot_username") {
+        premium_bot_username = get_json_value_string(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "premium_invoice_slug") {
+        premium_invoice_slug = get_json_value_string(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "premium_purchase_blocked") {
+        is_premium_available = !get_json_value_bool(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "stickers_premium_by_emoji_num") {
+        stickers_premium_by_emoji_num = get_json_value_int(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "stickers_normal_by_emoji_per_premium_num") {
+        stickers_normal_by_emoji_per_premium_num = get_json_value_int(std::move(key_value->value_), key);
+        continue;
+      }
 
       new_values.push_back(std::move(key_value));
     }
@@ -1815,6 +1882,46 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   } else {
     shared_config.set_option_integer("reactions_uniq_max", reactions_uniq_max);
   }
+
+  bool is_premium = shared_config.get_option_boolean("is_premium");
+
+  auto chat_filter_count_max = shared_config.get_option_integer(
+      is_premium ? Slice("dialog_filters_limit_premium") : Slice("dialog_filters_limit_default"), is_premium ? 20 : 10);
+  shared_config.set_option_integer("chat_filter_count_max", static_cast<int32>(chat_filter_count_max));
+
+  auto chat_filter_chosen_chat_count_max = shared_config.get_option_integer(
+      is_premium ? Slice("dialog_filters_chats_limit_premium") : Slice("dialog_filters_chats_limit_default"),
+      is_premium ? 200 : 100);
+  shared_config.set_option_integer("chat_filter_chosen_chat_count_max",
+                                   static_cast<int32>(chat_filter_chosen_chat_count_max));
+
+  auto bio_length_max = shared_config.get_option_integer(
+      is_premium ? Slice("about_length_limit_premium") : Slice("about_length_limit_default"), is_premium ? 140 : 70);
+  shared_config.set_option_integer("bio_length_max", bio_length_max);
+
+  if (!is_premium_available) {
+    premium_bot_username.clear();  // just in case
+    premium_invoice_slug.clear();  // just in case
+    premium_features.clear();      // just in case
+    shared_config.set_option_empty("is_premium_available");
+  } else {
+    shared_config.set_option_boolean("is_premium_available", is_premium_available);
+  }
+  shared_config.set_option_string("premium_features", implode(premium_features, ','));
+  if (premium_bot_username.empty()) {
+    shared_config.set_option_empty("premium_bot_username");
+  } else {
+    shared_config.set_option_string("premium_bot_username", premium_bot_username);
+  }
+  if (premium_invoice_slug.empty()) {
+    shared_config.set_option_empty("premium_invoice_slug");
+  } else {
+    shared_config.set_option_string("premium_invoice_slug", premium_invoice_slug);
+  }
+
+  shared_config.set_option_integer("stickers_premium_by_emoji_num", stickers_premium_by_emoji_num);
+  shared_config.set_option_integer("stickers_normal_by_emoji_per_premium_num",
+                                   stickers_normal_by_emoji_per_premium_num);
 
   shared_config.set_option_empty("default_ton_blockchain_config");
   shared_config.set_option_empty("default_ton_blockchain_name");

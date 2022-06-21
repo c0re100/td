@@ -48,7 +48,16 @@ class TdDb {
   TdDb &operator=(TdDb &&) = delete;
   ~TdDb();
 
-  struct Events {
+  struct CheckedParameters {
+    string database_directory;
+    string files_directory;
+    bool is_database_encrypted{false};
+  };
+  static void check_parameters(int32 scheduler_id, TdParameters parameters, Promise<CheckedParameters> promise);
+
+  struct OpenedDatabase {
+    unique_ptr<TdDb> database;
+
     vector<BinlogEvent> to_secret_chats_manager;
     vector<BinlogEvent> user_events;
     vector<BinlogEvent> chat_events;
@@ -60,12 +69,7 @@ class TdDb {
     vector<BinlogEvent> to_notification_manager;
     vector<BinlogEvent> to_notification_settings_manager;
   };
-  static Result<unique_ptr<TdDb>> open(int32 scheduler_id, const TdParameters &parameters, DbKey key, Events &events);
-
-  struct EncryptionInfo {
-    bool is_encrypted{false};
-  };
-  static Result<EncryptionInfo> check_encryption(const TdParameters &parameters);
+  static void open(int32 scheduler_id, TdParameters parameters, DbKey key, Promise<OpenedDatabase> &&promise);
 
   static Status destroy(const TdParameters &parameters);
 
@@ -121,7 +125,6 @@ class TdDb {
   std::shared_ptr<BinlogKeyValue<ConcurrentBinlog>> config_pmc_;
   std::shared_ptr<ConcurrentBinlog> binlog_;
 
-  Status init(int32 scheduler_id, const TdParameters &parameters, DbKey key, Events &events);
   Status init_sqlite(int32 scheduler_id, const TdParameters &parameters, const DbKey &key, const DbKey &old_key,
                      BinlogKeyValue<Binlog> &binlog_pmc);
 

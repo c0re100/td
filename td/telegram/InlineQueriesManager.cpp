@@ -1234,7 +1234,7 @@ template <>
 tl_object_ptr<td_api::sticker> copy(const td_api::sticker &obj) {
   return td_api::make_object<td_api::sticker>(obj.set_id_, obj.width_, obj.height_, obj.emoji_, copy(obj.type_),
                                               transform(obj.outline_, copy_closed_vector_path), copy(obj.thumbnail_),
-                                              copy(obj.sticker_));
+                                              copy(obj.premium_animation_), copy(obj.sticker_));
 }
 
 template <>
@@ -1246,7 +1246,8 @@ tl_object_ptr<td_api::video> copy(const td_api::video &obj) {
 
 template <>
 tl_object_ptr<td_api::voiceNote> copy(const td_api::voiceNote &obj) {
-  return td_api::make_object<td_api::voiceNote>(obj.duration_, obj.waveform_, obj.mime_type_, copy(obj.voice_));
+  return td_api::make_object<td_api::voiceNote>(obj.duration_, obj.waveform_, obj.mime_type_, obj.is_recognized_,
+                                                obj.recognized_text_, copy(obj.voice_));
 }
 
 template <>

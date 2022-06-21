@@ -39,6 +39,7 @@ struct Invoice {
   vector<LabeledPricePart> price_parts;
   int64 max_tip_amount = 0;
   vector<int64> suggested_tip_amounts;
+  string recurring_payment_terms_of_service_url;
   bool is_test = false;
   bool need_name = false;
   bool need_phone_number = false;
@@ -180,15 +181,18 @@ void answer_shipping_query(Td *td, int64 shipping_query_id,
 void answer_pre_checkout_query(Td *td, int64 pre_checkout_query_id, const string &error_message,
                                Promise<Unit> &&promise);
 
-void get_payment_form(Td *td, FullMessageId full_message_id, const td_api::object_ptr<td_api::themeParameters> &theme,
+void get_payment_form(Td *td, td_api::object_ptr<td_api::InputInvoice> &&input_invoice,
+                      const td_api::object_ptr<td_api::themeParameters> &theme,
                       Promise<tl_object_ptr<td_api::paymentForm>> &&promise);
 
-void validate_order_info(Td *td, FullMessageId full_message_id, tl_object_ptr<td_api::orderInfo> order_info,
-                         bool allow_save, Promise<tl_object_ptr<td_api::validatedOrderInfo>> &&promise);
+void validate_order_info(Td *td, td_api::object_ptr<td_api::InputInvoice> &&input_invoice,
+                         td_api::object_ptr<td_api::orderInfo> &&order_info, bool allow_save,
+                         Promise<td_api::object_ptr<td_api::validatedOrderInfo>> &&promise);
 
-void send_payment_form(Td *td, FullMessageId full_message_id, int64 payment_form_id, const string &order_info_id,
-                       const string &shipping_option_id, const tl_object_ptr<td_api::InputCredentials> &credentials,
-                       int64 tip_amount, Promise<tl_object_ptr<td_api::paymentResult>> &&promise);
+void send_payment_form(Td *td, td_api::object_ptr<td_api::InputInvoice> &&input_invoice, int64 payment_form_id,
+                       const string &order_info_id, const string &shipping_option_id,
+                       const td_api::object_ptr<td_api::InputCredentials> &credentials, int64 tip_amount,
+                       Promise<td_api::object_ptr<td_api::paymentResult>> &&promise);
 
 void get_payment_receipt(Td *td, FullMessageId full_message_id,
                          Promise<tl_object_ptr<td_api::paymentReceipt>> &&promise);
@@ -198,6 +202,8 @@ void get_saved_order_info(Td *td, Promise<tl_object_ptr<td_api::orderInfo>> &&pr
 void delete_saved_order_info(Td *td, Promise<Unit> &&promise);
 
 void delete_saved_credentials(Td *td, Promise<Unit> &&promise);
+
+void export_invoice(Td *td, td_api::object_ptr<td_api::InputMessageContent> &&invoice, Promise<string> &&promise);
 
 void get_bank_card_info(Td *td, const string &bank_card_number,
                         Promise<td_api::object_ptr<td_api::bankCardInfo>> &&promise);

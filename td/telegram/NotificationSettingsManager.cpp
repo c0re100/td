@@ -582,6 +582,10 @@ const unique_ptr<NotificationSound> &NotificationSettingsManager::get_scope_noti
   return get_scope_notification_settings(scope)->sound;
 }
 
+bool NotificationSettingsManager::get_scope_show_preview(NotificationSettingsScope scope) const {
+  return get_scope_notification_settings(scope)->show_preview;
+}
+
 bool NotificationSettingsManager::get_scope_disable_pinned_message_notifications(
     NotificationSettingsScope scope) const {
   return get_scope_notification_settings(scope)->disable_pinned_message_notifications;
@@ -1456,26 +1460,6 @@ void NotificationSettingsManager::reset_notify_settings(Promise<Unit> &&promise)
 void NotificationSettingsManager::get_notify_settings_exceptions(NotificationSettingsScope scope, bool filter_scope,
                                                                  bool compare_sound, Promise<Unit> &&promise) {
   td_->create_handler<GetNotifySettingsExceptionsQuery>(std::move(promise))->send(scope, filter_scope, compare_sound);
-}
-
-void NotificationSettingsManager::after_get_difference() {
-  if (td_->auth_manager_->is_bot()) {
-    return;
-  }
-
-  if (!users_notification_settings_.is_synchronized) {
-    send_get_scope_notification_settings_query(NotificationSettingsScope::Private, Promise<>());
-  }
-  if (!chats_notification_settings_.is_synchronized) {
-    send_get_scope_notification_settings_query(NotificationSettingsScope::Group, Promise<>());
-  }
-  if (!channels_notification_settings_.is_synchronized) {
-    send_get_scope_notification_settings_query(NotificationSettingsScope::Channel, Promise<>());
-  }
-
-  if (td_->is_online() && !are_saved_ringtones_reloaded_) {
-    reload_saved_ringtones(Auto());
-  }
 }
 
 void NotificationSettingsManager::on_binlog_events(vector<BinlogEvent> &&events) {

@@ -9,6 +9,7 @@
 #include "td/telegram/AnimationsManager.h"
 #include "td/telegram/AudiosManager.h"
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/Dimensions.h"
 #include "td/telegram/Document.h"
 #include "td/telegram/files/FileEncryptionKey.h"
 #include "td/telegram/files/FileLocation.h"
@@ -237,13 +238,14 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
   int64 id;
   int64 access_hash;
   int32 dc_id;
-  int32 size;
+  int64 size;
   int32 date = 0;
   string mime_type;
   string file_reference;
   string minithumbnail;
   PhotoSize thumbnail;
   AnimationSize animated_thumbnail;
+  FileId premium_animation_file_id;
   FileEncryptionKey encryption_key;
   bool is_web = false;
   bool is_web_no_proxy = false;
@@ -309,11 +311,17 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     }
     for (auto &thumb : document->video_thumbs_) {
       if (thumb->type_ == "v") {
-        animated_thumbnail =
-            get_animation_size(td_->file_manager_.get(), PhotoSizeSource::thumbnail(FileType::Thumbnail, 0), id,
-                               access_hash, file_reference, DcId::create(dc_id), owner_dialog_id, std::move(thumb));
-        if (animated_thumbnail.file_id.is_valid()) {
-          break;
+        if (!animated_thumbnail.file_id.is_valid()) {
+          animated_thumbnail =
+              get_animation_size(td_->file_manager_.get(), PhotoSizeSource::thumbnail(FileType::Thumbnail, 0), id,
+                                 access_hash, file_reference, DcId::create(dc_id), owner_dialog_id, std::move(thumb));
+        }
+      } else if (thumb->type_ == "f") {
+        if (!premium_animation_file_id.is_valid()) {
+          premium_animation_file_id =
+              register_photo_size(td_->file_manager_.get(), PhotoSizeSource::thumbnail(FileType::Thumbnail, 'f'), id,
+                                  access_hash, file_reference, owner_dialog_id, thumb->size_, DcId::create(dc_id),
+                                  get_sticker_format_photo_format(sticker_format));
         }
       }
     }
@@ -477,8 +485,9 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       if (thumbnail_format == PhotoFormat::Jpeg) {
         minithumbnail = string();
       }
-      td_->stickers_manager_->create_sticker(file_id, std::move(minithumbnail), std::move(thumbnail), dimensions,
-                                             std::move(sticker), sticker_format, load_data_multipromise_ptr);
+      td_->stickers_manager_->create_sticker(file_id, premium_animation_file_id, std::move(minithumbnail),
+                                             std::move(thumbnail), dimensions, std::move(sticker), sticker_format,
+                                             load_data_multipromise_ptr);
       break;
     case Document::Type::Video:
       td_->videos_manager_->create_video(file_id, std::move(minithumbnail), std::move(thumbnail),
@@ -589,12 +598,12 @@ bool DocumentsManager::has_input_media(FileId file_id, FileId thumbnail_file_id,
 
 SecretInputMedia DocumentsManager::get_secret_input_media(FileId document_file_id,
                                                           tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                                          const string &caption, BufferSlice thumbnail) const {
+                                                          const string &caption, BufferSlice thumbnail,
+                                                          int32 layer) const {
   const GeneralDocument *document = get_document(document_file_id);
   CHECK(document != nullptr);
   auto file_view = td_->file_manager_->get_file_view(document_file_id);
-  auto &encryption_key = file_view.encryption_key();
-  if (!file_view.is_encrypted_secret() || encryption_key.empty()) {
+  if (!file_view.is_encrypted_secret() || file_view.encryption_key().empty()) {
     return SecretInputMedia{};
   }
   if (file_view.has_remote_location()) {
@@ -610,12 +619,14 @@ SecretInputMedia DocumentsManager::get_secret_input_media(FileId document_file_i
   if (!document->file_name.empty()) {
     attributes.push_back(make_tl_object<secret_api::documentAttributeFilename>(document->file_name));
   }
-  return SecretInputMedia{
-      std::move(input_file),
-      make_tl_object<secret_api::decryptedMessageMediaDocument>(
-          std::move(thumbnail), document->thumbnail.dimensions.width, document->thumbnail.dimensions.height,
-          document->mime_type, narrow_cast<int32>(file_view.size()), BufferSlice(encryption_key.key_slice()),
-          BufferSlice(encryption_key.iv_slice()), std::move(attributes), caption)};
+  return {std::move(input_file),
+          std::move(thumbnail),
+          document->thumbnail.dimensions,
+          document->mime_type,
+          file_view,
+          std::move(attributes),
+          caption,
+          layer};
 }
 
 tl_object_ptr<telegram_api::InputMedia> DocumentsManager::get_input_media(

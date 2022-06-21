@@ -29,9 +29,14 @@
 namespace td {
 
 int MessageEntity::get_type_priority(Type type) {
-  static const int types[] = {50, 50, 50, 50, 50, 90, 91, 20, 11, 10, 49, 49, 50, 50, 92, 93, 0, 50, 50, 94};
-  static_assert(sizeof(types) / sizeof(types[0]) == static_cast<size_t>(MessageEntity::Type::Size), "");
-  return types[static_cast<int32>(type)];
+  static const int priorities[] = {
+      50 /*Mention*/,      50 /*Hashtag*/,        50 /*BotCommand*/,     50 /*Url*/,
+      50 /*EmailAddress*/, 90 /*Bold*/,           91 /*Italic*/,         20 /*Code*/,
+      11 /*Pre*/,          10 /*PreCode*/,        49 /*TextUrl*/,        49 /*MentionName*/,
+      50 /*Cashtag*/,      50 /*PhoneNumber*/,    92 /*Underline*/,      93 /*Strikethrough*/,
+      0 /*BlockQuote*/,    50 /*BankCardNumber*/, 50 /*MediaTimestamp*/, 94 /*Spoiler*/};
+  static_assert(sizeof(priorities) / sizeof(priorities[0]) == static_cast<size_t>(MessageEntity::Type::Size), "");
+  return priorities[static_cast<int32>(type)];
 }
 
 StringBuilder &operator<<(StringBuilder &string_builder, const MessageEntity::Type &message_entity_type) {
@@ -1631,7 +1636,7 @@ static void fix_entity_offsets(Slice text, vector<MessageEntity> &entities) {
   }
 }
 
-vector<MessageEntity> find_entities(Slice text, bool skip_bot_commands, bool skip_media_timestamps) {
+vector<MessageEntity> find_entities(Slice text, bool skip_bot_commands, bool skip_media_timestamps, bool skip_urls) {
   vector<MessageEntity> entities;
 
   auto add_entities = [&entities, &text](MessageEntity::Type type, vector<Slice> (*find_entities_f)(Slice)) mutable {
@@ -1650,16 +1655,16 @@ vector<MessageEntity> find_entities(Slice text, bool skip_bot_commands, bool ski
   add_entities(MessageEntity::Type::Cashtag, find_cashtags);
   // TODO find_phone_numbers
   add_entities(MessageEntity::Type::BankCardNumber, find_bank_card_numbers);
-  add_entities(MessageEntity::Type::Url, find_tg_urls);
-
-  auto urls = find_urls(text);
-  for (auto &url : urls) {
-    auto type = url.second ? MessageEntity::Type::EmailAddress : MessageEntity::Type::Url;
-    auto offset = narrow_cast<int32>(url.first.begin() - text.begin());
-    auto length = narrow_cast<int32>(url.first.size());
-    entities.emplace_back(type, offset, length);
+  if (!skip_urls) {
+    add_entities(MessageEntity::Type::Url, find_tg_urls);
+    auto urls = find_urls(text);
+    for (auto &url : urls) {
+      auto type = url.second ? MessageEntity::Type::EmailAddress : MessageEntity::Type::Url;
+      auto offset = narrow_cast<int32>(url.first.begin() - text.begin());
+      auto length = narrow_cast<int32>(url.first.size());
+      entities.emplace_back(type, offset, length);
+    }
   }
-
   if (!skip_media_timestamps) {
     auto media_timestamps = find_media_timestamps(text);
     for (auto &entity : media_timestamps) {
@@ -1876,9 +1881,9 @@ Result<vector<MessageEntity>> parse_markdown(string &text) {
           if (user_id.is_valid()) {
             entities.emplace_back(entity_offset, entity_length, user_id);
           } else {
-            auto r_url = LinkManager::check_link(url);
-            if (r_url.is_ok()) {
-              entities.emplace_back(MessageEntity::Type::TextUrl, entity_offset, entity_length, r_url.move_as_ok());
+            url = LinkManager::get_checked_link(url);
+            if (!url.empty()) {
+              entities.emplace_back(MessageEntity::Type::TextUrl, entity_offset, entity_length, std::move(url));
             }
           }
           break;
@@ -2092,11 +2097,11 @@ static Result<vector<MessageEntity>> do_parse_markdown_v2(CSlice text, string &r
           }
           user_id = LinkManager::get_link_user_id(url);
           if (!user_id.is_valid()) {
-            auto r_url = LinkManager::check_link(url);
-            if (r_url.is_error()) {
+            url = LinkManager::get_checked_link(url);
+            if (url.empty()) {
               skip_entity = true;
             } else {
-              argument = r_url.move_as_ok();
+              argument = std::move(url);
             }
           }
           break;
@@ -2169,7 +2174,7 @@ static vector<Slice> find_text_url_entities_v3(Slice text) {
 
     if (url_end < size) {
       Slice url = text.substr(url_begin + 1, url_end - url_begin - 1);
-      if (LinkManager::check_link(url).is_ok()) {
+      if (!LinkManager::get_checked_link(url).empty()) {
         result.push_back(text.substr(text_begin, text_end - text_begin + 1));
         result.push_back(text.substr(url_begin, url_end - url_begin + 1));
       }
@@ -2241,7 +2246,7 @@ static FormattedText parse_text_url_entities_v3(Slice text, const vector<Message
         Slice url = parsed_part_text.substr(url_begin_pos + 1, url_end_pos - url_begin_pos - 1);
         auto url_utf16_length = text_length(url);
         result.entities.emplace_back(MessageEntity::Type::TextUrl, result_text_utf16_length, text_url_utf16_length,
-                                     LinkManager::check_link(url).move_as_ok());
+                                     LinkManager::get_checked_link(url));
         result.text.append(text_url.begin(), text_url.size());
         result_text_utf16_length += text_url_utf16_length;
 
@@ -3075,9 +3080,9 @@ static Result<vector<MessageEntity>> do_parse_html(CSlice text, string &result) 
           if (user_id.is_valid()) {
             entities.emplace_back(entity_offset, entity_length, user_id);
           } else {
-            auto r_url = LinkManager::check_link(url);
-            if (r_url.is_ok()) {
-              entities.emplace_back(MessageEntity::Type::TextUrl, entity_offset, entity_length, r_url.move_as_ok());
+            url = LinkManager::get_checked_link(url);
+            if (!url.empty()) {
+              entities.emplace_back(MessageEntity::Type::TextUrl, entity_offset, entity_length, std::move(url));
             }
           }
         } else if (tag_name == "pre") {
@@ -3284,7 +3289,7 @@ Result<vector<MessageEntity>> get_message_entities(const ContactsManager *contac
         }
         auto r_url = LinkManager::check_link(entity->url_);
         if (r_url.is_error()) {
-          return Status::Error(400, PSTRING() << "Wrong URL entity specified: " << r_url.error().message());
+          return Status::Error(400, PSTRING() << "Entity " << r_url.error().message());
         }
         entities.emplace_back(MessageEntity::Type::TextUrl, offset, length, r_url.move_as_ok());
         break;
@@ -3418,8 +3423,7 @@ vector<MessageEntity> get_message_entities(const ContactsManager *contacts_manag
         auto entity = static_cast<const telegram_api::messageEntityTextUrl *>(server_entity.get());
         auto r_url = LinkManager::check_link(entity->url_);
         if (r_url.is_error()) {
-          LOG(ERROR) << "Wrong URL entity: \"" << entity->url_ << "\": " << r_url.error().message() << " from "
-                     << source;
+          LOG(ERROR) << "Entity " << r_url.error().message() << " from " << source;
           continue;
         }
         entities.emplace_back(MessageEntity::Type::TextUrl, entity->offset_, entity->length_, r_url.move_as_ok());
@@ -3540,7 +3544,7 @@ vector<MessageEntity> get_message_entities(vector<tl_object_ptr<secret_api::Mess
         }
         auto r_url = LinkManager::check_link(entity->url_);
         if (r_url.is_error()) {
-          LOG(WARNING) << "Wrong URL entity: \"" << entity->url_ << "\": " << r_url.error().message();
+          LOG(WARNING) << "Entity " << r_url.error().message();
           continue;
         }
         entities.emplace_back(MessageEntity::Type::TextUrl, entity->offset_, entity->length_, r_url.move_as_ok());

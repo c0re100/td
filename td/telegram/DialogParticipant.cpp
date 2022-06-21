@@ -532,6 +532,9 @@ StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipant
       return string_builder;
     case DialogParticipantStatus::Type::Administrator:
       string_builder << status.get_administrator_rights();
+      if (status.can_be_edited()) {
+        string_builder << "(can_be_edited)";
+      }
       if (!status.rank_.empty()) {
         string_builder << " [" << status.rank_ << "]";
       }
@@ -569,6 +572,20 @@ StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipant
 DialogParticipantStatus get_dialog_participant_status(const td_api::object_ptr<td_api::ChatMemberStatus> &status,
                                                       ChannelType channel_type) {
   auto constructor_id = status == nullptr ? td_api::chatMemberStatusMember::ID : status->get_id();
+  auto fix_until_date = [](int32 until_date) {
+    if (until_date == 0) {
+      // fast path
+      return 0;
+    }
+
+    // if user is restricted for more than 366 days or less than 30 seconds from the current time,
+    // they are considered to be restricted forever
+    auto unix_time = G()->unix_time();
+    if (until_date < unix_time + 30 || until_date > unix_time + 366 * 86400) {
+      return 0;
+    }
+    return until_date;
+  };
   switch (constructor_id) {
     case td_api::chatMemberStatusCreator::ID: {
       auto st = static_cast<const td_api::chatMemberStatusCreator *>(status.get());
@@ -592,13 +609,13 @@ DialogParticipantStatus get_dialog_participant_status(const td_api::object_ptr<t
     case td_api::chatMemberStatusRestricted::ID: {
       auto st = static_cast<const td_api::chatMemberStatusRestricted *>(status.get());
       return DialogParticipantStatus::Restricted(RestrictedRights(st->permissions_), st->is_member_,
-                                                 st->restricted_until_date_);
+                                                 fix_until_date(st->restricted_until_date_));
     }
     case td_api::chatMemberStatusLeft::ID:
       return DialogParticipantStatus::Left();
     case td_api::chatMemberStatusBanned::ID: {
       auto st = static_cast<const td_api::chatMemberStatusBanned *>(status.get());
-      return DialogParticipantStatus::Banned(st->banned_until_date_);
+      return DialogParticipantStatus::Banned(fix_until_date(st->banned_until_date_));
     }
     default:
       UNREACHABLE();

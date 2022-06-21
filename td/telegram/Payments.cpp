@@ -8,9 +8,11 @@
 
 #include "td/telegram/AccessRights.h"
 #include "td/telegram/ContactsManager.h"
+#include "td/telegram/Dimensions.h"
 #include "td/telegram/files/FileManager.h"
 #include "td/telegram/files/FileType.h"
 #include "td/telegram/Global.h"
+#include "td/telegram/MessageEntity.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/PasswordManager.h"
@@ -32,6 +34,56 @@
 #include "td/utils/Status.h"
 
 namespace td {
+
+namespace {
+
+static tl_object_ptr<td_api::formattedText> get_product_description_object(const string &description) {
+  FormattedText result;
+  result.text = description;
+  result.entities = find_entities(result.text, true, true);
+  return get_formatted_text_object(result, true, 0);
+}
+
+struct InputInvoiceInfo {
+  DialogId dialog_id_;
+  telegram_api::object_ptr<telegram_api::InputInvoice> input_invoice_;
+};
+
+Result<InputInvoiceInfo> get_input_invoice_info(Td *td, td_api::object_ptr<td_api::InputInvoice> &&input_invoice) {
+  if (input_invoice == nullptr) {
+    return Status::Error(400, "Input invoice must be non-empty");
+  }
+
+  InputInvoiceInfo result;
+  switch (input_invoice->get_id()) {
+    case td_api::inputInvoiceMessage::ID: {
+      auto invoice = td_api::move_object_as<td_api::inputInvoiceMessage>(input_invoice);
+      DialogId dialog_id(invoice->chat_id_);
+      MessageId message_id(invoice->message_id_);
+      TRY_RESULT(server_message_id, td->messages_manager_->get_invoice_message_id({dialog_id, message_id}));
+
+      auto input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+      if (input_peer == nullptr) {
+        return Status::Error(400, "Can't access the chat");
+      }
+
+      result.dialog_id_ = dialog_id;
+      result.input_invoice_ =
+          make_tl_object<telegram_api::inputInvoiceMessage>(std::move(input_peer), server_message_id.get());
+      break;
+    }
+    case td_api::inputInvoiceName::ID: {
+      auto invoice = td_api::move_object_as<td_api::inputInvoiceName>(input_invoice);
+      result.input_invoice_ = make_tl_object<telegram_api::inputInvoiceSlug>(invoice->name_);
+      break;
+    }
+    default:
+      UNREACHABLE();
+  }
+  return std::move(result);
+}
+
+}  // namespace
 
 class SetBotShippingAnswerQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
@@ -136,18 +188,45 @@ static tl_object_ptr<td_api::invoice> convert_invoice(tl_object_ptr<telegram_api
     need_shipping_address = true;
   }
 
-  return make_tl_object<td_api::invoice>(
-      std::move(invoice->currency_), std::move(labeled_prices), invoice->max_tip_amount_,
-      vector<int64>(invoice->suggested_tip_amounts_), is_test, need_name, need_phone_number, need_email_address,
-      need_shipping_address, send_phone_number_to_provider, send_email_address_to_provider, is_flexible);
+  return make_tl_object<td_api::invoice>(std::move(invoice->currency_), std::move(labeled_prices),
+                                         invoice->max_tip_amount_, vector<int64>(invoice->suggested_tip_amounts_),
+                                         std::move(invoice->recurring_terms_url_), is_test, need_name,
+                                         need_phone_number, need_email_address, need_shipping_address,
+                                         send_phone_number_to_provider, send_email_address_to_provider, is_flexible);
 }
 
-static tl_object_ptr<td_api::paymentsProviderStripe> convert_payment_provider(
+static tl_object_ptr<td_api::PaymentProvider> convert_payment_provider(
     const string &native_provider_name, tl_object_ptr<telegram_api::dataJSON> native_parameters) {
   if (native_parameters == nullptr) {
     return nullptr;
   }
 
+  if (native_provider_name == "smartglocal") {
+    string data = native_parameters->data_;
+    auto r_value = json_decode(data);
+    if (r_value.is_error()) {
+      LOG(ERROR) << "Can't parse JSON object \"" << native_parameters->data_ << "\": " << r_value.error();
+      return nullptr;
+    }
+
+    auto value = r_value.move_as_ok();
+    if (value.type() != JsonValue::Type::Object) {
+      LOG(ERROR) << "Wrong JSON data \"" << native_parameters->data_ << '"';
+      return nullptr;
+    }
+
+    auto r_public_token = get_json_object_string_field(value.get_object(), "public_token", false);
+
+    if (r_public_token.is_error()) {
+      LOG(ERROR) << "Unsupported JSON data \"" << native_parameters->data_ << '"';
+      return nullptr;
+    }
+    if (value.get_object().size() != 1) {
+      LOG(ERROR) << "Unsupported JSON data \"" << native_parameters->data_ << '"';
+    }
+
+    return make_tl_object<td_api::paymentProviderSmartGlocal>(r_public_token.move_as_ok());
+  }
   if (native_provider_name == "stripe") {
     string data = native_parameters->data_;
     auto r_value = json_decode(data);
@@ -177,9 +256,9 @@ static tl_object_ptr<td_api::paymentsProviderStripe> convert_payment_provider(
       LOG(ERROR) << "Unsupported JSON data \"" << native_parameters->data_ << '"';
     }
 
-    return make_tl_object<td_api::paymentsProviderStripe>(r_publishable_key.move_as_ok(), r_need_country.move_as_ok(),
-                                                          r_need_postal_code.move_as_ok(),
-                                                          r_need_cardholder_name.move_as_ok());
+    return make_tl_object<td_api::paymentProviderStripe>(r_publishable_key.move_as_ok(), r_need_country.move_as_ok(),
+                                                         r_need_postal_code.move_as_ok(),
+                                                         r_need_cardholder_name.move_as_ok());
   }
 
   return nullptr;
@@ -269,20 +348,15 @@ class GetPaymentFormQuery final : public Td::ResultHandler {
   explicit GetPaymentFormQuery(Promise<tl_object_ptr<td_api::paymentForm>> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(DialogId dialog_id, ServerMessageId server_message_id,
-            tl_object_ptr<telegram_api::dataJSON> &&theme_parameters) {
-    dialog_id_ = dialog_id;
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
-    if (input_peer == nullptr) {
-      return on_error(Status::Error(400, "Can't access the chat"));
-    }
+  void send(InputInvoiceInfo &&input_invoice_info, tl_object_ptr<telegram_api::dataJSON> &&theme_parameters) {
+    dialog_id_ = input_invoice_info.dialog_id_;
 
     int32 flags = 0;
     if (theme_parameters != nullptr) {
       flags |= telegram_api::payments_getPaymentForm::THEME_PARAMS_MASK;
     }
     send_query(G()->net_query_creator().create(telegram_api::payments_getPaymentForm(
-        flags, std::move(input_peer), server_message_id.get(), std::move(theme_parameters))));
+        flags, std::move(input_invoice_info.input_invoice_), std::move(theme_parameters))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -308,13 +382,20 @@ class GetPaymentFormQuery final : public Td::ResultHandler {
     }
     bool can_save_credentials = payment_form->can_save_credentials_;
     bool need_password = payment_form->password_missing_;
+    auto photo = get_web_document_photo(td_->file_manager_.get(), std::move(payment_form->photo_), dialog_id_);
+    auto payment_provider =
+        convert_payment_provider(payment_form->native_provider_, std::move(payment_form->native_params_));
+    if (payment_provider == nullptr) {
+      payment_provider = td_api::make_object<td_api::paymentProviderOther>(std::move(payment_form->url_));
+    }
     promise_.set_value(make_tl_object<td_api::paymentForm>(
-        payment_form->form_id_, convert_invoice(std::move(payment_form->invoice_)), std::move(payment_form->url_),
+        payment_form->form_id_, convert_invoice(std::move(payment_form->invoice_)),
         td_->contacts_manager_->get_user_id_object(seller_bot_user_id, "paymentForm seller"),
         td_->contacts_manager_->get_user_id_object(payments_provider_user_id, "paymentForm provider"),
-        convert_payment_provider(payment_form->native_provider_, std::move(payment_form->native_params_)),
-        convert_order_info(std::move(payment_form->saved_info_)),
-        convert_saved_credentials(std::move(payment_form->saved_credentials_)), can_save_credentials, need_password));
+        std::move(payment_provider), convert_order_info(std::move(payment_form->saved_info_)),
+        convert_saved_credentials(std::move(payment_form->saved_credentials_)), can_save_credentials, need_password,
+        payment_form->title_, get_product_description_object(payment_form->description_),
+        get_photo_object(td_->file_manager_.get(), photo)));
   }
 
   void on_error(Status status) final {
@@ -332,13 +413,9 @@ class ValidateRequestedInfoQuery final : public Td::ResultHandler {
       : promise_(std::move(promise)) {
   }
 
-  void send(DialogId dialog_id, ServerMessageId server_message_id,
-            tl_object_ptr<telegram_api::paymentRequestedInfo> requested_info, bool allow_save) {
-    dialog_id_ = dialog_id;
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
-    if (input_peer == nullptr) {
-      return on_error(Status::Error(400, "Can't access the chat"));
-    }
+  void send(InputInvoiceInfo &&input_invoice_info, tl_object_ptr<telegram_api::paymentRequestedInfo> requested_info,
+            bool allow_save) {
+    dialog_id_ = input_invoice_info.dialog_id_;
 
     int32 flags = 0;
     if (allow_save) {
@@ -349,7 +426,7 @@ class ValidateRequestedInfoQuery final : public Td::ResultHandler {
       requested_info->flags_ = 0;
     }
     send_query(G()->net_query_creator().create(telegram_api::payments_validateRequestedInfo(
-        flags, false /*ignored*/, std::move(input_peer), server_message_id.get(), std::move(requested_info))));
+        flags, false /*ignored*/, std::move(input_invoice_info.input_invoice_), std::move(requested_info))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -381,16 +458,12 @@ class SendPaymentFormQuery final : public Td::ResultHandler {
       : promise_(std::move(promise)) {
   }
 
-  void send(DialogId dialog_id, ServerMessageId server_message_id, int64 payment_form_id, const string &order_info_id,
+  void send(InputInvoiceInfo &&input_invoice_info, int64 payment_form_id, const string &order_info_id,
             const string &shipping_option_id, tl_object_ptr<telegram_api::InputPaymentCredentials> input_credentials,
             int64 tip_amount) {
     CHECK(input_credentials != nullptr);
 
-    dialog_id_ = dialog_id;
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
-    if (input_peer == nullptr) {
-      return on_error(Status::Error(400, "Can't access the chat"));
-    }
+    dialog_id_ = input_invoice_info.dialog_id_;
 
     int32 flags = 0;
     if (!order_info_id.empty()) {
@@ -403,7 +476,7 @@ class SendPaymentFormQuery final : public Td::ResultHandler {
       flags |= telegram_api::payments_sendPaymentForm::TIP_AMOUNT_MASK;
     }
     send_query(G()->net_query_creator().create(telegram_api::payments_sendPaymentForm(
-        flags, payment_form_id, std::move(input_peer), server_message_id.get(), order_info_id, shipping_option_id,
+        flags, payment_form_id, std::move(input_invoice_info.input_invoice_), order_info_id, shipping_option_id,
         std::move(input_credentials), tip_amount)));
   }
 
@@ -485,8 +558,9 @@ class GetPaymentReceiptQuery final : public Td::ResultHandler {
     auto photo = get_web_document_photo(td_->file_manager_.get(), std::move(payment_receipt->photo_), dialog_id_);
 
     promise_.set_value(make_tl_object<td_api::paymentReceipt>(
-        payment_receipt->title_, payment_receipt->description_, get_photo_object(td_->file_manager_.get(), photo),
-        payment_receipt->date_, td_->contacts_manager_->get_user_id_object(seller_bot_user_id, "paymentReceipt seller"),
+        payment_receipt->title_, get_product_description_object(payment_receipt->description_),
+        get_photo_object(td_->file_manager_.get(), photo), payment_receipt->date_,
+        td_->contacts_manager_->get_user_id_object(seller_bot_user_id, "paymentReceipt seller"),
         td_->contacts_manager_->get_user_id_object(payments_provider_user_id, "paymentReceipt provider"),
         convert_invoice(std::move(payment_receipt->invoice_)), convert_order_info(std::move(payment_receipt->info_)),
         convert_shipping_option(std::move(payment_receipt->shipping_)), std::move(payment_receipt->credentials_title_),
@@ -560,6 +634,32 @@ class ClearSavedInfoQuery final : public Td::ResultHandler {
   }
 };
 
+class ExportInvoiceQuery final : public Td::ResultHandler {
+  Promise<string> promise_;
+
+ public:
+  explicit ExportInvoiceQuery(Promise<string> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(tl_object_ptr<telegram_api::inputMediaInvoice> &&input_media_invoice) {
+    send_query(G()->net_query_creator().create(telegram_api::payments_exportInvoice(std::move(input_media_invoice))));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::payments_exportInvoice>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto link = result_ptr.move_as_ok();
+    promise_.set_value(std::move(link->url_));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
 class GetBankCardInfoQuery final : public Td::ResultHandler {
   Promise<td_api::object_ptr<td_api::bankCardInfo>> promise_;
 
@@ -610,7 +710,8 @@ bool operator==(const Invoice &lhs, const Invoice &rhs) {
          lhs.send_phone_number_to_provider == rhs.send_phone_number_to_provider &&
          lhs.send_email_address_to_provider == rhs.send_email_address_to_provider &&
          lhs.is_flexible == rhs.is_flexible && lhs.currency == rhs.currency && lhs.price_parts == rhs.price_parts &&
-         lhs.max_tip_amount == rhs.max_tip_amount && lhs.suggested_tip_amounts == rhs.suggested_tip_amounts;
+         lhs.max_tip_amount == rhs.max_tip_amount && lhs.suggested_tip_amounts == rhs.suggested_tip_amounts &&
+         lhs.recurring_payment_terms_of_service_url == rhs.recurring_payment_terms_of_service_url;
 }
 
 bool operator!=(const Invoice &lhs, const Invoice &rhs) {
@@ -624,8 +725,12 @@ StringBuilder &operator<<(StringBuilder &string_builder, const Invoice &invoice)
                         << (invoice.need_email_address ? ", needs email address" : "")
                         << (invoice.need_shipping_address ? ", needs shipping address" : "")
                         << (invoice.send_phone_number_to_provider ? ", sends phone number to provider" : "")
-                        << (invoice.send_email_address_to_provider ? ", sends email address to provider" : "") << " in "
-                        << invoice.currency << " with price parts " << format::as_array(invoice.price_parts)
+                        << (invoice.send_email_address_to_provider ? ", sends email address to provider" : "")
+                        << (invoice.recurring_payment_terms_of_service_url.empty()
+                                ? string()
+                                : ", recurring payments terms of service at " +
+                                      invoice.recurring_payment_terms_of_service_url)
+                        << " in " << invoice.currency << " with price parts " << format::as_array(invoice.price_parts)
                         << " and suggested tip amounts " << invoice.suggested_tip_amounts << " up to "
                         << invoice.max_tip_amount << "]";
 }
@@ -734,8 +839,7 @@ Result<InputInvoice> process_input_message_invoice(
 
       PhotoSize s;
       s.type = 'n';
-      s.dimensions =
-          get_dimensions(input_invoice->photo_width_, input_invoice->photo_height_, "process_input_message_invoice");
+      s.dimensions = get_dimensions(input_invoice->photo_width_, input_invoice->photo_height_, nullptr);
       s.size = input_invoice->photo_size_;  // TODO use invoice_file_id size
       s.file_id = invoice_file_id;
 
@@ -784,6 +888,8 @@ Result<InputInvoice> process_input_message_invoice(
 
   result.invoice.max_tip_amount = input_invoice->invoice_->max_tip_amount_;
   result.invoice.suggested_tip_amounts = std::move(input_invoice->invoice_->suggested_tip_amounts_);
+  result.invoice.recurring_payment_terms_of_service_url =
+      std::move(input_invoice->invoice_->recurring_payment_terms_of_service_url_);
   result.invoice.is_test = input_invoice->invoice_->is_test_;
   result.invoice.need_name = input_invoice->invoice_->need_name_;
   result.invoice.need_phone_number = input_invoice->invoice_->need_phone_number_;
@@ -810,10 +916,10 @@ Result<InputInvoice> process_input_message_invoice(
 
 tl_object_ptr<td_api::messageInvoice> get_message_invoice_object(const InputInvoice &input_invoice, Td *td) {
   return make_tl_object<td_api::messageInvoice>(
-      input_invoice.title, input_invoice.description, get_photo_object(td->file_manager_.get(), input_invoice.photo),
-      input_invoice.invoice.currency, input_invoice.total_amount, input_invoice.start_parameter,
-      input_invoice.invoice.is_test, input_invoice.invoice.need_shipping_address,
-      input_invoice.receipt_message_id.get());
+      input_invoice.title, get_product_description_object(input_invoice.description),
+      get_photo_object(td->file_manager_.get(), input_invoice.photo), input_invoice.invoice.currency,
+      input_invoice.total_amount, input_invoice.start_parameter, input_invoice.invoice.is_test,
+      input_invoice.invoice.need_shipping_address, input_invoice.receipt_message_id.get());
 }
 
 static tl_object_ptr<telegram_api::invoice> get_input_invoice(const Invoice &invoice) {
@@ -845,14 +951,18 @@ static tl_object_ptr<telegram_api::invoice> get_input_invoice(const Invoice &inv
   if (invoice.max_tip_amount != 0) {
     flags |= telegram_api::invoice::MAX_TIP_AMOUNT_MASK;
   }
+  if (!invoice.recurring_payment_terms_of_service_url.empty()) {
+    flags |= telegram_api::invoice::RECURRING_TERMS_URL_MASK;
+  }
 
   auto prices = transform(invoice.price_parts, [](const LabeledPricePart &price) {
     return telegram_api::make_object<telegram_api::labeledPrice>(price.label, price.amount);
   });
   return make_tl_object<telegram_api::invoice>(
       flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-      false /*ignored*/, false /*ignored*/, false /*ignored*/, invoice.currency, std::move(prices),
-      invoice.max_tip_amount, vector<int64>(invoice.suggested_tip_amounts));
+      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, invoice.currency, std::move(prices),
+      invoice.max_tip_amount, vector<int64>(invoice.suggested_tip_amounts),
+      invoice.recurring_payment_terms_of_service_url);
 }
 
 static tl_object_ptr<telegram_api::inputWebDocument> get_input_web_document(const FileManager *file_manager,
@@ -1147,9 +1257,10 @@ void answer_pre_checkout_query(Td *td, int64 pre_checkout_query_id, const string
   td->create_handler<SetBotPreCheckoutAnswerQuery>(std::move(promise))->send(pre_checkout_query_id, error_message);
 }
 
-void get_payment_form(Td *td, FullMessageId full_message_id, const td_api::object_ptr<td_api::themeParameters> &theme,
+void get_payment_form(Td *td, td_api::object_ptr<td_api::InputInvoice> &&input_invoice,
+                      const td_api::object_ptr<td_api::themeParameters> &theme,
                       Promise<tl_object_ptr<td_api::paymentForm>> &&promise) {
-  TRY_RESULT_PROMISE(promise, server_message_id, td->messages_manager_->get_invoice_message_id(full_message_id));
+  TRY_RESULT_PROMISE(promise, input_invoice_info, get_input_invoice_info(td, std::move(input_invoice)));
 
   tl_object_ptr<telegram_api::dataJSON> theme_parameters;
   if (theme != nullptr) {
@@ -1157,12 +1268,13 @@ void get_payment_form(Td *td, FullMessageId full_message_id, const td_api::objec
     theme_parameters->data_ = ThemeManager::get_theme_parameters_json_string(theme, false);
   }
   td->create_handler<GetPaymentFormQuery>(std::move(promise))
-      ->send(full_message_id.get_dialog_id(), server_message_id, std::move(theme_parameters));
+      ->send(std::move(input_invoice_info), std::move(theme_parameters));
 }
 
-void validate_order_info(Td *td, FullMessageId full_message_id, tl_object_ptr<td_api::orderInfo> order_info,
-                         bool allow_save, Promise<tl_object_ptr<td_api::validatedOrderInfo>> &&promise) {
-  TRY_RESULT_PROMISE(promise, server_message_id, td->messages_manager_->get_invoice_message_id(full_message_id));
+void validate_order_info(Td *td, td_api::object_ptr<td_api::InputInvoice> &&input_invoice,
+                         td_api::object_ptr<td_api::orderInfo> &&order_info, bool allow_save,
+                         Promise<td_api::object_ptr<td_api::validatedOrderInfo>> &&promise) {
+  TRY_RESULT_PROMISE(promise, input_invoice_info, get_input_invoice_info(td, std::move(input_invoice)));
 
   if (order_info != nullptr) {
     if (!clean_input_string(order_info->name_)) {
@@ -1197,13 +1309,14 @@ void validate_order_info(Td *td, FullMessageId full_message_id, tl_object_ptr<td
   }
 
   td->create_handler<ValidateRequestedInfoQuery>(std::move(promise))
-      ->send(full_message_id.get_dialog_id(), server_message_id, convert_order_info(std::move(order_info)), allow_save);
+      ->send(std::move(input_invoice_info), convert_order_info(std::move(order_info)), allow_save);
 }
 
-void send_payment_form(Td *td, FullMessageId full_message_id, int64 payment_form_id, const string &order_info_id,
-                       const string &shipping_option_id, const tl_object_ptr<td_api::InputCredentials> &credentials,
-                       int64 tip_amount, Promise<tl_object_ptr<td_api::paymentResult>> &&promise) {
-  TRY_RESULT_PROMISE(promise, server_message_id, td->messages_manager_->get_invoice_message_id(full_message_id));
+void send_payment_form(Td *td, td_api::object_ptr<td_api::InputInvoice> &&input_invoice, int64 payment_form_id,
+                       const string &order_info_id, const string &shipping_option_id,
+                       const td_api::object_ptr<td_api::InputCredentials> &credentials, int64 tip_amount,
+                       Promise<td_api::object_ptr<td_api::paymentResult>> &&promise) {
+  TRY_RESULT_PROMISE(promise, input_invoice_info, get_input_invoice_info(td, std::move(input_invoice)));
 
   if (credentials == nullptr) {
     return promise.set_error(Status::Error(400, "Input payment credentials must be non-empty"));
@@ -1254,7 +1367,7 @@ void send_payment_form(Td *td, FullMessageId full_message_id, int64 payment_form
   }
 
   td->create_handler<SendPaymentFormQuery>(std::move(promise))
-      ->send(full_message_id.get_dialog_id(), server_message_id, payment_form_id, order_info_id, shipping_option_id,
+      ->send(std::move(input_invoice_info), payment_form_id, order_info_id, shipping_option_id,
              std::move(input_credentials), tip_amount);
 }
 
@@ -1276,6 +1389,14 @@ void delete_saved_order_info(Td *td, Promise<Unit> &&promise) {
 
 void delete_saved_credentials(Td *td, Promise<Unit> &&promise) {
   td->create_handler<ClearSavedInfoQuery>(std::move(promise))->send(true, false);
+}
+
+void export_invoice(Td *td, td_api::object_ptr<td_api::InputMessageContent> &&invoice, Promise<string> &&promise) {
+  if (invoice == nullptr) {
+    return promise.set_error(Status::Error(400, "Invoice must be non-empty"));
+  }
+  TRY_RESULT_PROMISE(promise, input_invoice, process_input_message_invoice(std::move(invoice), td));
+  td->create_handler<ExportInvoiceQuery>(std::move(promise))->send(get_input_media_invoice(input_invoice, td));
 }
 
 void get_bank_card_info(Td *td, const string &bank_card_number,

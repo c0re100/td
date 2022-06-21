@@ -6,18 +6,30 @@
 //
 #include "td/telegram/DialogFilter.h"
 
+#include "td/telegram/ConfigShared.h"
 #include "td/telegram/DialogId.h"
+#include "td/telegram/Global.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/emoji.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
+#include "td/utils/misc.h"
 
 namespace td {
 
-unique_ptr<DialogFilter> DialogFilter::get_dialog_filter(telegram_api::object_ptr<telegram_api::dialogFilter> filter,
-                                                         bool with_id) {
+int32 DialogFilter::get_max_filter_dialogs() {
+  return narrow_cast<int32>(G()->shared_config().get_option_integer("chat_filter_chosen_chat_count_max", 100));
+}
+
+unique_ptr<DialogFilter> DialogFilter::get_dialog_filter(
+    telegram_api::object_ptr<telegram_api::DialogFilter> filter_ptr, bool with_id) {
+  if (filter_ptr->get_id() != telegram_api::dialogFilter::ID) {
+    LOG(ERROR) << "Ignore " << to_string(filter_ptr);
+    return nullptr;
+  }
+  auto filter = telegram_api::move_object_as<telegram_api::dialogFilter>(filter_ptr);
   DialogFilterId dialog_filter_id(filter->id_);
   if (with_id && !dialog_filter_id.is_valid()) {
     LOG(ERROR) << "Receive invalid " << to_string(filter);
@@ -87,16 +99,15 @@ Status DialogFilter::check_limits() const {
   auto included_secret_dialog_count = static_cast<int32>(included_dialog_ids.size()) - included_server_dialog_count;
   auto pinned_secret_dialog_count = static_cast<int32>(pinned_dialog_ids.size()) - pinned_server_dialog_count;
 
-  if (excluded_server_dialog_count > MAX_INCLUDED_FILTER_DIALOGS ||
-      excluded_secret_dialog_count > MAX_INCLUDED_FILTER_DIALOGS) {
+  auto limit = get_max_filter_dialogs();
+  if (excluded_server_dialog_count > limit || excluded_secret_dialog_count > limit) {
     return Status::Error(400, "The maximum number of excluded chats exceeded");
   }
-  if (included_server_dialog_count > MAX_INCLUDED_FILTER_DIALOGS ||
-      included_secret_dialog_count > MAX_INCLUDED_FILTER_DIALOGS) {
+  if (included_server_dialog_count > limit || included_secret_dialog_count > limit) {
     return Status::Error(400, "The maximum number of included chats exceeded");
   }
-  if (included_server_dialog_count + pinned_server_dialog_count > MAX_INCLUDED_FILTER_DIALOGS ||
-      included_secret_dialog_count + pinned_secret_dialog_count > MAX_INCLUDED_FILTER_DIALOGS) {
+  if (included_server_dialog_count + pinned_server_dialog_count > limit ||
+      included_secret_dialog_count + pinned_secret_dialog_count > limit) {
     return Status::Error(400, "The maximum number of pinned chats exceeded");
   }
 
@@ -205,7 +216,7 @@ string DialogFilter::get_default_icon_name(const td_api::chatFilter *filter) {
   return "Custom";
 }
 
-telegram_api::object_ptr<telegram_api::dialogFilter> DialogFilter::get_input_dialog_filter() const {
+telegram_api::object_ptr<telegram_api::DialogFilter> DialogFilter::get_input_dialog_filter() const {
   int32 flags = 0;
   if (!emoji.empty()) {
     flags |= telegram_api::dialogFilter::EMOTICON_MASK;

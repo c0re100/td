@@ -2865,6 +2865,9 @@ string NotificationManager::convert_loc_key(const string &loc_key) {
       if (loc_key == "MESSAGE_ROUND") {
         return "MESSAGE_VIDEO_NOTE";
       }
+      if (loc_key == "MESSAGE_RECURRING_PAY") {
+        return "MESSAGE_RECURRING_PAYMENT";
+      }
       break;
     case 'S':
       if (loc_key == "MESSAGE_SCREENSHOT") {
@@ -3049,7 +3052,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
 
   if (loc_key == "SESSION_REVOKE") {
     if (was_encrypted) {
-      send_closure(td_->auth_manager_actor_, &AuthManager::on_authorization_lost, "SESSION_REVOKE");
+      G()->log_out("SESSION_REVOKE");
     } else {
       LOG(ERROR) << "Receive unencrypted SESSION_REVOKE push notification";
     }
@@ -3201,7 +3204,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
       return Status::Error("Receive wrong chat type");
     }
 
-    if (begins_with(loc_key, "CHAT_MESSAGE") || loc_key == "CHAT_ALBUM") {
+    if (begins_with(loc_key, "CHAT_MESSAGE") || begins_with(loc_key, "CHAT_REACT") || loc_key == "CHAT_ALBUM") {
       loc_key = loc_key.substr(5);
     }
     if (loc_args.empty()) {
@@ -3230,6 +3233,11 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
   if (begins_with(loc_key, "PHONE_CALL_") || begins_with(loc_key, "VIDEO_CALL_")) {
     // TODO PHONE_CALL_REQUEST/PHONE_CALL_DECLINE/PHONE_CALL_MISSED/VIDEO_CALL_REQUEST/VIDEO_CALL_MISSED notifications
     return Status::Error(406, "Phone call notification is not supported");
+  }
+
+  if (begins_with(loc_key, "REACT_")) {
+    // TODO REACT_* notifications
+    return Status::Error(406, "Reaction notifications are unsupported");
   }
 
   loc_key = convert_loc_key(loc_key);
@@ -3297,8 +3305,8 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, sender_user_id.get(), sender_access_hash, user_name, string(), string(), string(),
-        std::move(sender_photo), nullptr, 0, Auto(), string(), string());
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, sender_user_id.get(), sender_access_hash, user_name,
+        string(), string(), string(), std::move(sender_photo), nullptr, 0, Auto(), string(), string());
     td_->contacts_manager_->on_get_user(std::move(user), "process_push_notification_payload");
   }
 
@@ -3655,8 +3663,8 @@ void NotificationManager::add_message_push_notification(DialogId dialog_id, Mess
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, sender_user_id.get(), 0, user_name, string(), string(), string(), nullptr, nullptr, 0,
-        Auto(), string(), string());
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, sender_user_id.get(), 0, user_name, string(), string(),
+        string(), nullptr, nullptr, 0, Auto(), string(), string());
     td_->contacts_manager_->on_get_user(std::move(user), "add_message_push_notification");
   }
 

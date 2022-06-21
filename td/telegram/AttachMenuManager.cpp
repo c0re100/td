@@ -39,6 +39,7 @@ class RequestWebViewQuery final : public Td::ResultHandler {
   DialogId dialog_id_;
   UserId bot_user_id_;
   MessageId reply_to_message_id_;
+  DialogId as_dialog_id_;
   bool from_attach_menu_ = false;
 
  public:
@@ -47,10 +48,12 @@ class RequestWebViewQuery final : public Td::ResultHandler {
   }
 
   void send(DialogId dialog_id, UserId bot_user_id, tl_object_ptr<telegram_api::InputUser> &&input_user, string &&url,
-            td_api::object_ptr<td_api::themeParameters> &&theme, MessageId reply_to_message_id, bool silent) {
+            td_api::object_ptr<td_api::themeParameters> &&theme, MessageId reply_to_message_id, bool silent,
+            DialogId as_dialog_id) {
     dialog_id_ = dialog_id;
     bot_user_id_ = bot_user_id;
     reply_to_message_id_ = reply_to_message_id;
+    as_dialog_id_ = as_dialog_id;
 
     int32 flags = 0;
 
@@ -90,9 +93,17 @@ class RequestWebViewQuery final : public Td::ResultHandler {
       flags |= telegram_api::messages_requestWebView::SILENT_MASK;
     }
 
+    tl_object_ptr<telegram_api::InputPeer> as_input_peer;
+    if (as_dialog_id.is_valid()) {
+      as_input_peer = td_->messages_manager_->get_input_peer(as_dialog_id, AccessRights::Write);
+      if (as_input_peer != nullptr) {
+        flags |= telegram_api::messages_requestWebView::SEND_AS_MASK;
+      }
+    }
+
     send_query(G()->net_query_creator().create(telegram_api::messages_requestWebView(
         flags, false /*ignored*/, false /*ignored*/, std::move(input_peer), std::move(input_user), url, start_parameter,
-        std::move(theme_parameters), reply_to_message_id.get_server_message_id().get())));
+        std::move(theme_parameters), reply_to_message_id.get_server_message_id().get(), std::move(as_input_peer))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -102,7 +113,8 @@ class RequestWebViewQuery final : public Td::ResultHandler {
     }
 
     auto ptr = result_ptr.move_as_ok();
-    td_->attach_menu_manager_->open_web_view(ptr->query_id_, dialog_id_, bot_user_id_, reply_to_message_id_);
+    td_->attach_menu_manager_->open_web_view(ptr->query_id_, dialog_id_, bot_user_id_, reply_to_message_id_,
+                                             as_dialog_id_);
     promise_.set_value(td_api::make_object<td_api::webAppInfo>(ptr->query_id_, ptr->url_));
   }
 
@@ -120,7 +132,8 @@ class ProlongWebViewQuery final : public Td::ResultHandler {
   DialogId dialog_id_;
 
  public:
-  void send(DialogId dialog_id, UserId bot_user_id, int64 query_id, MessageId reply_to_message_id, bool silent) {
+  void send(DialogId dialog_id, UserId bot_user_id, int64 query_id, MessageId reply_to_message_id, bool silent,
+            DialogId as_dialog_id) {
     dialog_id_ = dialog_id;
 
     auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
@@ -133,13 +146,22 @@ class ProlongWebViewQuery final : public Td::ResultHandler {
     if (reply_to_message_id.is_valid()) {
       flags |= telegram_api::messages_prolongWebView::REPLY_TO_MSG_ID_MASK;
     }
+
     if (silent) {
       flags |= telegram_api::messages_prolongWebView::SILENT_MASK;
     }
 
+    tl_object_ptr<telegram_api::InputPeer> as_input_peer;
+    if (as_dialog_id.is_valid()) {
+      as_input_peer = td_->messages_manager_->get_input_peer(as_dialog_id, AccessRights::Write);
+      if (as_input_peer != nullptr) {
+        flags |= telegram_api::messages_prolongWebView::SEND_AS_MASK;
+      }
+    }
+
     send_query(G()->net_query_creator().create(telegram_api::messages_prolongWebView(
         flags, false /*ignored*/, std::move(input_peer), r_input_user.move_as_ok(), query_id,
-        reply_to_message_id.get_server_message_id().get())));
+        reply_to_message_id.get_server_message_id().get(), std::move(as_input_peer))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -268,12 +290,18 @@ void AttachMenuManager::AttachMenuBotColor::parse(ParserT &parser) {
 }
 
 bool operator==(const AttachMenuManager::AttachMenuBot &lhs, const AttachMenuManager::AttachMenuBot &rhs) {
-  return lhs.user_id_ == rhs.user_id_ && lhs.name_ == rhs.name_ &&
+  return lhs.user_id_ == rhs.user_id_ && lhs.supports_self_dialog_ == rhs.supports_self_dialog_ &&
+         lhs.supports_user_dialogs_ == rhs.supports_user_dialogs_ &&
+         lhs.supports_bot_dialogs_ == rhs.supports_bot_dialogs_ &&
+         lhs.supports_group_dialogs_ == rhs.supports_group_dialogs_ &&
+         lhs.supports_broadcast_dialogs_ == rhs.supports_broadcast_dialogs_ &&
+         lhs.supports_settings_ == rhs.supports_settings_ && lhs.name_ == rhs.name_ &&
          lhs.default_icon_file_id_ == rhs.default_icon_file_id_ &&
          lhs.ios_static_icon_file_id_ == rhs.ios_static_icon_file_id_ &&
          lhs.ios_animated_icon_file_id_ == rhs.ios_animated_icon_file_id_ &&
          lhs.android_icon_file_id_ == rhs.android_icon_file_id_ && lhs.macos_icon_file_id_ == rhs.macos_icon_file_id_ &&
-         lhs.is_added_ == rhs.is_added_ && lhs.name_color_ == rhs.name_color_ && lhs.icon_color_ == rhs.icon_color_;
+         lhs.is_added_ == rhs.is_added_ && lhs.name_color_ == rhs.name_color_ && lhs.icon_color_ == rhs.icon_color_ &&
+         lhs.placeholder_file_id_ == rhs.placeholder_file_id_;
 }
 
 bool operator!=(const AttachMenuManager::AttachMenuBot &lhs, const AttachMenuManager::AttachMenuBot &rhs) {
@@ -288,6 +316,9 @@ void AttachMenuManager::AttachMenuBot::store(StorerT &storer) const {
   bool has_macos_icon_file_id = macos_icon_file_id_.is_valid();
   bool has_name_color = name_color_ != AttachMenuBotColor();
   bool has_icon_color = icon_color_ != AttachMenuBotColor();
+  bool has_support_flags = true;
+  bool has_placeholder_file_id = placeholder_file_id_.is_valid();
+  bool has_cache_version = cache_version_ != 0;
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_ios_static_icon_file_id);
   STORE_FLAG(has_ios_animated_icon_file_id);
@@ -296,6 +327,15 @@ void AttachMenuManager::AttachMenuBot::store(StorerT &storer) const {
   STORE_FLAG(is_added_);
   STORE_FLAG(has_name_color);
   STORE_FLAG(has_icon_color);
+  STORE_FLAG(has_support_flags);
+  STORE_FLAG(supports_self_dialog_);
+  STORE_FLAG(supports_user_dialogs_);
+  STORE_FLAG(supports_bot_dialogs_);
+  STORE_FLAG(supports_group_dialogs_);
+  STORE_FLAG(supports_broadcast_dialogs_);
+  STORE_FLAG(supports_settings_);
+  STORE_FLAG(has_placeholder_file_id);
+  STORE_FLAG(has_cache_version);
   END_STORE_FLAGS();
   td::store(user_id_, storer);
   td::store(name_, storer);
@@ -318,6 +358,12 @@ void AttachMenuManager::AttachMenuBot::store(StorerT &storer) const {
   if (has_icon_color) {
     td::store(icon_color_, storer);
   }
+  if (has_placeholder_file_id) {
+    td::store(placeholder_file_id_, storer);
+  }
+  if (has_cache_version) {
+    td::store(cache_version_, storer);
+  }
 }
 
 template <class ParserT>
@@ -328,6 +374,9 @@ void AttachMenuManager::AttachMenuBot::parse(ParserT &parser) {
   bool has_macos_icon_file_id;
   bool has_name_color;
   bool has_icon_color;
+  bool has_support_flags;
+  bool has_placeholder_file_id;
+  bool has_cache_version;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_ios_static_icon_file_id);
   PARSE_FLAG(has_ios_animated_icon_file_id);
@@ -336,6 +385,15 @@ void AttachMenuManager::AttachMenuBot::parse(ParserT &parser) {
   PARSE_FLAG(is_added_);
   PARSE_FLAG(has_name_color);
   PARSE_FLAG(has_icon_color);
+  PARSE_FLAG(has_support_flags);
+  PARSE_FLAG(supports_self_dialog_);
+  PARSE_FLAG(supports_user_dialogs_);
+  PARSE_FLAG(supports_bot_dialogs_);
+  PARSE_FLAG(supports_group_dialogs_);
+  PARSE_FLAG(supports_broadcast_dialogs_);
+  PARSE_FLAG(supports_settings_);
+  PARSE_FLAG(has_placeholder_file_id);
+  PARSE_FLAG(has_cache_version);
   END_PARSE_FLAGS();
   td::parse(user_id_, parser);
   td::parse(name_, parser);
@@ -357,6 +415,18 @@ void AttachMenuManager::AttachMenuBot::parse(ParserT &parser) {
   }
   if (has_icon_color) {
     td::parse(icon_color_, parser);
+  }
+  if (has_placeholder_file_id) {
+    td::parse(placeholder_file_id_, parser);
+  }
+  if (has_cache_version) {
+    td::parse(cache_version_, parser);
+  }
+
+  if (!has_support_flags) {
+    supports_self_dialog_ = true;
+    supports_user_dialogs_ = true;
+    supports_bot_dialogs_ = true;
   }
 }
 
@@ -425,7 +495,13 @@ void AttachMenuManager::init() {
         dependencies.add(attach_menu_bot.user_id_);
       }
       if (is_valid && dependencies.resolve_force(td_, "AttachMenuBotsLogEvent")) {
-        hash_ = attach_menu_bots_log_event.hash_;
+        bool is_cache_outdated = false;
+        for (auto &bot : attach_menu_bots_log_event.attach_menu_bots_) {
+          if (bot.cache_version_ != AttachMenuBot::CACHE_VERSION) {
+            is_cache_outdated = true;
+          }
+        }
+        hash_ = is_cache_outdated ? 0 : attach_menu_bots_log_event.hash_;
         attach_menu_bots_ = std::move(attach_menu_bots_log_event.attach_menu_bots_);
       } else {
         LOG(ERROR) << "Ignore invalid attachment menu bots log event";
@@ -493,7 +569,8 @@ void AttachMenuManager::ping_web_view() {
     const auto &opened_web_view = it.second;
     bool silent = td_->messages_manager_->get_dialog_silent_send_message(opened_web_view.dialog_id_);
     td_->create_handler<ProlongWebViewQuery>()->send(opened_web_view.dialog_id_, opened_web_view.bot_user_id_, it.first,
-                                                     opened_web_view.reply_to_message_id_, silent);
+                                                     opened_web_view.reply_to_message_id_, silent,
+                                                     opened_web_view.as_dialog_id_);
   }
 
   schedule_ping_web_view();
@@ -517,12 +594,12 @@ void AttachMenuManager::request_web_view(DialogId dialog_id, UserId bot_user_id,
 
   switch (dialog_id.get_type()) {
     case DialogType::User:
-      // ok
-      break;
     case DialogType::Chat:
     case DialogType::Channel:
+      // ok
+      break;
     case DialogType::SecretChat:
-      return promise.set_error(Status::Error(400, "Web apps can be opened only in private chats"));
+      return promise.set_error(Status::Error(400, "Web Apps can't be opened in secret chats"));
     case DialogType::None:
     default:
       UNREACHABLE();
@@ -538,16 +615,17 @@ void AttachMenuManager::request_web_view(DialogId dialog_id, UserId bot_user_id,
   }
 
   bool silent = td_->messages_manager_->get_dialog_silent_send_message(dialog_id);
+  DialogId as_dialog_id = td_->messages_manager_->get_dialog_default_send_message_as_dialog_id(dialog_id);
 
   td_->create_handler<RequestWebViewQuery>(std::move(promise))
       ->send(dialog_id, bot_user_id, std::move(input_user), std::move(url), std::move(theme), reply_to_message_id,
-             silent);
+             silent, as_dialog_id);
 }
 
 void AttachMenuManager::open_web_view(int64 query_id, DialogId dialog_id, UserId bot_user_id,
-                                      MessageId reply_to_message_id) {
+                                      MessageId reply_to_message_id, DialogId as_dialog_id) {
   if (query_id == 0) {
-    LOG(ERROR) << "Receive web app query identifier == 0";
+    LOG(ERROR) << "Receive Web App query identifier == 0";
     return;
   }
 
@@ -558,6 +636,7 @@ void AttachMenuManager::open_web_view(int64 query_id, DialogId dialog_id, UserId
   opened_web_view.dialog_id_ = dialog_id;
   opened_web_view.bot_user_id_ = bot_user_id;
   opened_web_view.reply_to_message_id_ = reply_to_message_id;
+  opened_web_view.as_dialog_id_ = as_dialog_id;
   opened_web_views_.emplace(query_id, std::move(opened_web_view));
 }
 
@@ -589,7 +668,7 @@ Result<AttachMenuManager::AttachMenuBot> AttachMenuManager::get_attach_menu_bot(
     CHECK(document_id == telegram_api::document::ID);
 
     if (name != "default_static" && name != "ios_static" && name != "ios_animated" && name != "android_animated" &&
-        name != "macos_animated") {
+        name != "macos_animated" && name != "placeholder_static") {
       LOG(ERROR) << "Have icon for " << user_id << " with name " << name;
       continue;
     }
@@ -598,9 +677,7 @@ Result<AttachMenuManager::AttachMenuBot> AttachMenuManager::get_attach_menu_bot(
     auto parsed_document =
         td_->documents_manager_->on_get_document(move_tl_object_as<telegram_api::document>(icon->icon_), DialogId());
     if (parsed_document.type != expected_document_type) {
-      if (user_id != UserId(static_cast<int64>(5000860301)) || !G()->is_test_dc() || name != "macos_animated") {
-        LOG(ERROR) << "Receive wrong attachment menu bot icon \"" << name << "\" for " << user_id;
-      }
+      LOG(ERROR) << "Receive wrong attachment menu bot icon \"" << name << "\" for " << user_id;
       continue;
     }
     bool expect_colors = false;
@@ -620,6 +697,9 @@ Result<AttachMenuManager::AttachMenuBot> AttachMenuManager::get_attach_menu_bot(
         break;
       case '_':
         attach_menu_bot.macos_icon_file_id_ = parsed_document.file_id;
+        break;
+      case 'h':
+        attach_menu_bot.placeholder_file_id_ = parsed_document.file_id;
         break;
       default:
         UNREACHABLE();
@@ -671,10 +751,33 @@ Result<AttachMenuManager::AttachMenuBot> AttachMenuManager::get_attach_menu_bot(
       }
     }
   }
-
+  for (auto &peer_type : bot->peer_types_) {
+    switch (peer_type->get_id()) {
+      case telegram_api::attachMenuPeerTypeSameBotPM::ID:
+        attach_menu_bot.supports_self_dialog_ = true;
+        break;
+      case telegram_api::attachMenuPeerTypeBotPM::ID:
+        attach_menu_bot.supports_bot_dialogs_ = true;
+        break;
+      case telegram_api::attachMenuPeerTypePM::ID:
+        attach_menu_bot.supports_user_dialogs_ = true;
+        break;
+      case telegram_api::attachMenuPeerTypeChat::ID:
+        attach_menu_bot.supports_group_dialogs_ = true;
+        break;
+      case telegram_api::attachMenuPeerTypeBroadcast::ID:
+        attach_menu_bot.supports_broadcast_dialogs_ = true;
+        break;
+      default:
+        UNREACHABLE();
+        break;
+    }
+  }
+  attach_menu_bot.supports_settings_ = bot->has_settings_;
   if (!attach_menu_bot.default_icon_file_id_.is_valid()) {
     return Status::Error(PSLICE() << "Have no default icon for " << user_id);
   }
+  attach_menu_bot.cache_version_ = AttachMenuBot::CACHE_VERSION;
 
   return std::move(attach_menu_bot);
 }
@@ -872,11 +975,13 @@ td_api::object_ptr<td_api::attachmentMenuBot> AttachMenuManager::get_attachment_
   };
 
   return td_api::make_object<td_api::attachmentMenuBot>(
-      td_->contacts_manager_->get_user_id_object(bot.user_id_, "get_attachment_menu_bot_object"), bot.name_,
+      td_->contacts_manager_->get_user_id_object(bot.user_id_, "get_attachment_menu_bot_object"),
+      bot.supports_self_dialog_, bot.supports_user_dialogs_, bot.supports_bot_dialogs_, bot.supports_group_dialogs_,
+      bot.supports_broadcast_dialogs_, bot.supports_settings_, bot.name_,
       get_attach_menu_bot_color_object(bot.name_color_), get_file(bot.default_icon_file_id_),
       get_file(bot.ios_static_icon_file_id_), get_file(bot.ios_animated_icon_file_id_),
       get_file(bot.android_icon_file_id_), get_file(bot.macos_icon_file_id_),
-      get_attach_menu_bot_color_object(bot.icon_color_));
+      get_attach_menu_bot_color_object(bot.icon_color_), get_file(bot.placeholder_file_id_));
 }
 
 td_api::object_ptr<td_api::updateAttachmentMenuBots> AttachMenuManager::get_update_attachment_menu_bots_object() const {

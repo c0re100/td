@@ -179,8 +179,8 @@ void ConnectionCreator::add_proxy(int32 old_proxy_id, string server, int32 port,
       proxy_id = max_proxy_id_++;
       G()->td_db()->get_binlog_pmc()->set("proxy_max_id", to_string(max_proxy_id_));
     }
-    CHECK(proxies_.count(proxy_id) == 0);
-    proxies_.emplace(proxy_id, std::move(new_proxy));
+    bool is_inserted = proxies_.emplace(proxy_id, std::move(new_proxy)).second;
+    CHECK(is_inserted);
     G()->td_db()->get_binlog_pmc()->set(get_proxy_database_key(proxy_id),
                                         log_event_store(proxies_[proxy_id]).as_slice().str());
     return proxy_id;
@@ -420,7 +420,7 @@ void ConnectionCreator::set_active_proxy_id(int32 proxy_id, bool from_binlog) {
   if (!from_binlog) {
     if (proxy_id == 0) {
       G()->td_db()->get_binlog_pmc()->erase("proxy_active_id");
-      send_closure(G()->config_manager(), &ConfigManager::request_config);
+      send_closure(G()->config_manager(), &ConfigManager::request_config, false);
     } else {
       G()->td_db()->get_binlog_pmc()->set("proxy_active_id", to_string(proxy_id));
     }

@@ -201,29 +201,35 @@ void VideosManager::create_video(FileId file_id, string minithumbnail, PhotoSize
 
 SecretInputMedia VideosManager::get_secret_input_media(FileId video_file_id,
                                                        tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                                       const string &caption, BufferSlice thumbnail) const {
+                                                       const string &caption, BufferSlice thumbnail,
+                                                       int32 layer) const {
   const Video *video = get_video(video_file_id);
   CHECK(video != nullptr);
   auto file_view = td_->file_manager_->get_file_view(video_file_id);
-  auto &encryption_key = file_view.encryption_key();
-  if (!file_view.is_encrypted_secret() || encryption_key.empty()) {
+  if (!file_view.is_encrypted_secret() || file_view.encryption_key().empty()) {
     return SecretInputMedia{};
   }
   if (file_view.has_remote_location()) {
     input_file = file_view.main_remote_location().as_input_encrypted_file();
   }
   if (!input_file) {
-    return SecretInputMedia{};
+    return {};
   }
   if (video->thumbnail.file_id.is_valid() && thumbnail.empty()) {
     return {};
   }
-  return SecretInputMedia{
-      std::move(input_file),
-      make_tl_object<secret_api::decryptedMessageMediaVideo>(
-          std::move(thumbnail), video->thumbnail.dimensions.width, video->thumbnail.dimensions.height, video->duration,
-          video->mime_type, video->dimensions.width, video->dimensions.height, narrow_cast<int32>(file_view.size()),
-          BufferSlice(encryption_key.key_slice()), BufferSlice(encryption_key.iv_slice()), caption)};
+  vector<tl_object_ptr<secret_api::DocumentAttribute>> attributes;
+  attributes.emplace_back(make_tl_object<secret_api::documentAttributeVideo>(video->duration, video->dimensions.width,
+                                                                             video->dimensions.height));
+
+  return {std::move(input_file),
+          std::move(thumbnail),
+          video->thumbnail.dimensions,
+          video->mime_type,
+          file_view,
+          std::move(attributes),
+          caption,
+          layer};
 }
 
 tl_object_ptr<telegram_api::InputMedia> VideosManager::get_input_media(

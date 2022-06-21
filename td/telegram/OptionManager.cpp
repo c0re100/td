@@ -31,10 +31,12 @@
 #include "td/utils/buffer.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/port/Clocks.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 
 #include <cmath>
+#include <functional>
 #include <limits>
 
 namespace td {
@@ -92,6 +94,9 @@ OptionManager::OptionManager(Td *td, ActorShared<> parent) : td_(td), parent_(st
   if (!G()->shared_config().have_option("message_caption_length_max")) {
     G()->shared_config().set_option_integer("message_caption_length_max", 1024);
   }
+  if (!G()->shared_config().have_option("bio_length_max")) {
+    G()->shared_config().set_option_integer("bio_length_max", 70);
+  }
   if (!G()->shared_config().have_option("suggested_video_note_length")) {
     G()->shared_config().set_option_integer("suggested_video_note_length", 384);
   }
@@ -109,6 +114,12 @@ OptionManager::OptionManager(Td *td, ActorShared<> parent) : td_(td), parent_(st
   }
   if (!G()->shared_config().have_option("notification_sound_count_max")) {
     G()->shared_config().set_option_integer("notification_sound_count_max", G()->is_test_dc() ? 5 : 100);
+  }
+  if (!G()->shared_config().have_option("chat_filter_count_max")) {
+    G()->shared_config().set_option_integer("chat_filter_count_max", G()->is_test_dc() ? 3 : 10);
+  }
+  if (!G()->shared_config().have_option("chat_filter_chosen_chat_count_max")) {
+    G()->shared_config().set_option_integer("chat_filter_chosen_chat_count_max", G()->is_test_dc() ? 5 : 100);
   }
   G()->shared_config().set_option_integer("utc_time_offset", Clocks::tz_offset());
 }
@@ -149,17 +160,25 @@ void OptionManager::clear_options() {
 bool OptionManager::is_internal_option(Slice name) {
   switch (name[0]) {
     case 'a':
-      return name == "animated_emoji_zoom" || name == "animation_search_emojis" ||
+      return name == "about_length_limit_default" || name == "about_length_limit_premium" ||
+             name == "animated_emoji_zoom" || name == "animation_search_emojis" ||
              name == "animation_search_provider" || name == "auth";
     case 'b':
       return name == "base_language_pack_version";
     case 'c':
       return name == "call_receive_timeout_ms" || name == "call_ring_timeout_ms" ||
+             name == "caption_length_limit_default" || name == "caption_length_limit_premium" ||
+             name == "channels_limit_default" || name == "channels_limit_premium" ||
+             name == "channels_public_limit_default" || name == "channels_public_limit_premium" ||
              name == "channels_read_media_period" || name == "chat_read_mark_expire_period" ||
              name == "chat_read_mark_size_threshold";
     case 'd':
-      return name == "dc_txt_domain_name" || name == "default_reaction_needs_sync" || name == "dice_emojis" ||
-             name == "dice_success_values";
+      return name == "dc_txt_domain_name" || name == "default_reaction_needs_sync" ||
+             name == "dialog_filters_chats_limit_default" || name == "dialog_filters_chats_limit_premium" ||
+             name == "dialog_filters_limit_default" || name == "dialog_filters_limit_premium" ||
+             name == "dialogs_folder_pinned_limit_default" || name == "dialogs_folder_pinned_limit_premium" ||
+             name == "dialogs_pinned_limit_default" || name == "dialogs_pinned_limit_premium" ||
+             name == "dice_emojis" || name == "dice_success_values";
     case 'e':
       return name == "edit_time_limit" || name == "emoji_sounds";
     case 'i':
@@ -172,11 +191,16 @@ bool OptionManager::is_internal_option(Slice name) {
       return name == "notification_cloud_delay_ms" || name == "notification_default_delay_ms";
     case 'o':
       return name == "online_cloud_timeout_ms" || name == "online_update_period_ms" || name == "otherwise_relogin_days";
+    case 'p':
+      return name == "premium_bot_username" || name == "premium_features" || name == "premium_invoice_slug";
     case 'r':
       return name == "rating_e_decay" || name == "reactions_uniq_max" || name == "recent_stickers_limit" ||
              name == "revoke_pm_inbox" || name == "revoke_time_limit" || name == "revoke_pm_time_limit";
     case 's':
-      return name == "saved_animations_limit" || name == "session_count";
+      return name == "saved_animations_limit" || name == "saved_gifs_limit_default" ||
+             name == "saved_gifs_limit_premium" || name == "session_count" || name == "stickers_faved_limit_default" ||
+             name == "stickers_faved_limit_premium" || name == "stickers_normal_by_emoji_per_premium_num" ||
+             name == "stickers_premium_by_emoji_num";
     case 'v':
       return name == "video_note_size_max";
     case 'w':
@@ -418,14 +442,14 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
     if (name != option_name) {
       return false;
     }
-    if (value_constructor_id != td_api::optionValueInteger::ID &&
-        value_constructor_id != td_api::optionValueEmpty::ID) {
-      promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have integer value"));
-      return false;
-    }
     if (value_constructor_id == td_api::optionValueEmpty::ID) {
       G()->shared_config().set_option_empty(option_name);
     } else {
+      if (value_constructor_id != td_api::optionValueInteger::ID) {
+        promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have integer value"));
+        return false;
+      }
+
       int64 int_value = static_cast<td_api::optionValueInteger *>(value.get())->value_;
       if (int_value < min_value || int_value > max_value) {
         promise.set_error(Status::Error(400, PSLICE() << "Option's \"" << name << "\" value " << int_value
@@ -443,14 +467,14 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
     if (name != option_name) {
       return false;
     }
-    if (value_constructor_id != td_api::optionValueBoolean::ID &&
-        value_constructor_id != td_api::optionValueEmpty::ID) {
-      promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have boolean value"));
-      return false;
-    }
     if (value_constructor_id == td_api::optionValueEmpty::ID) {
       G()->shared_config().set_option_empty(name);
     } else {
+      if (value_constructor_id != td_api::optionValueBoolean::ID) {
+        promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have boolean value"));
+        return false;
+      }
+
       bool bool_value = static_cast<td_api::optionValueBoolean *>(value.get())->value_;
       G()->shared_config().set_option_boolean(name, bool_value);
     }
@@ -458,17 +482,18 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
     return true;
   };
 
-  auto set_string_option = [&](Slice option_name, auto check_value) {
+  auto set_string_option = [&](Slice option_name, std::function<bool(Slice)> check_value) {
     if (name != option_name) {
-      return false;
-    }
-    if (value_constructor_id != td_api::optionValueString::ID && value_constructor_id != td_api::optionValueEmpty::ID) {
-      promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have string value"));
       return false;
     }
     if (value_constructor_id == td_api::optionValueEmpty::ID) {
       G()->shared_config().set_option_empty(name);
     } else {
+      if (value_constructor_id != td_api::optionValueString::ID) {
+        promise.set_error(Status::Error(400, PSLICE() << "Option \"" << name << "\" must have string value"));
+        return false;
+      }
+
       const string &str_value = static_cast<td_api::optionValueString *>(value.get())->value_;
       if (str_value.empty()) {
         G()->shared_config().set_option_empty(name);
@@ -623,10 +648,10 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
         }
         bool is_online = value_constructor_id == td_api::optionValueEmpty::ID ||
                          static_cast<const td_api::optionValueBoolean *>(value.get())->value_;
+        td_->set_is_online(is_online);
         if (!is_bot) {
           send_closure(td_->state_manager_, &StateManager::on_online, is_online);
         }
-        td_->set_is_online(is_online);
         return promise.set_value(Unit());
       }
       break;

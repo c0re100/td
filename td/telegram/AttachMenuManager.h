@@ -35,7 +35,8 @@ class AttachMenuManager final : public Actor {
                         td_api::object_ptr<td_api::themeParameters> &&theme,
                         Promise<td_api::object_ptr<td_api::webAppInfo>> &&promise);
 
-  void open_web_view(int64 query_id, DialogId dialog_id, UserId bot_user_id, MessageId reply_to_message_id);
+  void open_web_view(int64 query_id, DialogId dialog_id, UserId bot_user_id, MessageId reply_to_message_id,
+                     DialogId as_dialog_id);
 
   void close_web_view(int64 query_id, Promise<Unit> &&promise);
 
@@ -74,6 +75,12 @@ class AttachMenuManager final : public Actor {
   struct AttachMenuBot {
     bool is_added_ = false;
     UserId user_id_;
+    bool supports_self_dialog_ = false;
+    bool supports_user_dialogs_ = false;
+    bool supports_bot_dialogs_ = false;
+    bool supports_group_dialogs_ = false;
+    bool supports_broadcast_dialogs_ = false;
+    bool supports_settings_ = false;
     string name_;
     AttachMenuBotColor name_color_;
     FileId default_icon_file_id_;
@@ -82,6 +89,10 @@ class AttachMenuManager final : public Actor {
     FileId android_icon_file_id_;
     FileId macos_icon_file_id_;
     AttachMenuBotColor icon_color_;
+    FileId placeholder_file_id_;
+
+    static constexpr uint32 CACHE_VERSION = 1;
+    uint32 cache_version_ = 0;
 
     template <class StorerT>
     void store(StorerT &storer) const;
@@ -138,6 +149,7 @@ class AttachMenuManager final : public Actor {
     DialogId dialog_id_;
     UserId bot_user_id_;
     MessageId reply_to_message_id_;
+    DialogId as_dialog_id_;
   };
   FlatHashMap<int64, OpenedWebView> opened_web_views_;
   Timeout ping_web_view_timeout_;

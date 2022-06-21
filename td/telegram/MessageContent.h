@@ -30,7 +30,6 @@
 
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
-#include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 
 #include <utility>
@@ -103,13 +102,13 @@ unique_ptr<MessageContent> create_screenshot_taken_message_content();
 unique_ptr<MessageContent> create_chat_set_ttl_message_content(int32 ttl);
 
 Result<InputMessageContent> get_input_message_content(
-    DialogId dialog_id, tl_object_ptr<td_api::InputMessageContent> &&input_message_content, Td *td);
+    DialogId dialog_id, tl_object_ptr<td_api::InputMessageContent> &&input_message_content, Td *td, bool is_premium);
 
-bool can_have_input_media(const Td *td, const MessageContent *content);
+bool can_have_input_media(const Td *td, const MessageContent *content, bool is_server);
 
 SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
                                         tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                        BufferSlice thumbnail);
+                                        BufferSlice thumbnail, int32 layer);
 
 tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td,
                                                         tl_object_ptr<telegram_api::InputFile> input_file,
@@ -185,14 +184,14 @@ unique_ptr<MessageContent> get_secret_message_content(
     Td *td, string message_text, unique_ptr<EncryptedFile> file,
     tl_object_ptr<secret_api::DecryptedMessageMedia> &&media,
     vector<tl_object_ptr<secret_api::MessageEntity>> &&secret_entities, DialogId owner_dialog_id,
-    MultiPromiseActor &load_data_multipromise);
+    MultiPromiseActor &load_data_multipromise, bool is_premium);
 
 unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message_text,
                                                tl_object_ptr<telegram_api::MessageMedia> &&media,
                                                DialogId owner_dialog_id, bool is_content_read, UserId via_bot_user_id,
                                                int32 *ttl, bool *disable_web_page_preview);
 
-enum class MessageContentDupType : int32 { Send, SendViaBot, Forward, Copy };
+enum class MessageContentDupType : int32 { Send, SendViaBot, Forward, Copy, ServerCopy };
 
 unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const MessageContent *content,
                                                MessageContentDupType type, MessageCopyOptions &&copy_options);
@@ -232,7 +231,7 @@ void get_message_content_animated_emoji_click_sticker(const MessageContent *cont
                                                       Td *td, Promise<td_api::object_ptr<td_api::sticker>> &&promise);
 
 void on_message_content_animated_emoji_clicked(const MessageContent *content, FullMessageId full_message_id, Td *td,
-                                               Slice emoji, string data);
+                                               string &&emoji, string &&data);
 
 bool need_reget_message_content(const MessageContent *content);
 

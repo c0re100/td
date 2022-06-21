@@ -13,6 +13,7 @@
 #include "td/telegram/net/NetQueryStats.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/TdCallback.h"
+#include "td/telegram/TdDb.h"
 #include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/TermsOfService.h"
@@ -101,7 +102,7 @@ class Td final : public Actor {
   Td &operator=(Td &&) = delete;
   ~Td() final;
 
-  static constexpr const char *TDLIB_VERSION = "1.8.3";
+  static constexpr const char *TDLIB_VERSION = "1.8.4";
 
   struct Options {
     std::shared_ptr<NetQueryStats> net_query_stats;
@@ -136,7 +137,6 @@ class Td final : public Actor {
   unique_ptr<DocumentsManager> documents_manager_;
   unique_ptr<VideoNotesManager> video_notes_manager_;
   unique_ptr<VideosManager> videos_manager_;
-  unique_ptr<VoiceNotesManager> voice_notes_manager_;
 
   unique_ptr<AnimationsManager> animations_manager_;
   ActorOwn<AnimationsManager> animations_manager_actor_;
@@ -184,6 +184,8 @@ class Td final : public Actor {
   ActorOwn<TopDialogManager> top_dialog_manager_actor_;
   unique_ptr<UpdatesManager> updates_manager_;
   ActorOwn<UpdatesManager> updates_manager_actor_;
+  unique_ptr<VoiceNotesManager> voice_notes_manager_;
+  ActorOwn<VoiceNotesManager> voice_notes_manager_actor_;
   unique_ptr<WebPagesManager> web_pages_manager_;
   ActorOwn<WebPagesManager> web_pages_manager_actor_;
 
@@ -255,6 +257,8 @@ class Td final : public Actor {
 
   void on_connection_state_changed(ConnectionState new_state);
 
+  void run_request(uint64 id, tl_object_ptr<td_api::Function> function);
+
   void send_result(uint64 id, tl_object_ptr<td_api::Object> object);
   void send_error(uint64 id, Status error);
   void send_error_impl(uint64 id, tl_object_ptr<td_api::error> error);
@@ -291,6 +295,8 @@ class Td final : public Actor {
   int close_flag_ = 0;
 
   enum class State : int32 { WaitParameters, Decrypt, Run, Close } state_ = State::WaitParameters;
+  uint64 init_request_id_ = 0;
+  uint64 set_parameters_request_id_ = 0;
   bool is_database_encrypted_ = false;
 
   FlatHashMap<uint64, std::shared_ptr<ResultHandler>> result_handlers_;
@@ -308,13 +314,16 @@ class Td final : public Actor {
   TermsOfService pending_terms_of_service_;
 
   struct DownloadInfo {
-    int32 offset = -1;
-    int32 limit = -1;
+    int64 offset = -1;
+    int64 limit = -1;
     vector<uint64> request_ids;
   };
   FlatHashMap<FileId, DownloadInfo, FileIdHash> pending_file_downloads_;
 
   vector<std::pair<uint64, td_api::object_ptr<td_api::Function>>> pending_preauthentication_requests_;
+
+  vector<std::pair<uint64, td_api::object_ptr<td_api::Function>>> pending_set_parameters_requests_;
+  vector<std::pair<uint64, td_api::object_ptr<td_api::Function>>> pending_init_requests_;
 
   template <class T>
   void complete_pending_preauthentication_requests(const T &func);
@@ -525,6 +534,10 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::getMessageLinkInfo &request);
 
   void on_request(uint64 id, td_api::translateText &request);
+
+  void on_request(uint64 id, const td_api::recognizeSpeech &request);
+
+  void on_request(uint64 id, const td_api::rateSpeechRecognition &request);
 
   void on_request(uint64 id, const td_api::getFile &request);
 
@@ -1026,6 +1039,10 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::toggleSupergroupSignMessages &request);
 
+  void on_request(uint64 id, const td_api::toggleSupergroupJoinToSendMessages &request);
+
+  void on_request(uint64 id, const td_api::toggleSupergroupJoinByRequest &request);
+
   void on_request(uint64 id, const td_api::toggleSupergroupIsAllHistoryAvailable &request);
 
   void on_request(uint64 id, const td_api::toggleSupergroupIsBroadcastGroup &request);
@@ -1097,6 +1114,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::searchEmojis &request);
 
   void on_request(uint64 id, td_api::getAnimatedEmoji &request);
+
+  void on_request(uint64 id, const td_api::getAllAnimatedEmojis &request);
 
   void on_request(uint64 id, td_api::getEmojiSuggestionsUrl &request);
 
@@ -1196,7 +1215,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::getBankCardInfo &request);
 
-  void on_request(uint64 id, const td_api::getPaymentForm &request);
+  void on_request(uint64 id, td_api::getPaymentForm &request);
 
   void on_request(uint64 id, td_api::validateOrderInfo &request);
 
@@ -1209,6 +1228,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::deleteSavedOrderInfo &request);
 
   void on_request(uint64 id, const td_api::deleteSavedCredentials &request);
+
+  void on_request(uint64 id, td_api::createInvoiceLink &request);
 
   void on_request(uint64 id, td_api::getPassportElement &request);
 
@@ -1273,6 +1294,18 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::searchHashtags &request);
 
   void on_request(uint64 id, td_api::removeRecentHashtag &request);
+
+  void on_request(uint64 id, const td_api::getPremiumLimit &request);
+
+  void on_request(uint64 id, const td_api::getPremiumFeatures &request);
+
+  void on_request(uint64 id, const td_api::getPremiumStickers &request);
+
+  void on_request(uint64 id, const td_api::viewPremiumFeature &request);
+
+  void on_request(uint64 id, const td_api::clickPremiumSubscriptionButton &request);
+
+  void on_request(uint64 id, const td_api::getPremiumState &request);
 
   void on_request(uint64 id, td_api::acceptTermsOfService &request);
 
@@ -1394,14 +1427,33 @@ class Td final : public Actor {
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::testReturnError &request);
 
   static DbKey as_db_key(string key);
-  Status init(DbKey key) TD_WARN_UNUSED_RESULT;
+
+  static int32 get_database_scheduler_id();
+
+  void on_parameters_checked(Result<TdDb::CheckedParameters> r_checked_parameters);
+
+  void finish_set_parameters();
+
+  void start_init(uint64 id, string &&key);
+
+  void init(Result<TdDb::OpenedDatabase> r_opened_database);
+
   void init_options_and_network();
+
   void init_connection_creator();
+
   void init_file_manager();
+
   void init_managers();
+
+  void finish_init();
+
   void clear();
+
   void close_impl(bool destroy_flag);
+
   static Status fix_parameters(TdParameters &parameters) TD_WARN_UNUSED_RESULT;
+
   Status set_parameters(td_api::object_ptr<td_api::tdlibParameters> parameters) TD_WARN_UNUSED_RESULT;
 
   static td_api::object_ptr<td_api::error> make_error(int32 code, CSlice error) {

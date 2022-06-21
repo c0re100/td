@@ -352,9 +352,9 @@ class CliClient final : public Actor {
     int64 id = 0;
     string destination;
     string source;
-    int32 part_size = 0;
-    int32 local_size = 0;
-    int32 size = 0;
+    int64 part_size = 0;
+    int64 local_size = 0;
+    int64 size = 0;
     bool test_local_size_decrease = false;
   };
 
@@ -372,14 +372,14 @@ class CliClient final : public Actor {
       return;
     } else {
       file_generation.source = update.original_path_;
-      file_generation.part_size = to_integer<int32>(update.conversion_);
+      file_generation.part_size = to_integer<int64>(update.conversion_);
       file_generation.test_local_size_decrease = !update.conversion_.empty() && update.conversion_.back() == 't';
     }
 
     auto r_stat = stat(file_generation.source);
     if (r_stat.is_ok()) {
       auto size = r_stat.ok().size_;
-      if (size <= 0 || size > (2000 << 20)) {
+      if (size <= 0 || size > (static_cast<int64>(4000) << 20)) {
         r_stat = Status::Error(400, size == 0 ? Slice("File is empty") : Slice("File is too big"));
       }
     }
@@ -410,6 +410,8 @@ class CliClient final : public Actor {
         parameters->system_language_code_ = "en";
         parameters->device_model_ = "Desktop";
         parameters->application_version_ = "1.0";
+        send_request(
+            td_api::make_object<td_api::setOption>("use_pfs", td_api::make_object<td_api::optionValueBoolean>(true)));
         send_request(td_api::make_object<td_api::setTdlibParameters>(std::move(parameters)));
         break;
       }
@@ -434,7 +436,7 @@ class CliClient final : public Actor {
   static char get_delimiter(Slice str) {
     FlatHashSet<char> chars;
     for (auto c : trim(str)) {
-      if (!is_alnum(c) && c != '-' && c != '.' && c != '/' && c != '\0' && static_cast<uint8>(c) <= 127) {
+      if (!is_alnum(c) && c != '-' && c != '@' && c != '.' && c != '/' && c != '\0' && static_cast<uint8>(c) <= 127) {
         chars.insert(c);
       }
     }
@@ -635,7 +637,7 @@ class CliClient final : public Actor {
   }
 
   static td_api::object_ptr<td_api::InputFile> as_generated_file(string original_path, string conversion,
-                                                                 int32 expected_size = 0) {
+                                                                 int64 expected_size = 0) {
     return td_api::make_object<td_api::inputFileGenerated>(trim(std::move(original_path)), trim(std::move(conversion)),
                                                            expected_size);
   }
@@ -802,6 +804,32 @@ class CliClient final : public Actor {
     arg.file_id = as_file_id(args);
   }
 
+  struct InputInvoice {
+    int64 chat_id = 0;
+    int64 message_id = 0;
+    string invoice_name;
+
+    operator td_api::object_ptr<td_api::InputInvoice>() const {
+      if (invoice_name.empty()) {
+        return td_api::make_object<td_api::inputInvoiceMessage>(chat_id, message_id);
+      } else {
+        return td_api::make_object<td_api::inputInvoiceName>(invoice_name);
+      }
+    }
+  };
+
+  void get_args(string &args, InputInvoice &arg) const {
+    if (args.size() > 1 && args[0] == '#') {
+      arg.invoice_name = args;
+    } else {
+      string chat_id;
+      string message_id;
+      std::tie(chat_id, message_id) = split(args, get_delimiter(args));
+      arg.chat_id = as_chat_id(chat_id);
+      arg.message_id = as_message_id(message_id);
+    }
+  }
+
   template <class FirstType, class SecondType, class... Types>
   void get_args(string &args, FirstType &first_arg, SecondType &second_arg, Types &...other_args) const {
     string arg;
@@ -817,6 +845,17 @@ class CliClient final : public Actor {
         case td_api::stickerSets::ID: {
           auto sticker_sets = static_cast<const td_api::stickerSets *>(result.get());
           result_str = PSTRING() << "StickerSets { total_count = " << sticker_sets->total_count_
+                                 << ", count = " << sticker_sets->sets_.size();
+          for (auto &sticker_set : sticker_sets->sets_) {
+            result_str += PSTRING() << ", " << sticker_set->name_;
+          }
+          result_str += " }";
+          break;
+        }
+        case td_api::trendingStickerSets::ID: {
+          auto sticker_sets = static_cast<const td_api::trendingStickerSets *>(result.get());
+          result_str = PSTRING() << "TrendingStickerSets { is_premium = " << sticker_sets->is_premium_
+                                 << ", total_count = " << sticker_sets->total_count_
                                  << ", count = " << sticker_sets->sets_.size();
           for (auto &sticker_set : sticker_sets->sets_) {
             result_str += PSTRING() << ", " << sticker_set->name_;
@@ -1649,7 +1688,7 @@ class CliClient final : public Actor {
   }
 
   static td_api::object_ptr<td_api::themeParameters> get_theme_parameters() {
-    return td_api::make_object<td_api::themeParameters>(0, -1, 256, 65536, 123456789, 65535);
+    return td_api::make_object<td_api::themeParameters>(0, 1, -1, 256, 65536, 123456789, 65535);
   }
 
   static td_api::object_ptr<td_api::BackgroundFill> get_background_fill(int32 color) {
@@ -1999,40 +2038,36 @@ class CliClient final : public Actor {
     } else if (op == "gbci") {
       send_request(td_api::make_object<td_api::getBankCardInfo>(args));
     } else if (op == "gpf") {
-      ChatId chat_id;
-      MessageId message_id;
-      get_args(args, chat_id, message_id);
-      send_request(td_api::make_object<td_api::getPaymentForm>(chat_id, message_id, get_theme_parameters()));
+      InputInvoice input_invoice;
+      get_args(args, input_invoice);
+      send_request(td_api::make_object<td_api::getPaymentForm>(input_invoice, get_theme_parameters()));
     } else if (op == "voi") {
-      ChatId chat_id;
-      MessageId message_id;
+      InputInvoice input_invoice;
       bool allow_save;
-      get_args(args, chat_id, message_id, allow_save);
-      send_request(td_api::make_object<td_api::validateOrderInfo>(chat_id, message_id, nullptr, allow_save));
+      get_args(args, input_invoice, allow_save);
+      send_request(td_api::make_object<td_api::validateOrderInfo>(input_invoice, nullptr, allow_save));
     } else if (op == "spfs") {
-      ChatId chat_id;
-      MessageId message_id;
+      InputInvoice input_invoice;
       int64 tip_amount;
       int64 payment_form_id;
       string order_info_id;
       string shipping_option_id;
       string saved_credentials_id;
-      get_args(args, chat_id, message_id, tip_amount, payment_form_id, order_info_id, shipping_option_id,
+      get_args(args, input_invoice, tip_amount, payment_form_id, order_info_id, shipping_option_id,
                saved_credentials_id);
       send_request(td_api::make_object<td_api::sendPaymentForm>(
-          chat_id, message_id, payment_form_id, order_info_id, shipping_option_id,
+          input_invoice, payment_form_id, order_info_id, shipping_option_id,
           td_api::make_object<td_api::inputCredentialsSaved>(saved_credentials_id), tip_amount));
     } else if (op == "spfn") {
-      ChatId chat_id;
-      MessageId message_id;
+      InputInvoice input_invoice;
       int64 tip_amount;
       int64 payment_form_id;
       string order_info_id;
       string shipping_option_id;
       string data;
-      get_args(args, chat_id, message_id, tip_amount, payment_form_id, order_info_id, shipping_option_id, data);
+      get_args(args, input_invoice, tip_amount, payment_form_id, order_info_id, shipping_option_id, data);
       send_request(td_api::make_object<td_api::sendPaymentForm>(
-          chat_id, message_id, payment_form_id, order_info_id, shipping_option_id,
+          input_invoice, payment_form_id, order_info_id, shipping_option_id,
           td_api::make_object<td_api::inputCredentialsNew>(data, true), tip_amount));
     } else if (op == "gpre") {
       ChatId chat_id;
@@ -2521,6 +2556,22 @@ class CliClient final : public Actor {
       execute(td_api::make_object<td_api::getPhoneNumberInfoSync>(rand_bool() ? "en" : "", args));
     } else if (op == "gadl") {
       send_request(td_api::make_object<td_api::getApplicationDownloadLink>());
+    } else if (op == "gprl") {
+      auto limit_type = td_api::make_object<td_api::premiumLimitTypeChatFilterCount>();
+      send_request(td_api::make_object<td_api::getPremiumLimit>(std::move(limit_type)));
+    } else if (op == "gprf") {
+      auto source = td_api::make_object<td_api::premiumSourceLimitExceeded>(
+          td_api::make_object<td_api::premiumLimitTypeChatFilterCount>());
+      send_request(td_api::make_object<td_api::getPremiumFeatures>(std::move(source)));
+    } else if (op == "gprst") {
+      send_request(td_api::make_object<td_api::getPremiumStickers>());
+    } else if (op == "vprf") {
+      auto feature = td_api::make_object<td_api::premiumFeatureProfileBadge>();
+      send_request(td_api::make_object<td_api::viewPremiumFeature>(std::move(feature)));
+    } else if (op == "cprsb") {
+      send_request(td_api::make_object<td_api::clickPremiumSubscriptionButton>());
+    } else if (op == "gprs") {
+      send_request(td_api::make_object<td_api::getPremiumState>());
     } else if (op == "atos") {
       send_request(td_api::make_object<td_api::acceptTermsOfService>(args));
     } else if (op == "gdli") {
@@ -2715,6 +2766,8 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::searchEmojis>(args, false, vector<string>{"ru_RU"}));
     } else if (op == "gae") {
       send_request(td_api::make_object<td_api::getAnimatedEmoji>(args));
+    } else if (op == "gaae") {
+      send_request(td_api::make_object<td_api::getAllAnimatedEmojis>());
     } else if (op == "gesu") {
       send_request(td_api::make_object<td_api::getEmojiSuggestionsUrl>(args));
     } else if (op == "gsan") {
@@ -2853,19 +2906,30 @@ class CliClient final : public Actor {
       string to_language_code;
       get_args(args, text, from_language_code, to_language_code);
       send_request(td_api::make_object<td_api::translateText>(text, from_language_code, to_language_code));
+    } else if (op == "rs") {
+      ChatId chat_id;
+      MessageId message_id;
+      get_args(args, chat_id, message_id);
+      send_request(td_api::make_object<td_api::recognizeSpeech>(chat_id, message_id));
+    } else if (op == "rsr") {
+      ChatId chat_id;
+      MessageId message_id;
+      bool is_good;
+      get_args(args, chat_id, message_id, is_good);
+      send_request(td_api::make_object<td_api::rateSpeechRecognition>(chat_id, message_id, is_good));
     } else if (op == "gf" || op == "GetFile") {
       FileId file_id;
       get_args(args, file_id);
       send_request(td_api::make_object<td_api::getFile>(file_id));
     } else if (op == "gfdps") {
       FileId file_id;
-      int32 offset;
+      int64 offset;
       get_args(args, file_id, offset);
       send_request(td_api::make_object<td_api::getFileDownloadedPrefixSize>(file_id, offset));
     } else if (op == "rfp") {
       FileId file_id;
-      int32 offset;
-      int32 count;
+      int64 offset;
+      int64 count;
       get_args(args, file_id, offset, count);
       send_request(td_api::make_object<td_api::readFilePart>(file_id, offset, count));
     } else if (op == "grf") {
@@ -2883,8 +2947,8 @@ class CliClient final : public Actor {
                                                                     width, height, scale, chat_id));
     } else if (op == "df" || op == "DownloadFile" || op == "dff" || op == "dfs") {
       FileId file_id;
-      int32 offset;
-      int32 limit;
+      int64 offset;
+      int64 limit;
       int32 priority;
       get_args(args, file_id, offset, limit, priority);
       if (priority <= 0) {
@@ -3918,7 +3982,7 @@ class CliClient final : public Actor {
       ChatId chat_id;
       string photo_path;
       string conversion;
-      int32 expected_size;
+      int64 expected_size;
       get_args(args, chat_id, photo_path, conversion, expected_size);
       send_message(chat_id, td_api::make_object<td_api::inputMessagePhoto>(
                                 as_generated_file(photo_path, conversion, expected_size), nullptr, vector<int32>(), 0,
@@ -4124,7 +4188,11 @@ class CliClient final : public Actor {
     } else if (op == "dcf") {
       send_request(td_api::make_object<td_api::deleteChatFilter>(as_chat_filter_id(args)));
     } else if (op == "rcf") {
-      send_request(td_api::make_object<td_api::reorderChatFilters>(as_chat_filter_ids(args)));
+      int32 main_chat_list_position;
+      string chat_filter_ids;
+      get_args(args, main_chat_list_position, chat_filter_ids);
+      send_request(td_api::make_object<td_api::reorderChatFilters>(as_chat_filter_ids(chat_filter_ids),
+                                                                   main_chat_list_position));
     } else if (op == "grcf") {
       send_request(td_api::make_object<td_api::getRecommendedChatFilters>());
     } else if (op == "gcfdin") {
@@ -4372,6 +4440,18 @@ class CliClient final : public Actor {
       get_args(args, supergroup_id, sign_messages);
       send_request(
           td_api::make_object<td_api::toggleSupergroupSignMessages>(as_supergroup_id(supergroup_id), sign_messages));
+    } else if (op == "tsgjtsm") {
+      string supergroup_id;
+      bool join_to_send_message;
+      get_args(args, supergroup_id, join_to_send_message);
+      send_request(td_api::make_object<td_api::toggleSupergroupJoinToSendMessages>(as_supergroup_id(supergroup_id),
+                                                                                   join_to_send_message));
+    } else if (op == "tsgjbr") {
+      string supergroup_id;
+      bool join_by_request;
+      get_args(args, supergroup_id, join_by_request);
+      send_request(
+          td_api::make_object<td_api::toggleSupergroupJoinByRequest>(as_supergroup_id(supergroup_id), join_by_request));
     } else if (op == "scar") {
       ChatId chat_id;
       string available_reactions;
@@ -4844,7 +4924,7 @@ class CliClient final : public Actor {
       if (it->part_size > left_size) {
         it->part_size = left_size;
       }
-      BufferSlice block(it->part_size);
+      BufferSlice block(narrow_cast<size_t>(it->part_size));
       FileFd::open(it->source, FileFd::Flags::Read).move_as_ok().pread(block.as_slice(), it->local_size).ensure();
       if (rand_bool()) {
         auto open_flags = FileFd::Flags::Write | (it->local_size ? 0 : FileFd::Flags::Truncate | FileFd::Flags::Create);

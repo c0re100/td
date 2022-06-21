@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include "td/telegram/Dimensions.h"
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/files/FileSourceId.h"
 #include "td/telegram/PhotoSize.h"
@@ -43,7 +44,7 @@ class AnimationsManager final : public Actor {
 
   SecretInputMedia get_secret_input_media(FileId animation_file_id,
                                           tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                          const string &caption, BufferSlice thumbnail) const;
+                                          const string &caption, BufferSlice thumbnail, int32 layer) const;
 
   FileId get_animation_thumbnail_file_id(FileId file_id) const;
 
@@ -88,8 +89,6 @@ class AnimationsManager final : public Actor {
   FileId parse_animation(ParserT &parser);
 
   string get_animation_search_text(FileId file_id) const;
-
-  void after_get_difference();
 
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
 

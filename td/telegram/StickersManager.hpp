@@ -33,6 +33,7 @@ void StickersManager::store_sticker(FileId file_id, bool in_sticker_set, StorerT
   bool has_minithumbnail = !sticker->minithumbnail.empty();
   bool is_tgs = sticker->format == StickerFormat::Tgs;
   bool is_webm = sticker->format == StickerFormat::Webm;
+  bool has_premium_animation = sticker->premium_animation_file_id.is_valid();
   BEGIN_STORE_FLAGS();
   STORE_FLAG(sticker->is_mask);
   STORE_FLAG(has_sticker_set_access_hash);
@@ -40,6 +41,7 @@ void StickersManager::store_sticker(FileId file_id, bool in_sticker_set, StorerT
   STORE_FLAG(is_tgs);
   STORE_FLAG(has_minithumbnail);
   STORE_FLAG(is_webm);
+  STORE_FLAG(has_premium_animation);
   END_STORE_FLAGS();
   if (!in_sticker_set) {
     store(sticker->set_id.get(), storer);
@@ -63,6 +65,9 @@ void StickersManager::store_sticker(FileId file_id, bool in_sticker_set, StorerT
   if (has_minithumbnail) {
     store(sticker->minithumbnail, storer);
   }
+  if (has_premium_animation) {
+    store(sticker->premium_animation_file_id, storer);
+  }
 }
 
 template <class ParserT>
@@ -77,6 +82,7 @@ FileId StickersManager::parse_sticker(bool in_sticker_set, ParserT &parser) {
   bool has_minithumbnail;
   bool is_tgs;
   bool is_webm;
+  bool has_premium_animation;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(sticker->is_mask);
   PARSE_FLAG(has_sticker_set_access_hash);
@@ -84,6 +90,7 @@ FileId StickersManager::parse_sticker(bool in_sticker_set, ParserT &parser) {
   PARSE_FLAG(is_tgs);
   PARSE_FLAG(has_minithumbnail);
   PARSE_FLAG(is_webm);
+  PARSE_FLAG(has_premium_animation);
   END_PARSE_FLAGS();
   if (is_webm) {
     sticker->format = StickerFormat::Webm;
@@ -132,6 +139,9 @@ FileId StickersManager::parse_sticker(bool in_sticker_set, ParserT &parser) {
   }
   if (has_minithumbnail) {
     parse(sticker->minithumbnail, parser);
+  }
+  if (has_premium_animation) {
+    parse(sticker->premium_animation_file_id, parser);
   }
   if (parser.get_error() != nullptr || !sticker->file_id.is_valid()) {
     return FileId();
@@ -341,7 +351,7 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
         vector<string> emojis;
         parse(emojis, parser);
         for (auto &emoji : emojis) {
-          auto cleaned_emoji = remove_emoji_modifiers(emoji).str();
+          auto cleaned_emoji = remove_emoji_modifiers(emoji);
           if (!cleaned_emoji.empty()) {
             auto &sticker_ids = sticker_set->emoji_stickers_map_[cleaned_emoji];
             if (sticker_ids.empty() || sticker_ids.back() != sticker_id) {
@@ -396,6 +406,7 @@ void StickersManager::Reaction::store(StorerT &storer) const {
   STORE_FLAG(is_active_);
   STORE_FLAG(has_around_animation);
   STORE_FLAG(has_center_animation);
+  STORE_FLAG(is_premium_);
   END_STORE_FLAGS();
   td::store(reaction_, storer);
   td::store(title_, storer);
@@ -421,6 +432,7 @@ void StickersManager::Reaction::parse(ParserT &parser) {
   PARSE_FLAG(is_active_);
   PARSE_FLAG(has_around_animation);
   PARSE_FLAG(has_center_animation);
+  PARSE_FLAG(is_premium_);
   END_PARSE_FLAGS();
   td::parse(reaction_, parser);
   td::parse(title_, parser);

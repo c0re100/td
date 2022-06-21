@@ -6,6 +6,7 @@
 //
 #include "td/telegram/Photo.h"
 
+#include "td/telegram/Dimensions.h"
 #include "td/telegram/files/FileEncryptionKey.h"
 #include "td/telegram/files/FileLocation.h"
 #include "td/telegram/files/FileManager.h"
@@ -18,7 +19,6 @@
 #include "td/utils/common.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
-#include "td/utils/misc.h"
 #include "td/utils/SliceBuilder.h"
 
 #include <algorithm>
@@ -267,7 +267,7 @@ Photo get_encrypted_file_photo(FileManager *file_manager, unique_ptr<EncryptedFi
 
   PhotoSize s;
   s.type = 'i';
-  s.dimensions = get_dimensions(photo->w_, photo->h_, "get_encrypted_file_photo");
+  s.dimensions = get_dimensions(photo->w_, photo->h_, nullptr);
   s.size = photo->size_;
   s.file_id = file_id;
   res.photos.push_back(s);
@@ -303,7 +303,8 @@ Photo get_photo(FileManager *file_manager, tl_object_ptr<telegram_api::photo> &&
                                      owner_dialog_id, std::move(size_ptr), PhotoFormat::Jpeg);
     if (photo_size.get_offset() == 0) {
       PhotoSize &size = photo_size.get<0>();
-      if (size.type == 0 || size.type == 't' || size.type == 'i' || size.type == 'u' || size.type == 'v') {
+      if (size.type == 0 || size.type == 't' || size.type == 'i' || size.type == 'p' || size.type == 'u' ||
+          size.type == 'v') {
         LOG(ERROR) << "Skip unallowed photo size " << size;
         continue;
       }
@@ -350,10 +351,23 @@ tl_object_ptr<td_api::chatPhoto> get_chat_photo_object(FileManager *file_manager
     return nullptr;
   }
 
-  const AnimationSize *animation = photo.animations.empty() ? nullptr : &photo.animations.back();
+  const AnimationSize *small_animation = nullptr;
+  const AnimationSize *big_animation = nullptr;
+  for (auto &animation : photo.animations) {
+    if (animation.type == 'p') {
+      small_animation = &animation;
+    } else if (animation.type == 'u') {
+      big_animation = &animation;
+    }
+  }
+  if (big_animation == nullptr && small_animation != nullptr) {
+    LOG(ERROR) << "Have small animation without big animation in " << photo;
+    small_animation = nullptr;
+  }
   return td_api::make_object<td_api::chatPhoto>(
       photo.id.get(), photo.date, get_minithumbnail_object(photo.minithumbnail),
-      get_photo_sizes_object(file_manager, photo.photos), get_animated_chat_photo_object(file_manager, animation));
+      get_photo_sizes_object(file_manager, photo.photos), get_animated_chat_photo_object(file_manager, big_animation),
+      get_animated_chat_photo_object(file_manager, small_animation));
 }
 
 void photo_delete_thumbnail(Photo &photo) {
@@ -482,11 +496,15 @@ SecretInputMedia photo_get_secret_input_media(FileManager *file_manager, const P
   if (thumbnail_file_id.is_valid() && thumbnail.empty()) {
     return {};
   }
+  auto size = file_view.size();
+  if (size < 0 || size >= 1000000000) {
+    size = 0;
+  }
 
   return SecretInputMedia{
       std::move(input_file),
       make_tl_object<secret_api::decryptedMessageMediaPhoto>(
-          std::move(thumbnail), thumbnail_width, thumbnail_height, width, height, narrow_cast<int32>(file_view.size()),
+          std::move(thumbnail), thumbnail_width, thumbnail_height, width, height, static_cast<int32>(size),
           BufferSlice(encryption_key.key_slice()), BufferSlice(encryption_key.iv_slice()), caption)};
 }
 

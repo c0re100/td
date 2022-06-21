@@ -99,6 +99,7 @@ set(TDUTILS_SOURCE
   td/utils/filesystem.cpp
   td/utils/find_boundary.cpp
   td/utils/FlatHashTable.cpp
+  td/utils/FloodControlGlobal.cpp
   td/utils/Gzip.cpp
   td/utils/GzipByteFlow.cpp
   td/utils/Hints.cpp
@@ -213,6 +214,7 @@ set(TDUTILS_SOURCE
   td/utils/FlatHashSet.h
   td/utils/FlatHashTable.h
   td/utils/FloodControlFast.h
+  td/utils/FloodControlGlobal.h
   td/utils/FloodControlStrict.h
   td/utils/format.h
   td/utils/Gzip.h
@@ -289,6 +291,7 @@ set(TDUTILS_SOURCE
   td/utils/utf8.h
   td/utils/Variant.h
   td/utils/VectorQueue.h
+  td/utils/WaitFreeHashMap.h
 )
 
 if (TDUTILS_MIME_TYPE)
@@ -305,6 +308,7 @@ set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/ChainScheduler.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/ConcurrentHashMap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/crypto.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/emoji.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/Enumerator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/EpochBasedMemoryReclamation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/filesystem.cpp
@@ -328,6 +332,7 @@ set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/SharedSlice.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/StealingQueue.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/variant.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/WaitFreeHashMap.cpp
   PARENT_SCOPE
 )
 
