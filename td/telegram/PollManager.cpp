@@ -195,7 +195,7 @@ class StopPollQuery final : public Td::ResultHandler {
     }
 
     int32 flags = telegram_api::messages_editMessage::MEDIA_MASK;
-    auto input_reply_markup = get_input_reply_markup(reply_markup);
+    auto input_reply_markup = get_input_reply_markup(td_->contacts_manager_.get(), reply_markup);
     if (input_reply_markup != nullptr) {
       flags |= telegram_api::messages_editMessage::REPLY_MARKUP_MASK;
     }
@@ -265,7 +265,10 @@ void PollManager::tear_down() {
   parent_.reset();
 }
 
-PollManager::~PollManager() = default;
+PollManager::~PollManager() {
+  Scheduler::instance()->destroy_on_scheduler(G()->get_gc_scheduler_id(), polls_, server_poll_messages_,
+                                              other_poll_messages_, poll_voters_, loaded_from_database_polls_);
+}
 
 void PollManager::on_update_poll_timeout_callback(void *poll_manager_ptr, int64 poll_id_int) {
   if (G()->close_flag()) {
@@ -1044,7 +1047,7 @@ void PollManager::get_poll_voters(PollId poll_id, FullMessageId full_message_id,
     for (int32 i = offset; i != cur_offset && i - offset < limit; i++) {
       result.push_back(voters.voter_user_ids[i]);
     }
-    return promise.set_value({poll->options[option_id].voter_count, std::move(result)});
+    return promise.set_value({max(poll->options[option_id].voter_count, cur_offset), std::move(result)});
   }
 
   if (poll->options[option_id].voter_count == 0 || (voters.next_offset.empty() && cur_offset > 0)) {
@@ -1144,13 +1147,14 @@ void PollManager::on_get_poll_voters(PollId poll_id, int32 option_id, string off
   if (static_cast<int32>(user_ids.size()) > limit) {
     user_ids.resize(limit);
   }
-  if (voters.next_offset.empty() && narrow_cast<int32>(voters.voter_user_ids.size()) != vote_list->count_) {
+  auto known_voter_count = narrow_cast<int32>(voters.voter_user_ids.size());
+  if (voters.next_offset.empty() && known_voter_count != vote_list->count_) {
     // invalidate_poll_option_voters(poll, poll_id, option_id);
     voters.was_invalidated = true;
   }
 
   for (auto &promise : promises) {
-    promise.set_value({vote_list->count_, vector<UserId>(user_ids)});
+    promise.set_value({max(vote_list->count_, known_voter_count), vector<UserId>(user_ids)});
   }
 }
 
@@ -1211,9 +1215,24 @@ void PollManager::do_stop_poll(PollId poll_id, FullMessageId full_message_id, un
 
   bool is_inserted = being_closed_polls_.insert(poll_id).second;
   CHECK(is_inserted);
-  auto new_promise = get_erase_log_event_promise(log_event_id, std::move(promise));
+  auto new_promise = PromiseCreator::lambda(
+      [actor_id = actor_id(this), poll_id, log_event_id, promise = std::move(promise)](Result<Unit> result) mutable {
+        send_closure(actor_id, &PollManager::on_stop_poll_finished, poll_id, log_event_id, std::move(result),
+                     std::move(promise));
+      });
 
   td_->create_handler<StopPollQuery>(std::move(new_promise))->send(full_message_id, std::move(reply_markup), poll_id);
+}
+
+void PollManager::on_stop_poll_finished(PollId poll_id, uint64 log_event_id, Result<Unit> &&result,
+                                        Promise<Unit> &&promise) {
+  being_closed_polls_.erase(poll_id);
+
+  if (log_event_id != 0 && !G()->close_flag()) {
+    binlog_erase(G()->td_db()->get_binlog(), log_event_id);
+  }
+
+  promise.set_result(std::move(result));
 }
 
 void PollManager::stop_local_poll(PollId poll_id) {
@@ -1786,7 +1805,7 @@ void PollManager::on_get_poll_vote(PollId poll_id, UserId user_id, vector<Buffer
   for (auto &option : options) {
     auto slice = option.as_slice();
     if (slice.size() != 1 || slice[0] < '0' || slice[0] > '9') {
-      LOG(ERROR) << "Receive updateMessagePollVote with unexpected option \"" << format::escaped(slice) << '"';
+      LOG(INFO) << "Receive updateMessagePollVote with unexpected option \"" << format::escaped(slice) << '"';
       return;
     }
     option_ids.push_back(static_cast<int32>(slice[0] - '0'));

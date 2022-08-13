@@ -61,7 +61,7 @@
 
 #include "td/actor/actor.h"
 #include "td/actor/MultiPromise.h"
-#include "td/actor/PromiseFuture.h"
+#include "td/actor/MultiTimeout.h"
 #include "td/actor/SignalSlot.h"
 #include "td/actor/Timeout.h"
 
@@ -73,6 +73,7 @@
 #include "td/utils/Heap.h"
 #include "td/utils/Hints.h"
 #include "td/utils/logging.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
@@ -287,8 +288,6 @@ class MessagesManager final : public Actor {
                              int32 total_count);
 
   bool on_update_message_id(int64 random_id, MessageId new_message_id, const string &source);
-
-  bool on_update_scheduled_message_id(int64 random_id, ScheduledServerMessageId new_message_id, const string &source);
 
   void on_update_dialog_draft_message(DialogId dialog_id, tl_object_ptr<telegram_api::DraftMessage> &&draft_message);
 
@@ -1267,6 +1266,7 @@ class MessagesManager final : public Actor {
     string theme_name;
     int32 pending_join_request_count = 0;
     vector<UserId> pending_join_request_user_ids;
+    int32 have_full_history_source = 0;
 
     FolderId folder_id;
     vector<DialogListId> dialog_list_ids;  // TODO replace with mask
@@ -1340,10 +1340,12 @@ class MessagesManager final : public Actor {
     bool is_has_bots_inited = false;
     bool is_theme_name_inited = false;
     bool is_available_reactions_inited = false;
+    bool had_yet_unsent_message_id_overflow = false;
 
     bool increment_view_counter = false;
 
     bool is_update_new_chat_sent = false;
+    bool is_update_new_chat_being_sent = false;
     bool has_unload_timeout = false;
     bool is_channel_difference_finished = false;
 
@@ -1432,7 +1434,7 @@ class MessagesManager final : public Actor {
     Dialog &operator=(const Dialog &) = delete;
     Dialog(Dialog &&other) = delete;
     Dialog &operator=(Dialog &&other) = delete;
-    ~Dialog();
+    ~Dialog() = default;
 
     template <class StorerT>
     void store(StorerT &storer) const;
@@ -1786,6 +1788,7 @@ class MessagesManager final : public Actor {
   static constexpr int32 USERNAME_CACHE_EXPIRE_TIME = 3 * 86400;
   static constexpr int32 USERNAME_CACHE_EXPIRE_TIME_SHORT = 900;
   static constexpr int32 AUTH_NOTIFICATION_ID_CACHE_TIME = 7 * 86400;
+  static constexpr size_t MAX_SAVED_AUTH_NOTIFICATION_IDS = 100;
 
   static constexpr int32 ONLINE_MEMBER_COUNT_UPDATE_TIME = 5 * 60;
 
@@ -1939,6 +1942,10 @@ class MessagesManager final : public Actor {
                            const vector<MessageId> &message_ids, bool drop_author, bool drop_media_captions,
                            uint64 log_event_id);
 
+  void send_forward_message_query(int32 flags, DialogId to_dialog_id, DialogId from_dialog_id,
+                                  tl_object_ptr<telegram_api::InputPeer> as_input_peer, vector<MessageId> message_ids,
+                                  vector<int64> random_ids, int32 schedule_date, Promise<Unit> promise);
+
   Result<td_api::object_ptr<td_api::message>> forward_message(DialogId to_dialog_id, DialogId from_dialog_id,
                                                               MessageId message_id,
                                                               tl_object_ptr<td_api::messageSendOptions> &&options,
@@ -2016,12 +2023,12 @@ class MessagesManager final : public Actor {
   static void save_send_bot_start_message_log_event(UserId bot_user_id, DialogId dialog_id, const string &parameter,
                                                     const Message *m);
 
-  void do_send_bot_start_message(UserId bot_user_id, DialogId dialog_id, const string &parameter, const Message *m);
+  void do_send_bot_start_message(UserId bot_user_id, DialogId dialog_id, MessageId message_id, const string &parameter);
 
   static void save_send_inline_query_result_message_log_event(DialogId dialog_id, const Message *m, int64 query_id,
                                                               const string &result_id);
 
-  void do_send_inline_query_result_message(DialogId dialog_id, const Message *m, int64 query_id,
+  void do_send_inline_query_result_message(DialogId dialog_id, MessageId message_id, int64 query_id,
                                            const string &result_id);
 
   static uint64 save_send_screenshot_taken_notification_message_log_event(DialogId dialog_id, const Message *m);
@@ -2691,7 +2698,7 @@ class MessagesManager final : public Actor {
 
   Dialog *add_dialog(DialogId dialog_id, const char *source);
 
-  Dialog *add_new_dialog(unique_ptr<Dialog> &&d, bool is_loaded_from_database, const char *source);
+  Dialog *add_new_dialog(unique_ptr<Dialog> &&dialog, bool is_loaded_from_database, const char *source);
 
   void fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_database_message, MessageId last_database_message_id,
                       int64 order, int32 last_clear_history_date, MessageId last_clear_history_message_id,
@@ -2906,7 +2913,7 @@ class MessagesManager final : public Actor {
   static bool is_forward_info_sender_hidden(const MessageForwardInfo *forward_info);
 
   unique_ptr<MessageForwardInfo> get_message_forward_info(
-      tl_object_ptr<telegram_api::messageFwdHeader> &&forward_header);
+      tl_object_ptr<telegram_api::messageFwdHeader> &&forward_header, FullMessageId full_message_id);
 
   td_api::object_ptr<td_api::messageForwardInfo> get_message_forward_info_object(
       const unique_ptr<MessageForwardInfo> &forward_info) const;
@@ -3448,7 +3455,7 @@ class MessagesManager final : public Actor {
 
   bool running_get_difference_ = false;  // true after before_get_difference and false after after_get_difference
 
-  FlatHashMap<DialogId, unique_ptr<Dialog>, DialogIdHash> dialogs_;
+  WaitFreeHashMap<DialogId, unique_ptr<Dialog>, DialogIdHash> dialogs_;
   int64 added_message_count_ = 0;
 
   FlatHashSet<DialogId, DialogIdHash> loaded_dialogs_;  // dialogs loaded from database, but not added to dialogs_
@@ -3652,7 +3659,7 @@ class MessagesManager final : public Actor {
 
   FlatHashMap<DialogId, NetQueryRef, DialogIdHash> set_typing_query_;
 
-  FlatHashMap<FullMessageId, FileSourceId, FullMessageIdHash> full_message_id_to_file_source_id_;
+  WaitFreeHashMap<FullMessageId, FileSourceId, FullMessageIdHash> full_message_id_to_file_source_id_;
 
   FlatHashMap<DialogId, int32, DialogIdHash> last_outgoing_forwarded_message_date_;
 

@@ -13,6 +13,7 @@
 #include "td/telegram/ConfigShared.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogId.h"
+#include "td/telegram/GitCommitHash.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/JsonValue.h"
 #include "td/telegram/LanguagePackManager.h"
@@ -28,6 +29,7 @@
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/TopDialogManager.h"
 
+#include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -208,6 +210,15 @@ bool OptionManager::is_internal_option(Slice name) {
     default:
       return false;
   }
+}
+
+const vector<Slice> &OptionManager::get_synchronous_options() {
+  static const vector<Slice> options{"version", "commit_hash"};
+  return options;
+}
+
+bool OptionManager::is_synchronous_option(Slice name) {
+  return td::contains(get_synchronous_options(), name);
 }
 
 void OptionManager::on_option_updated(const string &name) {
@@ -424,13 +435,25 @@ void OptionManager::get_option(const string &name, Promise<td_api::object_ptr<td
         return promise.set_value(get_unix_time_option_value_object());
       }
       break;
+  }
+  wrap_promise().set_value(Unit());
+}
+
+td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(Slice name) {
+  CHECK(!name.empty());
+  switch (name[0]) {
+    case 'c':
+      if (name == "commit_hash") {
+        return td_api::make_object<td_api::optionValueString>(get_git_commit_hash());
+      }
+      break;
     case 'v':
       if (name == "version") {
-        return promise.set_value(td_api::make_object<td_api::optionValueString>(Td::TDLIB_VERSION));
+        return td_api::make_object<td_api::optionValueString>("1.8.5");
       }
       break;
   }
-  wrap_promise().set_value(Unit());
+  UNREACHABLE();
 }
 
 void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::OptionValue> &&value,
@@ -759,9 +782,15 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_value_object(S
   return td_api::make_object<td_api::optionValueString>(value.str());
 }
 
+void OptionManager::get_common_state(vector<td_api::object_ptr<td_api::Update>> &updates) {
+  for (auto option_name : get_synchronous_options()) {
+    updates.push_back(
+        td_api::make_object<td_api::updateOption>(option_name.str(), get_option_synchronously(option_name)));
+  }
+}
+
 void OptionManager::get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const {
-  updates.push_back(td_api::make_object<td_api::updateOption>(
-      "version", td_api::make_object<td_api::optionValueString>(Td::TDLIB_VERSION)));
+  get_common_state(updates);
 
   updates.push_back(td_api::make_object<td_api::updateOption>(
       "online", td_api::make_object<td_api::optionValueBoolean>(td_->is_online())));

@@ -16,6 +16,8 @@
 
 #include "td/mtproto/DhHandshake.h"
 
+#include "td/actor/PromiseFuture.h"
+
 #include "td/utils/algorithm.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
@@ -364,7 +366,7 @@ void DeviceTokenManager::save_info(int32 token_type) {
   }
   sync_cnt_++;
   G()->td_db()->get_binlog_pmc()->force_sync(
-      PromiseCreator::event(self_closure(this, &DeviceTokenManager::dec_sync_cnt)));
+      create_event_promise(self_closure(this, &DeviceTokenManager::dec_sync_cnt)));
 }
 
 void DeviceTokenManager::dec_sync_cnt() {

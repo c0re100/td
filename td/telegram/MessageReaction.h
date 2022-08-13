@@ -14,10 +14,9 @@
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 
-#include "td/actor/PromiseFuture.h"
-
 #include "td/utils/common.h"
 #include "td/utils/FlatHashMap.h"
+#include "td/utils/Promise.h"
 #include "td/utils/StringBuilder.h"
 
 #include <utility>
@@ -81,6 +80,8 @@ class MessageReaction {
   void add_recent_chooser_dialog_id(DialogId dialog_id);
 
   bool remove_recent_chooser_dialog_id(DialogId dialog_id);
+
+  void update_recent_chooser_dialog_ids(const MessageReaction &old_reaction);
 
   td_api::object_ptr<td_api::messageReaction> get_message_reaction_object(Td *td) const;
 

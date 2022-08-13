@@ -21,6 +21,7 @@
 #include "td/telegram/secret_api.h"
 #include "td/telegram/StickerFormat.h"
 #include "td/telegram/StickersManager.h"
+#include "td/telegram/StickerType.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
@@ -48,15 +49,17 @@ namespace td {
 DocumentsManager::DocumentsManager(Td *td) : td_(td) {
 }
 
+DocumentsManager::~DocumentsManager() {
+  Scheduler::instance()->destroy_on_scheduler(G()->get_gc_scheduler_id(), documents_);
+}
+
 tl_object_ptr<td_api::document> DocumentsManager::get_document_object(FileId file_id,
                                                                       PhotoFormat thumbnail_format) const {
   if (!file_id.is_valid()) {
     return nullptr;
   }
 
-  auto it = documents_.find(file_id);
-  CHECK(it != documents_.end());
-  auto document = it->second.get();
+  auto document = get_document(file_id);
   CHECK(document != nullptr);
   return make_tl_object<td_api::document>(
       document->file_name, document->mime_type, get_minithumbnail_object(document->minithumbnail),
@@ -72,6 +75,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
   tl_object_ptr<telegram_api::documentAttributeVideo> video;
   tl_object_ptr<telegram_api::documentAttributeAudio> audio;
   tl_object_ptr<telegram_api::documentAttributeSticker> sticker;
+  tl_object_ptr<telegram_api::documentAttributeCustomEmoji> custom_emoji;
   Dimensions dimensions;
   string file_name;
   bool has_stickers = false;
@@ -106,6 +110,10 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       case telegram_api::documentAttributeHasStickers::ID:
         has_stickers = true;
         break;
+      case telegram_api::documentAttributeCustomEmoji::ID:
+        custom_emoji = move_tl_object_as<telegram_api::documentAttributeCustomEmoji>(attribute);
+        type_attributes++;
+        break;
       default:
         UNREACHABLE();
     }
@@ -126,7 +134,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       if ((video->flags_ & telegram_api::documentAttributeVideo::ROUND_MESSAGE_MASK) != 0) {
         // video note without sound
         animated = nullptr;
-      } else if (sticker != nullptr) {
+      } else if (sticker != nullptr || custom_emoji != nullptr) {
         // sticker
         type_attributes--;
         animated = nullptr;
@@ -135,7 +143,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         // video animation
         video = nullptr;
       }
-    } else if (sticker != nullptr) {
+    } else if (sticker != nullptr || custom_emoji != nullptr) {
       // some stickers uploaded before release
       type_attributes--;
       video = nullptr;
@@ -150,6 +158,11 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     // animation send as sticker
     type_attributes--;
     sticker = nullptr;
+  }
+  if (animated != nullptr && custom_emoji != nullptr) {
+    // just in case
+    type_attributes--;
+    custom_emoji = nullptr;
   }
 
   auto document_type = default_document_type;
@@ -179,7 +192,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         file_type = FileType::Audio;
         default_extension = Slice("mp3");
       }
-    } else if (sticker != nullptr || default_document_type == Document::Type::Sticker) {
+    } else if (sticker != nullptr || custom_emoji != nullptr || default_document_type == Document::Type::Sticker) {
       document_type = Document::Type::Sticker;
       file_type = FileType::Sticker;
       sticker_format = StickerFormat::Webp;
@@ -207,8 +220,9 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     }
   } else if (type_attributes >= 2) {
     LOG(WARNING) << "Receive document with more than 1 type attribute: animated = " << to_string(animated)
-                 << ", sticker = " << to_string(sticker) << ", video = " << to_string(video)
-                 << ", audio = " << to_string(audio) << ", file_name = " << file_name << ", dimensions = " << dimensions
+                 << ", sticker = " << to_string(sticker) << ", custom_emoji = " << to_string(custom_emoji)
+                 << ", video = " << to_string(video) << ", audio = " << to_string(audio)
+                 << ", file_name = " << file_name << ", dimensions = " << dimensions
                  << ", has_stickers = " << has_stickers;
   }
 
@@ -407,7 +421,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     default_extension = Slice("webm");
   }
   if (file_type == FileType::Encrypted && document_type == Document::Type::Sticker &&
-      size > get_max_sticker_file_size(sticker_format, false)) {
+      size > get_max_sticker_file_size(sticker_format, StickerType::Regular, false)) {
     document_type = Document::Type::General;
   }
 
@@ -486,8 +500,8 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         minithumbnail = string();
       }
       td_->stickers_manager_->create_sticker(file_id, premium_animation_file_id, std::move(minithumbnail),
-                                             std::move(thumbnail), dimensions, std::move(sticker), sticker_format,
-                                             load_data_multipromise_ptr);
+                                             std::move(thumbnail), dimensions, std::move(sticker),
+                                             std::move(custom_emoji), sticker_format, load_data_multipromise_ptr);
       break;
     case Document::Type::Video:
       td_->videos_manager_->create_video(file_id, std::move(minithumbnail), std::move(thumbnail),
@@ -565,13 +579,7 @@ void DocumentsManager::create_document(FileId file_id, string minithumbnail, Pho
 }
 
 const DocumentsManager::GeneralDocument *DocumentsManager::get_document(FileId file_id) const {
-  auto document = documents_.find(file_id);
-  if (document == documents_.end()) {
-    return nullptr;
-  }
-
-  CHECK(document->second->file_id == file_id);
-  return document->second.get();
+  return documents_.get_pointer(file_id);
 }
 
 bool DocumentsManager::has_input_media(FileId file_id, FileId thumbnail_file_id, bool is_secret) const {
@@ -692,7 +700,7 @@ FileId DocumentsManager::dup_document(FileId new_id, FileId old_id) {
   return new_id;
 }
 
-void DocumentsManager::merge_documents(FileId new_id, FileId old_id, bool can_delete_old) {
+void DocumentsManager::merge_documents(FileId new_id, FileId old_id) {
   CHECK(old_id.is_valid() && new_id.is_valid());
   CHECK(new_id != old_id);
 
@@ -700,27 +708,15 @@ void DocumentsManager::merge_documents(FileId new_id, FileId old_id, bool can_de
   const GeneralDocument *old_ = get_document(old_id);
   CHECK(old_ != nullptr);
 
-  auto new_it = documents_.find(new_id);
-  if (new_it == documents_.end()) {
-    auto &old = documents_[old_id];
-    if (!can_delete_old) {
-      dup_document(new_id, old_id);
-    } else {
-      old->file_id = new_id;
-      documents_.emplace(new_id, std::move(old));
-    }
+  const auto *new_ = get_document(new_id);
+  if (new_ == nullptr) {
+    dup_document(new_id, old_id);
   } else {
-    GeneralDocument *new_ = new_it->second.get();
-    CHECK(new_ != nullptr);
-
     if (old_->thumbnail != new_->thumbnail) {
       // LOG_STATUS(td_->file_manager_->merge(new_->thumbnail.file_id, old_->thumbnail.file_id));
     }
   }
   LOG_STATUS(td_->file_manager_->merge(new_id, old_id));
-  if (can_delete_old) {
-    documents_.erase(old_id);
-  }
 }
 
 string DocumentsManager::get_document_search_text(FileId file_id) const {

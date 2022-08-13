@@ -27,6 +27,7 @@
 #include "td/telegram/MessageId.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/Photo.h"
+#include "td/telegram/PremiumGiftOption.h"
 #include "td/telegram/PublicDialogType.h"
 #include "td/telegram/QueryCombiner.h"
 #include "td/telegram/RestrictionReason.h"
@@ -39,16 +40,17 @@
 
 #include "td/actor/actor.h"
 #include "td/actor/MultiPromise.h"
-#include "td/actor/PromiseFuture.h"
-#include "td/actor/Timeout.h"
+#include "td/actor/MultiTimeout.h"
 
 #include "td/utils/common.h"
 #include "td/utils/FlatHashMap.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/Hints.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/Time.h"
+#include "td/utils/WaitFreeHashMap.h"
 
 #include <functional>
 #include <memory>
@@ -118,6 +120,7 @@ class ContactsManager final : public Actor {
   bool get_channel_has_protected_content(ChannelId channel_id) const;
 
   string get_user_private_forward_name(UserId user_id);
+  bool get_user_voice_messages_forbidden(UserId user_id) const;
 
   string get_dialog_about(DialogId dialog_id);
 
@@ -489,7 +492,8 @@ class ContactsManager final : public Actor {
   bool get_user(UserId user_id, int left_tries, Promise<Unit> &&promise);
   void reload_user(UserId user_id, Promise<Unit> &&promise);
   void load_user_full(UserId user_id, bool force, Promise<Unit> &&promise, const char *source);
-  void reload_user_full(UserId user_id);
+  FileSourceId get_user_full_file_source_id(UserId user_id);
+  void reload_user_full(UserId user_id, Promise<Unit> &&promise);
 
   std::pair<int32, vector<const Photo *>> get_user_profile_photos(UserId user_id, int32 offset, int32 limit,
                                                                   Promise<Unit> &&promise);
@@ -714,6 +718,10 @@ class ContactsManager final : public Actor {
     string description;
     Photo description_photo;
     FileId description_animation_file_id;
+    vector<FileId> registered_file_ids;
+    FileSourceId file_source_id;
+
+    vector<PremiumGiftOption> premium_gift_options;
 
     unique_ptr<BotMenuButton> menu_button;
     vector<BotCommand> commands;
@@ -728,8 +736,10 @@ class ContactsManager final : public Actor {
     bool has_private_calls = false;
     bool can_pin_messages = true;
     bool need_phone_number_privacy_exception = false;
+    bool voice_messages_forbidden = false;
 
     bool is_common_chat_count_changed = true;
+    bool are_files_changed = true;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_send_update = true;       // have new changes that need only to be sent to the client
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
@@ -1072,6 +1082,7 @@ class ContactsManager final : public Actor {
   static constexpr int32 USER_FULL_FLAG_HAS_PRIVATE_FORWARD_NAME = 1 << 16;
   static constexpr int32 USER_FULL_FLAG_HAS_GROUP_ADMINISTRATOR_RIGHTS = 1 << 17;
   static constexpr int32 USER_FULL_FLAG_HAS_BROADCAST_ADMINISTRATOR_RIGHTS = 1 << 18;
+  static constexpr int32 USER_FULL_FLAG_HAS_VOICE_MESSAGES_FORBIDDEN = 1 << 20;
 
   static constexpr int32 CHAT_FLAG_USER_IS_CREATOR = 1 << 0;
   static constexpr int32 CHAT_FLAG_USER_HAS_LEFT = 1 << 2;
@@ -1684,8 +1695,8 @@ class ContactsManager final : public Actor {
   UserId support_user_id_;
   int32 my_was_online_local_ = 0;
 
-  FlatHashMap<UserId, unique_ptr<User>, UserIdHash> users_;
-  FlatHashMap<UserId, unique_ptr<UserFull>, UserIdHash> users_full_;
+  WaitFreeHashMap<UserId, unique_ptr<User>, UserIdHash> users_;
+  WaitFreeHashMap<UserId, unique_ptr<UserFull>, UserIdHash> users_full_;
   FlatHashMap<UserId, UserPhotos, UserIdHash> user_photos_;
   mutable FlatHashSet<UserId, UserIdHash> unknown_users_;
   FlatHashMap<UserId, tl_object_ptr<telegram_api::UserProfilePhoto>, UserIdHash> pending_user_photos_;
@@ -1694,22 +1705,23 @@ class ContactsManager final : public Actor {
       return UserIdHash()(pair.first) * 2023654985u + std::hash<int64>()(pair.second);
     }
   };
-  FlatHashMap<std::pair<UserId, int64>, FileSourceId, UserIdPhotoIdHash> user_profile_photo_file_source_ids_;
+  WaitFreeHashMap<std::pair<UserId, int64>, FileSourceId, UserIdPhotoIdHash> user_profile_photo_file_source_ids_;
   FlatHashMap<int64, FileId> my_photo_file_id_;
+  WaitFreeHashMap<UserId, FileSourceId, UserIdHash> user_full_file_source_ids_;
 
-  FlatHashMap<ChatId, unique_ptr<Chat>, ChatIdHash> chats_;
-  FlatHashMap<ChatId, unique_ptr<ChatFull>, ChatIdHash> chats_full_;
+  WaitFreeHashMap<ChatId, unique_ptr<Chat>, ChatIdHash> chats_;
+  WaitFreeHashMap<ChatId, unique_ptr<ChatFull>, ChatIdHash> chats_full_;
   mutable FlatHashSet<ChatId, ChatIdHash> unknown_chats_;
-  FlatHashMap<ChatId, FileSourceId, ChatIdHash> chat_full_file_source_ids_;
+  WaitFreeHashMap<ChatId, FileSourceId, ChatIdHash> chat_full_file_source_ids_;
 
-  FlatHashMap<ChannelId, unique_ptr<MinChannel>, ChannelIdHash> min_channels_;
-  FlatHashMap<ChannelId, unique_ptr<Channel>, ChannelIdHash> channels_;
-  FlatHashMap<ChannelId, unique_ptr<ChannelFull>, ChannelIdHash> channels_full_;
+  WaitFreeHashMap<ChannelId, unique_ptr<MinChannel>, ChannelIdHash> min_channels_;
+  WaitFreeHashMap<ChannelId, unique_ptr<Channel>, ChannelIdHash> channels_;
+  WaitFreeHashMap<ChannelId, unique_ptr<ChannelFull>, ChannelIdHash> channels_full_;
   mutable FlatHashSet<ChannelId, ChannelIdHash> unknown_channels_;
   FlatHashSet<ChannelId, ChannelIdHash> invalidated_channels_full_;
-  FlatHashMap<ChannelId, FileSourceId, ChannelIdHash> channel_full_file_source_ids_;
+  WaitFreeHashMap<ChannelId, FileSourceId, ChannelIdHash> channel_full_file_source_ids_;
 
-  FlatHashMap<SecretChatId, unique_ptr<SecretChat>, SecretChatIdHash> secret_chats_;
+  WaitFreeHashMap<SecretChatId, unique_ptr<SecretChat>, SecretChatIdHash> secret_chats_;
   mutable FlatHashSet<SecretChatId, SecretChatIdHash> unknown_secret_chats_;
 
   FlatHashMap<UserId, vector<SecretChatId>, UserIdHash> secret_chats_with_user_;
@@ -1823,7 +1835,7 @@ class ContactsManager final : public Actor {
   bool is_set_location_visibility_request_sent_ = false;
   Location last_user_location_;
 
-  FlatHashMap<ChannelId, ChannelId, ChannelIdHash> linked_channel_ids_;
+  WaitFreeHashMap<ChannelId, ChannelId, ChannelIdHash> linked_channel_ids_;
 
   FlatHashSet<UserId, UserIdHash> restricted_user_ids_;
   FlatHashSet<ChannelId, ChannelIdHash> restricted_channel_ids_;

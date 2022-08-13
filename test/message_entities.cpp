@@ -114,6 +114,8 @@ TEST(MessageEntities, hashtag) {
                     "ООО" + td::string(200, '2'),
                 {"#" + td::string(200, '1') + "ООО" + td::string(53, '2')});
   check_hashtag(u8"#a\u2122", {"#a"});
+  check_hashtag("#a൹", {"#a"});
+  check_hashtag("#aඁං෴ก฿", {"#aඁං෴ก"});
 }
 
 static void check_cashtag(const td::string &str, const td::vector<td::string> &expected) {
@@ -173,6 +175,12 @@ TEST(MessageEntities, cashtag) {
   check_cashtag(u8"$ABC\u2122", {"$ABC"});
   check_cashtag(u8"\u2122$ABC", {"$ABC"});
   check_cashtag(u8"\u2122$ABC\u2122", {"$ABC"});
+  check_cashtag("$ABC൹", {"$ABC"});
+  check_cashtag("$ABCඁ", {});
+  check_cashtag("$ABCං", {});
+  check_cashtag("$ABC෴", {});
+  check_cashtag("$ABCก", {});
+  check_cashtag("$ABC฿", {"$ABC"});
 }
 
 static void check_media_timestamp(const td::string &str, const td::vector<std::pair<td::string, td::int32>> &expected) {
@@ -1329,6 +1337,15 @@ TEST(MessageEntities, parse_html) {
                    {{td::MessageEntity::Type::Pre, 6, 7}, {td::MessageEntity::Type::Code, 6, 6}});
   check_parse_html("🏟 🏟&lt;<pre> <code class=\"language-fift\">🏟 🏟&lt;</></>", "🏟 🏟< 🏟 🏟<",
                    {{td::MessageEntity::Type::Pre, 6, 7}, {td::MessageEntity::Type::Code, 7, 6}});
+  check_parse_html("➡️ ➡️<tg-emoji emoji-id = \"12345\">➡️ ➡️</tg-emoji><b>➡️ ➡️</b>",
+                   "➡️ ➡️➡️ ➡️➡️ ➡️",
+                   {{td::MessageEntity::Type::CustomEmoji, 5, 5, static_cast<td::int64>(12345)},
+                    {td::MessageEntity::Type::Bold, 10, 5}});
+  check_parse_html("🏟 🏟<tg-emoji emoji-id=\"54321\">🏟 &lt🏟</tg-emoji>", "🏟 🏟🏟 <🏟",
+                   {{td::MessageEntity::Type::CustomEmoji, 5, 6, static_cast<td::int64>(54321)}});
+  check_parse_html(
+      "🏟 🏟<b aba   =   caba><tg-emoji emoji-id=\"1\">🏟</tg-emoji>1</b>", "🏟 🏟🏟1",
+      {{td::MessageEntity::Type::Bold, 5, 3}, {td::MessageEntity::Type::CustomEmoji, 5, 2, static_cast<td::int64>(1)}});
 }
 
 static void check_parse_markdown(td::string text, const td::string &result,
@@ -1384,6 +1401,16 @@ TEST(MessageEntities, parse_markdown) {
   check_parse_markdown("🏟 🏟__🏟 _🏟___", "Can't find end of Italic entity at byte offset 23");
   check_parse_markdown("🏟 🏟__", "Can't find end of Underline entity at byte offset 9");
   check_parse_markdown("🏟 🏟||test\\|", "Can't find end of Spoiler entity at byte offset 9");
+  check_parse_markdown("🏟 🏟!", "Character '!' is reserved and must be escaped with the preceding '\\'");
+  check_parse_markdown("🏟 🏟![", "Can't find end of CustomEmoji entity at byte offset 9");
+  check_parse_markdown("🏟 🏟![👍", "Can't find end of CustomEmoji entity at byte offset 9");
+  check_parse_markdown("🏟 🏟![👍]", "Custom emoji entity must contain a tg://emoji URL");
+  check_parse_markdown("🏟 🏟![👍](tg://emoji?id=1234", "Can't find end of a custom emoji URL at byte offset 17");
+  check_parse_markdown("🏟 🏟![👍](t://emoji?id=1234)", "Custom emoji URL must have scheme tg");
+  check_parse_markdown("🏟 🏟![👍](tg:emojis?id=1234)", "Custom emoji URL must have host \"emoji\"");
+  check_parse_markdown("🏟 🏟![👍](tg://emoji#test)", "Custom emoji URL must have an emoji identifier");
+  check_parse_markdown("🏟 🏟![👍](tg://emoji?test=1#&id=25)", "Custom emoji URL must have an emoji identifier");
+  check_parse_markdown("🏟 🏟![👍](tg://emoji?test=1231&id=025)", "Invalid custom emoji identifier specified");
 
   check_parse_markdown("", "", {});
   check_parse_markdown("\\\\", "\\", {});
@@ -1455,6 +1482,8 @@ TEST(MessageEntities, parse_markdown) {
   check_parse_markdown("[telegram\\.org](asdasd)", "telegram.org", {});
   check_parse_markdown("[telegram\\.org](tg:user?id=123456)", "telegram.org",
                        {{0, 12, td::UserId(static_cast<td::int64>(123456))}});
+  check_parse_markdown("🏟 🏟![👍](TG://EMoJI/?test=1231&id=25#id=32)a", "🏟 🏟👍a",
+                       {{td::MessageEntity::Type::CustomEmoji, 5, 2, static_cast<td::int64>(25)}});
 }
 
 static void check_parse_markdown_v3(td::string text, td::vector<td::MessageEntity> entities,

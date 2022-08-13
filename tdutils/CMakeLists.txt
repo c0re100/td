@@ -138,6 +138,7 @@ set(TDUTILS_SOURCE
   td/utils/port/IPAddress.h
   td/utils/port/IoSlice.h
   td/utils/port/MemoryMapping.h
+  td/utils/port/Mutex.h
   td/utils/port/path.h
   td/utils/port/platform.h
   td/utils/port/Poll.h
@@ -250,6 +251,7 @@ set(TDUTILS_SOURCE
   td/utils/overloaded.h
   td/utils/Parser.h
   td/utils/PathView.h
+  td/utils/Promise.h
   td/utils/queue.h
   td/utils/Random.h
   td/utils/ScopeGuard.h
@@ -292,6 +294,7 @@ set(TDUTILS_SOURCE
   td/utils/Variant.h
   td/utils/VectorQueue.h
   td/utils/WaitFreeHashMap.h
+  td/utils/WaitFreeVector.h
 )
 
 if (TDUTILS_MIME_TYPE)
@@ -333,10 +336,10 @@ set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/StealingQueue.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/variant.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/WaitFreeHashMap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/WaitFreeVector.cpp
   PARENT_SCOPE
 )
 
-#RULES
 #LIBRARIES
 add_library(tdutils STATIC ${TDUTILS_SOURCE})
 

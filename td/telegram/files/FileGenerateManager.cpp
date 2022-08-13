@@ -113,9 +113,9 @@ class FileDownloadGenerateActor final : public FileGenerateActor {
   }
 };
 
-class MapDownloadGenerateActor final : public FileGenerateActor {
+class WebFileDownloadGenerateActor final : public FileGenerateActor {
  public:
-  MapDownloadGenerateActor(string conversion, unique_ptr<FileGenerateCallback> callback, ActorShared<> parent)
+  WebFileDownloadGenerateActor(string conversion, unique_ptr<FileGenerateCallback> callback, ActorShared<> parent)
       : conversion_(std::move(conversion)), callback_(std::move(callback)), parent_(std::move(parent)) {
   }
   void file_generate_progress(int64 expected_size, int64 local_prefix_size, Promise<> promise) final {
@@ -132,25 +132,50 @@ class MapDownloadGenerateActor final : public FileGenerateActor {
   string file_name_;
 
   class Callback final : public NetQueryCallback {
-    ActorId<MapDownloadGenerateActor> parent_;
+    ActorId<WebFileDownloadGenerateActor> parent_;
 
    public:
-    explicit Callback(ActorId<MapDownloadGenerateActor> parent) : parent_(parent) {
+    explicit Callback(ActorId<WebFileDownloadGenerateActor> parent) : parent_(parent) {
     }
 
     void on_result(NetQueryPtr query) final {
-      send_closure(parent_, &MapDownloadGenerateActor::on_result, std::move(query));
+      send_closure(parent_, &WebFileDownloadGenerateActor::on_result, std::move(query));
     }
 
     void hangup_shared() final {
-      send_closure(parent_, &MapDownloadGenerateActor::hangup_shared);
+      send_closure(parent_, &WebFileDownloadGenerateActor::hangup_shared);
     }
   };
   ActorOwn<NetQueryCallback> net_callback_;
 
-  Result<tl_object_ptr<telegram_api::inputWebFileGeoPointLocation>> parse_conversion() {
+  Result<tl_object_ptr<telegram_api::InputWebFileLocation>> parse_conversion() {
     auto parts = full_split(Slice(conversion_), '#');
-    if (parts.size() != 9 || !parts[0].empty() || parts[1] != "map" || !parts[8].empty()) {
+    if (parts.size() <= 2 || !parts[0].empty() || !parts.back().empty()) {
+      return Status::Error("Wrong conversion");
+    }
+
+    if (parts.size() == 6 && parts[1] == "audio_t") {
+      // music thumbnail
+      if (parts[2].empty() && parts[3].empty()) {
+        return Status::Error("Title or performer must be non-empty");
+      }
+      if (parts[4] != "0" && parts[4] != "1") {
+        return Status::Error("Invalid conversion");
+      }
+
+      bool is_small = parts[4][0] == '1';
+      file_name_ = PSTRING() << "Album cover " << (is_small ? "thumbnail " : "") << "for " << parts[3] << " - "
+                             << parts[2] << ".jpg";
+
+      int32 flags = telegram_api::inputWebFileAudioAlbumThumbLocation::TITLE_MASK;
+      if (is_small) {
+        flags |= telegram_api::inputWebFileAudioAlbumThumbLocation::SMALL_MASK;
+      }
+      return make_tl_object<telegram_api::inputWebFileAudioAlbumThumbLocation>(flags, false /*ignored*/, nullptr,
+                                                                               parts[2].str(), parts[3].str());
+    }
+
+    if (parts.size() != 9 || parts[1] != "map") {
       return Status::Error("Wrong conversion");
     }
 
@@ -197,7 +222,7 @@ class MapDownloadGenerateActor final : public FileGenerateActor {
       return on_error(r_input_web_file.move_as_error());
     }
 
-    net_callback_ = create_actor<Callback>("MapDownloadGenerateCallback", actor_id(this));
+    net_callback_ = create_actor<Callback>("WebFileDownloadGenerateCallback", actor_id(this));
 
     LOG(INFO) << "Download " << conversion_;
     auto query =
@@ -220,7 +245,7 @@ class MapDownloadGenerateActor final : public FileGenerateActor {
     TRY_RESULT(web_file, fetch_result<telegram_api::upload_getWebFile>(std::move(query)));
 
     if (static_cast<size_t>(web_file->size_) != web_file->bytes_.size()) {
-      LOG(ERROR) << "Failed to download map of size " << web_file->size_;
+      LOG(ERROR) << "Failed to download web file of size " << web_file->size_;
       return Status::Error("File is too big");
     }
 
@@ -418,9 +443,10 @@ void FileGenerateManager::generate_file(uint64 query_id, FullGenerateFileLocatio
     auto file_id = FileId(to_integer<int32>(conversion.substr(file_id_query.size())), 0);
     query.worker_ = create_actor<FileDownloadGenerateActor>("FileDownloadGenerateActor", generate_location.file_type_,
                                                             file_id, std::move(callback), std::move(parent));
-  } else if (begins_with(conversion, "#map#") && generate_location.original_path_.empty()) {
-    query.worker_ = create_actor<MapDownloadGenerateActor>(
-        "MapDownloadGenerateActor", std::move(generate_location.conversion_), std::move(callback), std::move(parent));
+  } else if (FileManager::is_remotely_generated_file(conversion) && generate_location.original_path_.empty()) {
+    query.worker_ = create_actor<WebFileDownloadGenerateActor>("WebFileDownloadGenerateActor",
+                                                               std::move(generate_location.conversion_),
+                                                               std::move(callback), std::move(parent));
   } else {
     query.worker_ = create_actor<FileExternalGenerateActor>("FileExternalGenerationActor", query_id, generate_location,
                                                             local_location, std::move(name), std::move(callback),

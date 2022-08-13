@@ -9,11 +9,12 @@
 #include "td/telegram/DialogId.h"
 #include "td/telegram/telegram_api.h"
 
-#include "td/actor/PromiseFuture.h"
-
 #include "td/utils/common.h"
+#include "td/utils/Promise.h"
 
 namespace td {
+
+struct BinlogEvent;
 
 class Td;
 
@@ -21,5 +22,7 @@ void get_invite_text(Td *td, Promise<string> &&promise);
 
 void save_app_log(Td *td, const string &type, DialogId dialog_id, tl_object_ptr<telegram_api::JSONValue> &&data,
                   Promise<Unit> &&promise);
+
+void on_save_app_log_binlog_event(Td *td, BinlogEvent &&event);
 
 }  // namespace td

@@ -163,7 +163,7 @@ td_api::object_ptr<td_api::sponsoredMessage> SponsoredMessageManager::get_sponso
       if (bot_username.empty()) {
         break;
       }
-      link = td_api::make_object<td_api::internalLinkTypeBotStart>(bot_username, sponsored_message.start_param);
+      link = td_api::make_object<td_api::internalLinkTypeBotStart>(bot_username, sponsored_message.start_param, false);
       break;
     }
     case DialogType::Channel:
@@ -234,6 +234,10 @@ void SponsoredMessageManager::get_dialog_sponsored_message(
 
 void SponsoredMessageManager::on_get_dialog_sponsored_messages(
     DialogId dialog_id, Result<telegram_api::object_ptr<telegram_api::messages_sponsoredMessages>> &&result) {
+  if (result.is_ok() && G()->close_flag()) {
+    result = Global::request_aborted_error();
+  }
+
   auto &messages = dialog_sponsored_messages_[dialog_id];
   CHECK(messages != nullptr);
   auto promises = std::move(messages->promises);
@@ -241,9 +245,6 @@ void SponsoredMessageManager::on_get_dialog_sponsored_messages(
   CHECK(messages->messages.empty());
   CHECK(messages->message_random_ids.empty());
 
-  if (result.is_ok() && G()->close_flag()) {
-    result = Global::request_aborted_error();
-  }
   if (result.is_error()) {
     dialog_sponsored_messages_.erase(dialog_id);
     fail_promises(promises, result.move_as_error());
@@ -297,7 +298,7 @@ void SponsoredMessageManager::on_get_dialog_sponsored_messages(
     int32 ttl = 0;
     bool disable_web_page_preview = false;
     auto content = get_message_content(td_, std::move(message_text), nullptr, sponsor_dialog_id, true, UserId(), &ttl,
-                                       &disable_web_page_preview);
+                                       &disable_web_page_preview, "on_get_dialog_sponsored_messages");
     if (ttl != 0) {
       LOG(ERROR) << "Receive sponsored message with TTL " << ttl;
       continue;

@@ -250,14 +250,20 @@ class LinkManager::InternalLinkBotAddToChannel final : public InternalLink {
 class LinkManager::InternalLinkBotStart final : public InternalLink {
   string bot_username_;
   string start_parameter_;
+  bool autostart_;
 
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeBotStart>(bot_username_, start_parameter_);
+    bool autostart = autostart_;
+    if (Scheduler::context() != nullptr &&
+        bot_username_ == G()->shared_config().get_option_string("premium_bot_username")) {
+      autostart = true;
+    }
+    return td_api::make_object<td_api::internalLinkTypeBotStart>(bot_username_, start_parameter_, autostart);
   }
 
  public:
-  InternalLinkBotStart(string bot_username, string start_parameter)
-      : bot_username_(std::move(bot_username)), start_parameter_(std::move(start_parameter)) {
+  InternalLinkBotStart(string bot_username, string start_parameter, bool autostart)
+      : bot_username_(std::move(bot_username)), start_parameter_(std::move(start_parameter)), autostart_(autostart) {
   }
 };
 
@@ -478,6 +484,12 @@ class LinkManager::InternalLinkPublicDialog final : public InternalLink {
 class LinkManager::InternalLinkQrCodeAuthentication final : public InternalLink {
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
     return td_api::make_object<td_api::internalLinkTypeQrCodeAuthentication>();
+  }
+};
+
+class LinkManager::InternalLinkRestorePurchases final : public InternalLink {
+  td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
+    return td_api::make_object<td_api::internalLinkTypeRestorePurchases>();
   }
 };
 
@@ -918,15 +930,20 @@ LinkManager::LinkInfo LinkManager::get_link_info(Slice link) {
   return result;
 }
 
-unique_ptr<LinkManager::InternalLink> LinkManager::parse_internal_link(Slice link) {
+bool LinkManager::is_internal_link(Slice link) {
+  auto info = get_link_info(link);
+  return info.is_internal_;
+}
+
+unique_ptr<LinkManager::InternalLink> LinkManager::parse_internal_link(Slice link, bool is_trusted) {
   auto info = get_link_info(link);
   if (!info.is_internal_) {
     return nullptr;
   }
   if (info.is_tg_) {
-    return parse_tg_link_query(info.query_);
+    return parse_tg_link_query(info.query_, is_trusted);
   } else {
-    return parse_t_me_link_query(info.query_);
+    return parse_t_me_link_query(info.query_, is_trusted);
   }
 }
 
@@ -959,7 +976,7 @@ StringBuilder &operator<<(StringBuilder &string_builder, const CopyArg &copy_arg
 }
 }  // namespace
 
-unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice query) {
+unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice query, bool is_trusted) {
   const auto url_query = parse_url_query(query);
   const auto &path = url_query.path_;
 
@@ -997,7 +1014,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
         }
         if (arg.first == "start" && is_valid_start_parameter(arg.second)) {
           // resolve?domain=<bot_username>&start=<parameter>
-          return td::make_unique<InternalLinkBotStart>(std::move(username), arg.second);
+          return td::make_unique<InternalLinkBotStart>(std::move(username), arg.second, is_trusted);
         }
         if (arg.first == "startgroup" && is_valid_start_parameter(arg.second)) {
           // resolve?domain=<bot_username>&startgroup=<parameter>
@@ -1046,7 +1063,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
             nullptr, std::move(user_link), url_query.get_arg("attach").str(), url_query.get_arg("startattach"));
       }
       // resolve?phone=12345
-      return user_link;
+      return std::move(user_link);
     }
   } else if (path.size() == 1 && path[0] == "login") {
     // login?code=123456
@@ -1057,6 +1074,9 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
     if (has_arg("token")) {
       return td::make_unique<InternalLinkQrCodeAuthentication>();
     }
+  } else if (path.size() == 1 && path[0] == "restore_purchases") {
+    // restore_purchases
+    return td::make_unique<InternalLinkRestorePurchases>();
   } else if (path.size() == 1 && path[0] == "passport") {
     // passport?bot_id=<bot_user_id>&scope=<scope>&public_key=<public_key>&nonce=<nonce>
     return get_internal_link_passport(query, url_query.args_);
@@ -1096,8 +1116,9 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
       return td::make_unique<InternalLinkDialogInvite>(PSTRING() << "tg:join?invite="
                                                                  << url_encode(get_url_query_hash(true, url_query)));
     }
-  } else if (path.size() == 1 && path[0] == "addstickers") {
+  } else if (path.size() == 1 && (path[0] == "addstickers" || path[0] == "addemoji")) {
     // addstickers?set=<name>
+    // addemoji?set=<name>
     if (has_arg("set")) {
       return td::make_unique<InternalLinkStickerSet>(get_arg("set"));
     }
@@ -1178,7 +1199,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
   return nullptr;
 }
 
-unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice query) {
+unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice query, bool is_trusted) {
   CHECK(query[0] == '/');
   const auto url_query = parse_url_query(query);
   const auto &path = url_query.path_;
@@ -1228,16 +1249,17 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
               nullptr, std::move(user_link), url_query.get_arg("attach").str(), url_query.get_arg("startattach"));
         }
         // /+<phone_number>
-        return user_link;
+        return std::move(user_link);
       } else {
         // /+<link>
         return td::make_unique<InternalLinkDialogInvite>(PSTRING() << "tg:join?invite="
                                                                    << url_encode(get_url_query_hash(false, url_query)));
       }
     }
-  } else if (path[0] == "addstickers") {
+  } else if (path[0] == "addstickers" || path[0] == "addemoji") {
     if (path.size() >= 2 && !path[1].empty()) {
       // /addstickers/<name>
+      // /addemoji/<name>
       return td::make_unique<InternalLinkStickerSet>(path[1]);
     }
   } else if (path[0] == "setlanguage") {
@@ -1324,7 +1346,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
       }
       if (arg.first == "start" && is_valid_start_parameter(arg.second)) {
         // /<bot_username>?start=<parameter>
-        return td::make_unique<InternalLinkBotStart>(std::move(username), arg.second);
+        return td::make_unique<InternalLinkBotStart>(std::move(username), arg.second, is_trusted);
       }
       if (arg.first == "startgroup" && is_valid_start_parameter(arg.second)) {
         // /<bot_username>?startgroup=<parameter>
@@ -1566,7 +1588,7 @@ UserId LinkManager::get_link_user_id(Slice url) {
   }
 
   Slice host("user");
-  if (!begins_with(url, host)) {
+  if (!begins_with(url, host) || (url.size() > host.size() && Slice("/?#").find(url[host.size()]) == Slice::npos)) {
     return UserId();
   }
   url.remove_prefix(host.size());
@@ -1592,6 +1614,48 @@ UserId LinkManager::get_link_user_id(Slice url) {
     }
   }
   return UserId();
+}
+
+Result<int64> LinkManager::get_link_custom_emoji_document_id(Slice url) {
+  string lower_cased_url = to_lower(url);
+  url = lower_cased_url;
+
+  Slice link_scheme("tg:");
+  if (!begins_with(url, link_scheme)) {
+    return Status::Error(400, "Custom emoji URL must have scheme tg");
+  }
+  url.remove_prefix(link_scheme.size());
+  if (begins_with(url, "//")) {
+    url.remove_prefix(2);
+  }
+
+  Slice host("emoji");
+  if (!begins_with(url, host) || (url.size() > host.size() && Slice("/?#").find(url[host.size()]) == Slice::npos)) {
+    return Status::Error(400, PSLICE() << "Custom emoji URL must have host \"" << host << '"');
+  }
+  url.remove_prefix(host.size());
+  if (begins_with(url, "/")) {
+    url.remove_prefix(1);
+  }
+  if (!begins_with(url, "?")) {
+    return Status::Error(400, "Custom emoji URL must have an emoji identifier");
+  }
+  url.remove_prefix(1);
+  url.truncate(url.find('#'));
+
+  for (auto parameter : full_split(url, '&')) {
+    Slice key;
+    Slice value;
+    std::tie(key, value) = split(parameter, '=');
+    if (key == Slice("id")) {
+      auto r_document_id = to_integer_safe<int64>(value);
+      if (r_document_id.is_error() || r_document_id.ok() == 0) {
+        return Status::Error(400, "Invalid custom emoji identifier specified");
+      }
+      return r_document_id.ok();
+    }
+  }
+  return Status::Error(400, "Custom emoji URL must have an emoji identifier");
 }
 
 Result<MessageLinkInfo> LinkManager::get_message_link_info(Slice url) {

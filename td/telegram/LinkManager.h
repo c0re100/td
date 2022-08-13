@@ -12,9 +12,9 @@
 #include "td/telegram/UserId.h"
 
 #include "td/actor/actor.h"
-#include "td/actor/PromiseFuture.h"
 
 #include "td/utils/common.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 
@@ -52,8 +52,11 @@ class LinkManager final : public Actor {
   // same as check_link, but returns an empty string instead of an error
   static string get_checked_link(Slice link, bool http_only = false, bool https_only = false);
 
+  // returns whether a link is an internal link, supported or not
+  static bool is_internal_link(Slice link);
+
   // checks whether the link is a supported tg or t.me link and parses it
-  static unique_ptr<InternalLink> parse_internal_link(Slice link);
+  static unique_ptr<InternalLink> parse_internal_link(Slice link, bool is_trusted = false);
 
   void update_autologin_domains(string autologin_token, vector<string> autologin_domains,
                                 vector<string> url_auth_domains);
@@ -76,6 +79,8 @@ class LinkManager final : public Actor {
   static string get_dialog_invite_link(Slice hash, bool is_internal);
 
   static UserId get_link_user_id(Slice url);
+
+  static Result<int64> get_link_custom_emoji_document_id(Slice url);
 
   static Result<MessageLinkInfo> get_message_link_info(Slice url);
 
@@ -107,6 +112,7 @@ class LinkManager final : public Actor {
   class InternalLinkProxy;
   class InternalLinkPublicDialog;
   class InternalLinkQrCodeAuthentication;
+  class InternalLinkRestorePurchases;
   class InternalLinkSettings;
   class InternalLinkStickerSet;
   class InternalLinkTheme;
@@ -124,9 +130,9 @@ class LinkManager final : public Actor {
   // returns information about the link
   static LinkInfo get_link_info(Slice link);
 
-  static unique_ptr<InternalLink> parse_tg_link_query(Slice query);
+  static unique_ptr<InternalLink> parse_tg_link_query(Slice query, bool is_trusted);
 
-  static unique_ptr<InternalLink> parse_t_me_link_query(Slice query);
+  static unique_ptr<InternalLink> parse_t_me_link_query(Slice query, bool is_trusted);
 
   static unique_ptr<InternalLink> get_internal_link_passport(Slice query,
                                                              const vector<std::pair<string, string>> &args);

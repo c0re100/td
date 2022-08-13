@@ -23,10 +23,14 @@ namespace td {
 VideosManager::VideosManager(Td *td) : td_(td) {
 }
 
+VideosManager::~VideosManager() {
+  Scheduler::instance()->destroy_on_scheduler(G()->get_gc_scheduler_id(), videos_);
+}
+
 int32 VideosManager::get_video_duration(FileId file_id) const {
-  auto it = videos_.find(file_id);
-  CHECK(it != videos_.end());
-  return it->second->duration;
+  auto video = get_video(file_id);
+  CHECK(video != nullptr);
+  return video->duration;
 }
 
 tl_object_ptr<td_api::video> VideosManager::get_video_object(FileId file_id) const {
@@ -34,9 +38,7 @@ tl_object_ptr<td_api::video> VideosManager::get_video_object(FileId file_id) con
     return nullptr;
   }
 
-  auto it = videos_.find(file_id);
-  CHECK(it != videos_.end());
-  auto video = it->second.get();
+  auto video = get_video(file_id);
   CHECK(video != nullptr);
   auto thumbnail = video->animated_thumbnail.file_id.is_valid()
                        ? get_thumbnail_object(td_->file_manager_.get(), video->animated_thumbnail, PhotoFormat::Mpeg4)
@@ -103,13 +105,7 @@ FileId VideosManager::on_get_video(unique_ptr<Video> new_video, bool replace) {
 }
 
 const VideosManager::Video *VideosManager::get_video(FileId file_id) const {
-  auto video = videos_.find(file_id);
-  if (video == videos_.end()) {
-    return nullptr;
-  }
-
-  CHECK(video->second->file_id == file_id);
-  return video->second.get();
+  return videos_.get_pointer(file_id);
 }
 
 FileId VideosManager::get_video_thumbnail_file_id(FileId file_id) const {
@@ -143,7 +139,7 @@ FileId VideosManager::dup_video(FileId new_id, FileId old_id) {
   return new_id;
 }
 
-void VideosManager::merge_videos(FileId new_id, FileId old_id, bool can_delete_old) {
+void VideosManager::merge_videos(FileId new_id, FileId old_id) {
   CHECK(old_id.is_valid() && new_id.is_valid());
   CHECK(new_id != old_id);
 
@@ -151,19 +147,10 @@ void VideosManager::merge_videos(FileId new_id, FileId old_id, bool can_delete_o
   const Video *old_ = get_video(old_id);
   CHECK(old_ != nullptr);
 
-  auto new_it = videos_.find(new_id);
-  if (new_it == videos_.end()) {
-    auto &old = videos_[old_id];
-    if (!can_delete_old) {
-      dup_video(new_id, old_id);
-    } else {
-      old->file_id = new_id;
-      videos_.emplace(new_id, std::move(old));
-    }
+  const auto *new_ = get_video(new_id);
+  if (new_ == nullptr) {
+    dup_video(new_id, old_id);
   } else {
-    Video *new_ = new_it->second.get();
-    CHECK(new_ != nullptr);
-
     if (!old_->mime_type.empty() && old_->mime_type != new_->mime_type) {
       LOG(INFO) << "Video has changed: mime_type = (" << old_->mime_type << ", " << new_->mime_type << ")";
     }
@@ -173,9 +160,6 @@ void VideosManager::merge_videos(FileId new_id, FileId old_id, bool can_delete_o
     }
   }
   LOG_STATUS(td_->file_manager_->merge(new_id, old_id));
-  if (can_delete_old) {
-    videos_.erase(old_id);
-  }
 }
 
 void VideosManager::create_video(FileId file_id, string minithumbnail, PhotoSize thumbnail,

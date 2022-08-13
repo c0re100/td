@@ -21,7 +21,6 @@
 #include "td/telegram/telegram_api.h"
 
 #include "td/actor/actor.h"
-#include "td/actor/PromiseFuture.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
@@ -31,9 +30,12 @@
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
 #include "td/utils/optional.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
+#include "td/utils/WaitFreeHashMap.h"
+#include "td/utils/WaitFreeVector.h"
 
 #include <map>
 #include <memory>
@@ -126,7 +128,7 @@ class FileNode {
   friend class FileManager;
 
   static constexpr char PERSISTENT_ID_VERSION_OLD = 2;
-  static constexpr char PERSISTENT_ID_VERSION_MAP = 3;
+  static constexpr char PERSISTENT_ID_VERSION_GENERATED = 3;
   static constexpr char PERSISTENT_ID_VERSION = 4;
 
   LocalFileLocation local_;
@@ -150,7 +152,7 @@ class FileNode {
   DialogId owner_dialog_id_;
   FileEncryptionKey encryption_key_;
   FileDbId pmc_id_;
-  std::vector<FileId> file_ids_;
+  vector<FileId> file_ids_;
 
   FileId main_file_id_;
 
@@ -268,7 +270,7 @@ class FileView {
 
   bool get_by_hash() const;
 
-  FileId file_id() const {
+  FileId get_main_file_id() const {
     return node_->main_file_id_;
   }
 
@@ -382,6 +384,8 @@ class FileManager final : public FileLoadManager::Callback {
 
   class Context {
    public:
+    virtual bool need_notify_on_new_files() = 0;
+
     virtual void on_new_file(int64 size, int64 real_size, int32 cnt) = 0;
 
     virtual void on_file_updated(FileId size) = 0;
@@ -415,6 +419,8 @@ class FileManager final : public FileLoadManager::Callback {
 
   static bool are_modification_times_equal(int64 old_mtime, int64 new_mtime);
 
+  static bool is_remotely_generated_file(Slice conversion);
+
   void init_actor();
 
   FileId dup_file_id(FileId file_id);
@@ -446,6 +452,8 @@ class FileManager final : public FileLoadManager::Callback {
 
   bool set_encryption_key(FileId file_id, FileEncryptionKey key);
   bool set_content(FileId file_id, BufferSlice bytes);
+
+  void check_local_location(FileId file_id);
 
   void download(FileId file_id, std::shared_ptr<DownloadCallback> callback, int32 new_priority, int64 offset,
                 int64 limit);
@@ -482,6 +490,9 @@ class FileManager final : public FileLoadManager::Callback {
 
   Result<FileId> get_map_thumbnail_file_id(Location location, int32 zoom, int32 width, int32 height, int32 scale,
                                            DialogId owner_dialog_id) TD_WARN_UNUSED_RESULT;
+
+  Result<FileId> get_audio_thumbnail_file_id(string title, string performer, bool is_small,
+                                             DialogId owner_dialog_id) TD_WARN_UNUSED_RESULT;
 
   FileType guess_file_type(const tl_object_ptr<td_api::InputFile> &file);
 
@@ -573,15 +584,15 @@ class FileManager final : public FileLoadManager::Callback {
   };
   Enumerator<RemoteInfo> remote_location_info_;
 
-  FlatHashMap<string, FileId> file_hash_to_file_id_;
+  WaitFreeHashMap<string, FileId> file_hash_to_file_id_;
 
   std::map<FullLocalFileLocation, FileId> local_location_to_file_id_;
   std::map<FullGenerateFileLocation, FileId> generate_location_to_file_id_;
   std::map<FileDbId, int32> pmc_id_to_file_node_id_;
 
-  vector<FileIdInfo> file_id_info_;
-  vector<int32> empty_file_ids_;
-  vector<unique_ptr<FileNode>> file_nodes_;
+  WaitFreeVector<FileIdInfo> file_id_info_;
+  WaitFreeVector<int32> empty_file_ids_;
+  WaitFreeVector<unique_ptr<FileNode>> file_nodes_;
   ActorOwn<FileLoadManager> file_load_manager_;
   ActorOwn<FileGenerateManager> file_generate_manager_;
 
@@ -616,7 +627,7 @@ class FileManager final : public FileLoadManager::Callback {
   void flush_to_pmc(FileNodePtr node, bool new_remote, bool new_local, bool new_generate, const char *source);
   void load_from_pmc(FileNodePtr node, bool new_remote, bool new_local, bool new_generate);
 
-  Result<FileId> from_persistent_id_map(Slice binary, FileType file_type);
+  Result<FileId> from_persistent_id_generated(Slice binary, FileType file_type);
   Result<FileId> from_persistent_id_v2(Slice binary, FileType file_type);
   Result<FileId> from_persistent_id_v3(Slice binary, FileType file_type);
   Result<FileId> from_persistent_id_v23(Slice binary, FileType file_type, int32 version);
@@ -640,7 +651,7 @@ class FileManager final : public FileLoadManager::Callback {
   void do_cancel_download(FileNodePtr node);
   void do_cancel_upload(FileNodePtr node);
   void do_cancel_generate(FileNodePtr node);
-  void run_upload(FileNodePtr node, std::vector<int> bad_parts);
+  void run_upload(FileNodePtr node, vector<int> bad_parts);
   void run_download(FileNodePtr node, bool force_update_priority);
   void run_generate(FileNodePtr node);
 

@@ -26,6 +26,8 @@
 #include "td/mtproto/SessionConnection.h"
 #include "td/mtproto/TransportType.h"
 
+#include "td/actor/PromiseFuture.h"
+
 #include "td/utils/algorithm.h"
 #include "td/utils/as.h"
 #include "td/utils/format.h"
@@ -42,6 +44,7 @@
 #include "td/utils/utf8.h"
 #include "td/utils/VectorQueue.h"
 
+#include <atomic>
 #include <memory>
 #include <tuple>
 #include <utility>
@@ -66,11 +69,6 @@ class SemaphoreActor final : public Actor {
  private:
   size_t capacity_;
   VectorQueue<Promise<Promise<Unit>>> pending_;
-
-  void start_up() final {
-    set_context(std::make_shared<ActorContext>());
-    set_tag(string());
-  }
 
   void finish(Result<Unit>) {
     capacity_++;
@@ -112,6 +110,22 @@ class GenAuthKeyActor final : public Actor {
       , connection_promise_(std::move(connection_promise))
       , handshake_promise_(std::move(handshake_promise))
       , callback_(std::move(callback)) {
+    if (actor_count_.fetch_add(1, std::memory_order_relaxed) == MIN_HIGH_LOAD_ACTOR_COUNT - 1) {
+      LOG(WARNING) << "Number of GenAuthKeyActor exceeded high-load threshold";
+    }
+  }
+  GenAuthKeyActor(const GenAuthKeyActor &) = delete;
+  GenAuthKeyActor &operator=(const GenAuthKeyActor &) = delete;
+  GenAuthKeyActor(GenAuthKeyActor &&) = delete;
+  GenAuthKeyActor &operator=(GenAuthKeyActor &&) = delete;
+  ~GenAuthKeyActor() final {
+    if (actor_count_.fetch_sub(1, std::memory_order_relaxed) == MIN_HIGH_LOAD_ACTOR_COUNT) {
+      LOG(WARNING) << "Number of GenAuthKeyActor became lower than high-load threshold";
+    }
+  }
+
+  static bool is_high_loaded() {
+    return actor_count_.load(std::memory_order_relaxed) >= MIN_HIGH_LOAD_ACTOR_COUNT;
   }
 
   void on_network(uint32 network_generation) {
@@ -133,9 +147,16 @@ class GenAuthKeyActor final : public Actor {
   ActorOwn<mtproto::HandshakeActor> child_;
   Promise<Unit> finish_promise_;
 
+  static constexpr size_t MIN_HIGH_LOAD_ACTOR_COUNT = 100;
+  static std::atomic<size_t> actor_count_;
+
   static TD_THREAD_LOCAL Semaphore *semaphore_;
   Semaphore &get_handshake_semaphore() {
+    auto old_context = set_context(std::make_shared<ActorContext>());
+    auto old_tag = set_tag(string());
     init_thread_local<Semaphore>(semaphore_, 50);
+    set_context(std::move(old_context));
+    set_tag(std::move(old_tag));
     return *semaphore_;
   }
 
@@ -186,6 +207,7 @@ class GenAuthKeyActor final : public Actor {
   }
 };
 
+std::atomic<size_t> GenAuthKeyActor::actor_count_;
 TD_THREAD_LOCAL Semaphore *GenAuthKeyActor::semaphore_{};
 
 }  // namespace detail
@@ -255,6 +277,10 @@ Session::Session(unique_ptr<Callback> callback, std::shared_ptr<AuthDataShared> 
   last_activity_timestamp_ = Time::now();
   last_success_timestamp_ = Time::now() - 366 * 86400;
   last_bind_success_timestamp_ = Time::now() - 366 * 86400;
+}
+
+bool Session::is_high_loaded() {
+  return detail::GenAuthKeyActor::is_high_loaded();
 }
 
 bool Session::can_destroy_auth_key() const {

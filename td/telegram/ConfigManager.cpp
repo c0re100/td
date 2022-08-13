@@ -781,6 +781,11 @@ class ConfigRecoverer final : public Actor {
     if (close_flag_) {
       return;
     }
+    if (Session::is_high_loaded()) {
+      VLOG(config_recoverer) << "Skip config recoverer under high load";
+      set_timeout_in(Random::fast(200, 300));
+      return;
+    }
 
     if (is_connecting_) {
       VLOG(config_recoverer) << "Failed to connect for " << Time::now() - connecting_since_;
@@ -1387,8 +1392,8 @@ void ConfigManager::process_config(tl_object_ptr<telegram_api::config> config) {
   shared_config.set_option_integer("call_packet_timeout_ms", config->call_packet_timeout_ms_);
   shared_config.set_option_integer("call_receive_timeout_ms", config->call_receive_timeout_ms_);
 
-  shared_config.set_option_integer("message_text_length_max", config->message_length_max_);
-  shared_config.set_option_integer("message_caption_length_max", config->caption_length_max_);
+  shared_config.set_option_integer("message_text_length_max", clamp(config->message_length_max_, 4096, 1000000));
+  shared_config.set_option_integer("message_caption_length_max", clamp(config->caption_length_max_, 1024, 1000000));
 
   if (config->gif_search_username_.empty()) {
     shared_config.set_option_empty("animation_search_bot_username");
@@ -1489,9 +1494,10 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
       telegram_api::JSONValue *value = key_value->value_.get();
-      if (key == "message_animated_emoji_max" || key == "stickers_emoji_cache_time" || key == "test" ||
-          key == "upload_max_fileparts_default" || key == "upload_max_fileparts_premium" ||
-          key == "wallet_blockchain_name" || key == "wallet_config" || key == "wallet_enabled") {
+      if (key == "getfile_experimental_params" || key == "message_animated_emoji_max" ||
+          key == "stickers_emoji_cache_time" || key == "test" || key == "upload_max_fileparts_default" ||
+          key == "upload_max_fileparts_premium" || key == "wallet_blockchain_name" || key == "wallet_config" ||
+          key == "wallet_enabled") {
         continue;
       }
       if (key == "ignore_restriction_reasons") {

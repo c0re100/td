@@ -95,6 +95,14 @@ static void parse_internal_link(const td::string &url, td::td_api::object_ptr<td
 }
 
 TEST(Link, parse_internal_link) {
+  auto chat_administrator_rights = [](bool can_manage_chat, bool can_change_info, bool can_post_messages,
+                                      bool can_edit_messages, bool can_delete_messages, bool can_invite_users,
+                                      bool can_restrict_members, bool can_pin_messages, bool can_promote_members,
+                                      bool can_manage_video_chats, bool is_anonymous) {
+    return td::td_api::make_object<td::td_api::chatAdministratorRights>(
+        can_manage_chat, can_change_info, can_post_messages, can_edit_messages, can_delete_messages, can_invite_users,
+        can_restrict_members, can_pin_messages, can_promote_members, can_manage_video_chats, is_anonymous);
+  };
   auto target_chat_chosen = [](bool allow_users, bool allow_bots, bool allow_groups, bool allow_channels) {
     return td::td_api::make_object<td::td_api::targetChatChosen>(allow_users, allow_bots, allow_groups, allow_channels);
   };
@@ -128,7 +136,7 @@ TEST(Link, parse_internal_link) {
                                                                                 std::move(administrator_rights));
   };
   auto bot_start = [](const td::string &bot_username, const td::string &start_parameter) {
-    return td::td_api::make_object<td::td_api::internalLinkTypeBotStart>(bot_username, start_parameter);
+    return td::td_api::make_object<td::td_api::internalLinkTypeBotStart>(bot_username, start_parameter, false);
   };
   auto bot_start_in_group = [](const td::string &bot_username, const td::string &start_parameter,
                                td::td_api::object_ptr<td::td_api::chatAdministratorRights> &&administrator_rights) {
@@ -192,6 +200,9 @@ TEST(Link, parse_internal_link) {
   };
   auto qr_code_authentication = [] {
     return td::td_api::make_object<td::td_api::internalLinkTypeQrCodeAuthentication>();
+  };
+  auto restore_purchases = [] {
+    return td::td_api::make_object<td::td_api::internalLinkTypeRestorePurchases>();
   };
   auto settings = [] {
     return td::td_api::make_object<td::td_api::internalLinkTypeSettings>();
@@ -502,6 +513,14 @@ TEST(Link, parse_internal_link) {
   parse_internal_link("tg:login?token=abacaba", qr_code_authentication());
   parse_internal_link("tg:login?token=", unknown_deep_link("tg://login?token="));
 
+  parse_internal_link("tg:restore_purchases?token=abacaba", restore_purchases());
+  parse_internal_link("tg:restore_purchases?#", restore_purchases());
+  parse_internal_link("tg:restore_purchases/?#", restore_purchases());
+  parse_internal_link("tg:restore_purchases", restore_purchases());
+  parse_internal_link("tg:restore_purchase", unknown_deep_link("tg://restore_purchase"));
+  parse_internal_link("tg:restore_purchasess", unknown_deep_link("tg://restore_purchasess"));
+  parse_internal_link("tg:restore_purchases/test?#", unknown_deep_link("tg://restore_purchases/test?"));
+
   parse_internal_link("t.me/joinchat?invite=abcdef", nullptr);
   parse_internal_link("t.me/joinchat", nullptr);
   parse_internal_link("t.me/joinchat/", nullptr);
@@ -565,6 +584,24 @@ TEST(Link, parse_internal_link) {
   parse_internal_link("tg:addstickers?set=abcdef", sticker_set("abcdef"));
   parse_internal_link("tg:addstickers?set=abc%30ef", sticker_set("abc0ef"));
   parse_internal_link("tg://addstickers?set=", unknown_deep_link("tg://addstickers?set="));
+
+  parse_internal_link("t.me/addemoji?set=abcdef", nullptr);
+  parse_internal_link("t.me/addemoji", nullptr);
+  parse_internal_link("t.me/addemoji/", nullptr);
+  parse_internal_link("t.me/addemoji//abcdef", nullptr);
+  parse_internal_link("t.me/addemoji?/abcdef", nullptr);
+  parse_internal_link("t.me/addemoji/?abcdef", nullptr);
+  parse_internal_link("t.me/addemoji/#abcdef", nullptr);
+  parse_internal_link("t.me/addemoji/abacaba", sticker_set("abacaba"));
+  parse_internal_link("t.me/addemoji/aba%20aba", sticker_set("aba aba"));
+  parse_internal_link("t.me/addemoji/123456a", sticker_set("123456a"));
+  parse_internal_link("t.me/addemoji/12345678901", sticker_set("12345678901"));
+  parse_internal_link("t.me/addemoji/123456", sticker_set("123456"));
+  parse_internal_link("t.me/addemoji/123456/123123/12/31/a/s//21w/?asdas#test", sticker_set("123456"));
+
+  parse_internal_link("tg:addemoji?set=abcdef", sticker_set("abcdef"));
+  parse_internal_link("tg:addemoji?set=abc%30ef", sticker_set("abc0ef"));
+  parse_internal_link("tg://addemoji?set=", unknown_deep_link("tg://addemoji?set="));
 
   parse_internal_link("t.me/confirmphone?hash=abc%30ef&phone=", nullptr);
   parse_internal_link("t.me/confirmphone/123456/123123/12/31/a/s//21w/?hash=abc%30ef&phone=123456789",
@@ -734,29 +771,27 @@ TEST(Link, parse_internal_link) {
   parse_internal_link("tg:resolve?domain=username&startgroup&admin=asdas", bot_start_in_group("username", "", nullptr));
   parse_internal_link("tg:resolve?domain=username&startgroup&admin=post_messages",
                       bot_start_in_group("username", "", nullptr));
-  parse_internal_link(
-      "tg:resolve?domain=username&startgroup=1&admin=delete_messages+anonymous",
-      bot_start_in_group("username", "1",
-                         td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                             true, false, false, false, true, false, false, false, false, false, true)));
+  parse_internal_link("tg:resolve?domain=username&startgroup=1&admin=delete_messages+anonymous",
+                      bot_start_in_group("username", "1",
+                                         chat_administrator_rights(true, false, false, false, true, false, false, false,
+                                                                   false, false, true)));
   parse_internal_link(
       "tg:resolve?domain=username&startgroup&admin=manage_chat+change_info+post_messages+edit_messages+delete_messages+"
       "invite_users+restrict_members+pin_messages+promote_members+manage_video_chats+anonymous",
-      bot_start_in_group("username", "",
-                         td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                             true, true, false, false, true, true, true, true, true, true, true)));
+      bot_start_in_group(
+          "username", "",
+          chat_administrator_rights(true, true, false, false, true, true, true, true, true, true, true)));
 
   parse_internal_link("tg:resolve?domain=username&startchannel", public_chat("username"));
   parse_internal_link("tg:resolve?domain=username&startchannel&admin=", public_chat("username"));
-  parse_internal_link(
-      "tg:resolve?domain=username&startchannel&admin=post_messages",
-      bot_add_to_channel("username", td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                                         true, false, true, false, false, false, true, false, false, false, false)));
+  parse_internal_link("tg:resolve?domain=username&startchannel&admin=post_messages",
+                      bot_add_to_channel("username", chat_administrator_rights(true, false, true, false, false, false,
+                                                                               true, false, false, false, false)));
   parse_internal_link(
       "tg:resolve?domain=username&startchannel&admin=manage_chat+change_info+post_messages+edit_messages+delete_"
       "messages+invite_users+restrict_members+pin_messages+promote_members+manage_video_chats+anonymous",
-      bot_add_to_channel("username", td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                                         true, true, true, true, true, true, true, false, true, true, false)));
+      bot_add_to_channel(
+          "username", chat_administrator_rights(true, true, true, true, true, true, true, false, true, true, false)));
 
   parse_internal_link("t.me/username/0/a//s/as?startgroup=", bot_start_in_group("username", "", nullptr));
   parse_internal_link("t.me/username/aasdas?test=1&startgroup=#12312", bot_start_in_group("username", "", nullptr));
@@ -771,31 +806,29 @@ TEST(Link, parse_internal_link) {
   parse_internal_link("t.me/username?startgroup", bot_start_in_group("username", "", nullptr));
   parse_internal_link("t.me/username?startgroup&admin=asdas", bot_start_in_group("username", "", nullptr));
   parse_internal_link("t.me/username?startgroup&admin=post_messages", bot_start_in_group("username", "", nullptr));
-  parse_internal_link(
-      "t.me/username?startgroup=1&admin=delete_messages+anonymous",
-      bot_start_in_group("username", "1",
-                         td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                             true, false, false, false, true, false, false, false, false, false, true)));
+  parse_internal_link("t.me/username?startgroup=1&admin=delete_messages+anonymous",
+                      bot_start_in_group("username", "1",
+                                         chat_administrator_rights(true, false, false, false, true, false, false, false,
+                                                                   false, false, true)));
   parse_internal_link(
       "t.me/"
       "username?startgroup&admin=manage_chat+change_info+post_messages+edit_messages+delete_messages+invite_users+"
       "restrict_members+pin_messages+promote_members+manage_video_chats+anonymous",
-      bot_start_in_group("username", "",
-                         td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                             true, true, false, false, true, true, true, true, true, true, true)));
+      bot_start_in_group(
+          "username", "",
+          chat_administrator_rights(true, true, false, false, true, true, true, true, true, true, true)));
 
   parse_internal_link("t.me/username?startchannel", public_chat("username"));
   parse_internal_link("t.me/username?startchannel&admin=", public_chat("username"));
-  parse_internal_link(
-      "t.me/username?startchannel&admin=post_messages",
-      bot_add_to_channel("username", td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                                         true, false, true, false, false, false, true, false, false, false, false)));
+  parse_internal_link("t.me/username?startchannel&admin=post_messages",
+                      bot_add_to_channel("username", chat_administrator_rights(true, false, true, false, false, false,
+                                                                               true, false, false, false, false)));
   parse_internal_link(
       "t.me/"
       "username?startchannel&admin=manage_chat+change_info+post_messages+edit_messages+delete_messages+invite_users+"
       "restrict_members+pin_messages+promote_members+manage_video_chats+anonymous",
-      bot_add_to_channel("username", td::td_api::make_object<td::td_api::chatAdministratorRights>(
-                                         true, true, true, true, true, true, true, false, true, true, false)));
+      bot_add_to_channel(
+          "username", chat_administrator_rights(true, true, true, true, true, true, true, false, true, true, false)));
 
   parse_internal_link("tg:resolve?domain=username&game=aasdasd", game("username", "aasdasd"));
   parse_internal_link("TG://resolve?domain=username&game=", public_chat("username"));

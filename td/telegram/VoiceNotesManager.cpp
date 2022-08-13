@@ -100,6 +100,11 @@ VoiceNotesManager::VoiceNotesManager(Td *td, ActorShared<> parent) : td_(td), pa
   voice_note_transcription_timeout_.set_callback_data(static_cast<void *>(this));
 }
 
+VoiceNotesManager::~VoiceNotesManager() {
+  Scheduler::instance()->destroy_on_scheduler(G()->get_gc_scheduler_id(), voice_notes_, voice_note_messages_,
+                                              message_voice_notes_);
+}
+
 void VoiceNotesManager::tear_down() {
   parent_.reset();
 }
@@ -117,11 +122,11 @@ void VoiceNotesManager::on_voice_note_transcription_timeout_callback(void *voice
 }
 
 int32 VoiceNotesManager::get_voice_note_duration(FileId file_id) const {
-  auto it = voice_notes_.find(file_id);
-  if (it == voice_notes_.end()) {
+  auto voice_note = get_voice_note(file_id);
+  if (voice_note == nullptr) {
     return 0;
   }
-  return it->second->duration;
+  return voice_note->duration;
 }
 
 tl_object_ptr<td_api::voiceNote> VoiceNotesManager::get_voice_note_object(FileId file_id) const {
@@ -129,12 +134,26 @@ tl_object_ptr<td_api::voiceNote> VoiceNotesManager::get_voice_note_object(FileId
     return nullptr;
   }
 
-  auto it = voice_notes_.find(file_id);
-  CHECK(it != voice_notes_.end());
-  auto voice_note = it->second.get();
+  auto voice_note = get_voice_note(file_id);
   CHECK(voice_note != nullptr);
+
+  auto speech_recognition_result = [this, voice_note]() -> td_api::object_ptr<td_api::SpeechRecognitionResult> {
+    if (voice_note->is_transcribed) {
+      return td_api::make_object<td_api::speechRecognitionResultText>(voice_note->text);
+    }
+    if (speech_recognition_queries_.count(voice_note->file_id) != 0) {
+      return td_api::make_object<td_api::speechRecognitionResultPending>(voice_note->text);
+    }
+    if (voice_note->last_transcription_error.is_error()) {
+      return td_api::make_object<td_api::speechRecognitionResultError>(
+          td_api::make_object<td_api::error>(voice_note->last_transcription_error.error().code(),
+                                             voice_note->last_transcription_error.error().message().str()));
+    }
+    return nullptr;
+  }();
+
   return make_tl_object<td_api::voiceNote>(voice_note->duration, voice_note->waveform, voice_note->mime_type,
-                                           voice_note->is_transcribed, voice_note->text,
+                                           std::move(speech_recognition_result),
                                            td_->file_manager_->get_file_object(file_id));
 }
 
@@ -162,6 +181,7 @@ FileId VoiceNotesManager::on_get_voice_note(unique_ptr<VoiceNote> new_voice_note
       v->is_transcribed = true;
       v->transcription_id = new_voice_note->transcription_id;
       v->text = std::move(new_voice_note->text);
+      v->last_transcription_error = Status::OK();
       on_voice_note_transcription_updated(file_id);
     }
   }
@@ -170,23 +190,11 @@ FileId VoiceNotesManager::on_get_voice_note(unique_ptr<VoiceNote> new_voice_note
 }
 
 VoiceNotesManager::VoiceNote *VoiceNotesManager::get_voice_note(FileId file_id) {
-  auto voice_note = voice_notes_.find(file_id);
-  if (voice_note == voice_notes_.end()) {
-    return nullptr;
-  }
-
-  CHECK(voice_note->second->file_id == file_id);
-  return voice_note->second.get();
+  return voice_notes_.get_pointer(file_id);
 }
 
 const VoiceNotesManager::VoiceNote *VoiceNotesManager::get_voice_note(FileId file_id) const {
-  auto voice_note = voice_notes_.find(file_id);
-  if (voice_note == voice_notes_.end()) {
-    return nullptr;
-  }
-
-  CHECK(voice_note->second->file_id == file_id);
-  return voice_note->second.get();
+  return voice_notes_.get_pointer(file_id);
 }
 
 FileId VoiceNotesManager::dup_voice_note(FileId new_id, FileId old_id) {
@@ -194,12 +202,19 @@ FileId VoiceNotesManager::dup_voice_note(FileId new_id, FileId old_id) {
   CHECK(old_voice_note != nullptr);
   auto &new_voice_note = voice_notes_[new_id];
   CHECK(new_voice_note == nullptr);
-  new_voice_note = make_unique<VoiceNote>(*old_voice_note);
+  new_voice_note = make_unique<VoiceNote>();
   new_voice_note->file_id = new_id;
+  new_voice_note->mime_type = old_voice_note->mime_type;
+  new_voice_note->duration = old_voice_note->duration;
+  new_voice_note->waveform = old_voice_note->waveform;
+  if (old_voice_note->is_transcribed) {
+    new_voice_note->is_transcribed = old_voice_note->is_transcribed;
+    new_voice_note->text = old_voice_note->text;
+  }
   return new_id;
 }
 
-void VoiceNotesManager::merge_voice_notes(FileId new_id, FileId old_id, bool can_delete_old) {
+void VoiceNotesManager::merge_voice_notes(FileId new_id, FileId old_id) {
   CHECK(old_id.is_valid() && new_id.is_valid());
   CHECK(new_id != old_id);
 
@@ -207,27 +222,15 @@ void VoiceNotesManager::merge_voice_notes(FileId new_id, FileId old_id, bool can
   const VoiceNote *old_ = get_voice_note(old_id);
   CHECK(old_ != nullptr);
 
-  auto new_it = voice_notes_.find(new_id);
-  if (new_it == voice_notes_.end()) {
-    auto &old = voice_notes_[old_id];
-    if (!can_delete_old) {
-      dup_voice_note(new_id, old_id);
-    } else {
-      old->file_id = new_id;
-      voice_notes_.emplace(new_id, std::move(old));
-    }
+  const auto *new_ = get_voice_note(new_id);
+  if (new_ == nullptr) {
+    dup_voice_note(new_id, old_id);
   } else {
-    VoiceNote *new_ = new_it->second.get();
-    CHECK(new_ != nullptr);
-
     if (!old_->mime_type.empty() && old_->mime_type != new_->mime_type) {
       LOG(INFO) << "Voice note has changed: mime_type = (" << old_->mime_type << ", " << new_->mime_type << ")";
     }
   }
   LOG_STATUS(td_->file_manager_->merge(new_id, old_id));
-  if (can_delete_old) {
-    voice_notes_.erase(old_id);
-  }
 }
 
 void VoiceNotesManager::create_voice_note(FileId file_id, string mime_type, int32 duration, string waveform,
@@ -288,6 +291,8 @@ void VoiceNotesManager::recognize_speech(FullMessageId full_message_id, Promise<
   queries.push_back(std::move(promise));
   if (queries.size() == 1) {
     td_->create_handler<TranscribeAudioQuery>()->send(file_id, full_message_id);
+    voice_note->last_transcription_error = Status::OK();
+    on_voice_note_transcription_updated(file_id);
   }
 }
 
@@ -297,14 +302,12 @@ void VoiceNotesManager::on_voice_note_transcribed(FileId file_id, string &&text,
   CHECK(voice_note != nullptr);
   CHECK(!voice_note->is_transcribed);
   CHECK(voice_note->transcription_id == 0 || voice_note->transcription_id == transcription_id);
+  CHECK(transcription_id != 0);
   bool is_changed = voice_note->is_transcribed != is_final || voice_note->text != text;
   voice_note->transcription_id = transcription_id;
   voice_note->is_transcribed = is_final;
   voice_note->text = std::move(text);
-
-  if (is_changed) {
-    on_voice_note_transcription_updated(file_id);
-  }
+  voice_note->last_transcription_error = Status::OK();
 
   if (is_final) {
     auto it = speech_recognition_queries_.find(file_id);
@@ -313,8 +316,13 @@ void VoiceNotesManager::on_voice_note_transcribed(FileId file_id, string &&text,
     auto promises = std::move(it->second);
     speech_recognition_queries_.erase(it);
 
+    on_voice_note_transcription_updated(file_id);
     set_promises(promises);
   } else {
+    if (is_changed) {
+      on_voice_note_transcription_updated(file_id);
+    }
+
     if (pending_voice_note_transcription_queries_.count(transcription_id) != 0) {
       on_pending_voice_note_transcription_failed(transcription_id,
                                                  Status::Error(500, "Receive duplicate recognition identifier"));
@@ -329,15 +337,11 @@ void VoiceNotesManager::on_voice_note_transcription_failed(FileId file_id, Statu
   auto voice_note = get_voice_note(file_id);
   CHECK(voice_note != nullptr);
   CHECK(!voice_note->is_transcribed);
+  CHECK(pending_voice_note_transcription_queries_.count(voice_note->transcription_id) == 0);
 
-  if (voice_note->transcription_id != 0) {
-    CHECK(pending_voice_note_transcription_queries_.count(voice_note->transcription_id) == 0);
-    voice_note->transcription_id = 0;
-    if (!voice_note->text.empty()) {
-      voice_note->text.clear();
-      on_voice_note_transcription_updated(file_id);
-    }
-  }
+  voice_note->transcription_id = 0;
+  voice_note->text.clear();
+  voice_note->last_transcription_error = error.clone();
 
   auto it = speech_recognition_queries_.find(file_id);
   CHECK(it != speech_recognition_queries_.end());
@@ -345,6 +349,7 @@ void VoiceNotesManager::on_voice_note_transcription_failed(FileId file_id, Statu
   auto promises = std::move(it->second);
   speech_recognition_queries_.erase(it);
 
+  on_voice_note_transcription_updated(file_id);
   fail_promises(promises, std::move(error));
 }
 

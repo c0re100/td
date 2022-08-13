@@ -7,6 +7,7 @@
 #pragma once
 
 #include "td/utils/common.h"
+#include "td/utils/WaitFreeVector.h"
 
 #include <limits>
 #include <map>
@@ -42,9 +43,13 @@ class Enumerator {
     return arr_.size();
   }
 
+  bool empty() const {
+    return size() == 0;
+  }
+
  private:
   std::map<ValueT, int32> map_;
-  std::vector<const ValueT *> arr_;
+  WaitFreeVector<const ValueT *> arr_;
 };
 
 }  // namespace td

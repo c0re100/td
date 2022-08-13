@@ -417,11 +417,17 @@ void WebPagesManager::tear_down() {
   LOG(DEBUG) << "Have " << web_pages_.size() << " web pages to free";
 }
 
-WebPagesManager::~WebPagesManager() = default;
+WebPagesManager::~WebPagesManager() {
+  Scheduler::instance()->destroy_on_scheduler(G()->get_gc_scheduler_id(), web_pages_, web_page_messages_,
+                                              got_web_page_previews_, url_to_web_page_id_, url_to_file_source_id_);
+}
 
 WebPageId WebPagesManager::on_get_web_page(tl_object_ptr<telegram_api::WebPage> &&web_page_ptr,
                                            DialogId owner_dialog_id) {
   CHECK(web_page_ptr != nullptr);
+  if (td_->auth_manager_->is_bot()) {
+    return WebPageId();
+  }
   LOG(DEBUG) << "Got " << to_string(web_page_ptr);
   switch (web_page_ptr->get_id()) {
     case telegram_api::webPageEmpty::ID: {
@@ -946,8 +952,8 @@ void WebPagesManager::on_load_web_page_instant_view_from_database(WebPageId web_
   //  G()->td_db()->get_sqlite_pmc()->erase(get_web_page_instant_view_database_key(web_page_id), Auto());
   //  value.clear();
 
-  auto web_page_it = web_pages_.find(web_page_id);
-  if (web_page_it == web_pages_.end() || web_page_it->second->instant_view.is_empty) {
+  WebPage *web_page = web_pages_.get_pointer(web_page_id);
+  if (web_page == nullptr || web_page->instant_view.is_empty) {
     // possible if web page loses preview/instant view
     LOG(WARNING) << "There is no instant view in " << web_page_id;
     if (!value.empty()) {
@@ -956,7 +962,6 @@ void WebPagesManager::on_load_web_page_instant_view_from_database(WebPageId web_
     update_web_page_instant_view_load_requests(web_page_id, true, web_page_id);
     return;
   }
-  WebPage *web_page = web_page_it->second.get();
   auto &web_page_instant_view = web_page->instant_view;
   if (web_page_instant_view.was_loaded_from_database) {
     return;
@@ -1312,8 +1317,8 @@ tl_object_ptr<td_api::webPageInstantView> WebPagesManager::get_web_page_instant_
     LOG(ERROR) << "Trying to get not loaded web page instant view";
     return nullptr;
   }
-  auto feedback_link =
-      td_api::make_object<td_api::internalLinkTypeBotStart>("previews", PSTRING() << "webpage" << web_page_id.get());
+  auto feedback_link = td_api::make_object<td_api::internalLinkTypeBotStart>(
+      "previews", PSTRING() << "webpage" << web_page_id.get(), true);
   return td_api::make_object<td_api::webPageInstantView>(
       get_page_block_objects(web_page_instant_view->page_blocks, td_, web_page_instant_view->url),
       web_page_instant_view->view_count, web_page_instant_view->is_v2 ? 2 : 1, web_page_instant_view->is_rtl,
@@ -1355,12 +1360,7 @@ void WebPagesManager::on_web_page_changed(WebPageId web_page_id, bool have_web_p
 }
 
 const WebPagesManager::WebPage *WebPagesManager::get_web_page(WebPageId web_page_id) const {
-  auto p = web_pages_.find(web_page_id);
-  if (p == web_pages_.end()) {
-    return nullptr;
-  } else {
-    return p->second.get();
-  }
+  return web_pages_.get_pointer(web_page_id);
 }
 
 const WebPagesManager::WebPageInstantView *WebPagesManager::get_web_page_instant_view(WebPageId web_page_id) const {

@@ -21,13 +21,13 @@
 #include "td/telegram/td_api.h"
 
 #include "td/actor/actor.h"
-#include "td/actor/PromiseFuture.h"
-#include "td/actor/Timeout.h"
+#include "td/actor/MultiTimeout.h"
 
 #include "td/utils/common.h"
 #include "td/utils/FlatHashMap.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/Time.h"
@@ -273,7 +273,7 @@ class NotificationManager final : public Actor {
   void send_remove_group_update(const NotificationGroupKey &group_key, const NotificationGroup &group,
                                 vector<int32> &&removed_notification_ids);
 
-  void send_add_group_update(const NotificationGroupKey &group_key, const NotificationGroup &group);
+  void send_add_group_update(const NotificationGroupKey &group_key, const NotificationGroup &group, const char *source);
 
   int32 get_notification_delay_ms(DialogId dialog_id, const PendingNotification &notification,
                                   int32 min_delay_ms) const;

@@ -4,17 +4,27 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
-#include "td/utils/GitInfo.h"
+#pragma once
 
-#include "auto/git_info.h"
+#include <mutex>
 
 namespace td {
 
-CSlice GitInfo::commit() {
-  return GIT_COMMIT;
-}
-bool GitInfo::is_dirty() {
-  return GIT_DIRTY;
-}
+class Mutex {
+ public:
+  struct Guard {
+    std::unique_lock<std::mutex> guard;
+    void reset() {
+      guard.unlock();
+    }
+  };
+
+  Guard lock() {
+    return {std::unique_lock<std::mutex>(mutex_)};
+  }
+
+ private:
+  std::mutex mutex_;
+};
 
 }  // namespace td

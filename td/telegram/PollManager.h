@@ -16,13 +16,13 @@
 #include "td/telegram/UserId.h"
 
 #include "td/actor/actor.h"
-#include "td/actor/PromiseFuture.h"
-#include "td/actor/Timeout.h"
+#include "td/actor/MultiTimeout.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/FlatHashMap.h"
 #include "td/utils/FlatHashSet.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Status.h"
 
 #include <utility>
@@ -212,6 +212,8 @@ class PollManager final : public Actor {
 
   void do_stop_poll(PollId poll_id, FullMessageId full_message_id, unique_ptr<ReplyMarkup> &&reply_markup,
                     uint64 log_event_id, Promise<Unit> &&promise);
+
+  void on_stop_poll_finished(PollId poll_id, uint64 log_event_id, Result<Unit> &&result, Promise<Unit> &&promise);
 
   void forget_local_poll(PollId poll_id);
 

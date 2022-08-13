@@ -21,6 +21,7 @@
 #include "td/utils/MpscPollableQueue.h"
 #include "td/utils/ObjectPool.h"
 #include "td/utils/port/thread_local.h"
+#include "td/utils/Promise.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/Time.h"
 
@@ -337,6 +338,43 @@ void Scheduler::send_to_other_scheduler(int32 sched_id, const ActorId<> &actor_i
     outbound_queues_[sched_id]->writer_put(EventCreator::event_unsafe(actor_id, std::move(event)));
     outbound_queues_[sched_id]->writer_flush();
   }
+}
+
+void Scheduler::run_on_scheduler(int32 sched_id, Promise<Unit> action) {
+  if (sched_id >= 0 && sched_id_ != sched_id) {
+    class Worker final : public Actor {
+     public:
+      explicit Worker(Promise<Unit> action) : action_(std::move(action)) {
+      }
+
+     private:
+      Promise<Unit> action_;
+
+      void start_up() final {
+        action_.set_value(Unit());
+        stop();
+      }
+    };
+    create_actor_on_scheduler<Worker>("RunOnSchedulerWorker", sched_id, std::move(action)).release();
+    return;
+  }
+
+  action.set_value(Unit());
+}
+
+void Scheduler::destroy_on_scheduler_impl(int32 sched_id, Promise<Unit> action) {
+  auto empty_context = std::make_shared<ActorContext>();
+  empty_context->this_ptr_ = empty_context;
+  ActorContext *current_context = context_;
+  context_ = empty_context.get();
+
+  const char *current_tag = LOG_TAG;
+  LOG_TAG = nullptr;
+
+  run_on_scheduler(sched_id, std::move(action));
+
+  context_ = current_context;
+  LOG_TAG = current_tag;
 }
 
 void Scheduler::add_to_mailbox(ActorInfo *actor_info, Event &&event) {

@@ -20,16 +20,16 @@
 #include "td/telegram/ReplyMarkup.h"
 #include "td/telegram/secret_api.h"
 #include "td/telegram/SecretInputMedia.h"
+#include "td/telegram/StickerType.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/TopDialogCategory.h"
 #include "td/telegram/UserId.h"
 #include "td/telegram/WebPageId.h"
 
-#include "td/actor/PromiseFuture.h"
-
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
+#include "td/utils/Promise.h"
 #include "td/utils/Status.h"
 
 #include <utility>
@@ -39,10 +39,9 @@ namespace td {
 class Dependencies;
 class DialogAction;
 class Game;
+class MultiPromiseActor;
 struct Photo;
 class Td;
-
-class MultiPromiseActor;
 
 // Do not forget to update merge_message_contents when one of the inheritors of this class changes
 class MessageContent {
@@ -132,6 +131,8 @@ bool update_opened_message_content(MessageContent *content);
 
 int32 get_message_content_index_mask(const MessageContent *content, const Td *td, bool is_outgoing);
 
+StickerType get_message_content_sticker_type(const Td *td, const MessageContent *content);
+
 MessageId get_message_content_pinned_message_id(const MessageContent *content);
 
 string get_message_content_theme_name(const MessageContent *content);
@@ -182,21 +183,21 @@ void unregister_message_content(Td *td, const MessageContent *content, FullMessa
 
 unique_ptr<MessageContent> get_secret_message_content(
     Td *td, string message_text, unique_ptr<EncryptedFile> file,
-    tl_object_ptr<secret_api::DecryptedMessageMedia> &&media,
+    tl_object_ptr<secret_api::DecryptedMessageMedia> &&media_ptr,
     vector<tl_object_ptr<secret_api::MessageEntity>> &&secret_entities, DialogId owner_dialog_id,
     MultiPromiseActor &load_data_multipromise, bool is_premium);
 
 unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message_text,
-                                               tl_object_ptr<telegram_api::MessageMedia> &&media,
+                                               tl_object_ptr<telegram_api::MessageMedia> &&media_ptr,
                                                DialogId owner_dialog_id, bool is_content_read, UserId via_bot_user_id,
-                                               int32 *ttl, bool *disable_web_page_preview);
+                                               int32 *ttl, bool *disable_web_page_preview, const char *source);
 
 enum class MessageContentDupType : int32 { Send, SendViaBot, Forward, Copy, ServerCopy };
 
 unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const MessageContent *content,
                                                MessageContentDupType type, MessageCopyOptions &&copy_options);
 
-unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<telegram_api::MessageAction> &&action,
+unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<telegram_api::MessageAction> &&action_ptr,
                                                       DialogId owner_dialog_id, DialogId reply_in_dialog_id,
                                                       MessageId reply_to_message_id);
 
