@@ -16784,7 +16784,7 @@ td_api::object_ptr<td_api::UserStatus> ContactsManager::get_user_status_object(U
 
 td_api::object_ptr<td_api::updateUser> ContactsManager::get_update_unknown_user_object(UserId user_id) {
   return td_api::make_object<td_api::updateUser>(td_api::make_object<td_api::user>(
-      user_id.get(), -1, "", "", "", "", td_api::make_object<td_api::userStatusEmpty>(), nullptr, nullptr, false, false, false,
+      user_id.get(), -1, "", "", "", "", td_api::make_object<td_api::userStatusEmpty>(), nullptr, nullptr, false, false, 
       false, false, false, "", false, false, false, td_api::make_object<td_api::userTypeUnknown>(), "", false));
 }
 
