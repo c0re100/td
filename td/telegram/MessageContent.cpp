@@ -14,7 +14,6 @@
 #include "td/telegram/CallDiscardReason.h"
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ChatId.h"
-#include "td/telegram/ConfigShared.h"
 #include "td/telegram/Contact.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/Dependencies.h"
@@ -44,6 +43,7 @@
 #include "td/telegram/MessageSender.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
+#include "td/telegram/OptionManager.h"
 #include "td/telegram/Payments.h"
 #include "td/telegram/Payments.hpp"
 #include "td/telegram/Photo.h"
@@ -1630,12 +1630,12 @@ InlineMessageContent create_inline_message_content(Td *td, FileId file_id,
       }
 
       result.disable_web_page_preview = inline_message->no_webpage_;
+      FormattedText text{std::move(inline_message->message_), std::move(entities)};
       WebPageId web_page_id;
       if (!result.disable_web_page_preview) {
-        web_page_id = td->web_pages_manager_->get_web_page_by_url(get_first_url(inline_message->message_, entities));
+        web_page_id = td->web_pages_manager_->get_web_page_by_url(get_first_url(text));
       }
-      result.message_content = make_unique<MessageText>(
-          FormattedText{std::move(inline_message->message_), std::move(entities)}, web_page_id);
+      result.message_content = make_unique<MessageText>(std::move(text), web_page_id);
       reply_markup = std::move(inline_message->reply_markup_);
       break;
     }
@@ -1772,8 +1772,7 @@ static Result<InputMessageContent> create_input_message_content(
           dialog_id.get_type() != DialogType::Channel ||
           td->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id()).can_add_web_page_previews();
       if (!is_bot && !disable_web_page_preview && can_add_web_page_previews) {
-        web_page_id = td->web_pages_manager_->get_web_page_by_url(
-            get_first_url(input_message_text.text.text, input_message_text.text.entities));
+        web_page_id = td->web_pages_manager_->get_web_page_by_url(get_first_url(input_message_text.text));
       }
       content = make_unique<MessageText>(std::move(input_message_text.text), web_page_id);
       break;
@@ -2018,7 +2017,7 @@ static Result<InputMessageContent> create_input_message_content(
             return Status::Error(400, "Wrong correct option ID specified");
           }
           auto r_explanation =
-              process_input_caption(td->contacts_manager_.get(), dialog_id, std::move(type->explanation_), is_bot);
+              get_formatted_text(td, dialog_id, std::move(type->explanation_), is_bot, true, true, false);
           if (r_explanation.is_error()) {
             return r_explanation.move_as_error();
           }
@@ -2087,8 +2086,8 @@ Result<InputMessageContent> get_input_message_content(
     }
     case td_api::inputMessagePhoto::ID: {
       auto input_message = static_cast<td_api::inputMessagePhoto *>(input_message_content.get());
-      r_file_id =
-          td->file_manager_->get_input_file_id(FileType::Photo, input_message->photo_, dialog_id, false, is_secret);
+      r_file_id = td->file_manager_->get_input_file_id(FileType::Photo, input_message->photo_, dialog_id, false,
+                                                       is_secret, false, false, true);
       input_thumbnail = std::move(input_message->thumbnail_);
       if (!input_message->added_sticker_file_ids_.empty()) {
         sticker_file_ids = td->stickers_manager_->get_attached_sticker_file_ids(input_message->added_sticker_file_ids_);
@@ -2159,8 +2158,8 @@ Result<InputMessageContent> get_input_message_content(
     }
   }
 
-  TRY_RESULT(caption, process_input_caption(td->contacts_manager_.get(), dialog_id,
-                                            extract_input_caption(input_message_content), td->auth_manager_->is_bot()));
+  TRY_RESULT(caption, get_formatted_text(td, dialog_id, extract_input_caption(input_message_content),
+                                         td->auth_manager_->is_bot(), true, false, false));
   return create_input_message_content(dialog_id, std::move(input_message_content), td, std::move(caption), file_id,
                                       std::move(thumbnail), std::move(sticker_file_ids), is_premium);
 }
@@ -2795,7 +2794,7 @@ bool can_forward_message_content(const MessageContent *content) {
   auto content_type = content->get_type();
   if (content_type == MessageContentType::Text) {
     auto *text = static_cast<const MessageText *>(content);
-    return !is_empty_string(text->text.text);  // text can't be empty in the new message
+    return !is_empty_string(text->text.text);  // text must be non-empty in the new message
   }
   if (content_type == MessageContentType::Poll) {
     auto *poll = static_cast<const MessagePoll *>(content);
@@ -4672,7 +4671,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       }
     case MessageContentType::Sticker: {
       auto result = make_unique<MessageSticker>(*static_cast<const MessageSticker *>(content));
-      result->is_premium = G()->shared_config().get_option_boolean("is_premium");
+      result->is_premium = td->option_manager_->get_option_boolean("is_premium");
       if (td->stickers_manager_->has_input_media(result->file_id, to_secret)) {
         return std::move(result);
       }
@@ -4685,7 +4684,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       if (type == MessageContentDupType::Copy || type == MessageContentDupType::ServerCopy) {
         remove_unallowed_entities(td, result->text, dialog_id);
       }
-      return result;
+      return std::move(result);
     }
     case MessageContentType::Venue:
       return make_unique<MessageVenue>(*static_cast<const MessageVenue *>(content));
@@ -5934,12 +5933,34 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
 void on_sent_message_content(Td *td, const MessageContent *content) {
   switch (content->get_type()) {
     case MessageContentType::Animation:
-      return td->animations_manager_->add_saved_animation_by_id(get_message_content_any_file_id(content));
+      return td->animations_manager_->add_saved_animation_by_id(get_message_content_upload_file_id(content));
     case MessageContentType::Sticker:
-      return td->stickers_manager_->add_recent_sticker_by_id(false, get_message_content_any_file_id(content));
+      return td->stickers_manager_->add_recent_sticker_by_id(false, get_message_content_upload_file_id(content));
     default:
       // nothing to do
       return;
+  }
+}
+
+void move_message_content_sticker_set_to_top(Td *td, const MessageContent *content) {
+  CHECK(content != nullptr);
+  if (content->get_type() == MessageContentType::Sticker) {
+    td->stickers_manager_->move_sticker_set_to_top_by_sticker_id(get_message_content_upload_file_id(content));
+    return;
+  }
+
+  auto text = get_message_content_text(content);
+  if (text == nullptr) {
+    return;
+  }
+  vector<int64> custom_emoji_ids;
+  for (auto &entity : text->entities) {
+    if (entity.type == MessageEntity::Type::CustomEmoji) {
+      custom_emoji_ids.push_back(entity.document_id);
+    }
+  }
+  if (!custom_emoji_ids.empty()) {
+    td->stickers_manager_->move_sticker_set_to_top_by_custom_emoji_ids(custom_emoji_ids);
   }
 }
 
@@ -5969,20 +5990,21 @@ void update_used_hashtags(Td *td, const MessageContent *content) {
   const unsigned char *ptr = Slice(text->text).ubegin();
   const unsigned char *end = Slice(text->text).uend();
   int32 utf16_pos = 0;
+  uint32 skipped_code = 0;
   for (auto &entity : text->entities) {
     if (entity.type != MessageEntity::Type::Hashtag) {
       continue;
     }
     while (utf16_pos < entity.offset && ptr < end) {
       utf16_pos += 1 + (ptr[0] >= 0xf0);
-      ptr = next_utf8_unsafe(ptr, nullptr, "update_used_hashtags");
+      ptr = next_utf8_unsafe(ptr, &skipped_code);
     }
     CHECK(utf16_pos == entity.offset);
     auto from = ptr;
 
     while (utf16_pos < entity.offset + entity.length && ptr < end) {
       utf16_pos += 1 + (ptr[0] >= 0xf0);
-      ptr = next_utf8_unsafe(ptr, nullptr, "update_used_hashtags 2");
+      ptr = next_utf8_unsafe(ptr, &skipped_code);
     }
     CHECK(utf16_pos == entity.offset + entity.length);
     auto to = ptr;

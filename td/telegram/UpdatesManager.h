@@ -406,6 +406,8 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateMessageReactions> update, Promise<Unit> &&promise);
 
+  void on_update(tl_object_ptr<telegram_api::updateRecentReactions> update, Promise<Unit> &&promise);
+
   void on_update(tl_object_ptr<telegram_api::updateAttachMenuBots> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateWebViewResultSent> update, Promise<Unit> &&promise);
 
@@ -420,6 +422,8 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateUserName> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserPhone> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserPhoto> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateUserEmojiStatus> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateRecentEmojiStatuses> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updatePeerBlocked> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateBotCommands> update, Promise<Unit> &&promise);
@@ -489,6 +493,7 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateNewStickerSet> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateStickerSets> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateStickerSetsOrder> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateMoveStickerSetToTop> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateReadFeaturedStickers> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateReadFeaturedEmojiStickers> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateRecentStickers> update, Promise<Unit> &&promise);

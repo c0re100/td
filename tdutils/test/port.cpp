@@ -284,3 +284,31 @@ TEST(Port, EventFdAndSignals) {
 }
 #endif
 #endif
+
+#if TD_HAVE_THREAD_AFFINITY
+TEST(Port, ThreadAffinityMask) {
+  auto thread_id = td::this_thread::get_id();
+  auto old_mask = td::thread::get_affinity_mask(thread_id);
+  LOG(INFO) << "Initial thread " << thread_id << " affinity mask: " << old_mask;
+  for (size_t i = 0; i < 64; i++) {
+    auto mask = td::thread::get_affinity_mask(thread_id);
+    LOG(INFO) << mask;
+    auto result = td::thread::set_affinity_mask(thread_id, static_cast<td::uint64>(1) << i);
+    LOG(INFO) << i << ": " << result << ' ' << td::thread::get_affinity_mask(thread_id);
+
+    if (i <= 1) {
+      td::thread thread([] {
+        auto thread_id = td::this_thread::get_id();
+        auto mask = td::thread::get_affinity_mask(thread_id);
+        LOG(INFO) << "New thread " << thread_id << " affinity mask: " << mask;
+        auto result = td::thread::set_affinity_mask(thread_id, 1);
+        LOG(INFO) << "Thread " << thread_id << ": " << result << ' ' << td::thread::get_affinity_mask(thread_id);
+      });
+    }
+  }
+  auto result = td::thread::set_affinity_mask(thread_id, old_mask);
+  LOG(INFO) << result;
+  old_mask = td::thread::get_affinity_mask(thread_id);
+  LOG(INFO) << old_mask;
+}
+#endif

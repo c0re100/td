@@ -49,8 +49,8 @@ class RequestWebViewQuery final : public Td::ResultHandler {
   }
 
   void send(DialogId dialog_id, UserId bot_user_id, tl_object_ptr<telegram_api::InputUser> &&input_user, string &&url,
-            td_api::object_ptr<td_api::themeParameters> &&theme, MessageId reply_to_message_id, bool silent,
-            DialogId as_dialog_id) {
+            td_api::object_ptr<td_api::themeParameters> &&theme, string &&platform, MessageId reply_to_message_id,
+            bool silent, DialogId as_dialog_id) {
     dialog_id_ = dialog_id;
     bot_user_id_ = bot_user_id;
     reply_to_message_id_ = reply_to_message_id;
@@ -104,7 +104,8 @@ class RequestWebViewQuery final : public Td::ResultHandler {
 
     send_query(G()->net_query_creator().create(telegram_api::messages_requestWebView(
         flags, false /*ignored*/, false /*ignored*/, std::move(input_peer), std::move(input_user), url, start_parameter,
-        std::move(theme_parameters), reply_to_message_id.get_server_message_id().get(), std::move(as_input_peer))));
+        std::move(theme_parameters), platform, reply_to_message_id.get_server_message_id().get(),
+        std::move(as_input_peer))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -600,7 +601,7 @@ void AttachMenuManager::schedule_ping_web_view() {
 
 void AttachMenuManager::request_web_view(DialogId dialog_id, UserId bot_user_id, MessageId reply_to_message_id,
                                          string &&url, td_api::object_ptr<td_api::themeParameters> &&theme,
-                                         Promise<td_api::object_ptr<td_api::webAppInfo>> &&promise) {
+                                         string &&platform, Promise<td_api::object_ptr<td_api::webAppInfo>> &&promise) {
   TRY_STATUS_PROMISE(promise, td_->contacts_manager_->get_bot_data(bot_user_id));
   TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(bot_user_id));
 
@@ -634,8 +635,8 @@ void AttachMenuManager::request_web_view(DialogId dialog_id, UserId bot_user_id,
   DialogId as_dialog_id = td_->messages_manager_->get_dialog_default_send_message_as_dialog_id(dialog_id);
 
   td_->create_handler<RequestWebViewQuery>(std::move(promise))
-      ->send(dialog_id, bot_user_id, std::move(input_user), std::move(url), std::move(theme), reply_to_message_id,
-             silent, as_dialog_id);
+      ->send(dialog_id, bot_user_id, std::move(input_user), std::move(url), std::move(theme), std::move(platform),
+             reply_to_message_id, silent, as_dialog_id);
 }
 
 void AttachMenuManager::open_web_view(int64 query_id, DialogId dialog_id, UserId bot_user_id,
@@ -805,22 +806,25 @@ void AttachMenuManager::reload_attach_menu_bots(Promise<Unit> &&promise) {
   if (!is_active()) {
     return;
   }
-  auto query_promise =
-      PromiseCreator::lambda([actor_id = actor_id(this), promise = std::move(promise)](
-                                 Result<telegram_api::object_ptr<telegram_api::AttachMenuBots>> &&result) mutable {
-        send_closure(actor_id, &AttachMenuManager::on_reload_attach_menu_bots, std::move(result), std::move(promise));
-      });
-  td_->create_handler<GetAttachMenuBotsQuery>(std::move(query_promise))->send(hash_);
+
+  reload_attach_menu_bots_queries_.push_back(std::move(promise));
+  if (reload_attach_menu_bots_queries_.size() == 1) {
+    auto query_promise = PromiseCreator::lambda(
+        [actor_id = actor_id(this)](Result<telegram_api::object_ptr<telegram_api::AttachMenuBots>> &&result) {
+          send_closure(actor_id, &AttachMenuManager::on_reload_attach_menu_bots, std::move(result));
+        });
+    td_->create_handler<GetAttachMenuBotsQuery>(std::move(query_promise))->send(hash_);
+  }
 }
 
 void AttachMenuManager::on_reload_attach_menu_bots(
-    Result<telegram_api::object_ptr<telegram_api::AttachMenuBots>> &&result, Promise<Unit> &&promise) {
+    Result<telegram_api::object_ptr<telegram_api::AttachMenuBots>> &&result) {
   if (!is_active()) {
-    return promise.set_value(Unit());
+    return set_promises(reload_attach_menu_bots_queries_);
   }
   if (result.is_error()) {
     set_timeout_in(Random::fast(60, 120));
-    return promise.set_value(Unit());
+    return set_promises(reload_attach_menu_bots_queries_);
   }
 
   is_inited_ = true;
@@ -830,7 +834,7 @@ void AttachMenuManager::on_reload_attach_menu_bots(
   auto attach_menu_bots_ptr = result.move_as_ok();
   auto constructor_id = attach_menu_bots_ptr->get_id();
   if (constructor_id == telegram_api::attachMenuBotsNotModified::ID) {
-    return promise.set_value(Unit());
+    return set_promises(reload_attach_menu_bots_queries_);
   }
   CHECK(constructor_id == telegram_api::attachMenuBots::ID);
   auto attach_menu_bots = move_tl_object_as<telegram_api::attachMenuBots>(attach_menu_bots_ptr);
@@ -867,7 +871,7 @@ void AttachMenuManager::on_reload_attach_menu_bots(
 
     save_attach_menu_bots();
   }
-  promise.set_value(Unit());
+  set_promises(reload_attach_menu_bots_queries_);
 }
 
 void AttachMenuManager::remove_bot_from_attach_menu(UserId user_id) {

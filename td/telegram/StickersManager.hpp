@@ -113,13 +113,7 @@ FileId StickersManager::parse_sticker(bool in_sticker_set, ParserT &parser) {
   } else {
     sticker->format_ = StickerFormat::Webp;
   }
-  if (is_emoji) {
-    sticker->type_ = StickerType::CustomEmoji;
-  } else if (is_mask) {
-    sticker->type_ = StickerType::Mask;
-  } else {
-    sticker->type_ = StickerType::Regular;
-  }
+  sticker->type_ = ::td::get_sticker_type(is_mask, is_emoji);
   if (in_sticker_set_stored != in_sticker_set) {
     Slice data = parser.template fetch_string_raw<Slice>(parser.get_left_len());
     for (auto c : data) {
@@ -299,12 +293,7 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
   } else {
     sticker_format = StickerFormat::Webp;
   }
-  StickerType sticker_type = StickerType::Regular;
-  if (is_emojis) {
-    sticker_type = StickerType::CustomEmoji;
-  } else if (is_masks) {
-    sticker_type = StickerType::Mask;
-  }
+  auto sticker_type = ::td::get_sticker_type(is_masks, is_emojis);
 
   if (sticker_set->is_inited_) {
     string title;
@@ -499,6 +488,8 @@ void StickersManager::Reaction::parse(ParserT &parser) {
   if (has_center_animation) {
     center_animation_ = stickers_manager->parse_sticker(false, parser);
   }
+
+  is_premium_ = false;
 }
 
 template <class StorerT>
@@ -515,6 +506,30 @@ void StickersManager::Reactions::store(StorerT &storer) const {
 
 template <class ParserT>
 void StickersManager::Reactions::parse(ParserT &parser) {
+  bool has_reactions;
+  BEGIN_PARSE_FLAGS();
+  PARSE_FLAG(has_reactions);
+  END_PARSE_FLAGS();
+  if (has_reactions) {
+    td::parse(reactions_, parser);
+    td::parse(hash_, parser);
+  }
+}
+
+template <class StorerT>
+void StickersManager::ReactionList::store(StorerT &storer) const {
+  bool has_reactions = !reactions_.empty();
+  BEGIN_STORE_FLAGS();
+  STORE_FLAG(has_reactions);
+  END_STORE_FLAGS();
+  if (has_reactions) {
+    td::store(reactions_, storer);
+    td::store(hash_, storer);
+  }
+}
+
+template <class ParserT>
+void StickersManager::ReactionList::parse(ParserT &parser) {
   bool has_reactions;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_reactions);

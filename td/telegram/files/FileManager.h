@@ -26,7 +26,6 @@
 #include "td/utils/common.h"
 #include "td/utils/Container.h"
 #include "td/utils/Enumerator.h"
-#include "td/utils/FlatHashMap.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
 #include "td/utils/optional.h"
@@ -486,7 +485,8 @@ class FileManager final : public FileLoadManager::Callback {
                                              DialogId owner_dialog_id, bool is_encrypted) TD_WARN_UNUSED_RESULT;
   Result<FileId> get_input_file_id(FileType type, const tl_object_ptr<td_api::InputFile> &file,
                                    DialogId owner_dialog_id, bool allow_zero, bool is_encrypted,
-                                   bool get_by_hash = false, bool is_secure = false) TD_WARN_UNUSED_RESULT;
+                                   bool get_by_hash = false, bool is_secure = false,
+                                   bool force_reuse = false) TD_WARN_UNUSED_RESULT;
 
   Result<FileId> get_map_thumbnail_file_id(Location location, int32 zoom, int32 width, int32 height, int32 scale,
                                            DialogId owner_dialog_id) TD_WARN_UNUSED_RESULT;

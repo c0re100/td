@@ -19,6 +19,7 @@
 #include "td/telegram/DialogLocation.h"
 #include "td/telegram/DialogParticipant.h"
 #include "td/telegram/DialogParticipantFilter.h"
+#include "td/telegram/EmojiStatus.h"
 #include "td/telegram/files/FileId.h"
 #include "td/telegram/files/FileSourceId.h"
 #include "td/telegram/FolderId.h"
@@ -51,6 +52,7 @@
 #include "td/utils/StringBuilder.h"
 #include "td/utils/Time.h"
 #include "td/utils/WaitFreeHashMap.h"
+#include "td/utils/WaitFreeHashSet.h"
 
 #include <functional>
 #include <memory>
@@ -177,6 +179,7 @@ class ContactsManager final : public Actor {
   void on_update_user_name(UserId user_id, string &&first_name, string &&last_name, string &&username);
   void on_update_user_phone_number(UserId user_id, string &&phone_number);
   void on_update_user_photo(UserId user_id, tl_object_ptr<telegram_api::UserProfilePhoto> &&photo_ptr);
+  void on_update_user_emoji_status(UserId user_id, tl_object_ptr<telegram_api::EmojiStatus> &&emoji_status);
   void on_update_user_online(UserId user_id, tl_object_ptr<telegram_api::UserStatus> &&status);
   void on_update_user_local_was_online(UserId user_id, int32 local_was_online);
   void on_update_user_is_blocked(UserId user_id, bool is_blocked);
@@ -324,7 +327,7 @@ class ContactsManager final : public Actor {
 
   void set_location(const Location &location, Promise<Unit> &&promise);
 
-  void set_location_visibility();
+  static void set_location_visibility(Td *td);
 
   void get_is_location_visible(Promise<Unit> &&promise);
 
@@ -341,6 +344,8 @@ class ContactsManager final : public Actor {
   void set_bio(const string &bio, Promise<Unit> &&promise);
 
   void set_username(const string &username, Promise<Unit> &&promise);
+
+  void set_emoji_status(EmojiStatus emoji_status, Promise<Unit> &&promise);
 
   void set_chat_description(ChatId chat_id, const string &description, Promise<Unit> &&promise);
 
@@ -640,6 +645,8 @@ class ContactsManager final : public Actor {
     string username;
     string phone_number;
     int64 access_hash = -1;
+    EmojiStatus emoji_status;
+    int64 last_sent_emoji_status = 0;
 
     ProfilePhoto photo;
 
@@ -1069,6 +1076,7 @@ class ContactsManager final : public Actor {
   static constexpr int32 USER_FLAG_IS_ATTACH_MENU_BOT = 1 << 27;
   static constexpr int32 USER_FLAG_IS_PREMIUM = 1 << 28;
   static constexpr int32 USER_FLAG_ATTACH_MENU_ENABLED = 1 << 29;
+  static constexpr int32 USER_FLAG_HAS_EMOJI_STATUS = 1 << 30;
 
   static constexpr int32 USER_FULL_FLAG_IS_BLOCKED = 1 << 0;
   static constexpr int32 USER_FULL_FLAG_HAS_ABOUT = 1 << 1;
@@ -1245,10 +1253,13 @@ class ContactsManager final : public Actor {
 
   static bool is_valid_username(const string &username);
 
+  void on_set_emoji_status(EmojiStatus emoji_status, Promise<Unit> &&promise);
+
   void on_update_user_name(User *u, UserId user_id, string &&first_name, string &&last_name, string &&username);
   void on_update_user_phone_number(User *u, UserId user_id, string &&phone_number);
   void on_update_user_photo(User *u, UserId user_id, tl_object_ptr<telegram_api::UserProfilePhoto> &&photo,
                             const char *source);
+  void on_update_user_emoji_status(User *u, UserId user_id, EmojiStatus emoji_status);
   void on_update_user_is_contact(User *u, UserId user_id, bool is_contact, bool is_mutual_contact);
   void on_update_user_online(User *u, UserId user_id, tl_object_ptr<telegram_api::UserStatus> &&status);
   void on_update_user_local_was_online(User *u, UserId user_id, int32 local_was_online);
@@ -1665,6 +1676,8 @@ class ContactsManager final : public Actor {
 
   static void on_user_online_timeout_callback(void *contacts_manager_ptr, int64 user_id_long);
 
+  static void on_user_emoji_status_timeout_callback(void *contacts_manager_ptr, int64 user_id_long);
+
   static void on_channel_unban_timeout_callback(void *contacts_manager_ptr, int64 channel_id_long);
 
   static void on_user_nearby_timeout_callback(void *contacts_manager_ptr, int64 user_id_long);
@@ -1677,6 +1690,8 @@ class ContactsManager final : public Actor {
 
   void on_user_online_timeout(UserId user_id);
 
+  void on_user_emoji_status_timeout(UserId user_id);
+
   void on_channel_unban_timeout(ChannelId channel_id);
 
   void on_user_nearby_timeout(UserId user_id);
@@ -1686,6 +1701,8 @@ class ContactsManager final : public Actor {
   void on_invite_link_info_expire_timeout(DialogId dialog_id);
 
   void on_channel_participant_cache_timeout(ChannelId channel_id);
+
+  void start_up() final;
 
   void tear_down() final;
 
@@ -1718,7 +1735,7 @@ class ContactsManager final : public Actor {
   WaitFreeHashMap<ChannelId, unique_ptr<Channel>, ChannelIdHash> channels_;
   WaitFreeHashMap<ChannelId, unique_ptr<ChannelFull>, ChannelIdHash> channels_full_;
   mutable FlatHashSet<ChannelId, ChannelIdHash> unknown_channels_;
-  FlatHashSet<ChannelId, ChannelIdHash> invalidated_channels_full_;
+  WaitFreeHashSet<ChannelId, ChannelIdHash> invalidated_channels_full_;
   WaitFreeHashMap<ChannelId, FileSourceId, ChannelIdHash> channel_full_file_source_ids_;
 
   WaitFreeHashMap<SecretChatId, unique_ptr<SecretChat>, SecretChatIdHash> secret_chats_;
@@ -1837,8 +1854,8 @@ class ContactsManager final : public Actor {
 
   WaitFreeHashMap<ChannelId, ChannelId, ChannelIdHash> linked_channel_ids_;
 
-  FlatHashSet<UserId, UserIdHash> restricted_user_ids_;
-  FlatHashSet<ChannelId, ChannelIdHash> restricted_channel_ids_;
+  WaitFreeHashSet<UserId, UserIdHash> restricted_user_ids_;
+  WaitFreeHashSet<ChannelId, ChannelIdHash> restricted_channel_ids_;
 
   vector<Contact> next_all_imported_contacts_;
   vector<size_t> imported_contacts_unique_id_;
@@ -1848,6 +1865,7 @@ class ContactsManager final : public Actor {
   vector<int32> unimported_contact_invites_;  // result of change_imported_contacts
 
   MultiTimeout user_online_timeout_{"UserOnlineTimeout"};
+  MultiTimeout user_emoji_status_timeout_{"UserEmojiStatusTimeout"};
   MultiTimeout channel_unban_timeout_{"ChannelUnbanTimeout"};
   MultiTimeout user_nearby_timeout_{"UserNearbyTimeout"};
   MultiTimeout slow_mode_delay_timeout_{"SlowModeDelayTimeout"};
