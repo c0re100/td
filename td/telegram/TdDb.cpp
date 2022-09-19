@@ -288,7 +288,7 @@ Status TdDb::init_sqlite(const TdParameters &parameters, const DbKey &key, const
   bool use_dialog_db = parameters.use_message_db;
   bool use_message_db = parameters.use_message_db;
   if (!use_sqlite) {
-    unlink(sql_database_path).ignore();
+    SqliteDb::destroy(sql_database_path).ignore();
     return Status::OK();
   }
 
@@ -410,6 +410,11 @@ void TdDb::open_impl(TdParameters parameters, DbKey key, Promise<OpenedDatabase>
   VLOG(td_init) << "Finish initialization of binlog PMC";
   config_pmc->external_init_finish(binlog);
   VLOG(td_init) << "Finish initialization of config PMC";
+
+  if (parameters.use_file_db && binlog_pmc->get("auth").empty()) {
+    LOG(INFO) << "Destroy SQLite database, because wasn't authorized yet";
+    SqliteDb::destroy(get_sqlite_path(parameters)).ignore();
+  }
 
   DbKey new_sqlite_key;
   DbKey old_sqlite_key;
