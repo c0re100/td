@@ -366,6 +366,8 @@ class MessagesManager final : public Actor {
 
   void on_external_update_message_content(FullMessageId full_message_id);
 
+  void on_update_message_content(FullMessageId full_message_id);
+
   void on_read_channel_inbox(ChannelId channel_id, MessageId max_message_id, int32 server_unread_count, int32 pts,
                              const char *source);
 
@@ -1291,6 +1293,7 @@ class MessagesManager final : public Actor {
     vector<UserId> pending_join_request_user_ids;
     int32 have_full_history_source = 0;
     int32 unload_dialog_delay_seed = 0;
+    int64 last_media_album_id = 0;
 
     FolderId folder_id;
     vector<DialogListId> dialog_list_ids;  // TODO replace with mask
@@ -2356,6 +2359,8 @@ class MessagesManager final : public Actor {
 
   void on_message_changed(const Dialog *d, const Message *m, bool need_send_update, const char *source);
 
+  void on_message_notification_changed(Dialog *d, const Message *m, const char *source);
+
   bool need_delete_file(FullMessageId full_message_id, FileId file_id) const;
 
   bool need_delete_message_files(DialogId dialog_id, const Message *m) const;
@@ -2404,7 +2409,7 @@ class MessagesManager final : public Actor {
   static bool need_message_changed_warning(const Message *old_message);
 
   bool update_message_content(DialogId dialog_id, Message *old_message, unique_ptr<MessageContent> new_content,
-                              bool need_send_update_message_content, bool need_merge_files, bool is_message_in_dialog);
+                              bool need_merge_files, bool is_message_in_dialog, bool &is_content_changed);
 
   void update_message_max_reply_media_timestamp(const Dialog *d, Message *m, bool need_send_update_message_content);
 
@@ -2476,8 +2481,6 @@ class MessagesManager final : public Actor {
   bool need_skip_bot_commands(DialogId dialog_id, const Message *m) const;
 
   void send_update_message_send_succeeded(Dialog *d, MessageId old_message_id, const Message *m) const;
-
-  void send_update_message_content(DialogId dialog_id, Message *m, bool is_message_in_dialog, const char *source);
 
   void send_update_message_content(const Dialog *d, Message *m, bool is_message_in_dialog, const char *source);
 
@@ -2596,7 +2599,7 @@ class MessagesManager final : public Actor {
 
   void set_dialog_last_read_outbox_message_id(Dialog *d, MessageId message_id);
 
-  void set_dialog_last_message_id(Dialog *d, MessageId last_message_id, const char *source);
+  void set_dialog_last_message_id(Dialog *d, MessageId last_message_id, const char *source, const Message *m = nullptr);
 
   void set_dialog_first_database_message_id(Dialog *d, MessageId first_database_message_id, const char *source);
 

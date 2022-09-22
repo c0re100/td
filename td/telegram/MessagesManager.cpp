@@ -6967,9 +6967,10 @@ td_api::object_ptr<td_api::messageInteractionInfo> MessagesManager::get_message_
       my_user_id = td_->contacts_manager_->get_my_id();
       peer_user_id = dialog_id.get_user_id();
     }
-    reactions = transform(m->reactions->reactions_, [td = td_, my_user_id, peer_user_id](const MessageReaction &reaction) {
-      return reaction.get_message_reaction_object(td, my_user_id, peer_user_id);
-    });
+    reactions =
+        transform(m->reactions->reactions_, [td = td_, my_user_id, peer_user_id](const MessageReaction &reaction) {
+          return reaction.get_message_reaction_object(td, my_user_id, peer_user_id);
+        });
   }
 
   return td_api::make_object<td_api::messageInteractionInfo>(m->view_count, m->forward_count, std::move(reply_info),
@@ -7186,9 +7187,21 @@ void MessagesManager::on_external_update_message_content(FullMessageId full_mess
   Message *m = get_message(d, full_message_id.get_message_id());
   CHECK(m != nullptr);
   send_update_message_content(d, m, true, "on_external_update_message_content");
+  // must not call on_message_changed, because the message itself wasn't changed
   if (m->message_id == d->last_message_id) {
     send_update_chat_last_message_impl(d, "on_external_update_message_content");
   }
+  on_message_notification_changed(d, m, "on_external_update_message_content");
+}
+
+void MessagesManager::on_update_message_content(FullMessageId full_message_id) {
+  Dialog *d = get_dialog(full_message_id.get_dialog_id());
+  CHECK(d != nullptr);
+  Message *m = get_message(d, full_message_id.get_message_id());
+  CHECK(m != nullptr);
+  send_update_message_content(d, m, true, "on_update_message_content");
+  on_message_changed(d, m, true, "on_update_message_content");
+  on_message_notification_changed(d, m, "on_update_message_content");
 }
 
 bool MessagesManager::update_message_contains_unread_mention(Dialog *d, Message *m, bool contains_unread_mention,
@@ -7882,8 +7895,8 @@ void MessagesManager::on_message_edited(FullMessageId full_message_id, int32 pts
   Message *m = get_message(d, full_message_id.get_message_id());
   CHECK(m != nullptr);
   m->last_edit_pts = pts;
+  d->last_edited_message_id = m->message_id;
   if (td_->auth_manager_->is_bot()) {
-    d->last_edited_message_id = m->message_id;
     send_update_message_edited(dialog_id, m);
   }
   update_used_hashtags(dialog_id, m);
@@ -9039,7 +9052,7 @@ void MessagesManager::on_upload_media_error(FileId file_id, Status status) {
 
   bool is_edit = full_message_id.get_message_id().is_any_server();
   if (is_edit) {
-    fail_edit_message_media(full_message_id, Status::Error(status.code() > 0 ? status.code() : 500, status.message()));
+    fail_edit_message_media(full_message_id, std::move(status));
   } else {
     fail_send_message(full_message_id, std::move(status));
   }
@@ -14862,12 +14875,26 @@ FullMessageId MessagesManager::on_get_message(MessageInfo &&message_info, bool f
   return FullMessageId(dialog_id, message_id);
 }
 
-void MessagesManager::set_dialog_last_message_id(Dialog *d, MessageId last_message_id, const char *source) {
+void MessagesManager::set_dialog_last_message_id(Dialog *d, MessageId last_message_id, const char *source,
+                                                 const Message *m) {
   CHECK(!last_message_id.is_scheduled());
 
   LOG(INFO) << "Set " << d->dialog_id << " last message to " << last_message_id << " from " << source;
   d->last_message_id = last_message_id;
 
+  if (m != nullptr) {
+    d->last_media_album_id = m->media_album_id;
+  } else if (!last_message_id.is_valid()) {
+    d->last_media_album_id = 0;
+  } else {
+    m = get_message(d, last_message_id);
+    if (m == nullptr) {
+      LOG(ERROR) << "Failed to find last " << last_message_id << " in " << d->dialog_id;
+      d->last_media_album_id = 0;
+    } else {
+      d->last_media_album_id = m->media_album_id;
+    }
+  }
   if (!last_message_id.is_valid()) {
     d->suffix_load_first_message_id_ = MessageId();
     d->suffix_load_done_ = false;
@@ -15410,12 +15437,11 @@ void MessagesManager::on_update_sent_text_message(int64 random_id,
                                "on_update_sent_text_message");
     m->content = std::move(new_content);
     m->is_content_secret = is_secret_message_content(m->ttl, MessageContentType::Text);
-  }
-  if (need_update) {
-    send_update_message_content(dialog_id, m, true, "on_update_sent_text_message");
-    if (m->message_id == d->last_message_id) {
-      send_update_chat_last_message_impl(d, "on_update_sent_text_message");
+
+    if (need_update) {
+      send_update_message_content(d, m, true, "on_update_sent_text_message");
     }
+    on_message_changed(d, m, need_update, "on_update_sent_text_message");
   }
 }
 
@@ -15934,6 +15960,7 @@ bool MessagesManager::can_unload_message(const Dialog *d, const Message *m) cons
   // don't want to unload message with active reply markup
   // don't want to unload the newest pinned message
   // don't want to unload last edited message, because server can send updateEditChannelMessage again
+  // don't want to unload messages from the last album
   // can't unload from memory last dialog, last database messages, yet unsent messages, being edited media messages and active live locations
   // can't unload messages in dialog with active suffix load query
   FullMessageId full_message_id{d->dialog_id, m->message_id};
@@ -15941,7 +15968,8 @@ bool MessagesManager::can_unload_message(const Dialog *d, const Message *m) cons
          !m->message_id.is_yet_unsent() && active_live_location_full_message_ids_.count(full_message_id) == 0 &&
          replied_by_yet_unsent_messages_.count(full_message_id) == 0 && m->edited_content == nullptr &&
          d->suffix_load_queries_.empty() && m->message_id != d->reply_markup_message_id &&
-         m->message_id != d->last_pinned_message_id && m->message_id != d->last_edited_message_id;
+         m->message_id != d->last_pinned_message_id && m->message_id != d->last_edited_message_id &&
+         (m->media_album_id != d->last_media_album_id || m->media_album_id == 0);
 }
 
 void MessagesManager::unload_message(Dialog *d, MessageId message_id) {
@@ -16233,7 +16261,7 @@ unique_ptr<MessagesManager::Message> MessagesManager::do_delete_message(Dialog *
       if ((*it)->have_previous) {
         --it;
         if (*it != nullptr) {
-          set_dialog_last_message_id(d, (*it)->message_id, "do_delete_message");
+          set_dialog_last_message_id(d, (*it)->message_id, "do_delete_message", *it);
         } else {
           LOG(ERROR) << "Have have_previous is true, but there is no previous for " << full_message_id << " from "
                      << source;
@@ -24535,6 +24563,7 @@ Result<td_api::object_ptr<td_api::availableReactions>> MessagesManager::get_mess
 
   FlatHashSet<string> all_available_reactions;
   for (const auto &reaction : available_reactions.reactions_) {
+    CHECK(!reaction.empty());
     all_available_reactions.insert(reaction);
   }
 
@@ -26307,9 +26336,13 @@ void MessagesManager::on_upload_message_media_success(DialogId dialog_id, Messag
   auto content = get_message_content(td_, caption == nullptr ? FormattedText() : *caption, std::move(media), dialog_id,
                                      false, UserId(), nullptr, nullptr, "on_upload_message_media_success");
 
-  if (update_message_content(dialog_id, m, std::move(content), true, true, true) &&
-      m->message_id == d->last_message_id) {
-    send_update_chat_last_message_impl(d, "on_upload_message_media_success");
+  bool is_content_changed = false;
+  bool need_update = update_message_content(dialog_id, m, std::move(content), true, true, is_content_changed);
+  if (need_update) {
+    send_update_message_content(d, m, true, "on_upload_message_media_success");
+  }
+  if (is_content_changed || need_update) {
+    on_message_changed(d, m, need_update, "on_upload_message_media_success");
   }
 
   auto input_media = get_input_media(m->content.get(), td_, m->ttl, m->send_emoji, true);
@@ -27392,7 +27425,9 @@ void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId mess
   // must not run getDifference
 
   CHECK(message_id.is_any_server());
-  auto m = get_message({dialog_id, message_id});
+  Dialog *d = get_dialog(dialog_id);
+  CHECK(d != nullptr);
+  auto m = get_message(d, message_id);
   if (m == nullptr || m->edit_generation != generation) {
     // message is already deleted or was edited again
     return;
@@ -27411,8 +27446,17 @@ void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId mess
     bool need_send_update_message_content = m->edited_content->get_type() == MessageContentType::Photo &&
                                             m->content->get_type() == MessageContentType::Photo;
     bool need_merge_files = pts != 0 && pts == m->last_edit_pts;
-    update_message_content(dialog_id, m, std::move(m->edited_content), need_send_update_message_content,
-                           need_merge_files, true);
+    bool is_content_changed = false;
+    bool need_update =
+        update_message_content(dialog_id, m, std::move(m->edited_content), need_merge_files, true, is_content_changed);
+    if (need_send_update_message_content) {
+      if (need_update) {
+        send_update_message_content(d, m, true, "on_message_media_edited");
+      }
+      if (is_content_changed || need_update) {
+        on_message_changed(d, m, need_update, "on_message_media_edited");
+      }
+    }
   } else {
     LOG(INFO) << "Failed to edit " << message_id << " in " << dialog_id << ": " << result.error();
     if (was_uploaded) {
@@ -30799,14 +30843,6 @@ void MessagesManager::send_update_message_send_succeeded(Dialog *d, MessageId ol
   send_closure(G()->td(), &Td::send_update,
                make_tl_object<td_api::updateMessageSendSucceeded>(
                    get_message_object(d->dialog_id, m, "send_update_message_send_succeeded"), old_message_id.get()));
-}
-
-void MessagesManager::send_update_message_content(DialogId dialog_id, Message *m, bool is_message_in_dialog,
-                                                  const char *source) {
-  Dialog *d = get_dialog(dialog_id);
-  LOG_CHECK(d != nullptr) << "Send updateMessageContent in unknown " << dialog_id << " from " << source
-                          << " with load count " << loaded_dialogs_.count(dialog_id);
-  send_update_message_content(d, m, is_message_in_dialog, source);
 }
 
 void MessagesManager::send_update_message_content(const Dialog *d, Message *m, bool is_message_in_dialog,
@@ -34839,27 +34875,8 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
           try_add_active_live_location(dialog_id, m);
         }
         change_message_files(dialog_id, m, old_file_ids);
-        if (need_send_update && m->notification_id.is_valid() && is_message_notification_active(d, m)) {
-          auto &group_info = get_notification_group_info(d, m);
-          if (group_info.group_id.is_valid()) {
-            send_closure_later(
-                G()->notification_manager(), &NotificationManager::edit_notification, group_info.group_id,
-                m->notification_id,
-                create_new_message_notification(
-                    m->message_id, is_message_preview_enabled(d, m, is_from_mention_notification_group(m))));
-          }
-        }
-        if (need_send_update && m->is_pinned && d->pinned_message_notification_message_id.is_valid() &&
-            d->mention_notification_group.group_id.is_valid()) {
-          auto pinned_message = get_message_force(d, d->pinned_message_notification_message_id, "after update_message");
-          if (pinned_message != nullptr && pinned_message->notification_id.is_valid() &&
-              is_message_notification_active(d, pinned_message) &&
-              get_message_content_pinned_message_id(pinned_message->content.get()) == message_id) {
-            send_closure_later(
-                G()->notification_manager(), &NotificationManager::edit_notification,
-                d->mention_notification_group.group_id, pinned_message->notification_id,
-                create_new_message_notification(pinned_message->message_id, is_message_preview_enabled(d, m, true)));
-          }
+        if (need_send_update) {
+          on_message_notification_changed(d, m, source);
         }
         update_message_count_by_index(d, -1, old_index_mask & ~new_index_mask);
         update_message_count_by_index(d, +1, new_index_mask & ~old_index_mask);
@@ -35147,8 +35164,9 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
     }
   }
 
+  const Message *m = message.get();
   if (*need_update && message_id > d->last_read_inbox_message_id && !td_->auth_manager_->is_bot()) {
-    if (has_incoming_notification(dialog_id, message.get())) {
+    if (has_incoming_notification(dialog_id, m)) {
       int32 server_unread_count = d->server_unread_count;
       int32 local_unread_count = d->local_unread_count;
       if (message_id.is_server()) {
@@ -35168,19 +35186,19 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
       }
     }
   }
-  if (*need_update && message->contains_unread_mention) {
+  if (*need_update && m->contains_unread_mention) {
     set_dialog_unread_mention_count(d, d->unread_mention_count + 1);
     send_update_chat_unread_mention_count(d);
   }
-  if (*need_update && has_unread_message_reactions(dialog_id, message.get())) {
+  if (*need_update && has_unread_message_reactions(dialog_id, m)) {
     set_dialog_unread_reaction_count(d, d->unread_reaction_count + 1);
     send_update_chat_unread_reaction_count(d, "add_message_to_dialog");
   }
   if (*need_update) {
-    update_message_count_by_index(d, +1, message.get());
+    update_message_count_by_index(d, +1, m);
   }
   if (auto_attach && message_id > d->last_message_id && message_id >= d->last_new_message_id) {
-    set_dialog_last_message_id(d, message_id, "add_message_to_dialog");
+    set_dialog_last_message_id(d, message_id, "add_message_to_dialog", m);
     *need_update_dialog_pos = true;
   }
   if (auto_attach && !message_id.is_yet_unsent() && message_id >= d->last_new_message_id &&
@@ -35193,12 +35211,11 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
       set_dialog_last_database_message_id(d, message_id, "add_message_to_dialog");
       if (!d->first_database_message_id.is_valid()) {
         set_dialog_first_database_message_id(d, message_id, "add_message_to_dialog");
-        try_restore_dialog_reply_markup(d, message.get());
+        try_restore_dialog_reply_markup(d, m);
       }
     }
   }
 
-  const Message *m = message.get();
   if (m->message_id.is_yet_unsent() && m->reply_to_message_id != MessageId()) {
     if (!m->reply_to_message_id.is_yet_unsent()) {
       if (!m->reply_to_message_id.is_scheduled()) {
@@ -35586,6 +35603,32 @@ void MessagesManager::on_message_changed(const Dialog *d, const Message *m, bool
 
   if (!m->message_id.is_yet_unsent()) {
     add_message_to_database(d, m, source);
+  }
+}
+
+void MessagesManager::on_message_notification_changed(Dialog *d, const Message *m, const char *source) {
+  CHECK(d != nullptr);
+  CHECK(m != nullptr);
+  if (m->notification_id.is_valid() && is_message_notification_active(d, m)) {
+    auto &group_info = get_notification_group_info(d, m);
+    if (group_info.group_id.is_valid()) {
+      send_closure_later(G()->notification_manager(), &NotificationManager::edit_notification, group_info.group_id,
+                         m->notification_id,
+                         create_new_message_notification(
+                             m->message_id, is_message_preview_enabled(d, m, is_from_mention_notification_group(m))));
+    }
+  }
+  if (m->is_pinned && d->pinned_message_notification_message_id.is_valid() &&
+      d->mention_notification_group.group_id.is_valid()) {
+    auto pinned_message = get_message_force(d, d->pinned_message_notification_message_id, "after update_message");
+    if (pinned_message != nullptr && pinned_message->notification_id.is_valid() &&
+        is_message_notification_active(d, pinned_message) &&
+        get_message_content_pinned_message_id(pinned_message->content.get()) == m->message_id) {
+      send_closure_later(
+          G()->notification_manager(), &NotificationManager::edit_notification, d->mention_notification_group.group_id,
+          pinned_message->notification_id,
+          create_new_message_notification(pinned_message->message_id, is_message_preview_enabled(d, m, true)));
+    }
   }
 }
 
@@ -36256,15 +36299,6 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
     old_message->disable_web_page_preview = new_message->disable_web_page_preview;
   }
 
-  if (!is_scheduled &&
-      update_message_contains_unread_mention(d, old_message, new_message->contains_unread_mention, "update_message")) {
-    need_send_update = true;
-  }
-  if (update_message_interaction_info(d, old_message, new_message->view_count, new_message->forward_count, true,
-                                      std::move(new_message->reply_info), true, std::move(new_message->reactions),
-                                      "update_message")) {
-    need_send_update = true;
-  }
   if (old_message->noforwards != new_message->noforwards) {
     LOG(DEBUG) << "Message can_be_saved has changed from " << !old_message->noforwards << " to "
                << !old_message->noforwards;
@@ -36298,10 +36332,6 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
   if (old_message->is_from_scheduled != new_message->is_from_scheduled) {
     // is_from_scheduled flag shouldn't be changed, because we are unable to show/hide message notification
     // old_message->is_from_scheduled = new_message->is_from_scheduled;
-  }
-
-  if (!is_scheduled && update_message_is_pinned(d, old_message, new_message->is_pinned, "update_message")) {
-    need_send_update = true;
   }
 
   if (old_message->edit_date > 0) {
@@ -36368,8 +36398,21 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
   if (old_message->last_access_date < new_message->last_access_date) {
     old_message->last_access_date = new_message->last_access_date;
   }
-  if (new_message->is_update_sent) {
+  if (new_message->is_update_sent || is_edited) {
     old_message->is_update_sent = true;
+  }
+
+  if (!is_scheduled && update_message_is_pinned(d, old_message, new_message->is_pinned, "update_message")) {
+    need_send_update = true;
+  }
+  if (!is_scheduled &&
+      update_message_contains_unread_mention(d, old_message, new_message->contains_unread_mention, "update_message")) {
+    need_send_update = true;
+  }
+  if (update_message_interaction_info(d, old_message, new_message->view_count, new_message->forward_count, true,
+                                      std::move(new_message->reply_info), true, std::move(new_message->reactions),
+                                      "update_message")) {
+    need_send_update = true;
   }
 
   if (!is_scheduled) {
@@ -36383,8 +36426,11 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
     }
   }
 
-  if (update_message_content(dialog_id, old_message, std::move(new_message->content), true,
-                             message_id.is_yet_unsent() && new_message->edit_date == 0, is_message_in_dialog)) {
+  bool is_content_changed = false;
+  if (update_message_content(dialog_id, old_message, std::move(new_message->content),
+                             message_id.is_yet_unsent() && new_message->edit_date == 0, is_message_in_dialog,
+                             is_content_changed)) {
+    send_update_message_content(d, old_message, is_message_in_dialog, "update_message");
     need_send_update = true;
   }
 
@@ -36393,7 +36439,6 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
   }
 
   if (is_edited && !td_->auth_manager_->is_bot()) {
-    d->last_edited_message_id = message_id;
     send_update_message_edited(dialog_id, old_message);
   }
 
@@ -36427,11 +36472,11 @@ bool MessagesManager::need_message_changed_warning(const Message *old_message) {
 }
 
 bool MessagesManager::update_message_content(DialogId dialog_id, Message *old_message,
-                                             unique_ptr<MessageContent> new_content,
-                                             bool need_send_update_message_content, bool need_merge_files,
-                                             bool is_message_in_dialog) {
-  bool is_content_changed = false;
+                                             unique_ptr<MessageContent> new_content, bool need_merge_files,
+                                             bool is_message_in_dialog, bool &is_content_changed) {
+  is_content_changed = false;
   bool need_update = false;
+
   unique_ptr<MessageContent> &old_content = old_message->content;
   MessageContentType old_content_type = old_content->get_type();
   MessageContentType new_content_type = new_content->get_type();
@@ -36500,10 +36545,6 @@ bool MessagesManager::update_message_content(DialogId dialog_id, Message *old_me
   }
 
   if (need_update) {
-    if (need_send_update_message_content) {
-      send_update_message_content(dialog_id, old_message, is_message_in_dialog, "update_message_content");
-    }
-
     auto file_ids = get_message_content_file_ids(old_content.get(), td_);
     if (!file_ids.empty()) {
       auto file_source_id = get_message_file_source_id(FullMessageId(dialog_id, old_message->message_id));
@@ -37284,7 +37325,7 @@ bool MessagesManager::add_dialog_last_database_message(Dialog *d, unique_ptr<Mes
     }
   }
   if (m != nullptr) {
-    set_dialog_last_message_id(d, m->message_id, "add_dialog_last_database_message 2");
+    set_dialog_last_message_id(d, m->message_id, "add_dialog_last_database_message 2", m);
     send_update_chat_last_message(d, "add_dialog_last_database_message 3");
   } else {
     if (d->pending_last_message_date != 0) {
