@@ -6726,40 +6726,9 @@ void MessagesManager::on_get_message_reaction_list(FullMessageId full_message_id
     return;
   }
 
-  auto are_consistent = [](const vector<DialogId> &lhs, const vector<DialogId> &rhs) {
-    size_t i = 0;
-    size_t max_i = td::min(lhs.size(), rhs.size());
-    while (i < max_i && lhs[i] == rhs[i]) {
-      i++;
-    }
-    return i == max_i;
-  };
-
   // it's impossible to use received reactions to update message reactions, because there is no way to find,
   // which reactions are chosen by the current user, so just reload message reactions for consistency
-  bool need_reload = false;
-  if (reaction.empty()) {
-    // received list and total_count for all reactions
-    int32 old_total_count = 0;
-    for (const auto &message_reaction : m->reactions->reactions_) {
-      need_reload |=
-          !are_consistent(reactions[message_reaction.get_reaction()], message_reaction.get_recent_chooser_dialog_ids());
-      old_total_count += message_reaction.get_choose_count();
-      reactions.erase(message_reaction.get_reaction());
-    }
-    need_reload |= old_total_count != total_count || !reactions.empty();
-  } else {
-    // received list and total_count for a single reaction
-    const auto *message_reaction = m->reactions->get_reaction(reaction);
-    if (message_reaction == nullptr) {
-      need_reload = reactions.count(reaction) != 0 || total_count > 0;
-    } else {
-      need_reload = !are_consistent(reactions[reaction], message_reaction->get_recent_chooser_dialog_ids()) ||
-                    message_reaction->get_choose_count() != total_count;
-    }
-  }
-
-  if (!need_reload) {
+  if (m->reactions->are_consistent_with_list(reaction, std::move(reactions), total_count)) {
     return;
   }
 
@@ -6967,10 +6936,7 @@ td_api::object_ptr<td_api::messageInteractionInfo> MessagesManager::get_message_
       my_user_id = td_->contacts_manager_->get_my_id();
       peer_user_id = dialog_id.get_user_id();
     }
-    reactions =
-        transform(m->reactions->reactions_, [td = td_, my_user_id, peer_user_id](const MessageReaction &reaction) {
-          return reaction.get_message_reaction_object(td, my_user_id, peer_user_id);
-        });
+    reactions = m->reactions->get_message_reactions_object(td_, my_user_id, peer_user_id);
   }
 
   return td_api::make_object<td_api::messageInteractionInfo>(m->view_count, m->forward_count, std::move(reply_info),
@@ -25553,18 +25519,8 @@ void MessagesManager::add_message_dependencies(Dependencies &dependencies, const
     dependencies.add_dialog_dependencies(recent_replier_dialog_id);
   }
   if (m->reactions != nullptr) {
-    for (const auto &reaction : m->reactions->reactions_) {
-      for (const auto &recent_chooser_min_channel : reaction.get_recent_chooser_min_channels()) {
-        LOG(INFO) << "Add min reacted " << recent_chooser_min_channel.first;
-        td_->contacts_manager_->add_min_channel(recent_chooser_min_channel.first, recent_chooser_min_channel.second);
-      }
-      const auto &dialog_ids = reaction.get_recent_chooser_dialog_ids();
-      for (auto dialog_id : dialog_ids) {
-        // don't load the dialog itself
-        // it will be created in get_message_reaction_object if needed
-        dependencies.add_dialog_dependencies(dialog_id);
-      }
-    }
+    m->reactions->add_min_channels(td_);
+    m->reactions->add_dependencies(dependencies);
   }
   add_message_content_dependencies(dependencies, m->content.get());
   add_reply_markup_dependencies(dependencies, m->reply_markup.get());
