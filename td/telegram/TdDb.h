@@ -102,6 +102,12 @@ class TdDb {
 
   Result<string> get_stats();
 
+  void destroy_messages_db();
+
+  void destroy_files_db();
+
+  void shrink_database();
+
  private:
   string sqlite_path_;
   std::shared_ptr<SqliteConnectionSafe> sql_connection_;

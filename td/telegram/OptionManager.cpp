@@ -256,7 +256,7 @@ bool OptionManager::is_internal_option(Slice name) {
              name == "dialog_filters_limit_default" || name == "dialog_filters_limit_premium" ||
              name == "dialogs_folder_pinned_limit_default" || name == "dialogs_folder_pinned_limit_premium" ||
              name == "dialogs_pinned_limit_default" || name == "dialogs_pinned_limit_premium" ||
-             name == "dice_emojis" || name == "dice_success_values";
+             name == "dice_emojis" || name == "dice_success_values" || name == "drop_database_on_session_close";
     case 'e':
       return name == "edit_time_limit" || name == "emoji_sounds";
     case 'i':
@@ -650,6 +650,9 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
         G()->td_db()->get_binlog_pmc()->erase("notification_id_current");
         G()->td_db()->get_binlog_pmc()->erase("notification_group_id_current");
         return promise.set_value(Unit());
+      }
+      if (set_boolean_option("drop_database_on_session_close")) {
+        return;
       }
       break;
     case 'i':

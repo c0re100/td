@@ -3454,6 +3454,11 @@ void Td::clear() {
   LOG(DEBUG) << "VoiceNotesManager actor was cleared" << timer;
   web_pages_manager_actor_.reset();
   LOG(DEBUG) << "WebPagesManager actor was cleared" << timer;
+  if (G()->get_option_boolean("drop_database_on_session_close")) {
+    G()->td_db()->destroy_files_db();
+    G()->td_db()->destroy_messages_db();
+    G()->td_db()->shrink_database();
+  }
 }
 
 void Td::close() {

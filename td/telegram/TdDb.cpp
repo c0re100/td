@@ -612,4 +612,19 @@ Result<string> TdDb::get_stats() {
   return sb.as_cslice().str();
 }
 
+void TdDb::destroy_messages_db() {
+  auto &db = get_sqlite_connection_safe()->get();
+  db.exec("DROP TABLE IF EXISTS messages");
+}
+
+void TdDb::destroy_files_db() {
+  auto &db = get_sqlite_connection_safe()->get();
+  db.exec("DROP TABLE IF EXISTS files");
+}
+
+void TdDb::shrink_database() {
+  auto &db = get_sqlite_connection_safe()->get();
+  db.exec("VACUUM");
+}
+
 }  // namespace td
