@@ -4509,7 +4509,8 @@ class CliClient final : public Actor {
       } else if (status_str == "unrest") {
         status = td_api::make_object<td_api::chatMemberStatusRestricted>(
             true, 0,
-            true, 0, td_api::make_object<td_api::chatPermissions>(true, true, true, true, true, true, true, true, true, true, true, true));
+            td_api::make_object<td_api::chatPermissions>(true, true, true, true, true, true, true, true, true, true,
+                  true, true));
       }
       if (status != nullptr) {
         send_request(

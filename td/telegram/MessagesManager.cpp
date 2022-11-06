@@ -11114,10 +11114,10 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
   lock.set_value(Unit());
 
   delete_dialog_messages(d, message_ids, false, DELETE_MESSAGE_USER_REQUEST_SOURCE);
-  if (cant_delete_message_ids.size() > 0 && deleted_message_ids.size() > 0) {
+  if (cant_delete_message_ids.size() > 0 && deleted_server_message_ids.size() > 0) {
     SliceBuilder sb;
     sb << "Can't delete messages " << cant_delete_message_ids << " from " << dialog_id << " but "
-               << deleted_message_ids << " deleted successfully";
+               << deleted_server_message_ids << " deleted successfully";
     return mpas.get_promise().set_error(Status::Error(400, sb.as_cslice().str()));
   }
 

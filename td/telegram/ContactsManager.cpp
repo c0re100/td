@@ -17381,7 +17381,7 @@ tl_object_ptr<td_api::user> ContactsManager::get_user_object(UserId user_id, con
 
   auto emoji_status = u->last_sent_emoji_status.is_valid() ? u->emoji_status.get_emoji_status_object() : nullptr;
   return make_tl_object<td_api::user>(
-      user_id.get(), u->access_hash, u->first_name, u->last_name, u->usernames.get_usernames_object(), u->phone_number, get_user_status_object(user_id, u),
+      user_id.get(), u->access_hash, u->first_name, u->last_name, u->usernames.get_usernames_object(), u->phone_number,
       get_user_status_object(user_id, u), get_profile_photo_object(td_->file_manager_.get(), u->photo),
       std::move(emoji_status), u->is_contact, u->is_mutual_contact, u->is_verified, u->is_premium, u->is_support,
       get_restriction_reason_description(u->restriction_reasons), u->is_scam, u->is_fake, u->is_received,
@@ -17511,7 +17511,7 @@ td_api::object_ptr<td_api::updateSupergroup> ContactsManager::get_update_unknown
   auto min_channel = get_min_channel(channel_id);
   bool is_megagroup = min_channel == nullptr ? false : min_channel->is_megagroup_;
   return td_api::make_object<td_api::updateSupergroup>(td_api::make_object<td_api::supergroup>(
-      channel_id.get(), -1, nullptr, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, false,
+      channel_id.get(), -1, nullptr, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, false, false,
       false, !is_megagroup, false, false, !is_megagroup, false, false, false, string(), false, false));
 }
 
@@ -17537,7 +17537,7 @@ tl_object_ptr<td_api::supergroup> ContactsManager::get_supergroup_object(Channel
     return nullptr;
   }
   return td_api::make_object<td_api::supergroup>(
-      channel_id.get(), -1, c->usernames.get_usernames_object(), c->date, get_channel_status(c).get_chat_member_status_object(),
+      channel_id.get(), -1, c->usernames.get_usernames_object(), c->date,
       get_channel_status(c).get_chat_member_status_object(), c->participant_count, c->has_linked_channel,
       c->has_location, c->sign_messages, get_channel_join_to_send(c), get_channel_join_request(c),
       c->is_slow_mode_enabled, !c->is_megagroup, c->is_gigagroup, c->is_forum, c->is_verified,
