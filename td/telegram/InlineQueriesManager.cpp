@@ -18,6 +18,7 @@
 #include "td/telegram/files/FileType.h"
 #include "td/telegram/Game.h"
 #include "td/telegram/Global.h"
+#include "td/telegram/InputInvoice.h"
 #include "td/telegram/InputMessageText.h"
 #include "td/telegram/Location.h"
 #include "td/telegram/MessageContent.h"
@@ -26,7 +27,6 @@
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
-#include "td/telegram/Payments.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/PhotoFormat.h"
 #include "td/telegram/PhotoSize.h"
@@ -376,8 +376,9 @@ Result<tl_object_ptr<telegram_api::InputBotInlineMessage>> InlineQueriesManager:
     return contact.get_input_bot_inline_message_media_contact(std::move(input_reply_markup));
   }
   if (constructor_id == td_api::inputMessageInvoice::ID) {
-    TRY_RESULT(input_invoice, process_input_message_invoice(std::move(input_message_content), td_));
-    return get_input_bot_inline_message_media_invoice(input_invoice, std::move(input_reply_markup), td_);
+    TRY_RESULT(input_invoice,
+               InputInvoice::process_input_message_invoice(std::move(input_message_content), td_, DialogId(), false));
+    return input_invoice.get_input_bot_inline_message_media_invoice(std::move(input_reply_markup), td_);
   }
   if (constructor_id == td_api::inputMessageLocation::ID) {
     TRY_RESULT(location, process_input_message_location(std::move(input_message_content)));
@@ -1947,7 +1948,7 @@ void InlineQueriesManager::save_recently_used_bots() {
       value += ',';
       value_ids += ',';
     }
-    value += td_->contacts_manager_->get_user_username(bot_user_id);
+    value += td_->contacts_manager_->get_user_first_username(bot_user_id);
     value_ids += to_string(bot_user_id.get());
   }
   G()->td_db()->get_binlog_pmc()->set("recently_used_inline_bot_usernames", value);
@@ -2027,7 +2028,7 @@ void InlineQueriesManager::on_new_query(int64 query_id, UserId sender_user_id, L
     LOG(ERROR) << "Receive new inline query from invalid " << sender_user_id;
     return;
   }
-  LOG_IF(ERROR, !td_->contacts_manager_->have_user(sender_user_id)) << "Have no info about " << sender_user_id;
+  LOG_IF(ERROR, !td_->contacts_manager_->have_user(sender_user_id)) << "Receive unknown " << sender_user_id;
   if (!td_->auth_manager_->is_bot()) {
     LOG(ERROR) << "Receive new inline query";
     return;
@@ -2066,7 +2067,7 @@ void InlineQueriesManager::on_chosen_result(
     LOG(ERROR) << "Receive chosen inline query result from invalid " << user_id;
     return;
   }
-  LOG_IF(ERROR, !td_->contacts_manager_->have_user(user_id)) << "Have no info about " << user_id;
+  LOG_IF(ERROR, !td_->contacts_manager_->have_user(user_id)) << "Receive unknown " << user_id;
   if (!td_->auth_manager_->is_bot()) {
     LOG(ERROR) << "Receive chosen inline query result";
     return;

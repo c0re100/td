@@ -216,6 +216,8 @@ int32 get_message_content_duration(const MessageContent *content, const Td *td);
 
 int32 get_message_content_media_duration(const MessageContent *content, const Td *td);
 
+const Photo *get_message_content_photo(const MessageContent *content);
+
 FileId get_message_content_upload_file_id(const MessageContent *content);
 
 FileId get_message_content_any_file_id(const MessageContent *content);
@@ -227,6 +229,12 @@ FileId get_message_content_thumbnail_file_id(const MessageContent *content, cons
 vector<FileId> get_message_content_file_ids(const MessageContent *content, const Td *td);
 
 string get_message_content_search_text(const Td *td, const MessageContent *content);
+
+bool update_message_content_extended_media(MessageContent *content,
+                                           telegram_api::object_ptr<telegram_api::MessageExtendedMedia> extended_media,
+                                           DialogId owner_dialog_id, Td *td);
+
+bool need_poll_message_content_extended_media(const MessageContent *content);
 
 void get_message_content_animated_emoji_click_sticker(const MessageContent *content, FullMessageId full_message_id,
                                                       Td *td, Promise<td_api::object_ptr<td_api::sticker>> &&promise);
@@ -244,6 +252,9 @@ void update_failed_to_send_message_content(Td *td, unique_ptr<MessageContent> &c
 
 void add_message_content_dependencies(Dependencies &dependencies, const MessageContent *message_content);
 
+void update_forum_topic_info_by_service_message_content(Td *td, const MessageContent *content, DialogId dialog_id,
+                                                        MessageId top_thread_message_id);
+
 void on_sent_message_content(Td *td, const MessageContent *content);
 
 void move_message_content_sticker_set_to_top(Td *td, const MessageContent *content);
@@ -255,5 +266,11 @@ void init_stickers_manager(Td *td);
 void on_dialog_used(TopDialogCategory category, DialogId dialog_id, int32 date);
 
 void update_used_hashtags(Td *td, const MessageContent *content);
+
+void recognize_message_content_speech(Td *td, const MessageContent *content, FullMessageId full_message_id,
+                                      Promise<Unit> &&promise);
+
+void rate_message_content_speech_recognition(Td *td, const MessageContent *content, FullMessageId full_message_id,
+                                             bool is_good, Promise<Unit> &&promise);
 
 }  // namespace td

@@ -30,6 +30,8 @@
 #include "td/utils/emoji.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
+#include "td/utils/Slice.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 #include "td/utils/utf8.h"
 
@@ -220,6 +222,9 @@ class SendReactionQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
+    if (status.message() == "MESSAGE_NOT_MODIFIED") {
+      return promise_.set_value(Unit());
+    }
     td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "SendReactionQuery");
     promise_.set_error(std::move(status));
   }
@@ -551,19 +556,19 @@ unique_ptr<MessageReactions> MessageReactions::get_message_reactions(
           if (dialog_type == DialogType::User) {
             auto user_id = dialog_id.get_user_id();
             if (!td->contacts_manager_->have_min_user(user_id)) {
-              LOG(ERROR) << "Have no info about " << user_id;
+              LOG(ERROR) << "Receive unknown " << user_id;
               continue;
             }
           } else if (dialog_type == DialogType::Channel) {
             auto channel_id = dialog_id.get_channel_id();
             auto min_channel = td->contacts_manager_->get_min_channel(channel_id);
             if (min_channel == nullptr) {
-              LOG(ERROR) << "Have no info about reacted " << channel_id;
+              LOG(ERROR) << "Receive unknown reacted " << channel_id;
               continue;
             }
             recent_chooser_min_channels.emplace_back(channel_id, *min_channel);
           } else {
-            LOG(ERROR) << "Have no info about reacted " << dialog_id;
+            LOG(ERROR) << "Receive unknown reacted " << dialog_id;
             continue;
           }
         }
@@ -778,6 +783,7 @@ bool MessageReactions::are_consistent_with_list(const string &reaction, FlatHash
     // received list and total_count for all reactions
     int32 old_total_count = 0;
     for (const auto &message_reaction : reactions_) {
+      CHECK(!message_reaction.get_reaction().empty());
       if (!are_consistent(reactions[message_reaction.get_reaction()],
                           message_reaction.get_recent_chooser_dialog_ids())) {
         return false;

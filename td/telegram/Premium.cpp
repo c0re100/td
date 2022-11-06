@@ -14,10 +14,12 @@
 #include "td/telegram/DocumentsManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/MessageEntity.h"
-#include "td/telegram/Payments.h"
+#include "td/telegram/misc.h"
+#include "td/telegram/PremiumGiftOption.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UpdatesManager.h"
+#include "td/telegram/UserId.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
@@ -65,6 +67,9 @@ static td_api::object_ptr<td_api::PremiumFeature> get_premium_feature_object(Sli
   }
   if (premium_feature == "animated_userpics") {
     return td_api::make_object<td_api::premiumFeatureAnimatedProfilePhoto>();
+  }
+  if (premium_feature == "forum_topic_icon") {
+    return td_api::make_object<td_api::premiumFeatureForumTopicIcon>();
   }
   if (premium_feature == "app_icons") {
     return td_api::make_object<td_api::premiumFeatureAppIcons>();
@@ -358,6 +363,8 @@ static string get_premium_source(const td_api::PremiumFeature *feature) {
       return "emoji_status";
     case td_api::premiumFeatureAnimatedProfilePhoto::ID:
       return "animated_userpics";
+    case td_api::premiumFeatureForumTopicIcon::ID:
+      return "forum_topic_icon";
     case td_api::premiumFeatureAppIcons::ID:
       return "app_icons";
     default:

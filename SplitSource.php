@@ -66,7 +66,7 @@ function split_file($file, $chunks, $undo) {
     }
 
     if (!file_exists($cpp_name)) {
-        echo "ERROR: skip unexisting file $cpp_name".PHP_EOL;
+        echo "ERROR: skip nonexistent file $cpp_name".PHP_EOL;
         return;
     }
 
@@ -286,12 +286,13 @@ function split_file($file, $chunks, $undo) {
                 'documents_manager[_(-][^.]|DocumentsManager' => "DocumentsManager",
                 'file_reference_manager[_(-][^.]|FileReferenceManager|file_references[)]' => 'FileReferenceManager',
                 'file_manager[_(-][^.]|FileManager([^ ;.]| [^*])|update_file[)]' => 'files/FileManager',
+                'forum_topic_manager[_(-][^.]|ForumTopicManager' => 'ForumTopicManager',
                 'G[(][)]|Global[^A-Za-z]' => 'Global',
                 'game_manager[_(-][^.]|GameManager' => 'GameManager',
                 'group_call_manager[_(-][^.]|GroupCallManager' => 'GroupCallManager',
                 'HashtagHints' => 'HashtagHints',
                 'inline_queries_manager[_(-][^.]|InlineQueriesManager' => 'InlineQueriesManager',
-                'language_pack_manager[_(-][^.]|LanguagePackManager' => 'LanguagePackManager',
+                'language_pack_manager[_(-]|LanguagePackManager' => 'LanguagePackManager',
                 'link_manager[_(-][^.]|LinkManager' => 'LinkManager',
                 'LogeventIdWithGeneration|add_log_event|delete_log_event|get_erase_log_event_promise|parse_time|store_time' => 'logevent/LogEventHelper',
                 'MessageCopyOptions' => 'MessageCopyOptions',
@@ -303,7 +304,7 @@ function split_file($file, $chunks, $undo) {
                 'poll_manager[_(-][^.]|PollManager' => "PollManager",
                 'PublicDialogType|get_public_dialog_type' => 'PublicDialogType',
                 'SecretChatActor' => 'SecretChatActor',
-                'secret_chats_manager[_(-][^.]|SecretChatsManager' => 'SecretChatsManager',
+                'secret_chats_manager[_(-]|SecretChatsManager' => 'SecretChatsManager',
                 'sponsored_message_manager[_(-][^.]|SponsoredMessageManager' => 'SponsoredMessageManager',
                 'stickers_manager[_(-][^.]|StickersManager' => 'StickersManager',
                 '[>](td_db[(][)]|get_td_db_impl[(])|TdDb[^A-Za-z]' => 'TdDb',

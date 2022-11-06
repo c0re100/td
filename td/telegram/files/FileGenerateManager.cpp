@@ -83,11 +83,12 @@ class FileDownloadGenerateActor final : public FileGenerateActor {
     };
 
     send_closure(G()->file_manager(), &FileManager::download, file_id_, std::make_shared<Callback>(actor_id(this)), 1,
-                 FileManager::KEEP_DOWNLOAD_OFFSET, FileManager::KEEP_DOWNLOAD_LIMIT);
+                 FileManager::KEEP_DOWNLOAD_OFFSET, FileManager::KEEP_DOWNLOAD_LIMIT,
+                 Promise<td_api::object_ptr<td_api::file>>());
   }
   void hangup() final {
     send_closure(G()->file_manager(), &FileManager::download, file_id_, nullptr, 0, FileManager::KEEP_DOWNLOAD_OFFSET,
-                 FileManager::KEEP_DOWNLOAD_LIMIT);
+                 FileManager::KEEP_DOWNLOAD_LIMIT, Promise<td_api::object_ptr<td_api::file>>());
     stop();
   }
 
@@ -412,7 +413,7 @@ static Status check_mtime(std::string &conversion, CSlice original_path) {
   conversion = parser.read_all().str();
   auto r_stat = stat(original_path);
   uint64 actual_mtime = r_stat.is_ok() ? r_stat.ok().mtime_nsec_ : 0;
-  if (FileManager::are_modification_times_equal(expected_mtime, actual_mtime)) {
+  if (are_modification_times_equal(expected_mtime, actual_mtime)) {
     LOG(DEBUG) << "File \"" << original_path << "\" modification time " << actual_mtime << " matches";
     return Status::OK();
   }

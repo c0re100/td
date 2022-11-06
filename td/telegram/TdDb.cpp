@@ -108,6 +108,7 @@ Status init_binlog(Binlog &binlog, string path, BinlogKeyValue<Binlog> &binlog_p
       case LogEvent::HandlerType::DeleteAllCallMessagesOnServer:
       case LogEvent::HandlerType::DeleteDialogMessagesByDateOnServer:
       case LogEvent::HandlerType::ReadAllDialogReactionsOnServer:
+      case LogEvent::HandlerType::DeleteTopicHistoryOnServer:
         events.to_messages_manager.push_back(event.clone());
         break;
       case LogEvent::HandlerType::UpdateScopeNotificationSettingsOnServer:
@@ -163,8 +164,8 @@ std::shared_ptr<KeyValueSyncInterface> TdDb::get_config_pmc_shared() {
   return config_pmc_;
 }
 
-KeyValueSyncInterface *TdDb::get_binlog_pmc() {
-  CHECK(binlog_pmc_);
+KeyValueSyncInterface *TdDb::get_binlog_pmc_impl(const char *file, int line) {
+  LOG_CHECK(binlog_pmc_) << G()->close_flag() << ' ' << file << ' ' << line;
   return binlog_pmc_.get();
 }
 
@@ -495,8 +496,11 @@ Status TdDb::check_parameters(TdParameters &parameters) {
     }
     TRY_STATUS(mkpath(dir, 0750));
     TRY_RESULT(real_dir, realpath(dir, true));
-    if (dir.back() != TD_DIR_SLASH) {
-      dir += TD_DIR_SLASH;
+    if (real_dir.empty()) {
+      return Status::Error(PSTRING() << "Failed to get realpath for \"" << dir << '"');
+    }
+    if (real_dir.back() != TD_DIR_SLASH) {
+      real_dir += TD_DIR_SLASH;
     }
     return real_dir;
   };

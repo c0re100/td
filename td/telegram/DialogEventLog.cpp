@@ -12,6 +12,7 @@
 #include "td/telegram/DialogInviteLink.h"
 #include "td/telegram/DialogLocation.h"
 #include "td/telegram/DialogParticipant.h"
+#include "td/telegram/ForumTopicInfo.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/GroupCallManager.h"
 #include "td/telegram/GroupCallParticipant.h"
@@ -126,6 +127,11 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeUsername>(action_ptr);
       return td_api::make_object<td_api::chatEventUsernameChanged>(std::move(action->prev_value_),
                                                                    std::move(action->new_value_));
+    }
+    case telegram_api::channelAdminLogEventActionChangeUsernames::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeUsernames>(action_ptr);
+      return td_api::make_object<td_api::chatEventActiveUsernamesChanged>(std::move(action->prev_value_),
+                                                                          std::move(action->new_value_));
     }
     case telegram_api::channelAdminLogEventActionChangePhoto::ID: {
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangePhoto>(action_ptr);
@@ -352,6 +358,59 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
           old_available_reactions.get_chat_available_reactions_object(),
           new_available_reactions.get_chat_available_reactions_object());
     }
+    case telegram_api::channelAdminLogEventActionToggleForum::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionToggleForum>(action_ptr);
+      return td_api::make_object<td_api::chatEventIsForumToggled>(action->new_value_);
+    }
+    case telegram_api::channelAdminLogEventActionCreateTopic::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionCreateTopic>(action_ptr);
+      auto topic_info = ForumTopicInfo(action->topic_);
+      if (topic_info.is_empty()) {
+        return nullptr;
+      }
+      actor_dialog_id = topic_info.get_creator_dialog_id();
+      return td_api::make_object<td_api::chatEventForumTopicCreated>(topic_info.get_forum_topic_info_object(td));
+    }
+    case telegram_api::channelAdminLogEventActionEditTopic::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionEditTopic>(action_ptr);
+      auto old_topic_info = ForumTopicInfo(action->prev_topic_);
+      auto new_topic_info = ForumTopicInfo(action->new_topic_);
+      if (old_topic_info.is_empty() || new_topic_info.is_empty() ||
+          old_topic_info.get_top_thread_message_id() != new_topic_info.get_top_thread_message_id()) {
+        LOG(ERROR) << "Receive " << to_string(action);
+        return nullptr;
+      }
+      if (old_topic_info.is_closed() != new_topic_info.is_closed()) {
+        return td_api::make_object<td_api::chatEventForumTopicToggleIsClosed>(
+            new_topic_info.get_forum_topic_info_object(td));
+      }
+      return td_api::make_object<td_api::chatEventForumTopicEdited>(old_topic_info.get_forum_topic_info_object(td),
+                                                                    new_topic_info.get_forum_topic_info_object(td));
+    }
+    case telegram_api::channelAdminLogEventActionDeleteTopic::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionDeleteTopic>(action_ptr);
+      auto topic_info = ForumTopicInfo(action->topic_);
+      if (topic_info.is_empty()) {
+        return nullptr;
+      }
+      return td_api::make_object<td_api::chatEventForumTopicDeleted>(topic_info.get_forum_topic_info_object(td));
+    }
+    case telegram_api::channelAdminLogEventActionPinTopic::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionPinTopic>(action_ptr);
+      ForumTopicInfo old_topic_info;
+      ForumTopicInfo new_topic_info;
+      if (action->prev_topic_ != nullptr) {
+        old_topic_info = ForumTopicInfo(action->prev_topic_);
+      }
+      if (action->new_topic_ != nullptr) {
+        new_topic_info = ForumTopicInfo(action->new_topic_);
+      }
+      if (old_topic_info.is_empty() && new_topic_info.is_empty()) {
+        return nullptr;
+      }
+      return td_api::make_object<td_api::chatEventForumTopicPinned>(old_topic_info.get_forum_topic_info_object(td),
+                                                                    new_topic_info.get_forum_topic_info_object(td));
+    }
     default:
       UNREACHABLE();
       return nullptr;
@@ -411,7 +470,7 @@ class GetChannelAdminLogQuery final : public Td::ResultHandler {
         LOG(ERROR) << "Receive invalid " << user_id;
         continue;
       }
-      LOG_IF(ERROR, !td_->contacts_manager_->have_user(user_id)) << "Have no info about " << user_id;
+      LOG_IF(ERROR, !td_->contacts_manager_->have_user(user_id)) << "Receive unknown " << user_id;
 
       DialogId actor_dialog_id;
       auto action = get_chat_event_action_object(td_, channel_id_, std::move(event->action_), actor_dialog_id);
@@ -485,11 +544,15 @@ static telegram_api::object_ptr<telegram_api::channelAdminLogEventsFilter> get_i
   if (filters->video_chat_changes_) {
     flags |= telegram_api::channelAdminLogEventsFilter::GROUP_CALL_MASK;
   }
+  if (filters->forum_changes_) {
+    flags |= telegram_api::channelAdminLogEventsFilter::FORUMS_MASK;
+  }
 
   return telegram_api::make_object<telegram_api::channelAdminLogEventsFilter>(
       flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
       false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/);
+      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+      false /*ignored*/);
 }
 
 void get_dialog_event_log(Td *td, DialogId dialog_id, const string &query, int64 from_event_id, int32 limit,

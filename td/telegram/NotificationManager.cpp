@@ -2681,7 +2681,7 @@ void NotificationManager::process_push_notification(string payload, Promise<Unit
   }
 
   auto receiver_id = r_receiver_id.move_as_ok();
-  auto encryption_keys = td_->device_token_manager_->get_actor_unsafe()->get_encryption_keys();
+  auto encryption_keys = td_->device_token_manager_.get_actor_unsafe()->get_encryption_keys();
   VLOG(notifications) << "Process push notification \"" << format::escaped(payload)
                       << "\" with receiver_id = " << receiver_id << " and " << encryption_keys.size()
                       << " encryption keys";
@@ -3257,7 +3257,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     return Status::Error(406, "Phone call notification is not supported");
   }
 
-  if (begins_with(loc_key, "REACT_")) {
+  if (begins_with(loc_key, "REACT_") || loc_key == "READ_REACTION") {
     // TODO REACT_* notifications
     return Status::Error(406, "Reaction notifications are unsupported");
   }
@@ -3327,8 +3327,9 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, false /*ignored*/, false /*ignored*/, sender_user_id.get(), sender_access_hash, user_name,
-        string(), string(), string(), std::move(sender_photo), nullptr, 0, Auto(), string(), string(), nullptr);
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, 0, sender_user_id.get(), sender_access_hash, user_name,
+        string(), string(), string(), std::move(sender_photo), nullptr, 0, Auto(), string(), string(), nullptr,
+        vector<telegram_api::object_ptr<telegram_api::username>>());
     td_->contacts_manager_->on_get_user(std::move(user), "process_push_notification_payload");
   }
 
@@ -3685,8 +3686,9 @@ void NotificationManager::add_message_push_notification(DialogId dialog_id, Mess
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, false /*ignored*/, false /*ignored*/, sender_user_id.get(), 0, user_name, string(), string(),
-        string(), nullptr, nullptr, 0, Auto(), string(), string(), nullptr);
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, 0, sender_user_id.get(), 0, user_name, string(),
+        string(), string(), nullptr, nullptr, 0, Auto(), string(), string(), nullptr,
+        vector<telegram_api::object_ptr<telegram_api::username>>());
     td_->contacts_manager_->on_get_user(std::move(user), "add_message_push_notification");
   }
 

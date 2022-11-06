@@ -38,10 +38,10 @@ class FileDbInterface {
   FileDbInterface &operator=(const FileDbInterface &) = delete;
   virtual ~FileDbInterface() = default;
 
-  // non thread safe
+  // non-thread-safe
   virtual FileDbId create_pmc_id() = 0;
 
-  // thread safe
+  // thread-safe
   virtual void close(Promise<> promise) = 0;
 
   template <class LocationT>
@@ -68,9 +68,9 @@ class FileDbInterface {
   Result<FileData> get_file_data_sync(const LocationT &location) {
     auto res = get_file_data_sync_impl(as_key(location));
     if (res.is_ok()) {
-      LOG(DEBUG) << "GET " << location << " " << res.ok();
+      LOG(DEBUG) << "GET " << location << ": " << res.ok();
     } else {
-      LOG(DEBUG) << "GET " << location << " " << res.error();
+      LOG(DEBUG) << "GET " << location << ": " << res.error();
     }
     return res;
   }

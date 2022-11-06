@@ -243,6 +243,30 @@ bool is_empty_string(const string &str) {
   return strip_empty_characters(str, str.size()).empty();
 }
 
+bool is_valid_username(Slice username) {
+  if (username.empty() || username.size() > 32) {
+    return false;
+  }
+  if (!is_alpha(username[0])) {
+    return false;
+  }
+  for (auto c : username) {
+    if (!is_alpha(c) && !is_digit(c) && c != '_') {
+      return false;
+    }
+  }
+  if (username.back() == '_') {
+    return false;
+  }
+  for (size_t i = 1; i < username.size(); i++) {
+    if (username[i - 1] == '_' && username[i] == '_') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 int64 get_vector_hash(const vector<uint64> &numbers) {
   uint64 acc = 0;
   for (auto number : numbers) {
@@ -309,6 +333,11 @@ string get_emoji_fingerprint(uint64 num) {
       u8"\U0001f537"};
 
   return emojis[static_cast<size_t>((num & 0x7FFFFFFFFFFFFFFF) % emojis.size())].str();
+}
+
+bool check_currency_amount(int64 amount) {
+  constexpr int64 MAX_AMOUNT = 9999'9999'9999;
+  return -MAX_AMOUNT <= amount && amount <= MAX_AMOUNT;
 }
 
 }  // namespace td

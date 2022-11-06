@@ -19,11 +19,15 @@
 namespace td {
 
 MessageReplyInfo::MessageReplyInfo(Td *td, tl_object_ptr<telegram_api::messageReplies> &&reply_info, bool is_bot) {
-  if (reply_info == nullptr || is_bot || reply_info->channel_id_ == 777) {
+  if (reply_info == nullptr) {
     return;
   }
   if (reply_info->replies_ < 0) {
     LOG(ERROR) << "Receive wrong " << to_string(reply_info);
+    return;
+  }
+  if (is_bot || reply_info->channel_id_ == 777) {
+    is_dropped = true;
     return;
   }
   reply_count = reply_info->replies_;
@@ -56,19 +60,19 @@ MessageReplyInfo::MessageReplyInfo(Td *td, tl_object_ptr<telegram_api::messageRe
         if (dialog_type == DialogType::User) {
           auto replier_user_id = dialog_id.get_user_id();
           if (!td->contacts_manager_->have_min_user(replier_user_id)) {
-            LOG(ERROR) << "Have no info about replied " << replier_user_id;
+            LOG(ERROR) << "Receive unknown replied " << replier_user_id;
             continue;
           }
         } else if (dialog_type == DialogType::Channel) {
           auto replier_channel_id = dialog_id.get_channel_id();
           auto min_channel = td->contacts_manager_->get_min_channel(replier_channel_id);
           if (min_channel == nullptr) {
-            LOG(ERROR) << "Have no info about replied " << replier_channel_id;
+            LOG(ERROR) << "Receive unknown replied " << replier_channel_id;
             continue;
           }
           replier_min_channels.emplace_back(replier_channel_id, *min_channel);
         } else {
-          LOG(ERROR) << "Have no info about replied " << dialog_id;
+          LOG(ERROR) << "Receive unknown replied " << dialog_id;
           continue;
         }
       }

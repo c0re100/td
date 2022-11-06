@@ -178,7 +178,7 @@ FileId AnimationsManager::on_get_animation(unique_ptr<Animation> new_animation, 
     CHECK(a->file_id == file_id);
     if (a->mime_type != new_animation->mime_type) {
       LOG(DEBUG) << "Animation " << file_id << " info has changed";
-      a->mime_type = new_animation->mime_type;
+      a->mime_type = std::move(new_animation->mime_type);
     }
     if (a->file_name != new_animation->file_name) {
       LOG(DEBUG) << "Animation " << file_id << " file name has changed";
@@ -202,7 +202,7 @@ FileId AnimationsManager::on_get_animation(unique_ptr<Animation> new_animation, 
         LOG(INFO) << "Animation " << file_id << " thumbnail has changed from " << a->thumbnail << " to "
                   << new_animation->thumbnail;
       }
-      a->thumbnail = new_animation->thumbnail;
+      a->thumbnail = std::move(new_animation->thumbnail);
     }
     if (a->animated_thumbnail != new_animation->animated_thumbnail) {
       if (!a->animated_thumbnail.file_id.is_valid()) {
@@ -211,7 +211,7 @@ FileId AnimationsManager::on_get_animation(unique_ptr<Animation> new_animation, 
         LOG(INFO) << "Animation " << file_id << " animated thumbnail has changed from " << a->animated_thumbnail
                   << " to " << new_animation->animated_thumbnail;
       }
-      a->animated_thumbnail = new_animation->animated_thumbnail;
+      a->animated_thumbnail = std::move(new_animation->animated_thumbnail);
     }
     if (a->has_stickers != new_animation->has_stickers && new_animation->has_stickers) {
       a->has_stickers = new_animation->has_stickers;
@@ -384,7 +384,7 @@ SecretInputMedia AnimationsManager::get_secret_input_media(FileId animation_file
     attributes.push_back(make_tl_object<secret_api::documentAttributeFilename>(animation->file_name));
   }
   if (animation->duration != 0 && animation->mime_type == "video/mp4") {
-    attributes.push_back(make_tl_object<secret_api::documentAttributeVideo66>(
+    attributes.push_back(make_tl_object<secret_api::documentAttributeVideo>(
         0, false, animation->duration, animation->dimensions.width, animation->dimensions.height));
   }
   if (animation->dimensions.width != 0 && animation->dimensions.height != 0) {

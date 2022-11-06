@@ -383,26 +383,33 @@ void Session::on_bind_result(NetQueryPtr query) {
   if (query->is_error()) {
     status = std::move(query->error());
     if (status.code() == 400 && status.message() == "ENCRYPTED_MESSAGE_INVALID") {
-      auto auth_key_age = G()->server_time() - auth_data_.get_main_auth_key().created_at();
-      bool has_immunity = !G()->is_server_time_reliable() || auth_key_age < 60 ||
-                          (auth_key_age > 86400 &&
-                           (use_pfs_ ? last_bind_success_timestamp_ : last_success_timestamp_) > Time::now() - 86400);
+      auto server_time = G()->server_time();
+      auto auth_key_creation_date = auth_data_.get_main_auth_key().created_at();
+      auto auth_key_age = server_time - auth_key_creation_date;
+      auto is_server_time_reliable = G()->is_server_time_reliable();
+      auto last_success_time = use_pfs_ ? last_bind_success_timestamp_ : last_success_timestamp_;
+      auto now = Time::now();
+      bool has_immunity =
+          !is_server_time_reliable || auth_key_age < 60 || (auth_key_age > 86400 && last_success_time > now - 86400);
+      auto debug = PSTRING() << ". Server time is " << server_time << ", auth key created at " << auth_key_creation_date
+                             << ", is_server_time_reliable = " << is_server_time_reliable
+                             << ", last_success_time = " << last_success_time << ", now = " << now;
       if (!use_pfs_) {
         if (has_immunity) {
-          LOG(WARNING) << "Do not drop main key, because it was created too recently";
+          LOG(WARNING) << "Do not drop main key, because it was created too recently" << debug;
         } else {
-          LOG(WARNING) << "Drop main key because check with temporary key failed";
+          LOG(WARNING) << "Drop main key because check with temporary key failed" << debug;
           auth_data_.drop_main_auth_key();
           on_auth_key_updated();
           G()->log_out("Main authorization key is invalid");
         }
       } else {
         if (has_immunity) {
-          LOG(WARNING) << "Do not validate main key, because it was created too recently";
+          LOG(WARNING) << "Do not validate main key, because it was created too recently" << debug;
         } else {
           need_check_main_key_ = true;
           auth_data_.set_use_pfs(false);
-          LOG(WARNING) << "Got ENCRYPTED_MESSAGE_INVALID error, validate main key";
+          LOG(WARNING) << "Got ENCRYPTED_MESSAGE_INVALID error, validate main key" << debug;
         }
       }
     }
@@ -419,7 +426,7 @@ void Session::on_bind_result(NetQueryPtr query) {
     auth_data_.on_bind();
     last_bind_success_timestamp_ = Time::now();
     on_tmp_auth_key_updated();
-  } else if (status.error().message() == "DispatchTtlError") {
+  } else if (status.message() == "DispatchTtlError") {
     LOG(INFO) << "Resend bind auth key " << auth_data_.get_tmp_auth_key().id() << " request after DispatchTtlError";
   } else {
     LOG(ERROR) << "BindKey failed: " << status;
@@ -445,7 +452,7 @@ void Session::on_check_key_result(NetQueryPtr query) {
       status = r_flag.move_as_error();
     }
   }
-  if (status.is_ok() || status.error().code() != -404) {
+  if (status.is_ok() || status.code() != -404) {
     LOG(INFO) << "Check main key ok";
     need_check_main_key_ = false;
     auth_data_.set_use_pfs(true);

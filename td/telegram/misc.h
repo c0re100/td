@@ -7,6 +7,7 @@
 #pragma once
 
 #include "td/utils/common.h"
+#include "td/utils/Slice.h"
 
 namespace td {
 
@@ -31,10 +32,16 @@ string strip_empty_characters(string str, size_t max_length, bool strip_rtlo = f
 // checks if string is empty after strip_empty_characters
 bool is_empty_string(const string &str) TD_WARN_UNUSED_RESULT;
 
+// checks whether a string could be a valid username
+bool is_valid_username(Slice username);
+
 // calculates hash of list of uint64
 int64 get_vector_hash(const vector<uint64> &numbers) TD_WARN_UNUSED_RESULT;
 
 // returns emoji corresponding to the specified number
 string get_emoji_fingerprint(uint64 num);
+
+// checks whether currency amount is valid
+bool check_currency_amount(int64 amount);
 
 }  // namespace td

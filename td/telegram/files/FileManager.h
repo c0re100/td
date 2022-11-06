@@ -11,6 +11,7 @@
 #include "td/telegram/files/FileEncryptionKey.h"
 #include "td/telegram/files/FileGenerateManager.h"
 #include "td/telegram/files/FileId.h"
+#include "td/telegram/files/FileLoaderUtils.h"
 #include "td/telegram/files/FileLoadManager.h"
 #include "td/telegram/files/FileLocation.h"
 #include "td/telegram/files/FileSourceId.h"
@@ -208,7 +209,7 @@ class FileNodePtr {
   FileNode &operator*() const;
   FileNode *get() const;
   FullRemoteFileLocation *get_remote() const;
-  explicit operator bool() const;
+  explicit operator bool() const noexcept;
 
  private:
   FileId file_id_;
@@ -229,7 +230,7 @@ class ConstFileNodePtr {
     return file_node_ptr_.operator*();
   }
 
-  explicit operator bool() const {
+  explicit operator bool() const noexcept {
     return static_cast<bool>(file_node_ptr_);
   }
   const FullRemoteFileLocation *get_remote() const {
@@ -416,8 +417,6 @@ class FileManager final : public FileLoadManager::Callback {
   FileManager &operator=(FileManager &&other) = delete;
   ~FileManager() final;
 
-  static bool are_modification_times_equal(int64 old_mtime, int64 new_mtime);
-
   static bool is_remotely_generated_file(Slice conversion);
 
   void init_actor();
@@ -452,10 +451,10 @@ class FileManager final : public FileLoadManager::Callback {
   bool set_encryption_key(FileId file_id, FileEncryptionKey key);
   bool set_content(FileId file_id, BufferSlice bytes);
 
-  void check_local_location(FileId file_id);
+  void check_local_location(FileId file_id, bool skip_file_size_checks);
 
   void download(FileId file_id, std::shared_ptr<DownloadCallback> callback, int32 new_priority, int64 offset,
-                int64 limit);
+                int64 limit, Promise<td_api::object_ptr<td_api::file>> promise);
   void upload(FileId file_id, std::shared_ptr<UploadCallback> callback, int32 new_priority, uint64 upload_order);
   void resume_upload(FileId file_id, std::vector<int> bad_parts, std::shared_ptr<UploadCallback> callback,
                      int32 new_priority, uint64 upload_order, bool force = false, bool prefer_small = false);
@@ -602,6 +601,8 @@ class FileManager final : public FileLoadManager::Callback {
 
   std::set<std::string> bad_paths_;
 
+  int file_node_size_warning_exp_ = 12;
+
   FileId next_file_id();
   FileNodeId next_file_node_id();
   int32 next_pmc_file_id();
@@ -616,9 +617,20 @@ class FileManager final : public FileLoadManager::Callback {
   void load_from_pmc_result(FileId file_id, Result<FileData> &&result);
   FileId register_pmc_file_data(FileData &&data);
 
-  Status check_local_location(FileNodePtr node);
+  void download_impl(FileId file_id, std::shared_ptr<DownloadCallback> callback, int32 new_priority, int64 offset,
+                     int64 limit, Status check_status, Promise<td_api::object_ptr<td_api::file>> promise);
+
+  Status check_local_location(FileNodePtr node, bool skip_file_size_checks);
+  void on_failed_check_local_location(FileNodePtr node);
+  void check_local_location_async(FileNodePtr node, bool skip_file_size_checks, Promise<Unit> promise);
+  void on_check_full_local_location(FileId file_id, LocalFileLocation checked_location,
+                                    Result<FullLocalLocationInfo> r_info, Promise<Unit> promise);
+  void on_check_partial_local_location(FileId file_id, LocalFileLocation checked_location, Result<Unit> result,
+                                       Promise<Unit> promise);
+  void recheck_full_local_location(FullLocalLocationInfo location_info, bool skip_file_size_checks);
+  void on_recheck_full_local_location(FullLocalFileLocation checked_location, Result<FullLocalLocationInfo> r_info);
+
   static bool try_fix_partial_local_location(FileNodePtr node);
-  Status check_local_location(FullLocalFileLocation &location, int64 &size, bool skip_file_size_checks);
   void try_flush_node_full(FileNodePtr node, bool new_remote, bool new_local, bool new_generate, FileDbId other_pmc_id);
   void try_flush_node(FileNodePtr node, const char *source);
   void try_flush_node_info(FileNodePtr node, const char *source);

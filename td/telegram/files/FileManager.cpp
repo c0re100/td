@@ -32,7 +32,6 @@
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/PathView.h"
-#include "td/utils/port/path.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/SliceBuilder.h"
@@ -40,7 +39,6 @@
 #include "td/utils/Time.h"
 #include "td/utils/tl_helpers.h"
 #include "td/utils/tl_parsers.h"
-#include "td/utils/utf8.h"
 
 #include <algorithm>
 #include <cmath>
@@ -145,7 +143,7 @@ FileNode *FileNodePtr::get_unsafe() const {
   return file_manager_->get_file_node_raw(file_id_);
 }
 
-FileNodePtr::operator bool() const {
+FileNodePtr::operator bool() const noexcept {
   return file_manager_ != nullptr && get_unsafe() != nullptr;
 }
 
@@ -916,125 +914,140 @@ string FileManager::get_file_name(FileType file_type, Slice path) {
   return file_name.str();
 }
 
-bool FileManager::are_modification_times_equal(int64 old_mtime, int64 new_mtime) {
-  if (old_mtime == new_mtime) {
-    return true;
-  }
-  if (old_mtime < new_mtime) {
-    return false;
-  }
-  if (old_mtime - new_mtime == 1000000000 && old_mtime % 1000000000 == 0 && new_mtime % 2000000000 == 0) {
-    // FAT32 has 2 seconds mtime resolution, but file system sometimes reports odd modification time
-    return true;
-  }
-  return false;
-}
-
 bool FileManager::is_remotely_generated_file(Slice conversion) {
   return begins_with(conversion, "#map#") || begins_with(conversion, "#audio_t#");
 }
 
-Status FileManager::check_local_location(FullLocalFileLocation &location, int64 &size, bool skip_file_size_checks) {
-  constexpr int64 MAX_THUMBNAIL_SIZE = 200 * (1 << 10) - 1 /* 200 KB - 1 B */;
-  constexpr int64 MAX_PHOTO_SIZE = 10 * (1 << 20) /* 10 MB */;
-  constexpr int64 DEFAULT_VIDEO_NOTE_SIZE_MAX = 12 * (1 << 20) /* 12 MB */;
-
-  if (location.path_.empty()) {
-    return Status::Error(400, "File must have non-empty path");
-  }
-  auto r_path = realpath(location.path_, true);
-  if (r_path.is_error()) {
-    return Status::Error(400, "Can't find real file path");
-  }
-  location.path_ = r_path.move_as_ok();
-  if (bad_paths_.count(location.path_) != 0) {
-    return Status::Error(400, "Sending of internal database files is forbidden");
-  }
-  auto r_stat = stat(location.path_);
-  if (r_stat.is_error()) {
-    return Status::Error(400, "Can't get stat about the file");
-  }
-  auto stat = r_stat.move_as_ok();
-  if (!stat.is_reg_) {
-    return Status::Error(400, "File must be a regular file");
-  }
-  if (stat.size_ < 0) {
-    // TODO is it possible?
-    return Status::Error(400, "File is too big");
-  }
-  if (stat.size_ == 0) {
-    return Status::Error(400, "File must be non-empty");
-  }
-
-  if (size == 0) {
-    size = stat.size_;
-  }
-  if (location.mtime_nsec_ == 0) {
-    VLOG(file_loader) << "Set file \"" << location.path_ << "\" modification time to " << stat.mtime_nsec_;
-    location.mtime_nsec_ = stat.mtime_nsec_;
-  } else if (!are_modification_times_equal(location.mtime_nsec_, stat.mtime_nsec_)) {
-    VLOG(file_loader) << "File \"" << location.path_ << "\" was modified: old mtime = " << location.mtime_nsec_
-                      << ", new mtime = " << stat.mtime_nsec_;
-    return Status::Error(400, PSLICE() << "File \"" << utf8_encode(location.path_) << "\" was modified");
-  }
-  if (skip_file_size_checks) {
-    return Status::OK();
-  }
-
-  auto get_file_size_error = [&](Slice reason) {
-    return Status::Error(400, PSLICE() << "File \"" << utf8_encode(location.path_) << "\" of size " << size
-                                       << " bytes is too big" << reason);
-  };
-  if ((location.file_type_ == FileType::Thumbnail || location.file_type_ == FileType::EncryptedThumbnail) &&
-      size > MAX_THUMBNAIL_SIZE && !begins_with(PathView(location.path_).file_name(), "map") &&
-      !begins_with(PathView(location.path_).file_name(), "Album cover for ")) {
-    return get_file_size_error(" for a thumbnail");
-  }
-  if (size > MAX_FILE_SIZE) {
-    return get_file_size_error("");
-  }
-  if (location.file_type_ == FileType::Photo && size > MAX_PHOTO_SIZE) {
-    return get_file_size_error(" for a photo");
-  }
-  if (location.file_type_ == FileType::VideoNote &&
-      size > G()->get_option_integer("video_note_size_max", DEFAULT_VIDEO_NOTE_SIZE_MAX)) {
-    return get_file_size_error(" for a video note");
-  }
-  return Status::OK();
-}
-
-static Status check_partial_local_location(const PartialLocalFileLocation &location) {
-  TRY_RESULT(stat, stat(location.path_));
-  if (!stat.is_reg_) {
-    if (stat.is_dir_) {
-      return Status::Error(PSLICE() << "Can't use directory \"" << location.path_ << "\" as a file path");
-    }
-    return Status::Error("File must be a regular file");
-  }
-  // can't check mtime. Hope nobody will mess with this file in our temporary dir.
-  return Status::OK();
-}
-
-void FileManager::check_local_location(FileId file_id) {
+void FileManager::check_local_location(FileId file_id, bool skip_file_size_checks) {
   auto node = get_sync_file_node(file_id);
   if (node) {
-    check_local_location(node).ignore();
+    check_local_location(node, skip_file_size_checks).ignore();
   }
 }
 
-Status FileManager::check_local_location(FileNodePtr node) {
+Status FileManager::check_local_location(FileNodePtr node, bool skip_file_size_checks) {
   Status status;
   if (node->local_.type() == LocalFileLocation::Type::Full) {
-    status = check_local_location(node->local_.full(), node->size_, false);
+    auto r_info = check_full_local_location({node->local_.full(), node->size_}, skip_file_size_checks);
+    if (r_info.is_error()) {
+      status = r_info.move_as_error();
+    } else if (bad_paths_.count(r_info.ok().location_.path_) != 0) {
+      status = Status::Error(400, "Sending of internal database files is forbidden");
+    } else if (r_info.ok().location_ != node->local_.full() || r_info.ok().size_ != node->size_) {
+      LOG(ERROR) << "Local location changed from " << node->local_.full() << " with size " << node->size_ << " to "
+                 << r_info.ok().location_ << " with size " << r_info.ok().size_;
+    }
   } else if (node->local_.type() == LocalFileLocation::Type::Partial) {
     status = check_partial_local_location(node->local_.partial());
   }
   if (status.is_error()) {
-    send_closure(G()->download_manager(), &DownloadManager::remove_file_if_finished, node->main_file_id_);
-    node->drop_local_location();
-    try_flush_node(node, "check_local_location");
+    on_failed_check_local_location(node);
   }
   return status;
+}
+
+void FileManager::on_failed_check_local_location(FileNodePtr node) {
+  send_closure(G()->download_manager(), &DownloadManager::remove_file_if_finished, node->main_file_id_);
+  node->drop_local_location();
+  try_flush_node(node, "on_failed_check_local_location");
+}
+
+void FileManager::check_local_location_async(FileNodePtr node, bool skip_file_size_checks, Promise<Unit> promise) {
+  if (node->local_.type() == LocalFileLocation::Type::Empty) {
+    return promise.set_value(Unit());
+  }
+
+  if (node->local_.type() == LocalFileLocation::Type::Full) {
+    send_closure(file_load_manager_, &FileLoadManager::check_full_local_location,
+                 FullLocalLocationInfo{node->local_.full(), node->size_}, skip_file_size_checks,
+                 PromiseCreator::lambda([actor_id = actor_id(this), file_id = node->main_file_id_,
+                                         checked_location = node->local_,
+                                         promise = std::move(promise)](Result<FullLocalLocationInfo> result) mutable {
+                   send_closure(actor_id, &FileManager::on_check_full_local_location, file_id,
+                                std::move(checked_location), std::move(result), std::move(promise));
+                 }));
+  } else {
+    CHECK(node->local_.type() == LocalFileLocation::Type::Partial);
+    send_closure(file_load_manager_, &FileLoadManager::check_partial_local_location, node->local_.partial(),
+                 PromiseCreator::lambda([actor_id = actor_id(this), file_id = node->main_file_id_,
+                                         checked_location = node->local_,
+                                         promise = std::move(promise)](Result<Unit> result) mutable {
+                   send_closure(actor_id, &FileManager::on_check_partial_local_location, file_id,
+                                std::move(checked_location), std::move(result), std::move(promise));
+                 }));
+  }
+}
+
+void FileManager::on_check_full_local_location(FileId file_id, LocalFileLocation checked_location,
+                                               Result<FullLocalLocationInfo> r_info, Promise<Unit> promise) {
+  TRY_STATUS_PROMISE(promise, G()->close_status());
+
+  auto node = get_file_node(file_id);
+  if (!node) {
+    return;
+  }
+  if (node->local_ != checked_location) {
+    LOG(INFO) << "Full location changed while being checked; ignore check result";
+    return promise.set_value(Unit());
+  }
+  Status status;
+  if (r_info.is_error()) {
+    status = r_info.move_as_error();
+  } else if (bad_paths_.count(r_info.ok().location_.path_) != 0) {
+    status = Status::Error(400, "Sending of internal database files is forbidden");
+  } else if (r_info.ok().location_ != node->local_.full() || r_info.ok().size_ != node->size_) {
+    LOG(ERROR) << "Local location changed from " << node->local_.full() << " with size " << node->size_ << " to "
+               << r_info.ok().location_ << " with size " << r_info.ok().size_;
+  }
+  if (status.is_error()) {
+    on_failed_check_local_location(node);
+    promise.set_error(std::move(status));
+  } else {
+    promise.set_value(Unit());
+  }
+}
+
+void FileManager::on_check_partial_local_location(FileId file_id, LocalFileLocation checked_location,
+                                                  Result<Unit> result, Promise<Unit> promise) {
+  TRY_STATUS_PROMISE(promise, G()->close_status());
+
+  auto node = get_file_node(file_id);
+  CHECK(node);
+  if (node->local_ != checked_location) {
+    LOG(INFO) << "Partial location changed while being checked; ignore check result";
+    return promise.set_value(Unit());
+  }
+  if (result.is_error()) {
+    on_failed_check_local_location(node);
+    promise.set_error(result.move_as_error());
+  } else {
+    promise.set_value(Unit());
+  }
+}
+
+void FileManager::recheck_full_local_location(FullLocalLocationInfo location_info, bool skip_file_size_checks) {
+  auto promise = PromiseCreator::lambda([actor_id = actor_id(this), checked_location = location_info.location_](
+                                            Result<FullLocalLocationInfo> result) mutable {
+    send_closure(actor_id, &FileManager::on_recheck_full_local_location, std::move(checked_location),
+                 std::move(result));
+  });
+  send_closure(file_load_manager_, &FileLoadManager::check_full_local_location, std::move(location_info),
+               skip_file_size_checks, std::move(promise));
+}
+
+void FileManager::on_recheck_full_local_location(FullLocalFileLocation checked_location,
+                                                 Result<FullLocalLocationInfo> r_info) {
+  if (G()->close_flag()) {
+    return;
+  }
+
+  auto file_id_it = local_location_to_file_id_.find(checked_location);
+  if (file_id_it == local_location_to_file_id_.end()) {
+    return;
+  }
+  auto file_id = file_id_it->second;
+
+  on_check_full_local_location(file_id, LocalFileLocation(checked_location), std::move(r_info), Promise<Unit>());
 }
 
 bool FileManager::try_fix_partial_local_location(FileNodePtr node) {
@@ -1123,7 +1136,7 @@ void FileManager::on_file_unlink(const FullLocalFileLocation &location) {
   clear_from_pmc(file_node);
   send_closure(G()->download_manager(), &DownloadManager::remove_file_if_finished, file_node->main_file_id_);
   file_node->drop_local_location();
-  try_flush_node_info(file_node, "on_file_unlink");
+  try_flush_node(file_node, "on_file_unlink");
 }
 
 Result<FileId> FileManager::register_local(FullLocalFileLocation location, DialogId owner_dialog_id, int64 size,
@@ -1201,8 +1214,14 @@ Result<FileId> FileManager::register_file(FileData &&data, FileLocationSource fi
       }
     }
 
-    if (!is_from_database) {
-      auto status = check_local_location(data.local_.full(), data.size_, skip_file_size_checks);
+    if (file_location_source != FileLocationSource::FromDatabase) {
+      Status status;
+      auto r_info = check_full_local_location({data.local_.full(), data.size_}, skip_file_size_checks);
+      if (r_info.is_error()) {
+        status = r_info.move_as_error();
+      } else if (bad_paths_.count(r_info.ok().location_.path_) != 0) {
+        status = Status::Error(400, "Sending of internal database files is forbidden");
+      }
       if (status.is_error()) {
         LOG(INFO) << "Invalid " << data.local_.full() << ": " << status << " from " << source;
         data.local_ = LocalFileLocation();
@@ -1213,7 +1232,13 @@ Result<FileId> FileManager::register_file(FileData &&data, FileLocationSource fi
         if (!has_remote && !has_generate) {
           return std::move(status);
         }
+      } else {
+        data.local_ = LocalFileLocation(std::move(r_info.ok().location_));
+        data.size_ = r_info.ok().size_;
       }
+    } else {
+      // the location has been checked previously, but recheck it just in case
+      recheck_full_local_location({data.local_.full(), data.size_}, skip_file_size_checks);
     }
   }
   bool has_local = data.local_.type() == LocalFileLocation::Type::Full;
@@ -1300,9 +1325,11 @@ Result<FileId> FileManager::register_file(FileData &&data, FileLocationSource fi
   try_flush_node(get_file_node(file_id), "register_file");
   auto main_file_id = get_file_node(file_id)->main_file_id_;
   try_forget_file_id(file_id);
-  for (auto file_source_id : data.file_source_ids_) {
+
+  if (!data.file_source_ids_.empty()) {
     VLOG(file_references) << "Loaded " << data.file_source_ids_ << " for file " << main_file_id << " from " << source;
-    if (file_source_id.is_valid()) {
+    for (auto file_source_id : data.file_source_ids_) {
+      CHECK(file_source_id.is_valid());
       context_->add_file_source(main_file_id, file_source_id);
     }
   }
@@ -1702,6 +1729,11 @@ Result<FileId> FileManager::merge(FileId x_file_id, FileId y_file_id, bool no_sy
     node->on_info_changed();
   }
 
+  if (node->file_ids_.size() > (static_cast<size_t>(1) << file_node_size_warning_exp_)) {
+    LOG(WARNING) << "File of type " << file_view.get_type() << " has " << node->file_ids_.size() << " file identifiers";
+    file_node_size_warning_exp_++;
+  }
+
   // Check if some download/upload queries are ready
   for (auto file_id : vector<FileId>(node->file_ids_)) {
     auto *info = get_file_id_info(file_id);
@@ -1737,7 +1769,7 @@ Result<FileId> FileManager::merge(FileId x_file_id, FileId y_file_id, bool no_sy
 }
 
 void FileManager::add_file_source(FileId file_id, FileSourceId file_source_id) {
-  auto node = get_file_node(file_id);
+  auto node = get_sync_file_node(file_id);  // synchronously load the file to preload known file sources
   if (!node) {
     return;
   }
@@ -1750,7 +1782,7 @@ void FileManager::add_file_source(FileId file_id, FileSourceId file_source_id) {
 }
 
 void FileManager::remove_file_source(FileId file_id, FileSourceId file_source_id) {
-  auto node = get_file_node(file_id);
+  auto node = get_sync_file_node(file_id);  // synchronously load the file to preload known file sources
   if (!node) {
     return;
   }
@@ -1873,6 +1905,7 @@ void FileManager::clear_from_pmc(FileNodePtr node) {
   auto file_view = FileView(node);
   if (file_view.has_local_location()) {
     data.local_ = node->local_;
+    prepare_path_for_pmc(data.local_.full().file_type_, data.local_.full().path_);
   }
   if (file_view.has_remote_location()) {
     data.remote_ = RemoteFileLocation(*node->remote_.full);
@@ -1986,24 +2019,23 @@ void FileManager::load_from_pmc(FileNodePtr node, bool new_remote, bool new_loca
     generate = file_view.generate_location();
   }
 
-  LOG(DEBUG) << "Load from pmc " << file_id << "/" << file_view.get_main_file_id() << ", new_remote = " << new_remote
-             << ", new_local = " << new_local << ", new_generate = " << new_generate;
-  auto load = [&](auto location) {
+  LOG(DEBUG) << "Load from pmc file " << file_id << '/' << file_view.get_main_file_id()
+             << ", new_remote = " << new_remote << ", new_local = " << new_local << ", new_generate = " << new_generate;
+  auto load = [&](auto location, const char *source) {
     TRY_RESULT(file_data, file_db_->get_file_data_sync(location));
-    TRY_RESULT(new_file_id,
-               register_file(std::move(file_data), FileLocationSource::FromDatabase, "load_from_pmc", false));
+    TRY_RESULT(new_file_id, register_file(std::move(file_data), FileLocationSource::FromDatabase, source, false));
     TRY_RESULT(main_file_id, merge(file_id, new_file_id));
     file_id = main_file_id;
     return Status::OK();
   };
   if (new_remote) {
-    load(remote).ignore();
+    load(remote, "load remote from database").ignore();
   }
   if (new_local) {
-    load(local).ignore();
+    load(local, "load local from database").ignore();
   }
   if (new_generate) {
-    load(generate).ignore();
+    load(generate, "load generate from database").ignore();
   }
 }
 
@@ -2063,8 +2095,7 @@ void FileManager::get_content(FileId file_id, Promise<BufferSlice> promise) {
   if (!node) {
     return promise.set_error(Status::Error("Unknown file_id"));
   }
-  auto status = check_local_location(node);
-  status.ignore();
+  check_local_location(node, true).ignore();
 
   auto file_view = FileView(node);
   if (!file_view.has_local_location()) {
@@ -2187,63 +2218,92 @@ void FileManager::delete_file(FileId file_id, Promise<Unit> promise, const char 
 }
 
 void FileManager::download(FileId file_id, std::shared_ptr<DownloadCallback> callback, int32 new_priority, int64 offset,
-                           int64 limit) {
-  LOG(INFO) << "Download file " << file_id << " with priority " << new_priority;
+                           int64 limit, Promise<td_api::object_ptr<td_api::file>> promise) {
+  TRY_STATUS_PROMISE(promise, G()->close_status());
+
   auto node = get_sync_file_node(file_id);
   if (!node) {
     LOG(INFO) << "File " << file_id << " not found";
+    auto error = Status::Error(400, "File not found");
     if (callback) {
-      callback->on_download_error(file_id, Status::Error(400, "File not found"));
+      callback->on_download_error(file_id, error.clone());
     }
-    return;
+    return promise.set_error(std::move(error));
   }
 
+  if ((callback == nullptr && new_priority <= 0) || node->local_.type() == LocalFileLocation::Type::Empty) {
+    // skip local location check if download is canceled or there is no local location
+    return download_impl(file_id, std::move(callback), new_priority, offset, limit, Status::OK(), std::move(promise));
+  }
+
+  LOG(INFO) << "Asynchronously check location of file " << file_id << " before downloading";
+  auto check_promise =
+      PromiseCreator::lambda([actor_id = actor_id(this), file_id, callback = std::move(callback), new_priority, offset,
+                              limit, promise = std::move(promise)](Result<Unit> result) mutable {
+        Status check_status;
+        if (result.is_error()) {
+          check_status = result.move_as_error();
+        }
+        send_closure(actor_id, &FileManager::download_impl, file_id, std::move(callback), new_priority, offset, limit,
+                     std::move(check_status), std::move(promise));
+      });
+  check_local_location_async(node, true, std::move(check_promise));
+}
+
+void FileManager::download_impl(FileId file_id, std::shared_ptr<DownloadCallback> callback, int32 new_priority,
+                                int64 offset, int64 limit, Status check_status,
+                                Promise<td_api::object_ptr<td_api::file>> promise) {
+  TRY_STATUS_PROMISE(promise, G()->close_status());
+
+  LOG(INFO) << "Download file " << file_id << " with priority " << new_priority;
+  auto node = get_file_node(file_id);
+  CHECK(node);
+
+  if (check_status.is_error()) {
+    LOG(WARNING) << "Need to redownload file " << file_id << ": " << check_status;
+  }
   if (node->local_.type() == LocalFileLocation::Type::Full) {
-    auto status = check_local_location(node);
-    if (status.is_error()) {
-      LOG(WARNING) << "Need to redownload file " << file_id << ": " << status.error();
-    } else {
-      LOG(INFO) << "File " << file_id << " is already downloaded";
-      if (callback) {
-        callback->on_download_ok(file_id);
-      }
-      return;
+    LOG(INFO) << "File " << file_id << " is already downloaded";
+    if (callback) {
+      callback->on_download_ok(file_id);
     }
-  } else if (node->local_.type() == LocalFileLocation::Type::Partial) {
-    auto status = check_local_location(node);
-    if (status.is_error()) {
-      LOG(WARNING) << "Need to download file " << file_id << " from beginning: " << status.error();
-    }
+    return promise.set_value(get_file_object(file_id, false));
   }
 
   FileView file_view(node);
   if (!file_view.can_download_from_server() && !file_view.can_generate()) {
     LOG(INFO) << "File " << file_id << " can't be downloaded";
+    auto error = Status::Error(400, "Can't download or generate the file");
     if (callback) {
-      callback->on_download_error(file_id, Status::Error(400, "Can't download or generate file"));
+      callback->on_download_error(file_id, error.clone());
     }
-    return;
+    return promise.set_error(std::move(error));
   }
 
   if (new_priority == -1) {
     if (node->is_download_started_) {
       LOG(INFO) << "File " << file_id << " is being downloaded";
-      return;
+      return promise.set_value(get_file_object(file_id, false));
     }
     new_priority = 0;
   }
 
-  LOG(INFO) << "Change download priority of file " << file_id << " to " << new_priority;
+  LOG(INFO) << "Change download priority of file " << file_id << " to " << new_priority << " with callback "
+            << callback.get();
   node->set_download_offset(offset);
   node->set_download_limit(limit);
   auto *file_info = get_file_id_info(file_id);
   CHECK(new_priority == 0 || callback);
   if (file_info->download_callback_ != nullptr && file_info->download_callback_.get() != callback.get()) {
-    // the callback will be destroyed soon and lost forever
-    // this would be an error and should never happen, unless we cancel previous download query
-    // in that case we send an error to the callback
-    CHECK(new_priority == 0);
-    file_info->download_callback_->on_download_error(file_id, Status::Error(200, "Canceled"));
+    // the old callback will be destroyed soon and lost forever
+    // this is a bug and must never happen, unless we cancel previous download query
+    // but still there is no way to prevent this with the current FileManager implementation
+    if (new_priority == 0) {
+      file_info->download_callback_->on_download_error(file_id, Status::Error(200, "Canceled"));
+    } else {
+      LOG(ERROR) << "File " << file_id << " is used with different download callbacks";
+      file_info->download_callback_->on_download_error(file_id, Status::Error(500, "Internal Server Error"));
+    }
   }
   file_info->ignore_download_limit = limit == IGNORE_DOWNLOAD_LIMIT;
   file_info->download_priority_ = narrow_cast<int8>(new_priority);
@@ -2258,6 +2318,7 @@ void FileManager::download(FileId file_id, std::shared_ptr<DownloadCallback> cal
   run_download(node, true);
 
   try_flush_node(node, "download");
+  promise.set_value(get_file_object(file_id, false));
 }
 
 void FileManager::run_download(FileNodePtr node, bool force_update_priority) {
@@ -2576,7 +2637,7 @@ void FileManager::resume_upload(FileId file_id, vector<int> bad_parts, std::shar
   }
 
   if (file_view.has_local_location() && new_priority != 0) {
-    auto status = check_local_location(node);
+    auto status = check_local_location(node, false);
     if (status.is_error()) {
       LOG(INFO) << "Full local location of file " << file_id << " for upload is invalid: " << status;
     }
@@ -2599,9 +2660,21 @@ void FileManager::resume_upload(FileId file_id, vector<int> bad_parts, std::shar
     return;
   }
 
-  LOG(INFO) << "Change upload priority of file " << file_id << " to " << new_priority;
+  LOG(INFO) << "Change upload priority of file " << file_id << " to " << new_priority << " with callback "
+            << callback.get();
   auto *file_info = get_file_id_info(file_id);
   CHECK(new_priority == 0 || callback);
+  if (file_info->upload_callback_ != nullptr && file_info->upload_callback_.get() != callback.get()) {
+    // the old callback will be destroyed soon and lost forever
+    // this is a bug and must never happen, unless we cancel previous upload query
+    // but still there is no way to prevent this with the current FileManager implementation
+    if (new_priority == 0) {
+      file_info->upload_callback_->on_upload_error(file_id, Status::Error(200, "Canceled"));
+    } else {
+      LOG(ERROR) << "File " << file_id << " is used with different upload callbacks";
+      file_info->upload_callback_->on_upload_error(file_id, Status::Error(500, "Internal Server Error"));
+    }
+  }
   file_info->upload_order_ = upload_order;
   file_info->upload_priority_ = narrow_cast<int8>(new_priority);
   file_info->upload_callback_ = std::move(callback);
@@ -2635,7 +2708,7 @@ bool FileManager::delete_partial_remote_location(FileId file_id) {
     return false;
   }
 
-  auto status = check_local_location(node);
+  auto status = check_local_location(node, false);
   if (status.is_error()) {
     LOG(INFO) << "Need full local location to upload file " << file_id << ": " << status;
     return false;
@@ -3867,7 +3940,7 @@ void FileManager::on_error_impl(FileNodePtr node, Query::Type type, bool was_act
           !begins_with(status.message(), "FILE_DOWNLOAD_ID_INVALID") &&
           !begins_with(status.message(), "FILE_DOWNLOAD_LIMIT")) {
         CSlice path = node->local_.partial().path_;
-        if (begins_with(path, get_files_temp_dir(FileType::Encrypted)) ||
+        if (begins_with(path, get_files_temp_dir(FileType::SecureDecrypted)) ||
             begins_with(path, get_files_temp_dir(FileType::Video))) {
           LOG(INFO) << "Unlink file " << path;
           send_closure(file_load_manager_, &FileLoadManager::unlink_file, std::move(node->local_.partial().path_),

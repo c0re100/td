@@ -47,7 +47,10 @@
 namespace td {
 
 OptionManager::OptionManager(Td *td)
-    : td_(td), options_(td::make_unique<TsSeqKeyValue>()), option_pmc_(G()->td_db()->get_config_pmc_shared()) {
+    : td_(td)
+    , current_scheduler_id_(Scheduler::instance()->sched_id())
+    , options_(td::make_unique<TsSeqKeyValue>())
+    , option_pmc_(G()->td_db()->get_config_pmc_shared()) {
   send_unix_time_update();
 
   auto all_options = option_pmc_->get_all();
@@ -65,7 +68,13 @@ OptionManager::OptionManager(Td *td)
         send_closure(G()->td(), &Td::send_update, get_update_suggested_actions_object(added_actions, {}));
       }
     } else if (name == "default_reaction") {
-      send_update_default_reaction_type(get_option_string(name));
+      auto value = get_option_string(name);
+      if (value.empty()) {
+        // legacy
+        set_option_empty(name);
+      } else {
+        send_update_default_reaction_type(value);
+      }
     }
   }
 
@@ -106,6 +115,9 @@ OptionManager::OptionManager(Td *td)
     auto sticker_set_id =
         G()->is_test_dc() ? static_cast<int64>(2964141614563343) : static_cast<int64>(773947703670341676);
     set_option_integer("themed_emoji_statuses_sticker_set_id", sticker_set_id);
+  }
+  if (!have_option("forum_member_count_min")) {
+    set_option_integer("forum_member_count_min", 200);
   }
 }
 
@@ -181,7 +193,7 @@ string OptionManager::get_option_string(Slice name, string default_value) const 
 
 void OptionManager::set_option(Slice name, Slice value) {
   CHECK(!name.empty());
-  CHECK(Scheduler::instance()->sched_id() == 0);
+  CHECK(Scheduler::instance()->sched_id() == current_scheduler_id_);
   if (value.empty()) {
     if (option_pmc_->erase(name.str()) == 0) {
       return;
@@ -224,16 +236,6 @@ void OptionManager::on_update_server_time_difference() {
   }
 
   send_unix_time_update();
-}
-
-void OptionManager::clear_options() {
-  for (const auto &option : options_->get_all()) {
-    if (!is_internal_option(option.first)) {
-      send_closure(
-          G()->td(), &Td::send_update,
-          td_api::make_object<td_api::updateOption>(option.first, td_api::make_object<td_api::optionValueEmpty>()));
-    }
-  }
 }
 
 bool OptionManager::is_internal_option(Slice name) {
@@ -511,7 +513,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.6");
+        return td_api::make_object<td_api::optionValueString>("1.8.8");
       }
       break;
   }

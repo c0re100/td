@@ -47,12 +47,14 @@ void DownloadManagerCallback::update_file_removed(FileId file_id, DownloadManage
 void DownloadManagerCallback::start_file(FileId file_id, int8 priority, ActorShared<DownloadManager> download_manager) {
   send_closure_later(td_->file_manager_actor_, &FileManager::download, file_id,
                      make_download_file_callback(td_, std::move(download_manager)), priority,
-                     FileManager::KEEP_DOWNLOAD_OFFSET, FileManager::IGNORE_DOWNLOAD_LIMIT);
+                     FileManager::KEEP_DOWNLOAD_OFFSET, FileManager::IGNORE_DOWNLOAD_LIMIT,
+                     Promise<td_api::object_ptr<td_api::file>>());
 }
 
 void DownloadManagerCallback::pause_file(FileId file_id) {
   send_closure_later(td_->file_manager_actor_, &FileManager::download, file_id, nullptr, 0,
-                     FileManager::KEEP_DOWNLOAD_OFFSET, FileManager::KEEP_DOWNLOAD_LIMIT);
+                     FileManager::KEEP_DOWNLOAD_OFFSET, FileManager::KEEP_DOWNLOAD_LIMIT,
+                     Promise<td_api::object_ptr<td_api::file>>());
 }
 
 void DownloadManagerCallback::delete_file(FileId file_id) {
@@ -75,7 +77,7 @@ FileView DownloadManagerCallback::get_file_view(FileId file_id) {
 }
 
 FileView DownloadManagerCallback::get_sync_file_view(FileId file_id) {
-  td_->file_manager_->check_local_location(file_id);
+  td_->file_manager_->check_local_location(file_id, true);
   return get_file_view(file_id);
 }
 

@@ -49,7 +49,7 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
   if (G()->get_option_boolean("test_flood_wait")) {
     net_query->set_error(Status::Error(429, "Too Many Requests: retry after 10"));
     return complete_net_query(std::move(net_query));
-    //    if (net_query->is_ok() && net_query->tl_constructor() == 0x0d9d75a4) {
+    //    if (net_query->is_ok() && net_query->tl_constructor() == telegram_api::messages_sendMessage::ID) {
     //      net_query->set_error(Status::Error(420, "FLOOD_WAIT_10"));
     //    }
   }
@@ -60,7 +60,7 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
 
   if (!net_query->in_sequence_dispatcher() && !net_query->get_chain_ids().empty()) {
     net_query->debug("sent to main sequence dispatcher");
-    send_closure(sequence_dispatcher_, &MultiSequenceDispatcher::send, std::move(net_query));
+    send_closure_later(sequence_dispatcher_, &MultiSequenceDispatcher::send, std::move(net_query));
     return;
   }
 
@@ -73,7 +73,7 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
         net_query->resend();
       } else if (code < 0 || code == 500 || code == 420) {
         net_query->debug("sent to NetQueryDelayer");
-        return send_closure(delayer_, &NetQueryDelayer::delay, std::move(net_query));
+        return send_closure_later(delayer_, &NetQueryDelayer::delay, std::move(net_query));
       }
     }
   }
@@ -209,12 +209,12 @@ void NetQueryDispatcher::stop() {
   std::lock_guard<std::mutex> guard(main_dc_id_mutex_);
   td_guard_.reset();
   stop_flag_ = true;
-  delayer_.hangup();
-  for (const auto &dc : dcs_) {
-    dc.main_session_.hangup();
-    dc.upload_session_.hangup();
-    dc.download_session_.hangup();
-    dc.download_small_session_.hangup();
+  delayer_.reset();
+  for (auto &dc : dcs_) {
+    dc.main_session_.reset();
+    dc.upload_session_.reset();
+    dc.download_session_.reset();
+    dc.download_small_session_.reset();
   }
   public_rsa_key_watchdog_.reset();
   dc_auth_manager_.reset();

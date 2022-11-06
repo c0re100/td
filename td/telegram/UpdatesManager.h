@@ -17,9 +17,11 @@
 #include "td/telegram/UserId.h"
 
 #include "td/actor/actor.h"
+#include "td/actor/MultiTimeout.h"
 #include "td/actor/Timeout.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
 #include "td/utils/Promise.h"
@@ -27,6 +29,7 @@
 #include "td/utils/tl_storers.h"
 #include "td/utils/TlStorerToString.h"
 
+#include <functional>
 #include <map>
 
 namespace td {
@@ -101,6 +104,9 @@ class UpdatesManager final : public Actor {
 
   static FlatHashSet<int64> get_sent_messages_random_ids(const telegram_api::Updates *updates_ptr);
 
+  static const telegram_api::Message *get_message_by_random_id(const telegram_api::Updates *updates_ptr,
+                                                               DialogId dialog_id, int64 random_id);
+
   static vector<const tl_object_ptr<telegram_api::Message> *> get_new_messages(
       const telegram_api::Updates *updates_ptr);
 
@@ -113,6 +119,10 @@ class UpdatesManager final : public Actor {
   static vector<DialogId> get_chat_dialog_ids(const telegram_api::Updates *updates_ptr);
 
   static int32 get_update_edit_message_pts(const telegram_api::Updates *updates_ptr, FullMessageId full_message_id);
+
+  using TranscribedAudioHandler =
+      std::function<void(Result<telegram_api::object_ptr<telegram_api::updateTranscribedAudio>>)>;
+  void subscribe_to_transcribed_audio_updates(int64 transcription_id, TranscribedAudioHandler on_update);
 
   void get_difference(const char *source);
 
@@ -133,6 +143,7 @@ class UpdatesManager final : public Actor {
   static const double MAX_PTS_SAVE_DELAY;
   static constexpr bool DROP_PTS_UPDATES = false;
   static constexpr const char *AFTER_GET_DIFFERENCE_SOURCE = "after get difference";
+  static constexpr int32 AUDIO_TRANSCRIPTION_TIMEOUT = 60;
 
   friend class OnUpdate;
 
@@ -232,6 +243,9 @@ class UpdatesManager final : public Actor {
   int32 min_postponed_update_qts_ = 0;
   double get_difference_start_time_ = 0;  // time from which we started to get difference without success
 
+  FlatHashMap<int64, TranscribedAudioHandler> pending_audio_transcriptions_;
+  MultiTimeout pending_audio_transcription_timeout_{"PendingAudioTranscriptionTimeout"};
+
   void start_up() final;
 
   void tear_down() final;
@@ -322,6 +336,8 @@ class UpdatesManager final : public Actor {
 
   static void fill_gap(void *td, const char *source);
 
+  static void on_pending_audio_transcription_timeout_callback(void *td, int64 transcription_id);
+
   void set_pts_gap_timeout(double timeout);
 
   void set_seq_gap_timeout(double timeout);
@@ -365,6 +381,8 @@ class UpdatesManager final : public Actor {
   static const vector<tl_object_ptr<telegram_api::Update>> *get_updates(const telegram_api::Updates *updates_ptr);
 
   static vector<tl_object_ptr<telegram_api::Update>> *get_updates(telegram_api::Updates *updates_ptr);
+
+  void on_pending_audio_transcription_failed(int64 transcription_id, Status &&error);
 
   bool is_acceptable_user(UserId user_id) const;
 
@@ -517,6 +535,7 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateLangPack> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateGeoLiveViewed> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateMessageExtendedMedia> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateMessagePoll> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateMessagePollVote> update, Promise<Unit> &&promise);
@@ -540,6 +559,8 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateTranscribedAudio> update, Promise<Unit> &&promise);
 
   // unsupported updates
+
+  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopic> update, Promise<Unit> &&promise);
 };
 
 }  // namespace td

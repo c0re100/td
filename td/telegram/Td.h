@@ -53,6 +53,7 @@ class DocumentsManager;
 class DownloadManager;
 class FileManager;
 class FileReferenceManager;
+class ForumTopicManager;
 class GameManager;
 class GroupCallManager;
 class InlineQueriesManager;
@@ -93,7 +94,7 @@ extern int VERBOSITY_NAME(td_requests);
 // It happens after "hangup".
 //
 // Parent needs a way to know that it will receive no more updates.
-// It happens after destruction of callback or after on_closed.
+// It happens after destruction of callback
 class Td final : public Actor {
  public:
   Td(const Td &) = delete;
@@ -134,7 +135,6 @@ class Td final : public Actor {
   unique_ptr<CallbackQueriesManager> callback_queries_manager_;
   unique_ptr<DocumentsManager> documents_manager_;
   unique_ptr<OptionManager> option_manager_;
-  unique_ptr<VideoNotesManager> video_notes_manager_;
   unique_ptr<VideosManager> videos_manager_;
 
   unique_ptr<AnimationsManager> animations_manager_;
@@ -155,6 +155,8 @@ class Td final : public Actor {
   ActorOwn<FileManager> file_manager_actor_;
   unique_ptr<FileReferenceManager> file_reference_manager_;
   ActorOwn<FileReferenceManager> file_reference_manager_actor_;
+  unique_ptr<ForumTopicManager> forum_topic_manager_;
+  ActorOwn<ForumTopicManager> forum_topic_manager_actor_;
   unique_ptr<GameManager> game_manager_;
   ActorOwn<GameManager> game_manager_actor_;
   unique_ptr<GroupCallManager> group_call_manager_;
@@ -181,6 +183,8 @@ class Td final : public Actor {
   ActorOwn<TopDialogManager> top_dialog_manager_actor_;
   unique_ptr<UpdatesManager> updates_manager_;
   ActorOwn<UpdatesManager> updates_manager_actor_;
+  unique_ptr<VideoNotesManager> video_notes_manager_;
+  ActorOwn<VideoNotesManager> video_notes_manager_actor_;
   unique_ptr<VoiceNotesManager> voice_notes_manager_;
   ActorOwn<VoiceNotesManager> voice_notes_manager_actor_;
   unique_ptr<WebPagesManager> web_pages_manager_;
@@ -196,8 +200,8 @@ class Td final : public Actor {
   ActorOwn<NetStatsManager> net_stats_manager_;
   ActorOwn<PasswordManager> password_manager_;
   ActorOwn<PrivacyManager> privacy_manager_;
-  ActorOwn<SecureManager> secure_manager_;
   ActorOwn<SecretChatsManager> secret_chats_manager_;
+  ActorOwn<SecureManager> secure_manager_;
   ActorOwn<StateManager> state_manager_;
   ActorOwn<StorageManager> storage_manager_;
   ActorOwn<PhoneNumberManager> verify_phone_number_manager_;
@@ -530,7 +534,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getMessages &request);
 
-  void on_request(uint64 id, const td_api::getChatSponsoredMessage &request);
+  void on_request(uint64 id, const td_api::getChatSponsoredMessages &request);
 
   void on_request(uint64 id, const td_api::getMessageLink &request);
 
@@ -654,6 +658,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getChatMessageCount &request);
 
+  void on_request(uint64 id, const td_api::getChatMessagePosition &request);
+
   void on_request(uint64 id, const td_api::getChatScheduledMessages &request);
 
   void on_request(uint64 id, const td_api::getEmojiReaction &request);
@@ -686,7 +692,11 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::readAllChatMentions &request);
 
+  void on_request(uint64 id, const td_api::readAllMessageThreadMentions &request);
+
   void on_request(uint64 id, const td_api::readAllChatReactions &request);
+
+  void on_request(uint64 id, const td_api::readAllMessageThreadReactions &request);
 
   void on_request(uint64 id, const td_api::getChatAvailableMessageSenders &request);
 
@@ -723,6 +733,16 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::editInlineMessageReplyMarkup &request);
 
   void on_request(uint64 id, td_api::editMessageSchedulingState &request);
+
+  void on_request(uint64 id, const td_api::getForumTopicDefaultIcons &request);
+
+  void on_request(uint64 id, td_api::createForumTopic &request);
+
+  void on_request(uint64 id, td_api::editForumTopic &request);
+
+  void on_request(uint64 id, const td_api::toggleForumTopicIsClosed &request);
+
+  void on_request(uint64 id, const td_api::deleteForumTopic &request);
 
   void on_request(uint64 id, td_api::setGameScore &request);
 
@@ -898,6 +918,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::unpinAllChatMessages &request);
 
+  void on_request(uint64 id, const td_api::unpinAllMessageThreadMessages &request);
+
   void on_request(uint64 id, const td_api::joinChat &request);
 
   void on_request(uint64 id, const td_api::leaveChat &request);
@@ -1026,6 +1048,10 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::setUsername &request);
 
+  void on_request(uint64 id, td_api::toggleUsernameIsActive &request);
+
+  void on_request(uint64 id, td_api::reorderActiveUsernames &request);
+
   void on_request(uint64 id, const td_api::setEmojiStatus &request);
 
   void on_request(uint64 id, const td_api::getThemedEmojiStatuses &request);
@@ -1060,6 +1086,12 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::setSupergroupUsername &request);
 
+  void on_request(uint64 id, td_api::toggleSupergroupUsernameIsActive &request);
+
+  void on_request(uint64 id, const td_api::disableAllSupergroupUsernames &request);
+
+  void on_request(uint64 id, td_api::reorderSupergroupActiveUsernames &request);
+
   void on_request(uint64 id, const td_api::setSupergroupStickerSet &request);
 
   void on_request(uint64 id, const td_api::toggleSupergroupSignMessages &request);
@@ -1069,6 +1101,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::toggleSupergroupJoinByRequest &request);
 
   void on_request(uint64 id, const td_api::toggleSupergroupIsAllHistoryAvailable &request);
+
+  void on_request(uint64 id, const td_api::toggleSupergroupIsForum &request);
 
   void on_request(uint64 id, const td_api::toggleSupergroupIsBroadcastGroup &request);
 
@@ -1144,7 +1178,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::getEmojiSuggestionsUrl &request);
 
-  void on_request(uint64 id, td_api::getCustomEmojiStickers &request);
+  void on_request(uint64 id, const td_api::getCustomEmojiStickers &request);
 
   void on_request(uint64 id, const td_api::getFavoriteStickers &request);
 

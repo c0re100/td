@@ -122,6 +122,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
     }
   }
   int32 video_duration = 0;
+  string video_waveform;
   if (video != nullptr) {
     video_duration = video->duration_;
     auto video_dimensions = get_dimensions(video->w_, video->h_, "documentAttributeVideo");
@@ -130,6 +131,11 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         LOG(ERROR) << "Receive ambiguous video dimensions " << dimensions << " and " << video_dimensions;
       }
       dimensions = video_dimensions;
+    }
+    if (audio != nullptr) {
+      video_waveform = audio->waveform_.as_slice().str();
+      type_attributes--;
+      audio = nullptr;
     }
 
     if (animated != nullptr) {
@@ -514,7 +520,7 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
       break;
     case Document::Type::VideoNote:
       td_->video_notes_manager_->create_video_note(file_id, std::move(minithumbnail), std::move(thumbnail),
-                                                   video_duration, dimensions, !is_web);
+                                                   video_duration, dimensions, std::move(video_waveform), !is_web);
       break;
     case Document::Type::VoiceNote: {
       int32 duration = 0;
@@ -545,11 +551,11 @@ FileId DocumentsManager::on_get_document(unique_ptr<GeneralDocument> new_documen
     CHECK(d->file_id == new_document->file_id);
     if (d->mime_type != new_document->mime_type) {
       LOG(DEBUG) << "Document " << file_id << " mime_type has changed";
-      d->mime_type = new_document->mime_type;
+      d->mime_type = std::move(new_document->mime_type);
     }
     if (d->file_name != new_document->file_name) {
       LOG(DEBUG) << "Document " << file_id << " file_name has changed";
-      d->file_name = new_document->file_name;
+      d->file_name = std::move(new_document->file_name);
     }
     if (d->minithumbnail != new_document->minithumbnail) {
       d->minithumbnail = std::move(new_document->minithumbnail);
@@ -561,7 +567,7 @@ FileId DocumentsManager::on_get_document(unique_ptr<GeneralDocument> new_documen
         LOG(INFO) << "Document " << file_id << " thumbnail has changed from " << d->thumbnail << " to "
                   << new_document->thumbnail;
       }
-      d->thumbnail = new_document->thumbnail;
+      d->thumbnail = std::move(new_document->thumbnail);
     }
   }
 
