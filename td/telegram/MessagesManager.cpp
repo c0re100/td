@@ -487,6 +487,7 @@ class GetChannelMessagesQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   ChannelId channel_id_;
   MessageId last_new_message_id_;
+  bool can_be_inaccessible_ = false;
 
  public:
   explicit GetChannelMessagesQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
@@ -496,6 +497,7 @@ class GetChannelMessagesQuery final : public Td::ResultHandler {
             vector<tl_object_ptr<telegram_api::InputMessage>> &&message_ids, MessageId last_new_message_id) {
     channel_id_ = channel_id;
     last_new_message_id_ = last_new_message_id;
+    can_be_inaccessible_ = message_ids.size() == 1 && message_ids[0]->get_id() != telegram_api::inputMessageID::ID;
     CHECK(input_channel != nullptr);
     send_query(G()->net_query_creator().create(
         telegram_api::channels_getMessages(std::move(input_channel), std::move(message_ids))));
@@ -523,16 +525,17 @@ class GetChannelMessagesQuery final : public Td::ResultHandler {
       }
       td_->messages_manager_->on_get_empty_messages(DialogId(channel_id_), empty_message_ids);
     }
+    const char *source = can_be_inaccessible_ ? "GetRepliedChannelMessageQuery" : "GetChannelMessagesQuery";
     td_->messages_manager_->get_channel_difference_if_needed(
         DialogId(channel_id_), std::move(info),
-        PromiseCreator::lambda([actor_id = td_->messages_manager_actor_.get(),
+        PromiseCreator::lambda([actor_id = td_->messages_manager_actor_.get(), source,
                                 promise = std::move(promise_)](Result<MessagesManager::MessagesInfo> &&result) mutable {
           if (result.is_error()) {
             promise.set_error(result.move_as_error());
           } else {
             auto info = result.move_as_ok();
             send_closure(actor_id, &MessagesManager::on_get_messages, std::move(info.messages),
-                         info.is_channel_messages, false, std::move(promise), "GetChannelMessagesQuery");
+                         info.is_channel_messages, false, std::move(promise), source);
           }
         }));
   }
@@ -13542,19 +13545,25 @@ void MessagesManager::hangup() {
       auto it = being_uploaded_files_.begin();
       auto full_message_id = it->second.first;
       being_uploaded_files_.erase(it);
-      fail_send_message(full_message_id, Global::request_aborted_error());
+      if (full_message_id.get_message_id().is_yet_unsent()) {
+        fail_send_message(full_message_id, Global::request_aborted_error());
+      }
     }
     while (!being_uploaded_thumbnails_.empty()) {
       auto it = being_uploaded_thumbnails_.begin();
       auto full_message_id = it->second.full_message_id;
       being_uploaded_thumbnails_.erase(it);
-      fail_send_message(full_message_id, Global::request_aborted_error());
+      if (full_message_id.get_message_id().is_yet_unsent()) {
+        fail_send_message(full_message_id, Global::request_aborted_error());
+      }
     }
     while (!being_loaded_secret_thumbnails_.empty()) {
       auto it = being_loaded_secret_thumbnails_.begin();
       auto full_message_id = it->second.full_message_id;
       being_loaded_secret_thumbnails_.erase(it);
-      fail_send_message(full_message_id, Global::request_aborted_error());
+      if (full_message_id.get_message_id().is_yet_unsent()) {
+        fail_send_message(full_message_id, Global::request_aborted_error());
+      }
     }
     while (!being_sent_messages_.empty()) {
       on_send_message_fail(being_sent_messages_.begin()->first, Global::request_aborted_error());
@@ -14087,6 +14096,7 @@ void MessagesManager::ttl_db_on_result(Result<std::pair<std::vector<MessagesDbMe
     return;
   }
 
+  CHECK(r_result.is_ok());
   auto result = r_result.move_as_ok();
   ttl_db_has_query_ = false;
   ttl_db_expires_from_ = ttl_db_expires_till_;
@@ -24121,6 +24131,7 @@ void MessagesManager::get_dialog_sparse_message_positions(
     LOG(INFO) << "Get sparse message positions from database";
     auto new_promise =
         PromiseCreator::lambda([promise = std::move(promise)](Result<MessagesDbMessagePositions> result) mutable {
+          TRY_STATUS_PROMISE(promise, G()->close_status());
           if (result.is_error()) {
             return promise.set_error(result.move_as_error());
           }
@@ -24489,7 +24500,7 @@ void MessagesManager::on_get_history_from_database(DialogId dialog_id, MessageId
                                                      &need_update_dialog_pos, "on_get_history_from_database");
     if (m != nullptr) {
       first_added_message_id = m->message_id;
-      if (!have_next) {
+      if (!last_added_message_id.is_valid()) {
         last_added_message_id = m->message_id;
       }
       if (old_message == nullptr) {
@@ -30371,12 +30382,8 @@ vector<Notification> MessagesManager::get_message_notifications_from_database_fo
     return res;
   }
   while (true) {
-    auto result = do_get_message_notifications_from_database_force(d, from_mentions, from_notification_id,
-                                                                   from_message_id, limit);
-    if (result.is_error()) {
-      break;
-    }
-    auto messages = result.move_as_ok();
+    auto messages = do_get_message_notifications_from_database_force(d, from_mentions, from_notification_id,
+                                                                     from_message_id, limit);
     if (messages.empty()) {
       break;
     }
@@ -30470,7 +30477,7 @@ vector<Notification> MessagesManager::get_message_notifications_from_database_fo
   return res;
 }
 
-Result<vector<MessagesDbDialogMessage>> MessagesManager::do_get_message_notifications_from_database_force(
+vector<MessagesDbDialogMessage> MessagesManager::do_get_message_notifications_from_database_force(
     Dialog *d, bool from_mentions, NotificationId from_notification_id, MessageId from_message_id, int32 limit) {
   CHECK(G()->parameters().use_message_db);
   CHECK(!from_message_id.is_scheduled());
@@ -30508,11 +30515,7 @@ vector<NotificationGroupKey> MessagesManager::get_message_notification_group_key
 
   auto *dialog_db = G()->td_db()->get_dialog_db_sync();
   dialog_db->begin_read_transaction().ensure();
-  Result<vector<NotificationGroupKey>> r_notification_group_keys =
-      dialog_db->get_notification_groups_by_last_notification_date(from_group_key, limit);
-  r_notification_group_keys.ensure();
-  auto group_keys = r_notification_group_keys.move_as_ok();
-
+  auto group_keys = dialog_db->get_notification_groups_by_last_notification_date(from_group_key, limit);
   vector<NotificationGroupKey> result;
   for (auto &group_key : group_keys) {
     CHECK(group_key.group_id.is_valid());
@@ -35688,9 +35691,9 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
       auto next_message = *it;
       if (next_message != nullptr) {
         if (next_message->message_id.is_server() &&
-            !(td_->auth_manager_->is_bot() && Slice(source) == Slice("GetChannelMessagesQuery"))) {
-          LOG(ERROR) << "Can't attach " << m->message_id << " from " << source << " from "
-                     << (m->from_database ? "database" : "server") << " before " << next_message->message_id
+            !(td_->auth_manager_->is_bot() && Slice(source) == Slice("GetRepliedChannelMessageQuery"))) {
+          LOG(ERROR) << "Can't attach " << m->message_id << " of type " << m->content->get_type() << " from " << source
+                     << " from " << (m->from_database ? "database" : "server") << " before " << next_message->message_id
                      << " and after " << previous_message->message_id << " in " << dialog_id;
           dump_debug_message_op(d);
         }
@@ -36621,15 +36624,17 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
       LOG(DEBUG) << "Drop message reply_to_message_id";
       unregister_message_reply(dialog_id, old_message);
       old_message->reply_to_message_id = MessageId();
+      old_message->reply_in_dialog_id = DialogId();
       update_message_max_reply_media_timestamp(d, old_message, is_message_in_dialog);
       need_send_update = true;
     } else if (is_new_available) {
       if (message_id.is_yet_unsent() && old_message->reply_to_message_id == MessageId() &&
-          is_deleted_message(d, new_message->reply_to_message_id) &&
+          new_message->reply_in_dialog_id == DialogId() && is_deleted_message(d, new_message->reply_to_message_id) &&
           get_message(d, new_message->reply_to_message_id) == nullptr && !is_message_in_dialog) {
         LOG(INFO) << "Update replied message from " << old_message->reply_to_message_id << " to deleted "
                   << new_message->reply_to_message_id;
         old_message->reply_to_message_id = new_message->reply_to_message_id;
+        old_message->reply_in_dialog_id = DialogId();
         update_message_max_reply_media_timestamp(d, old_message, is_message_in_dialog);
         need_send_update = true;
       } else if (old_message->reply_to_message_id.is_valid_scheduled() &&
@@ -36637,12 +36642,23 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
                  new_message->reply_to_message_id.is_valid_scheduled() &&
                  new_message->reply_to_message_id.is_scheduled_server() &&
                  old_message->reply_to_message_id.get_scheduled_server_message_id() ==
-                     new_message->reply_to_message_id.get_scheduled_server_message_id()) {
+                     new_message->reply_to_message_id.get_scheduled_server_message_id() &&
+                 new_message->reply_in_dialog_id == DialogId()) {
         // schedule date has changed
         old_message->reply_to_message_id = new_message->reply_to_message_id;
+        old_message->reply_in_dialog_id = DialogId();
+        need_send_update = true;
+      } else if (message_id.is_yet_unsent() && old_message->top_thread_message_id == new_message->reply_to_message_id &&
+                 new_message->reply_in_dialog_id == DialogId()) {
+        LOG(INFO) << "Update replied message from " << old_message->reply_to_message_id << " to top thread "
+                  << new_message->reply_to_message_id;
+        unregister_message_reply(dialog_id, old_message);
+        old_message->reply_to_message_id = new_message->reply_to_message_id;
+        old_message->reply_in_dialog_id = DialogId();
+        register_message_reply(dialog_id, old_message);
         need_send_update = true;
       } else {
-        LOG(ERROR) << message_id << " in " << dialog_id << " has changed message it is replied message from "
+        LOG(ERROR) << message_id << " in " << dialog_id << " has changed it is replied message from "
                    << old_message->reply_to_message_id << " to " << new_message->reply_to_message_id
                    << ", message content type is " << old_content_type << '/' << new_content_type;
       }
