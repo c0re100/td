@@ -10,7 +10,7 @@
 
 namespace td {
 
-constexpr int32 MTPROTO_LAYER = 148;
+constexpr int32 MTPROTO_LAYER = 150;
 
 enum class Version : int32 {
   Initial,  // 0
@@ -57,14 +57,15 @@ enum class Version : int32 {
   AddStickerSetListFlags,
   AddInputInvoiceFlags,
   AddVideoNoteFlags,
+  AddMessageChatSetTtlFlags,
   Next
 };
 
 enum class DbVersion : int32 {
   DialogDbCreated = 3,
-  MessagesDbMediaIndex,
-  MessagesDb30MediaIndex,
-  MessagesDbFts,
+  MessageDbMediaIndex,
+  MessageDb30MediaIndex,
+  MessageDbFts,
   MessagesCallIndex,
   FixFileRemoteLocationKeyBug,
   AddNotificationsSupport,
@@ -72,6 +73,7 @@ enum class DbVersion : int32 {
   AddScheduledMessages,
   StorePinnedDialogsInBinlog,
   AddMessageThreadSupport,
+  AddMessageThreadDatabase,
   Next
 };
 

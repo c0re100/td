@@ -10,7 +10,8 @@
 #include "td/telegram/files/FileDb.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
-#include "td/telegram/MessagesDb.h"
+#include "td/telegram/MessageDb.h"
+#include "td/telegram/MessageThreadDb.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdParameters.h"
 #include "td/telegram/Version.h"
@@ -184,15 +185,26 @@ SqliteKeyValueAsyncInterface *TdDb::get_sqlite_pmc() {
   return common_kv_async_.get();
 }
 
-MessagesDbSyncInterface *TdDb::get_messages_db_sync() {
-  return &messages_db_sync_safe_->get();
+MessageDbSyncInterface *TdDb::get_message_db_sync() {
+  return &message_db_sync_safe_->get();
 }
-MessagesDbAsyncInterface *TdDb::get_messages_db_async() {
-  return messages_db_async_.get();
+
+MessageDbAsyncInterface *TdDb::get_message_db_async() {
+  return message_db_async_.get();
 }
+
+MessageThreadDbSyncInterface *TdDb::get_message_thread_db_sync() {
+  return &message_thread_db_sync_safe_->get();
+}
+
+MessageThreadDbAsyncInterface *TdDb::get_message_thread_db_async() {
+  return message_thread_db_async_.get();
+}
+
 DialogDbSyncInterface *TdDb::get_dialog_db_sync() {
   return &dialog_db_sync_safe_->get();
 }
+
 DialogDbAsyncInterface *TdDb::get_dialog_db_async() {
   return dialog_db_async_.get();
 }
@@ -206,8 +218,14 @@ CSlice TdDb::sqlite_path() const {
 
 void TdDb::flush_all() {
   LOG(INFO) << "Flush all databases";
-  if (messages_db_async_) {
-    messages_db_async_->force_flush();
+  if (message_db_async_) {
+    message_db_async_->force_flush();
+  }
+  if (message_thread_db_async_) {
+    message_thread_db_async_->force_flush();
+  }
+  if (dialog_db_async_) {
+    dialog_db_async_->force_flush();
   }
   binlog_->force_flush();
 }
@@ -249,9 +267,14 @@ void TdDb::do_close(Promise<> on_finished, bool destroy_flag) {
     common_kv_async_->close(mpas.get_promise());
   }
 
-  messages_db_sync_safe_.reset();
-  if (messages_db_async_) {
-    messages_db_async_->close(mpas.get_promise());
+  message_db_sync_safe_.reset();
+  if (message_db_async_) {
+    message_db_async_->close(mpas.get_promise());
+  }
+
+  message_thread_db_sync_safe_.reset();
+  if (message_thread_db_async_) {
+    message_thread_db_async_->close(mpas.get_promise());
   }
 
   dialog_db_sync_safe_.reset();
@@ -287,6 +310,7 @@ Status TdDb::init_sqlite(const TdParameters &parameters, const DbKey &key, const
   bool use_sqlite = parameters.use_file_db;
   bool use_file_db = parameters.use_file_db;
   bool use_dialog_db = parameters.use_message_db;
+  bool use_message_thread_db = parameters.use_message_db && false;
   bool use_message_db = parameters.use_message_db;
   if (!use_sqlite) {
     SqliteDb::destroy(sql_database_path).ignore();
@@ -320,11 +344,18 @@ Status TdDb::init_sqlite(const TdParameters &parameters, const DbKey &key, const
     TRY_STATUS(drop_dialog_db(db, user_version));
   }
 
-  // init MessagesDb
-  if (use_message_db) {
-    TRY_STATUS(init_messages_db(db, user_version));
+  // init MessageThreadDb
+  if (use_message_thread_db) {
+    TRY_STATUS(init_message_thread_db(db, user_version));
   } else {
-    TRY_STATUS(drop_messages_db(db, user_version));
+    TRY_STATUS(drop_message_thread_db(db, user_version));
+  }
+
+  // init MessageDb
+  if (use_message_db) {
+    TRY_STATUS(init_message_db(db, user_version));
+  } else {
+    TRY_STATUS(drop_message_db(db, user_version));
   }
 
   // init filesDb
@@ -371,9 +402,14 @@ Status TdDb::init_sqlite(const TdParameters &parameters, const DbKey &key, const
     dialog_db_async_ = create_dialog_db_async(dialog_db_sync_safe_);
   }
 
+  if (use_message_thread_db) {
+    message_thread_db_sync_safe_ = create_message_thread_db_sync(sql_connection_);
+    message_thread_db_async_ = create_message_thread_db_async(message_thread_db_sync_safe_);
+  }
+
   if (use_message_db) {
-    messages_db_sync_safe_ = create_messages_db_sync(sql_connection_);
-    messages_db_async_ = create_messages_db_async(messages_db_sync_safe_);
+    message_db_sync_safe_ = create_message_db_sync(sql_connection_);
+    message_db_async_ = create_message_db_async(message_db_sync_safe_);
   }
 
   return Status::OK();

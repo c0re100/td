@@ -470,6 +470,10 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::setUserPrivacySettingRules &request);
 
+  void on_request(uint64 id, const td_api::getDefaultMessageTtl &request);
+
+  void on_request(uint64 id, const td_api::setDefaultMessageTtl &request);
+
   void on_request(uint64 id, const td_api::getAccountTtl &request);
 
   void on_request(uint64 id, const td_api::setAccountTtl &request);
@@ -481,6 +485,10 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::checkChangePhoneNumberCode &request);
 
   void on_request(uint64 id, td_api::resendChangePhoneNumberCode &request);
+
+  void on_request(uint64 id, const td_api::getUserLink &request);
+
+  void on_request(uint64 id, td_api::searchUserByToken &request);
 
   void on_request(uint64 id, const td_api::getActiveSessions &request);
 
@@ -740,7 +748,15 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::editForumTopic &request);
 
+  void on_request(uint64 id, const td_api::getForumTopic &request);
+
+  void on_request(uint64 id, const td_api::getForumTopicLink &request);
+
+  void on_request(uint64 id, td_api::getForumTopics &request);
+
   void on_request(uint64 id, const td_api::toggleForumTopicIsClosed &request);
+
+  void on_request(uint64 id, const td_api::toggleGeneralForumTopicIsHidden &request);
 
   void on_request(uint64 id, const td_api::deleteForumTopic &request);
 
@@ -1102,11 +1118,15 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::toggleSupergroupIsAllHistoryAvailable &request);
 
+  void on_request(uint64 id, const td_api::toggleSupergroupIsAggressiveAntiSpamEnabled &request);
+
   void on_request(uint64 id, const td_api::toggleSupergroupIsForum &request);
 
   void on_request(uint64 id, const td_api::toggleSupergroupIsBroadcastGroup &request);
 
   void on_request(uint64 id, const td_api::reportSupergroupSpam &request);
+
+  void on_request(uint64 id, const td_api::reportSupergroupAntiSpamFalsePositive &request);
 
   void on_request(uint64 id, td_api::getSupergroupMembers &request);
 
@@ -1199,6 +1219,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::getScopeNotificationSettings &request);
 
   void on_request(uint64 id, td_api::setChatNotificationSettings &request);
+
+  void on_request(uint64 id, td_api::setForumTopicNotificationSettings &request);
 
   void on_request(uint64 id, td_api::setScopeNotificationSettings &request);
 

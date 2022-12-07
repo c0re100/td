@@ -204,7 +204,7 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
       if (message == nullptr) {
         return nullptr;
       }
-      return td_api::make_object<td_api::chatEventMessageDeleted>(std::move(message));
+      return td_api::make_object<td_api::chatEventMessageDeleted>(std::move(message), false);
     }
     case telegram_api::channelAdminLogEventActionChangeStickerSet::ID: {
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeStickerSet>(action_ptr);
@@ -380,6 +380,12 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
         LOG(ERROR) << "Receive " << to_string(action);
         return nullptr;
       }
+      bool edit_is_closed = old_topic_info.is_closed() != new_topic_info.is_closed();
+      bool edit_is_hidden = old_topic_info.is_hidden() != new_topic_info.is_hidden();
+      if (edit_is_hidden && !(!new_topic_info.is_hidden() && edit_is_closed && !new_topic_info.is_closed())) {
+        return td_api::make_object<td_api::chatEventForumTopicToggleIsHidden>(
+            new_topic_info.get_forum_topic_info_object(td));
+      }
       if (old_topic_info.is_closed() != new_topic_info.is_closed()) {
         return td_api::make_object<td_api::chatEventForumTopicToggleIsClosed>(
             new_topic_info.get_forum_topic_info_object(td));
@@ -410,6 +416,10 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
       }
       return td_api::make_object<td_api::chatEventForumTopicPinned>(old_topic_info.get_forum_topic_info_object(td),
                                                                     new_topic_info.get_forum_topic_info_object(td));
+    }
+    case telegram_api::channelAdminLogEventActionToggleAntiSpam::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionToggleAntiSpam>(action_ptr);
+      return td_api::make_object<td_api::chatEventIsAggressiveAntiSpamEnabledToggled>(action->new_value_);
     }
     default:
       UNREACHABLE();
@@ -457,6 +467,7 @@ class GetChannelAdminLogQuery final : public Td::ResultHandler {
     td_->contacts_manager_->on_get_users(std::move(events->users_), "on_get_event_log");
     td_->contacts_manager_->on_get_chats(std::move(events->chats_), "on_get_event_log");
 
+    auto anti_spam_user_id = UserId(G()->get_option_integer("anti_spam_bot_user_id"));
     auto result = td_api::make_object<td_api::chatEvents>();
     result->events_.reserve(events->events_.size());
     for (auto &event : events->events_) {
@@ -476,6 +487,10 @@ class GetChannelAdminLogQuery final : public Td::ResultHandler {
       auto action = get_chat_event_action_object(td_, channel_id_, std::move(event->action_), actor_dialog_id);
       if (action == nullptr) {
         continue;
+      }
+      if (user_id == anti_spam_user_id && anti_spam_user_id.is_valid() &&
+          action->get_id() == td_api::chatEventMessageDeleted::ID) {
+        static_cast<td_api::chatEventMessageDeleted *>(action.get())->can_report_anti_spam_false_positive_ = true;
       }
       if (user_id == ContactsManager::get_channel_bot_user_id() && actor_dialog_id.is_valid() &&
           actor_dialog_id.get_type() != DialogType::User) {

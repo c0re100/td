@@ -15,6 +15,8 @@
 
 namespace td {
 
+#if !TD_THREAD_UNSUPPORTED
+
 Status AsyncFileLog::init(string path, int64 rotate_threshold, bool redirect_stderr) {
   CHECK(path_.empty());
   CHECK(!path.empty());
@@ -38,7 +40,6 @@ Status AsyncFileLog::init(string path, int64 rotate_threshold, bool redirect_std
   logging_thread_ = td::thread(
       [queue = queue_.get(), fd = std::move(fd), path = path_, size, rotate_threshold, redirect_stderr]() mutable {
         auto after_rotation = [&] {
-          ScopedDisableLog disable_log;  // to ensure that nothing will be printed to the closed log
           fd.close();
           auto r_fd = FileFd::open(path, FileFd::Create | FileFd::Write | FileFd::Append);
           if (r_fd.is_error()) {
@@ -48,7 +49,12 @@ Status AsyncFileLog::init(string path, int64 rotate_threshold, bool redirect_std
           if (!Stderr().empty() && redirect_stderr) {
             fd.get_native_fd().duplicate(Stderr().get_native_fd()).ignore();
           }
-          size = 0;
+          auto r_size = fd.get_size();
+          if (r_fd.is_error()) {
+            process_fatal_error(PSLICE() << "Failed to get log size: " << r_fd.error() << " in " << __FILE__ << " at "
+                                         << __LINE__ << '\n');
+          }
+          size = r_size.move_as_ok();
         };
         auto append = [&](CSlice slice) {
           if (size > rotate_threshold) {
@@ -59,6 +65,11 @@ Status AsyncFileLog::init(string path, int64 rotate_threshold, bool redirect_std
             after_rotation();
           }
           while (!slice.empty()) {
+            if (redirect_stderr) {
+              while (has_log_guard()) {
+                // spin
+              }
+            }
             auto r_size = fd.write(slice);
             if (r_size.is_error()) {
               process_fatal_error(PSLICE() << r_size.error() << " in " << __FILE__ << " at " << __LINE__ << '\n');
@@ -148,5 +159,7 @@ void AsyncFileLog::do_append(int log_level, CSlice slice) {
     usleep_for(5000);  // allow some time for the log line to be actually printed
   }
 }
+
+#endif
 
 }  // namespace td

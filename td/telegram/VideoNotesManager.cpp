@@ -127,7 +127,8 @@ FileId VideoNotesManager::dup_video_note(FileId new_id, FileId old_id) {
   new_video_note->waveform = old_video_note->waveform;
   new_video_note->minithumbnail = old_video_note->minithumbnail;
   new_video_note->thumbnail = old_video_note->thumbnail;
-  new_video_note->thumbnail.file_id = td_->file_manager_->dup_file_id(new_video_note->thumbnail.file_id);
+  new_video_note->thumbnail.file_id =
+      td_->file_manager_->dup_file_id(new_video_note->thumbnail.file_id, "dup_video_note");
   new_video_note->transcription_info = TranscriptionInfo::copy_if_transcribed(old_video_note->transcription_info);
   return new_id;
 }
@@ -171,7 +172,8 @@ void VideoNotesManager::create_video_note(FileId file_id, string minithumbnail, 
 
 void VideoNotesManager::register_video_note(FileId video_note_file_id, FullMessageId full_message_id,
                                             const char *source) {
-  if (full_message_id.get_message_id().is_scheduled() || !full_message_id.get_message_id().is_server()) {
+  if (full_message_id.get_message_id().is_scheduled() || !full_message_id.get_message_id().is_server() ||
+      td_->auth_manager_->is_bot()) {
     return;
   }
   LOG(INFO) << "Register video note " << video_note_file_id << " from " << full_message_id << " from " << source;
@@ -183,7 +185,8 @@ void VideoNotesManager::register_video_note(FileId video_note_file_id, FullMessa
 
 void VideoNotesManager::unregister_video_note(FileId video_note_file_id, FullMessageId full_message_id,
                                               const char *source) {
-  if (full_message_id.get_message_id().is_scheduled() || !full_message_id.get_message_id().is_server()) {
+  if (full_message_id.get_message_id().is_scheduled() || !full_message_id.get_message_id().is_server() ||
+      td_->auth_manager_->is_bot()) {
     return;
   }
   LOG(INFO) << "Unregister video note " << video_note_file_id << " from " << full_message_id << " from " << source;

@@ -16,6 +16,10 @@ namespace td {
 
 class Td;
 
+void set_default_message_ttl(Td *td, int32 message_ttl, Promise<Unit> &&promise);
+
+void get_default_message_ttl(Td *td, Promise<int32> &&promise);
+
 void set_account_ttl(Td *td, int32 account_ttl, Promise<Unit> &&promise);
 
 void get_account_ttl(Td *td, Promise<int32> &&promise);
@@ -45,5 +49,9 @@ void set_default_group_administrator_rights(Td *td, AdministratorRights administ
 
 void set_default_channel_administrator_rights(Td *td, AdministratorRights administrator_rights,
                                               Promise<Unit> &&promise);
+
+void export_contact_token(Td *td, Promise<td_api::object_ptr<td_api::userLink>> &&promise);
+
+void import_contact_token(Td *td, const string &token, Promise<td_api::object_ptr<td_api::user>> &&promise);
 
 }  // namespace td

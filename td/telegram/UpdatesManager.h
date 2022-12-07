@@ -31,6 +31,7 @@
 
 #include <functional>
 #include <map>
+#include <utility>
 
 namespace td {
 
@@ -107,7 +108,8 @@ class UpdatesManager final : public Actor {
   static const telegram_api::Message *get_message_by_random_id(const telegram_api::Updates *updates_ptr,
                                                                DialogId dialog_id, int64 random_id);
 
-  static vector<const tl_object_ptr<telegram_api::Message> *> get_new_messages(
+  // [Message, is_scheduled]
+  static vector<std::pair<const telegram_api::Message *, bool>> get_new_messages(
       const telegram_api::Updates *updates_ptr);
 
   static vector<InputGroupCallId> get_update_new_group_call_ids(const telegram_api::Updates *updates_ptr);
@@ -139,8 +141,9 @@ class UpdatesManager final : public Actor {
  private:
   static constexpr int32 FORCED_GET_DIFFERENCE_PTS_DIFF = 100000;
   static constexpr int32 GAP_TIMEOUT_UPDATE_COUNT = 20;
-  static const double MAX_UNFILLED_GAP_TIME;
-  static const double MAX_PTS_SAVE_DELAY;
+  static constexpr double MAX_UNFILLED_GAP_TIME = 0.7;
+  static constexpr double MAX_PTS_SAVE_DELAY = 0.05;
+  static constexpr double UPDATE_APPLY_WARNING_TIME = 0.25;
   static constexpr bool DROP_PTS_UPDATES = false;
   static constexpr const char *AFTER_GET_DIFFERENCE_SOURCE = "after get difference";
   static constexpr int32 AUDIO_TRANSCRIPTION_TIMEOUT = 60;
@@ -378,6 +381,8 @@ class UpdatesManager final : public Actor {
 
   static bool is_channel_pts_update(const telegram_api::Update *update);
 
+  static bool is_additional_service_message(const telegram_api::Message *message);
+
   static const vector<tl_object_ptr<telegram_api::Update>> *get_updates(const telegram_api::Updates *updates_ptr);
 
   static vector<tl_object_ptr<telegram_api::Update>> *get_updates(telegram_api::Updates *updates_ptr);
@@ -561,6 +566,8 @@ class UpdatesManager final : public Actor {
   // unsupported updates
 
   void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopic> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopics> update, Promise<Unit> &&promise);
 };
 
 }  // namespace td

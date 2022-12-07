@@ -6,6 +6,8 @@
 //
 #pragma once
 
+#include "td/net/SslCtx.h"
+
 #include "td/utils/ByteFlow.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
@@ -23,10 +25,7 @@ class SslStream {
   SslStream &operator=(SslStream &&) noexcept;
   ~SslStream();
 
-  enum class VerifyPeer { On, Off };
-
-  static Result<SslStream> create(CSlice host, CSlice cert_file = CSlice(), VerifyPeer verify_peer = VerifyPeer::On,
-                                  bool use_ip_address_as_host = false);
+  static Result<SslStream> create(CSlice host, SslCtx ssl_ctx, bool use_ip_address_as_host = false);
 
   ByteFlowInterface &read_byte_flow();
   ByteFlowInterface &write_byte_flow();

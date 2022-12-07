@@ -13,6 +13,7 @@
 #include "td/telegram/LinkManager.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/MessageReaction.h"
+#include "td/telegram/misc.h"
 #include "td/telegram/net/AuthDataShared.h"
 #include "td/telegram/net/ConnectionCreator.h"
 #include "td/telegram/net/DcId.h"
@@ -35,7 +36,7 @@
 #include "td/mtproto/TransportType.h"
 
 #if !TD_EMSCRIPTEN  //FIXME
-#include "td/net/SslStream.h"
+#include "td/net/SslCtx.h"
 #include "td/net/Wget.h"
 #endif
 
@@ -239,7 +240,7 @@ static ActorOwn<> get_simple_config_impl(Promise<SimpleConfigResult> promise, in
           return std::move(res);
         }());
       }),
-      std::move(url), std::move(headers), timeout, ttl, prefer_ipv6, SslStream::VerifyPeer::Off, std::move(content),
+      std::move(url), std::move(headers), timeout, ttl, prefer_ipv6, SslCtx::VerifyPeer::Off, std::move(content),
       std::move(content_type)));
 #endif
 }
@@ -955,7 +956,7 @@ void ConfigManager::request_config(bool reopen_sessions) {
     return;
   }
 
-  lazy_request_flood_control_.add_event(static_cast<int32>(Timestamp::now().at()));
+  lazy_request_flood_control_.add_event(Time::now());
   request_config_from_dc_impl(DcId::main(), reopen_sessions);
 }
 
@@ -1492,14 +1493,16 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   int32 stickers_premium_by_emoji_num = 0;
   int32 stickers_normal_by_emoji_per_premium_num = 2;
   int32 forum_upgrade_participants_min = 200;
+  int32 telegram_antispam_group_size_min = 100;
+  vector<string> fragment_prefixes;
   if (config->get_id() == telegram_api::jsonObject::ID) {
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
       telegram_api::JSONValue *value = key_value->value_.get();
       if (key == "getfile_experimental_params" || key == "message_animated_emoji_max" ||
-          key == "stickers_emoji_cache_time" || key == "test" || key == "upload_max_fileparts_default" ||
-          key == "upload_max_fileparts_premium" || key == "wallet_blockchain_name" || key == "wallet_config" ||
-          key == "wallet_enabled") {
+          key == "reactions_in_chat_max" || key == "stickers_emoji_cache_time" || key == "test" ||
+          key == "upload_max_fileparts_default" || key == "upload_max_fileparts_premium" ||
+          key == "wallet_blockchain_name" || key == "wallet_config" || key == "wallet_enabled") {
         continue;
       }
       if (key == "ignore_restriction_reasons") {
@@ -1848,6 +1851,32 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         forum_upgrade_participants_min = get_json_value_int(std::move(key_value->value_), key);
         continue;
       }
+      if (key == "telegram_antispam_user_id") {
+        auto setting_value = get_json_value_long(std::move(key_value->value_), key);
+        G()->set_option_integer("anti_spam_bot_user_id", setting_value);
+        continue;
+      }
+      if (key == "telegram_antispam_group_size_min") {
+        telegram_antispam_group_size_min = get_json_value_int(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "fragment_prefixes") {
+        if (value->get_id() == telegram_api::jsonArray::ID) {
+          auto prefixes = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
+          for (auto &prefix : prefixes) {
+            auto prefix_text = get_json_value_string(std::move(prefix), key);
+            clean_phone_number(prefix_text);
+            if (!prefix_text.empty()) {
+              fragment_prefixes.push_back(prefix_text);
+            } else {
+              LOG(ERROR) << "Receive an invalid Fragment prefix";
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected fragment_prefixes " << to_string(*value);
+        }
+        continue;
+      }
 
       new_values.push_back(std::move(key_value));
     }
@@ -1896,6 +1925,8 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     options.set_option_string("dice_emojis", implode(dice_emojis, '\x01'));
   }
 
+  options.set_option_string("fragment_prefixes", implode(fragment_prefixes, ','));
+
   options.set_option_string("emoji_sounds", implode(emoji_sounds, ','));
 
   if (animated_emoji_zoom <= 0 || animated_emoji_zoom > 2.0) {
@@ -1934,10 +1965,11 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   } else {
     options.set_option_integer("reactions_uniq_max", reactions_uniq_max);
   }
-  if (forum_upgrade_participants_min < 0) {
-    options.set_option_empty("forum_member_count_min");
-  } else {
+  if (forum_upgrade_participants_min >= 0) {
     options.set_option_integer("forum_member_count_min", forum_upgrade_participants_min);
+  }
+  if (telegram_antispam_group_size_min >= 0) {
+    options.set_option_integer("aggressive_anti_spam_supergroup_member_count_min", telegram_antispam_group_size_min);
   }
 
   bool is_premium = options.get_option_boolean("is_premium");

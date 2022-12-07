@@ -109,6 +109,64 @@ static td_api::object_ptr<td_api::session> convert_authorization_object(
       authorization->country_, authorization->region_);
 }
 
+class SetDefaultHistoryTtlQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit SetDefaultHistoryTtlQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(int32 account_ttl) {
+    send_query(G()->net_query_creator().create(telegram_api::messages_setDefaultHistoryTTL(account_ttl), {{"me"}}));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_setDefaultHistoryTTL>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    bool result = result_ptr.move_as_ok();
+    if (!result) {
+      return on_error(Status::Error(500, "Internal Server Error: failed to set default message TTL"));
+    }
+
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class GetDefaultHistoryTtlQuery final : public Td::ResultHandler {
+  Promise<int32> promise_;
+
+ public:
+  explicit GetDefaultHistoryTtlQuery(Promise<int32> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send() {
+    send_query(G()->net_query_creator().create(telegram_api::messages_getDefaultHistoryTTL()));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_getDefaultHistoryTTL>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for GetDefaultHistoryTtlQuery: " << to_string(ptr);
+
+    promise_.set_value(std::move(ptr->period_));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
 class SetAccountTtlQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
 
@@ -531,6 +589,73 @@ class SetBotBroadcastDefaultAdminRightsQuery final : public Td::ResultHandler {
   }
 };
 
+class ExportContactTokenQuery final : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::userLink>> promise_;
+
+ public:
+  explicit ExportContactTokenQuery(Promise<td_api::object_ptr<td_api::userLink>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send() {
+    send_query(G()->net_query_creator().create(telegram_api::contacts_exportContactToken()));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::contacts_exportContactToken>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for ExportContactTokenQuery: " << to_string(ptr);
+    promise_.set_value(td_api::make_object<td_api::userLink>(
+        ptr->url_, td::max(static_cast<int32>(ptr->expires_ - G()->unix_time()), static_cast<int32>(1))));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class ImportContactTokenQuery final : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::user>> promise_;
+
+ public:
+  explicit ImportContactTokenQuery(Promise<td_api::object_ptr<td_api::user>> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(const string &token) {
+    send_query(G()->net_query_creator().create(telegram_api::contacts_importContactToken(token)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::contacts_importContactToken>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto user = result_ptr.move_as_ok();
+    LOG(DEBUG) << "Receive result for ImportContactTokenQuery: " << to_string(user);
+
+    auto user_id = ContactsManager::get_user_id(user);
+    td_->contacts_manager_->on_get_user(std::move(user), "ImportContactTokenQuery");
+    promise_.set_value(td_->contacts_manager_->get_user_object(user_id));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+void set_default_message_ttl(Td *td, int32 message_ttl, Promise<Unit> &&promise) {
+  td->create_handler<SetDefaultHistoryTtlQuery>(std::move(promise))->send(message_ttl);
+}
+
+void get_default_message_ttl(Td *td, Promise<int32> &&promise) {
+  td->create_handler<GetDefaultHistoryTtlQuery>(std::move(promise))->send();
+}
+
 void set_account_ttl(Td *td, int32 account_ttl, Promise<Unit> &&promise) {
   td->create_handler<SetAccountTtlQuery>(std::move(promise))->send(account_ttl);
 }
@@ -600,6 +725,14 @@ void set_default_channel_administrator_rights(Td *td, AdministratorRights admini
                                               Promise<Unit> &&promise) {
   td->contacts_manager_->invalidate_user_full(td->contacts_manager_->get_my_id());
   td->create_handler<SetBotBroadcastDefaultAdminRightsQuery>(std::move(promise))->send(administrator_rights);
+}
+
+void export_contact_token(Td *td, Promise<td_api::object_ptr<td_api::userLink>> &&promise) {
+  td->create_handler<ExportContactTokenQuery>(std::move(promise))->send();
+}
+
+void import_contact_token(Td *td, const string &token, Promise<td_api::object_ptr<td_api::user>> &&promise) {
+  td->create_handler<ImportContactTokenQuery>(std::move(promise))->send(token);
 }
 
 }  // namespace td

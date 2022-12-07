@@ -450,9 +450,10 @@ class MessageScreenshotTaken final : public MessageContent {
 class MessageChatSetTtl final : public MessageContent {
  public:
   int32 ttl;
+  UserId from_user_id;
 
   MessageChatSetTtl() = default;
-  explicit MessageChatSetTtl(int32 ttl) : ttl(ttl) {
+  MessageChatSetTtl(int32 ttl, UserId from_user_id) : ttl(ttl), from_user_id(from_user_id) {
   }
 
   MessageContentType get_type() const final {
@@ -1009,7 +1010,14 @@ static void store(const MessageContent *content, StorerT &storer) {
       break;
     case MessageContentType::ChatSetTtl: {
       const auto *m = static_cast<const MessageChatSetTtl *>(content);
+      bool has_from_user_id = m->from_user_id.is_valid();
+      BEGIN_STORE_FLAGS();
+      STORE_FLAG(has_from_user_id);
+      END_STORE_FLAGS();
       store(m->ttl, storer);
+      if (has_from_user_id) {
+        store(m->from_user_id, storer);
+      }
       break;
     }
     case MessageContentType::Call: {
@@ -1427,7 +1435,16 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       break;
     case MessageContentType::ChatSetTtl: {
       auto m = make_unique<MessageChatSetTtl>();
+      bool has_from_user_id = false;
+      if (parser.version() >= static_cast<int32>(Version::AddMessageChatSetTtlFlags)) {
+        BEGIN_PARSE_FLAGS();
+        PARSE_FLAG(has_from_user_id);
+        END_PARSE_FLAGS();
+      }
       parse(m->ttl, parser);
+      if (has_from_user_id) {
+        parse(m->from_user_id, parser);
+      }
       content = std::move(m);
       break;
     }
@@ -1783,8 +1800,8 @@ unique_ptr<MessageContent> create_screenshot_taken_message_content() {
   return make_unique<MessageScreenshotTaken>();
 }
 
-unique_ptr<MessageContent> create_chat_set_ttl_message_content(int32 ttl) {
-  return make_unique<MessageChatSetTtl>(ttl);
+unique_ptr<MessageContent> create_chat_set_ttl_message_content(int32 ttl, UserId from_user_id) {
+  return make_unique<MessageChatSetTtl>(ttl, from_user_id);
 }
 
 static Result<InputMessageContent> create_input_message_content(
@@ -3584,7 +3601,10 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
       const auto *old_ = static_cast<const MessageChatSetTtl *>(old_content);
       const auto *new_ = static_cast<const MessageChatSetTtl *>(new_content);
       if (old_->ttl != new_->ttl) {
-        LOG(ERROR) << "Ttl has changed from " << old_->ttl << " to " << new_->ttl;
+        LOG(ERROR) << "TTL has changed from " << old_->ttl << " to " << new_->ttl;
+        need_update = true;
+      }
+      if (old_->from_user_id != new_->from_user_id) {
         need_update = true;
       }
       break;
@@ -3592,10 +3612,11 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
     case MessageContentType::Call: {
       const auto *old_ = static_cast<const MessageCall *>(old_content);
       const auto *new_ = static_cast<const MessageCall *>(new_content);
-      if (old_->call_id != new_->call_id || old_->is_video != new_->is_video) {
+      if (old_->call_id != new_->call_id) {
         is_content_changed = true;
       }
-      if (old_->duration != new_->duration || old_->discard_reason != new_->discard_reason) {
+      if (old_->duration != new_->duration || old_->discard_reason != new_->discard_reason ||
+          old_->is_video != new_->is_video) {
         need_update = true;
       }
       break;
@@ -4637,13 +4658,13 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
   auto fix_file_id = [dialog_id, to_secret, file_manager = td->file_manager_.get()](FileId file_id) {
     auto file_view = file_manager->get_file_view(file_id);
     if (to_secret && !file_view.is_encrypted_secret()) {
-      auto download_file_id = file_manager->dup_file_id(file_id);
+      auto download_file_id = file_manager->dup_file_id(file_id, "dup_message_content to secret");
       file_id = file_manager
                     ->register_generate(FileType::Encrypted, FileLocationSource::FromServer, file_view.suggested_path(),
                                         PSTRING() << "#file_id#" << download_file_id.get(), dialog_id, file_view.size())
                     .ok();
     }
-    return file_manager->dup_file_id(file_id);
+    return file_manager->dup_file_id(file_id, "dup_message_content");
   };
 
   FileId thumbnail_file_id;
@@ -4776,7 +4797,8 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
 
       result->photo.photos.back().file_id = fix_file_id(result->photo.photos.back().file_id);
       if (has_thumbnail) {
-        result->photo.photos[0].file_id = td->file_manager_->dup_file_id(result->photo.photos[0].file_id);
+        result->photo.photos[0].file_id =
+            td->file_manager_->dup_file_id(result->photo.photos[0].file_id, "dup_message_content photo");
       }
       return std::move(result);
     }
@@ -5128,11 +5150,12 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
     }
     case telegram_api::messageActionSetMessagesTTL::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionSetMessagesTTL>(action_ptr);
-      if (action->period_ < 0) {
-        LOG(ERROR) << "Receive wrong TTL = " << action->period_;
+      UserId from_user_id(action->auto_setting_from_);
+      if (action->period_ < 0 || !(from_user_id == UserId() || from_user_id.is_valid())) {
+        LOG(ERROR) << "Receive invalid " << oneline(to_string(action));
         break;
       }
-      return make_unique<MessageChatSetTtl>(action->period_);
+      return make_unique<MessageChatSetTtl>(action->period_, from_user_id);
     }
     case telegram_api::messageActionGroupCallScheduled::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionGroupCallScheduled>(action_ptr);
@@ -5181,9 +5204,10 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       auto action = move_tl_object_as<telegram_api::messageActionTopicEdit>(action_ptr);
       auto edit_icon_custom_emoji_id = (action->flags_ & telegram_api::messageActionTopicEdit::ICON_EMOJI_ID_MASK) != 0;
       auto edit_is_closed = (action->flags_ & telegram_api::messageActionTopicEdit::CLOSED_MASK) != 0;
-      return td::make_unique<MessageTopicEdit>(ForumTopicEditedData{std::move(action->title_),
-                                                                    edit_icon_custom_emoji_id, action->icon_emoji_id_,
-                                                                    edit_is_closed, action->closed_});
+      auto edit_is_hidden = (action->flags_ & telegram_api::messageActionTopicEdit::HIDDEN_MASK) != 0;
+      return td::make_unique<MessageTopicEdit>(
+          ForumTopicEditedData{std::move(action->title_), edit_icon_custom_emoji_id, action->icon_emoji_id_,
+                               edit_is_closed, action->closed_, edit_is_hidden, action->hidden_});
     }
     default:
       UNREACHABLE();
@@ -5360,7 +5384,8 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       return make_tl_object<td_api::messageScreenshotTaken>();
     case MessageContentType::ChatSetTtl: {
       const auto *m = static_cast<const MessageChatSetTtl *>(content);
-      return make_tl_object<td_api::messageChatSetTtl>(m->ttl);
+      return make_tl_object<td_api::messageChatSetTtl>(
+          m->ttl, td->contacts_manager_->get_user_id_object(m->from_user_id, "MessageChatSetTtl"));
     }
     case MessageContentType::Call: {
       const auto *m = static_cast<const MessageCall *>(content);
@@ -5784,6 +5809,14 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
       const auto *poll = static_cast<const MessagePoll *>(content);
       return td->poll_manager_->get_poll_search_text(poll->poll_id);
     }
+    case MessageContentType::TopicCreate: {
+      const auto *topic_create = static_cast<const MessageTopicCreate *>(content);
+      return topic_create->title;
+    }
+    case MessageContentType::TopicEdit: {
+      const auto *topic_edit = static_cast<const MessageTopicEdit *>(content);
+      return topic_edit->edited_data.get_title();
+    }
     case MessageContentType::Contact:
     case MessageContentType::Game:
     case MessageContentType::LiveLocation:
@@ -5825,8 +5858,6 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::WebViewDataSent:
     case MessageContentType::WebViewDataReceived:
     case MessageContentType::GiftPremium:
-    case MessageContentType::TopicCreate:
-    case MessageContentType::TopicEdit:
       return string();
     default:
       UNREACHABLE();
@@ -6048,8 +6079,11 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
       break;
     case MessageContentType::ScreenshotTaken:
       break;
-    case MessageContentType::ChatSetTtl:
+    case MessageContentType::ChatSetTtl: {
+      const auto *content = static_cast<const MessageChatSetTtl *>(message_content);
+      dependencies.add(content->from_user_id);
       break;
+    }
     case MessageContentType::Unsupported:
       break;
     case MessageContentType::Call:

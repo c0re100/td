@@ -1628,12 +1628,14 @@ class CreateChatRequest final : public RequestActor<> {
 class CreateNewGroupChatRequest final : public RequestActor<> {
   vector<UserId> user_ids_;
   string title_;
+  MessageTtl message_ttl_;
   int64 random_id_;
 
   DialogId dialog_id_;
 
   void do_run(Promise<Unit> &&promise) final {
-    dialog_id_ = td_->messages_manager_->create_new_group_chat(user_ids_, title_, random_id_, std::move(promise));
+    dialog_id_ =
+        td_->messages_manager_->create_new_group_chat(user_ids_, title_, message_ttl_, random_id_, std::move(promise));
   }
 
   void do_send_result() final {
@@ -1642,10 +1644,12 @@ class CreateNewGroupChatRequest final : public RequestActor<> {
   }
 
  public:
-  CreateNewGroupChatRequest(ActorShared<Td> td, uint64 request_id, vector<UserId> user_ids, string title)
+  CreateNewGroupChatRequest(ActorShared<Td> td, uint64 request_id, vector<UserId> user_ids, string title,
+                            int32 message_ttl)
       : RequestActor(std::move(td), request_id)
       , user_ids_(std::move(user_ids))
       , title_(std::move(title))
+      , message_ttl_(message_ttl)
       , random_id_(0) {
   }
 };
@@ -1691,13 +1695,14 @@ class CreateNewSupergroupChatRequest final : public RequestActor<> {
   string description_;
   DialogLocation location_;
   bool for_import_;
+  MessageTtl message_ttl_;
   int64 random_id_;
 
   DialogId dialog_id_;
 
   void do_run(Promise<Unit> &&promise) final {
-    dialog_id_ = td_->messages_manager_->create_new_channel_chat(title_, is_megagroup_, description_, location_,
-                                                                 for_import_, random_id_, std::move(promise));
+    dialog_id_ = td_->messages_manager_->create_new_channel_chat(
+        title_, is_megagroup_, description_, location_, for_import_, message_ttl_, random_id_, std::move(promise));
   }
 
   void do_send_result() final {
@@ -1708,13 +1713,14 @@ class CreateNewSupergroupChatRequest final : public RequestActor<> {
  public:
   CreateNewSupergroupChatRequest(ActorShared<Td> td, uint64 request_id, string title, bool is_megagroup,
                                  string description, td_api::object_ptr<td_api::chatLocation> &&location,
-                                 bool for_import)
+                                 bool for_import, int32 message_ttl)
       : RequestActor(std::move(td), request_id)
       , title_(std::move(title))
       , is_megagroup_(is_megagroup)
       , description_(std::move(description))
       , location_(std::move(location))
       , for_import_(for_import)
+      , message_ttl_(message_ttl)
       , random_id_(0) {
   }
 };
@@ -2547,33 +2553,6 @@ class SearchBackgroundRequest final : public RequestActor<> {
   SearchBackgroundRequest(ActorShared<Td> td, uint64 request_id, string &&name)
       : RequestActor(std::move(td), request_id), name_(std::move(name)) {
     set_tries(3);
-  }
-};
-
-class SetBackgroundRequest final : public RequestActor<> {
-  td_api::object_ptr<td_api::InputBackground> input_background_;
-  td_api::object_ptr<td_api::BackgroundType> background_type_;
-  bool for_dark_theme_ = false;
-
-  BackgroundId background_id_;
-
-  void do_run(Promise<Unit> &&promise) final {
-    background_id_ = td_->background_manager_->set_background(input_background_.get(), background_type_.get(),
-                                                              for_dark_theme_, std::move(promise));
-  }
-
-  void do_send_result() final {
-    send_result(td_->background_manager_->get_background_object(background_id_, for_dark_theme_, nullptr));
-  }
-
- public:
-  SetBackgroundRequest(ActorShared<Td> td, uint64 request_id,
-                       td_api::object_ptr<td_api::InputBackground> &&input_background,
-                       td_api::object_ptr<td_api::BackgroundType> background_type, bool for_dark_theme)
-      : RequestActor(std::move(td), request_id)
-      , input_background_(std::move(input_background))
-      , background_type_(std::move(background_type))
-      , for_dark_theme_(for_dark_theme) {
   }
 };
 
@@ -4488,6 +4467,28 @@ void Td::on_request(uint64 id, td_api::setUserPrivacySettingRules &request) {
                std::move(promise));
 }
 
+void Td::on_request(uint64 id, const td_api::getDefaultMessageTtl &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<int32> result) mutable {
+    if (result.is_error()) {
+      promise.set_error(result.move_as_error());
+    } else {
+      promise.set_value(td_api::make_object<td_api::messageTtl>(result.ok()));
+    }
+  });
+  get_default_message_ttl(this, std::move(query_promise));
+}
+
+void Td::on_request(uint64 id, const td_api::setDefaultMessageTtl &request) {
+  CHECK_IS_USER();
+  if (request.ttl_ == nullptr) {
+    return send_error_raw(id, 400, "New default message TTL must be non-empty");
+  }
+  CREATE_OK_REQUEST_PROMISE();
+  set_default_message_ttl(this, request.ttl_->ttl_, std::move(promise));
+}
+
 void Td::on_request(uint64 id, const td_api::getAccountTtl &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
@@ -4532,6 +4533,19 @@ void Td::on_request(uint64 id, td_api::checkChangePhoneNumberCode &request) {
 void Td::on_request(uint64 id, td_api::resendChangePhoneNumberCode &request) {
   CHECK_IS_USER();
   send_closure(change_phone_number_manager_, &PhoneNumberManager::resend_authentication_code, id);
+}
+
+void Td::on_request(uint64 id, const td_api::getUserLink &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  contacts_manager_->get_user_link(std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::searchUserByToken &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.token_);
+  CREATE_REQUEST_PROMISE();
+  contacts_manager_->search_user_by_token(std::move(request.token_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getActiveSessions &request) {
@@ -5549,7 +5563,36 @@ void Td::on_request(uint64 id, td_api::editForumTopic &request) {
   CLEAN_INPUT_STRING(request.name_);
   CREATE_OK_REQUEST_PROMISE();
   forum_topic_manager_->edit_forum_topic(DialogId(request.chat_id_), MessageId(request.message_thread_id_),
-                                         std::move(request.name_), CustomEmojiId(request.icon_custom_emoji_id_),
+                                         std::move(request.name_), request.edit_icon_custom_emoji_,
+                                         CustomEmojiId(request.icon_custom_emoji_id_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getForumTopic &request) {
+  CREATE_REQUEST_PROMISE();
+  forum_topic_manager_->get_forum_topic(DialogId(request.chat_id_), MessageId(request.message_thread_id_),
+                                        std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getForumTopicLink &request) {
+  CREATE_REQUEST_PROMISE();
+  auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<string> result) mutable {
+    if (result.is_error()) {
+      promise.set_error(result.move_as_error());
+    } else {
+      promise.set_value(td_api::make_object<td_api::httpUrl>(result.move_as_ok()));
+    }
+  });
+  forum_topic_manager_->get_forum_topic_link(DialogId(request.chat_id_), MessageId(request.message_thread_id_),
+                                             std::move(query_promise));
+}
+
+void Td::on_request(uint64 id, td_api::getForumTopics &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.query_);
+  CREATE_REQUEST_PROMISE();
+  forum_topic_manager_->get_forum_topics(DialogId(request.chat_id_), std::move(request.query_), request.offset_date_,
+                                         MessageId(request.offset_message_id_),
+                                         MessageId(request.offset_message_thread_id_), request.limit_,
                                          std::move(promise));
 }
 
@@ -5557,6 +5600,12 @@ void Td::on_request(uint64 id, const td_api::toggleForumTopicIsClosed &request) 
   CREATE_OK_REQUEST_PROMISE();
   forum_topic_manager_->toggle_forum_topic_is_closed(DialogId(request.chat_id_), MessageId(request.message_thread_id_),
                                                      request.is_closed_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::toggleGeneralForumTopicIsHidden &request) {
+  CREATE_OK_REQUEST_PROMISE();
+  forum_topic_manager_->toggle_forum_topic_is_hidden(DialogId(request.chat_id_), request.is_hidden_,
+                                                     std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::deleteForumTopic &request) {
@@ -5669,7 +5718,8 @@ void Td::on_request(uint64 id, td_api::createSecretChat &request) {
 void Td::on_request(uint64 id, td_api::createNewBasicGroupChat &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.title_);
-  CREATE_REQUEST(CreateNewGroupChatRequest, UserId::get_user_ids(request.user_ids_), std::move(request.title_));
+  CREATE_REQUEST(CreateNewGroupChatRequest, UserId::get_user_ids(request.user_ids_), std::move(request.title_),
+                 request.message_ttl_);
 }
 
 void Td::on_request(uint64 id, td_api::createNewSupergroupChat &request) {
@@ -5677,8 +5727,10 @@ void Td::on_request(uint64 id, td_api::createNewSupergroupChat &request) {
   CLEAN_INPUT_STRING(request.title_);
   CLEAN_INPUT_STRING(request.description_);
   CREATE_REQUEST(CreateNewSupergroupChatRequest, std::move(request.title_), !request.is_channel_,
-                 std::move(request.description_), std::move(request.location_), request.for_import_);
+                 std::move(request.description_), std::move(request.location_), request.for_import_,
+                 request.message_ttl_);
 }
+
 void Td::on_request(uint64 id, td_api::createNewSecretChat &request) {
   CREATE_REQUEST(CreateNewSecretChatRequest, request.user_id_);
 }
@@ -6580,7 +6632,7 @@ void Td::on_request(uint64 id, td_api::preliminaryUploadFile &request) {
     return send_error_raw(id, 400, r_file_id.error().message());
   }
   auto file_id = r_file_id.ok();
-  auto upload_file_id = file_manager_->dup_file_id(file_id);
+  auto upload_file_id = file_manager_->dup_file_id(file_id, "preliminaryUploadFile");
 
   file_manager_->upload(upload_file_id, upload_file_callback_, priority, 0);
 
@@ -6995,6 +7047,13 @@ void Td::on_request(uint64 id, const td_api::toggleSupergroupIsAllHistoryAvailab
                                                              request.is_all_history_available_, std::move(promise));
 }
 
+void Td::on_request(uint64 id, const td_api::toggleSupergroupIsAggressiveAntiSpamEnabled &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->toggle_channel_is_aggressive_anti_spam_enabled(
+      ChannelId(request.supergroup_id_), request.is_aggressive_anti_spam_enabled_, std::move(promise));
+}
+
 void Td::on_request(uint64 id, const td_api::toggleSupergroupIsForum &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
@@ -7012,6 +7071,13 @@ void Td::on_request(uint64 id, const td_api::reportSupergroupSpam &request) {
   CREATE_OK_REQUEST_PROMISE();
   contacts_manager_->report_channel_spam(ChannelId(request.supergroup_id_),
                                          MessagesManager::get_message_ids(request.message_ids_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::reportSupergroupAntiSpamFalsePositive &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->report_channel_anti_spam_false_positive(ChannelId(request.supergroup_id_),
+                                                             MessageId(request.message_id_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::getSupergroupMembers &request) {
@@ -7371,6 +7437,13 @@ void Td::on_request(uint64 id, td_api::setChatNotificationSettings &request) {
   CHECK_IS_USER();
   answer_ok_query(id, messages_manager_->set_dialog_notification_settings(DialogId(request.chat_id_),
                                                                           std::move(request.notification_settings_)));
+}
+
+void Td::on_request(uint64 id, td_api::setForumTopicNotificationSettings &request) {
+  CHECK_IS_USER();
+  answer_ok_query(id, forum_topic_manager_->set_forum_topic_notification_settings(
+                          DialogId(request.chat_id_), MessageId(request.message_thread_id_),
+                          std::move(request.notification_settings_)));
 }
 
 void Td::on_request(uint64 id, td_api::setScopeNotificationSettings &request) {
@@ -7903,8 +7976,9 @@ void Td::on_request(uint64 id, td_api::searchBackground &request) {
 
 void Td::on_request(uint64 id, td_api::setBackground &request) {
   CHECK_IS_USER();
-  CREATE_REQUEST(SetBackgroundRequest, std::move(request.background_), std::move(request.type_),
-                 request.for_dark_theme_);
+  CREATE_REQUEST_PROMISE();
+  background_manager_->set_background(request.background_.get(), request.type_.get(), request.for_dark_theme_,
+                                      std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::removeBackground &request) {

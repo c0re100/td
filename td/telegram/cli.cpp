@@ -2171,6 +2171,10 @@ class CliClient final : public Actor {
       } else {
         send_request(td_api::make_object<td_api::searchContacts>("", as_limit(args)));
       }
+    } else if (op == "gul") {
+      send_request(td_api::make_object<td_api::getUserLink>());
+    } else if (op == "subt") {
+      send_request(td_api::make_object<td_api::searchUserByToken>(args));
     } else if (op == "AddContact") {
       UserId user_id;
       string first_name;
@@ -2518,6 +2522,12 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::setOption>(name, td_api::make_object<td_api::optionValueString>(value)));
     } else if (op == "me") {
       send_request(td_api::make_object<td_api::getMe>());
+    } else if (op == "sdmttl") {
+      int32 ttl;
+      get_args(args, ttl);
+      send_request(td_api::make_object<td_api::setDefaultMessageTtl>(td_api::make_object<td_api::messageTtl>(ttl)));
+    } else if (op == "gdmttl") {
+      send_request(td_api::make_object<td_api::getDefaultMessageTtl>());
     } else if (op == "sattl") {
       int32 days;
       get_args(args, days);
@@ -3867,15 +3877,42 @@ class CliClient final : public Actor {
       ChatId chat_id;
       MessageThreadId message_thread_id;
       string name;
+      bool edit_icon_custom_emoji;
       int64 icon_custom_emoji_id;
-      get_args(args, chat_id, message_thread_id, name, icon_custom_emoji_id);
-      send_request(td_api::make_object<td_api::editForumTopic>(chat_id, message_thread_id, name, icon_custom_emoji_id));
+      get_args(args, chat_id, message_thread_id, name, edit_icon_custom_emoji, icon_custom_emoji_id);
+      send_request(td_api::make_object<td_api::editForumTopic>(chat_id, message_thread_id, name, edit_icon_custom_emoji,
+                                                               icon_custom_emoji_id));
+    } else if (op == "gft") {
+      ChatId chat_id;
+      MessageThreadId message_thread_id;
+      get_args(args, chat_id, message_thread_id);
+      send_request(td_api::make_object<td_api::getForumTopic>(chat_id, message_thread_id));
+    } else if (op == "gftl") {
+      ChatId chat_id;
+      MessageThreadId message_thread_id;
+      get_args(args, chat_id, message_thread_id);
+      send_request(td_api::make_object<td_api::getForumTopicLink>(chat_id, message_thread_id));
+    } else if (op == "gfts") {
+      ChatId chat_id;
+      string query;
+      int32 offset_date;
+      MessageId offset_message_id;
+      MessageThreadId offset_message_thread_id;
+      string limit;
+      get_args(args, chat_id, query, offset_date, offset_message_id, offset_message_thread_id, limit);
+      send_request(td_api::make_object<td_api::getForumTopics>(chat_id, query, offset_date, offset_message_id,
+                                                               offset_message_thread_id, as_limit(limit)));
     } else if (op == "tftic") {
       ChatId chat_id;
       MessageThreadId message_thread_id;
       bool is_closed;
       get_args(args, chat_id, message_thread_id, is_closed);
       send_request(td_api::make_object<td_api::toggleForumTopicIsClosed>(chat_id, message_thread_id, is_closed));
+    } else if (op == "tgftih") {
+      ChatId chat_id;
+      bool is_hidden;
+      get_args(args, chat_id, is_hidden);
+      send_request(td_api::make_object<td_api::toggleGeneralForumTopicIsHidden>(chat_id, is_hidden));
     } else if (op == "dft") {
       ChatId chat_id;
       MessageThreadId message_thread_id;
@@ -4258,18 +4295,22 @@ class CliClient final : public Actor {
     } else if (op == "cnbgc") {
       string user_ids_string;
       string title;
-      get_args(args, user_ids_string, title);
-      send_request(td_api::make_object<td_api::createNewBasicGroupChat>(as_user_ids(user_ids_string), title));
-    } else if (op == "cnchc") {
-      send_request(td_api::make_object<td_api::createNewSupergroupChat>(args, true, "Description", nullptr, false));
-    } else if (op == "cnsgc") {
-      send_request(td_api::make_object<td_api::createNewSupergroupChat>(args, false, "Description", nullptr, false));
+      int32 message_ttl;
+      get_args(args, user_ids_string, title, message_ttl);
+      send_request(
+          td_api::make_object<td_api::createNewBasicGroupChat>(as_user_ids(user_ids_string), title, message_ttl));
+    } else if (op == "cnchc" || op == "cnchcttl") {
+      send_request(td_api::make_object<td_api::createNewSupergroupChat>(args, true, "Description", nullptr,
+                                                                        op == "cnchcttl" ? 86400 : 0, false));
+    } else if (op == "cnsgc" || op == "cnsgcttl") {
+      send_request(td_api::make_object<td_api::createNewSupergroupChat>(args, false, "Description", nullptr,
+                                                                        op == "cnsgcttl" ? 86400 : 0, false));
     } else if (op == "cnsgcloc") {
       send_request(td_api::make_object<td_api::createNewSupergroupChat>(
           args, false, "Description",
-          td_api::make_object<td_api::chatLocation>(as_location("40.0", "60.0", ""), "address"), false));
+          td_api::make_object<td_api::chatLocation>(as_location("40.0", "60.0", ""), "address"), 0, false));
     } else if (op == "cnsgcimport") {
-      send_request(td_api::make_object<td_api::createNewSupergroupChat>(args, false, "Description", nullptr, true));
+      send_request(td_api::make_object<td_api::createNewSupergroupChat>(args, false, "Description", nullptr, 0, true));
     } else if (op == "UpgradeBasicGroupChatToSupergroupChat") {
       ChatId chat_id;
       get_args(args, chat_id);
@@ -4621,6 +4662,12 @@ class CliClient final : public Actor {
       get_args(args, supergroup_id, is_all_history_available);
       send_request(td_api::make_object<td_api::toggleSupergroupIsAllHistoryAvailable>(as_supergroup_id(supergroup_id),
                                                                                       is_all_history_available));
+    } else if (op == "tsgas") {
+      string supergroup_id;
+      bool is_aggressive_anti_spam_enabled;
+      get_args(args, supergroup_id, is_aggressive_anti_spam_enabled);
+      send_request(td_api::make_object<td_api::toggleSupergroupIsAggressiveAntiSpamEnabled>(
+          as_supergroup_id(supergroup_id), is_aggressive_anti_spam_enabled));
     } else if (op == "tsgif") {
       string supergroup_id;
       bool is_forum;
@@ -4842,29 +4889,37 @@ class CliClient final : public Actor {
           as_notification_settings_scope(args), op == "gcnses"));
     } else if (op == "gsns") {
       send_request(td_api::make_object<td_api::getScopeNotificationSettings>(as_notification_settings_scope(args)));
-    } else if (op == "scns" || op == "ssns") {
-      string chat_id_or_scope;
+    } else if (op == "scns" || op == "ssns" || op == "sftns") {
+      string scope;
       string mute_for;
       int64 sound_id;
       string show_preview;
       string disable_pinned_message_notifications;
       string disable_mention_notifications;
-      get_args(args, chat_id_or_scope, mute_for, sound_id, show_preview, disable_pinned_message_notifications,
+      get_args(args, scope, mute_for, sound_id, show_preview, disable_pinned_message_notifications,
                disable_mention_notifications);
-      if (op == "scns") {
-        send_request(td_api::make_object<td_api::setChatNotificationSettings>(
-            as_chat_id(chat_id_or_scope),
-            td_api::make_object<td_api::chatNotificationSettings>(
-                mute_for.empty(), to_integer<int32>(mute_for), sound_id == -1, sound_id, show_preview.empty(),
-                as_bool(show_preview), disable_pinned_message_notifications.empty(),
-                as_bool(disable_pinned_message_notifications), disable_mention_notifications.empty(),
-                as_bool(disable_mention_notifications))));
-      } else {
+      if (op == "ssns") {
         send_request(td_api::make_object<td_api::setScopeNotificationSettings>(
-            as_notification_settings_scope(chat_id_or_scope),
+            as_notification_settings_scope(scope),
             td_api::make_object<td_api::scopeNotificationSettings>(
                 to_integer<int32>(mute_for), sound_id, as_bool(show_preview),
                 as_bool(disable_pinned_message_notifications), as_bool(disable_mention_notifications))));
+      } else {
+        auto settings = td_api::make_object<td_api::chatNotificationSettings>(
+            mute_for.empty(), to_integer<int32>(mute_for), sound_id == -1, sound_id, show_preview.empty(),
+            as_bool(show_preview), disable_pinned_message_notifications.empty(),
+            as_bool(disable_pinned_message_notifications), disable_mention_notifications.empty(),
+            as_bool(disable_mention_notifications));
+        if (op == "scns") {
+          send_request(
+              td_api::make_object<td_api::setChatNotificationSettings>(as_chat_id(scope), std::move(settings)));
+        } else {
+          string chat_id;
+          string message_id;
+          std::tie(chat_id, message_id) = split(scope, ',');
+          send_request(td_api::make_object<td_api::setForumTopicNotificationSettings>(
+              as_chat_id(chat_id), as_message_id(message_id), std::move(settings)));
+        }
       }
     } else if (op == "rans") {
       send_request(td_api::make_object<td_api::resetAllNotificationSettings>());
@@ -4959,6 +5014,12 @@ class CliClient final : public Actor {
       get_args(args, supergroup_id, message_ids);
       send_request(td_api::make_object<td_api::reportSupergroupSpam>(as_supergroup_id(supergroup_id),
                                                                      as_message_ids(message_ids)));
+    } else if (op == "rsgasfp") {
+      string supergroup_id;
+      MessageId message_id;
+      get_args(args, supergroup_id, message_id);
+      send_request(td_api::make_object<td_api::reportSupergroupAntiSpamFalsePositive>(as_supergroup_id(supergroup_id),
+                                                                                      message_id));
     } else if (op == "gdiff") {
       send_request(td_api::make_object<td_api::testGetDifference>());
     } else if (op == "dproxy") {

@@ -221,6 +221,18 @@ class Logger {
   int log_level_;
 };
 
+class LogGuard {
+ public:
+  LogGuard();
+  LogGuard(const LogGuard &) = delete;
+  LogGuard &operator=(const LogGuard &) = delete;
+  LogGuard(LogGuard &&) = delete;
+  LogGuard &operator=(LogGuard &&) = delete;
+  ~LogGuard();
+};
+
+bool has_log_guard();
+
 class ScopedDisableLog {
  public:
   ScopedDisableLog();

@@ -84,7 +84,7 @@ Result<size_t> HttpReader::read_next(HttpQuery *query, bool can_be_slow) {
           return Status::Error(501, "Unimplemented: unsupported transfer-encoding");
         }
 
-        if (content_encoding_.empty()) {
+        if (content_encoding_.empty() || content_encoding_ == "none") {
         } else if (content_encoding_ == "gzip" || content_encoding_ == "deflate") {
           gzip_flow_ = GzipByteFlow(Gzip::Mode::Decode);
           GzipByteFlow::Options options;
@@ -174,8 +174,8 @@ Result<size_t> HttpReader::read_next(HttpQuery *query, bool can_be_slow) {
         }
         // save content to a file
         if (temp_file_.empty()) {
-          auto file = open_temp_file("file");
-          if (file.is_error()) {
+          auto open_status = open_temp_file("file");
+          if (open_status.is_error()) {
             return Status::Error(500, "Internal Server Error: can't create temporary file");
           }
         }
@@ -408,10 +408,6 @@ Result<bool> HttpReader::parse_multipart_form_data(bool can_be_slow) {
             if (query_->files_.size() == max_files_) {
               return Status::Error(413, "Request Entity Too Large: too many files attached");
             }
-            auto file = open_temp_file(file_name_);
-            if (file.is_error()) {
-              return Status::Error(500, "Internal Server Error: can't create temporary file");
-            }
 
             // don't need to save headers for files
             file_field_name_ = field_name_.str();
@@ -466,6 +462,12 @@ Result<bool> HttpReader::parse_multipart_form_data(bool can_be_slow) {
       case FormDataParseState::ReadFile: {
         if (!can_be_slow) {
           return Status::Error("SLOW");
+        }
+        if (temp_file_.empty()) {
+          auto open_status = open_temp_file(file_name_);
+          if (open_status.is_error()) {
+            return Status::Error(500, "Internal Server Error: can't create temporary file");
+          }
         }
         if (find_boundary(content_->clone(), boundary_, form_data_read_length_)) {
           auto file_part = content_->cut_head(form_data_read_length_).move_as_buffer_slice();
@@ -555,8 +557,6 @@ void HttpReader::process_header(MutableSlice header_name, MutableSlice header_va
   to_lower_inplace(header_name);
   LOG(DEBUG) << "Process header [" << header_name << "=>" << header_value << "]";
   query_->headers_.emplace_back(header_name, header_value);
-  // TODO: check if protocol is HTTP/1.1
-  query_->keep_alive_ = true;
   if (header_name == "content-length") {
     auto content_length = to_integer<uint64>(header_value);
     if (content_length > MAX_CONTENT_SIZE) {
@@ -567,6 +567,8 @@ void HttpReader::process_header(MutableSlice header_name, MutableSlice header_va
     to_lower_inplace(header_value);
     if (header_value == "close") {
       query_->keep_alive_ = false;
+    } else {
+      query_->keep_alive_ = true;
     }
   } else if (header_name == "content-type") {
     content_type_ = header_value;
@@ -706,8 +708,12 @@ Status HttpReader::parse_head(MutableSlice head) {
   } else if (type == "POST") {
     query_->type_ = HttpQuery::Type::Post;
   } else if (type.size() >= 4 && type.substr(0, 4) == "HTTP") {
-    if (type == "HTTP/1.1" || type == "HTTP/1.0") {
+    if (type == "HTTP/1.1") {
       query_->type_ = HttpQuery::Type::Response;
+      query_->keep_alive_ = true;
+    } else if (type == "HTTP/1.0") {
+      query_->type_ = HttpQuery::Type::Response;
+      query_->keep_alive_ = false;
     } else {
       LOG(INFO) << "Unsupported HTTP version: " << type;
       return Status::Error(505, "HTTP Version Not Supported");
@@ -748,7 +754,6 @@ Status HttpReader::parse_head(MutableSlice head) {
   transfer_encoding_ = Slice();
   content_encoding_ = Slice();
 
-  query_->keep_alive_ = false;
   query_->headers_.clear();
   query_->files_.clear();
   query_->content_ = MutableSlice();

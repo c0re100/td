@@ -421,14 +421,14 @@ class FileManager final : public FileLoadManager::Callback {
 
   void init_actor();
 
-  FileId dup_file_id(FileId file_id);
+  FileId dup_file_id(FileId file_id, const char *source);
 
   void on_file_unlink(const FullLocalFileLocation &location);
 
   FileId register_empty(FileType type);
   Result<FileId> register_local(FullLocalFileLocation location, DialogId owner_dialog_id, int64 size,
-                                bool get_by_hash = false, bool force = false,
-                                bool skip_file_size_checks = false) TD_WARN_UNUSED_RESULT;
+                                bool get_by_hash = false, bool force = false, bool skip_file_size_checks = false,
+                                FileId merge_file_id = FileId()) TD_WARN_UNUSED_RESULT;
   FileId register_remote(FullRemoteFileLocation location, FileLocationSource file_location_source,
                          DialogId owner_dialog_id, int64 size, int64 expected_size,
                          string remote_name) TD_WARN_UNUSED_RESULT;
@@ -436,7 +436,7 @@ class FileManager final : public FileLoadManager::Callback {
                                    string conversion, DialogId owner_dialog_id,
                                    int64 expected_size) TD_WARN_UNUSED_RESULT;
 
-  Result<FileId> merge(FileId x_file_id, FileId y_file_id, bool no_sync = false) TD_WARN_UNUSED_RESULT;
+  Status merge(FileId x_file_id, FileId y_file_id, bool no_sync = false);
 
   void add_file_source(FileId file_id, FileSourceId file_source_id);
 
@@ -520,8 +520,8 @@ class FileManager final : public FileLoadManager::Callback {
 
   FileId register_url(string url, FileType file_type, FileLocationSource file_location_source,
                       DialogId owner_dialog_id);
-  Result<FileId> register_file(FileData &&data, FileLocationSource file_location_source, const char *source, bool force,
-                               bool skip_file_size_checks = false);
+  Result<FileId> register_file(FileData &&data, FileLocationSource file_location_source, FileId merge_file_id,
+                               const char *source, bool force, bool skip_file_size_checks = false);
 
   static constexpr int8 FROM_BYTES_PRIORITY = 10;
 
@@ -601,7 +601,7 @@ class FileManager final : public FileLoadManager::Callback {
 
   std::set<std::string> bad_paths_;
 
-  int file_node_size_warning_exp_ = 12;
+  int file_node_size_warning_exp_ = 10;
 
   FileId next_file_id();
   FileNodeId next_file_node_id();

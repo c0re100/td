@@ -12,6 +12,7 @@
 #include "td/db/binlog/BinlogInterface.h"
 
 #include "td/utils/FlatHashMap.h"
+#include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/Random.h"
 #include "td/utils/StorerBase.h"
@@ -83,8 +84,8 @@ bool EventId::is_valid_id(int32 id) {
 
 class TQueueImpl final : public TQueue {
   static constexpr size_t MAX_EVENT_LENGTH = 65536 * 8;
-  static constexpr size_t MAX_QUEUE_EVENTS = 1000000;
-  static constexpr size_t MAX_TOTAL_EVENT_LENGTH = 1 << 30;
+  static constexpr size_t MAX_QUEUE_EVENTS = 100000;
+  static constexpr size_t MAX_TOTAL_EVENT_LENGTH = 1 << 27;
 
  public:
   void set_callback(unique_ptr<StorageCallback> callback) final {
@@ -158,7 +159,9 @@ class TQueueImpl final : public TQueue {
     while (true) {
       if (q.tail_id.empty()) {
         if (hint_new_id.empty()) {
-          q.tail_id = EventId::from_int32(Random::fast(2 * MAX_QUEUE_EVENTS + 1, EventId::MAX_ID / 2)).move_as_ok();
+          q.tail_id = EventId::from_int32(
+                          Random::fast(2 * max(static_cast<int>(MAX_QUEUE_EVENTS), 1000000) + 1, EventId::MAX_ID / 2))
+                          .move_as_ok();
         } else {
           q.tail_id = hint_new_id;
         }
@@ -213,6 +216,35 @@ class TQueueImpl final : public TQueue {
       return;
     }
     pop(q, queue_id, it, q.tail_id);
+  }
+
+  void clear(QueueId queue_id, size_t keep_count) final {
+    auto queue_it = queues_.find(queue_id);
+    if (queue_it == queues_.end()) {
+      return;
+    }
+    auto &q = queue_it->second;
+    auto size = get_size(q);
+    if (size <= keep_count) {
+      return;
+    }
+
+    auto start_time = Time::now();
+    auto total_event_length = q.total_event_length;
+
+    auto end_it = q.events.end();
+    for (size_t i = 0; i < keep_count; i++) {
+      --end_it;
+    }
+    for (auto it = q.events.begin(); it != end_it;) {
+      pop(q, queue_id, it, q.tail_id);
+    }
+
+    auto clear_time = Time::now() - start_time;
+    if (clear_time > 0.1) {
+      LOG(WARNING) << "Cleared " << (size - keep_count) << " TQueue events with total size "
+                   << (total_event_length - q.total_event_length) << " in " << clear_time << " seconds";
+    }
   }
 
   Result<size_t> get(QueueId queue_id, EventId from_id, bool forget_previous, int32 unix_time_now,

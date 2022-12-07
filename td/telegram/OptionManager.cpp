@@ -117,7 +117,10 @@ OptionManager::OptionManager(Td *td)
     set_option_integer("themed_emoji_statuses_sticker_set_id", sticker_set_id);
   }
   if (!have_option("forum_member_count_min")) {
-    set_option_integer("forum_member_count_min", 200);
+    set_option_integer("forum_member_count_min", G()->is_test_dc() ? 3 : 100);
+  }
+  if (!have_option("aggressive_anti_spam_supergroup_member_count_min")) {
+    set_option_integer("aggressive_anti_spam_supergroup_member_count_min", G()->is_test_dc() ? 1 : 100);
   }
 }
 
@@ -261,6 +264,8 @@ bool OptionManager::is_internal_option(Slice name) {
              name == "dice_emojis" || name == "dice_success_values" || name == "drop_database_on_session_close";
     case 'e':
       return name == "edit_time_limit" || name == "emoji_sounds";
+    case 'f':
+      return name == "fragment_prefixes";
     case 'i':
       return name == "ignored_restriction_reasons";
     case 'l':
@@ -354,6 +359,9 @@ void OptionManager::on_option_updated(Slice name) {
     case 'f':
       if (name == "favorite_stickers_limit") {
         td_->stickers_manager_->on_update_favorite_stickers_limit();
+      }
+      if (name == "fragment_prefixes") {
+        send_closure(td_->contacts_manager_actor_, &ContactsManager::on_update_fragment_prefixes);
       }
       break;
     case 'i':
@@ -513,7 +521,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.8");
+        return td_api::make_object<td_api::optionValueString>("1.8.9");
       }
       break;
   }

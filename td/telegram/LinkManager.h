@@ -88,6 +88,8 @@ class LinkManager final : public Actor {
 
   static string get_instant_view_link(Slice url, Slice rhash);
 
+  static string get_public_chat_link(Slice username);
+
   static UserId get_link_user_id(Slice url);
 
   static Result<CustomEmojiId> get_link_custom_emoji_id(Slice url);
@@ -131,6 +133,7 @@ class LinkManager final : public Actor {
   class InternalLinkUnknownDeepLink;
   class InternalLinkUnsupportedProxy;
   class InternalLinkUserPhoneNumber;
+  class InternalLinkUserToken;
   class InternalLinkVoiceChat;
 
   enum class LinkType : int32 { External, TMe, Tg, Telegraph };
