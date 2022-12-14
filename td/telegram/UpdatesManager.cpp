@@ -22,9 +22,9 @@
 #include "td/telegram/DownloadManager.h"
 #include "td/telegram/EmojiStatus.h"
 #include "td/telegram/FolderId.h"
+#include "td/telegram/ForumTopicManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/GroupCallManager.h"
-#include "td/telegram/ForumTopicManager.h"
 #include "td/telegram/InlineQueriesManager.h"
 #include "td/telegram/LanguagePackManager.h"
 #include "td/telegram/Location.h"
@@ -1155,7 +1155,7 @@ FlatHashSet<int64> UpdatesManager::get_sent_messages_random_ids(const telegram_a
         if (random_id != 0) {
           bool found_message = false;
           for (auto message : new_messages) {
-            MessageId message_id = MessagesManager::get_message_id(message.first, message.second);
+            MessageId message_id = MessageId::get_message_id(message.first, message.second);
             if (message.second) {
               found_message |= message_id.is_valid_scheduled() &&
                                message_id.get_scheduled_server_message_id().get() == update_message_id->id_;
@@ -1207,7 +1207,7 @@ const telegram_api::Message *UpdatesManager::get_message_by_random_id(const tele
     } else if (constructor_id == telegram_api::updateNewChannelMessage::ID) {
       message = &static_cast<const telegram_api::updateNewChannelMessage *>(update.get())->message_;
     }
-    if (message != nullptr && MessagesManager::get_full_message_id(*message, false) == full_message_id) {
+    if (message != nullptr && FullMessageId::get_full_message_id(*message, false) == full_message_id) {
       if (result != nullptr) {
         return nullptr;
       }
@@ -1382,21 +1382,21 @@ int32 UpdatesManager::get_update_edit_message_pts(const telegram_api::Updates *u
         switch (update_ptr->get_id()) {
           case telegram_api::updateEditMessage::ID: {
             auto update = static_cast<const telegram_api::updateEditMessage *>(update_ptr.get());
-            if (MessagesManager::get_full_message_id(update->message_, false) == full_message_id) {
+            if (FullMessageId::get_full_message_id(update->message_, false) == full_message_id) {
               return update->pts_;
             }
             return 0;
           }
           case telegram_api::updateEditChannelMessage::ID: {
             auto update = static_cast<const telegram_api::updateEditChannelMessage *>(update_ptr.get());
-            if (MessagesManager::get_full_message_id(update->message_, false) == full_message_id) {
+            if (FullMessageId::get_full_message_id(update->message_, false) == full_message_id) {
               return update->pts_;
             }
             return 0;
           }
           case telegram_api::updateNewScheduledMessage::ID: {
             auto update = static_cast<const telegram_api::updateNewScheduledMessage *>(update_ptr.get());
-            auto new_full_message_id = MessagesManager::get_full_message_id(update->message_, true);
+            auto new_full_message_id = FullMessageId::get_full_message_id(update->message_, true);
             if (new_full_message_id.get_dialog_id() == full_message_id.get_dialog_id()) {
               auto new_message_id = new_full_message_id.get_message_id();
               auto old_message_id = full_message_id.get_message_id();
@@ -1727,9 +1727,8 @@ void UpdatesManager::after_get_difference() {
     VLOG(get_difference) << "Finished to apply " << total_update_count << " postponed updates";
     auto passed_time = Time::now() - begin_time;
     if (passed_time >= UPDATE_APPLY_WARNING_TIME) {
-      LOG(WARNING) << "Applied " << total_update_count << " postponed for "
-                   << (Time::now() - get_difference_start_time_) << " updates in " << chunk_count << " chunks in "
-                   << passed_time;
+      LOG(WARNING) << "Applied " << total_update_count << " updates in " << chunk_count << " chunks in " << passed_time
+                   << " seconds after postponing them for " << (Time::now() - get_difference_start_time_) << " seconds";
     }
   }
 
@@ -1752,8 +1751,8 @@ void UpdatesManager::after_get_difference() {
                          << postponed_pts_updates_.size() << " pending pts updates";
     auto passed_time = Time::now() - begin_time;
     if (passed_time >= UPDATE_APPLY_WARNING_TIME) {
-      LOG(WARNING) << "Applied " << update_count << " postponed for " << (Time::now() - get_difference_start_time_)
-                   << " pts updates in " << passed_time;
+      LOG(WARNING) << "Applied " << update_count << " pts updates in " << passed_time
+                   << " seconds after postponing them for " << (Time::now() - get_difference_start_time_) << " seconds";
     }
   }
 
@@ -1929,7 +1928,7 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
 
         // for channels we can try to replace unacceptable update with updateChannelTooLong
         if (message_ptr != nullptr) {
-          auto dialog_id = td_->messages_manager_->get_message_dialog_id(*message_ptr);
+          auto dialog_id = DialogId::get_message_dialog_id(*message_ptr);
           if (dialog_id.get_type() == DialogType::Channel) {
             auto channel_id = dialog_id.get_channel_id();
             if (td_->contacts_manager_->have_channel_force(channel_id)) {
@@ -2659,7 +2658,7 @@ void UpdatesManager::process_postponed_pts_updates() {
     LOG(WARNING) << "PTS has changed from " << initial_pts << " to " << old_pts << " after skipping "
                  << skipped_update_count << ", applying " << applied_update_count << " and keeping "
                  << postponed_pts_updates_.size() << " postponed for " << (Time::now() - get_difference_start_time_)
-                 << " updates in " << passed_time;
+                 << " seconds updates in " << passed_time << " seconds";
   }
 }
 
@@ -2714,7 +2713,7 @@ void UpdatesManager::process_pending_pts_updates() {
   if (passed_time >= UPDATE_APPLY_WARNING_TIME) {
     LOG(WARNING) << "PTS has changed from " << initial_pts << " to " << get_pts() << " after applying "
                  << applied_update_count << " and keeping " << pending_pts_updates_.size() << " pending updates in "
-                 << passed_time;
+                 << passed_time << " seconds";
   }
 }
 
@@ -2771,7 +2770,7 @@ void UpdatesManager::process_pending_seq_updates() {
   if (passed_time >= UPDATE_APPLY_WARNING_TIME) {
     LOG(WARNING) << "Seq has changed from " << initial_seq << " to " << seq_ << " after applying "
                  << applied_update_count << " and keeping " << pending_seq_updates_.size() << " pending updates in "
-                 << passed_time;
+                 << passed_time << " seconds";
   }
 }
 
@@ -2825,7 +2824,7 @@ void UpdatesManager::process_pending_qts_updates() {
   if (passed_time >= UPDATE_APPLY_WARNING_TIME) {
     LOG(WARNING) << "QTS has changed from " << initial_qts << " to " << get_qts() << " after applying "
                  << applied_update_count << " and keeping " << pending_qts_updates_.size() << " pending updates in "
-                 << passed_time;
+                 << passed_time << " seconds";
   }
 }
 
@@ -2868,7 +2867,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateNewMessage> upd
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateNewChannelMessage> update, Promise<Unit> &&promise) {
-  DialogId dialog_id = MessagesManager::get_message_dialog_id(update->message_);
+  DialogId dialog_id = DialogId::get_message_dialog_id(update->message_);
   int new_pts = update->pts_;
   int pts_count = update->pts_count_;
   td_->messages_manager_->add_pending_channel_update(dialog_id, std::move(update), new_pts, pts_count,
@@ -2957,7 +2956,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannel> update
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateEditChannelMessage> update, Promise<Unit> &&promise) {
-  DialogId dialog_id = MessagesManager::get_message_dialog_id(update->message_);
+  DialogId dialog_id = DialogId::get_message_dialog_id(update->message_);
   int new_pts = update->pts_;
   int pts_count = update->pts_count_;
   td_->messages_manager_->add_pending_channel_update(dialog_id, std::move(update), new_pts, pts_count,
@@ -3206,7 +3205,7 @@ bool UpdatesManager::check_pts_update(const tl_object_ptr<telegram_api::Update> 
       return true;
     case telegram_api::updateNewMessage::ID: {
       auto update_new_message = static_cast<const telegram_api::updateNewMessage *>(update.get());
-      return check_pts_update_dialog_id(MessagesManager::get_message_dialog_id(update_new_message->message_));
+      return check_pts_update_dialog_id(DialogId::get_message_dialog_id(update_new_message->message_));
     }
     case telegram_api::updateReadHistoryInbox::ID: {
       auto update_read_history_inbox = static_cast<const telegram_api::updateReadHistoryInbox *>(update.get());
@@ -3218,7 +3217,7 @@ bool UpdatesManager::check_pts_update(const tl_object_ptr<telegram_api::Update> 
     }
     case telegram_api::updateEditMessage::ID: {
       auto update_edit_message = static_cast<const telegram_api::updateEditMessage *>(update.get());
-      return check_pts_update_dialog_id(MessagesManager::get_message_dialog_id(update_edit_message->message_));
+      return check_pts_update_dialog_id(DialogId::get_message_dialog_id(update_edit_message->message_));
     }
     case telegram_api::updatePinnedMessages::ID: {
       auto update_pinned_messages = static_cast<const telegram_api::updatePinnedMessages *>(update.get());

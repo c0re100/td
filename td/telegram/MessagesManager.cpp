@@ -518,7 +518,7 @@ class GetChannelMessagesQuery final : public Td::ResultHandler {
       vector<MessageId> empty_message_ids;
       for (auto &message : info.messages) {
         if (message->get_id() == telegram_api::messageEmpty::ID) {
-          auto message_id = MessagesManager::get_message_id(message, false);
+          auto message_id = MessageId::get_message_id(message, false);
           if (message_id.is_valid() && message_id <= last_new_message_id_) {
             empty_message_ids.push_back(message_id);
           }
@@ -1931,7 +1931,7 @@ class GetMessagesViewsQuery final : public Td::ResultHandler {
     }
 
     send_query(G()->net_query_creator().create(telegram_api::messages_getMessagesViews(
-        std::move(input_peer), MessagesManager::get_server_message_ids(message_ids_), increment_view_counter)));
+        std::move(input_peer), MessageId::get_server_message_ids(message_ids_), increment_view_counter)));
   }
 
   void on_result(BufferSlice packet) final {
@@ -1983,7 +1983,7 @@ class GetExtendedMediaQuery final : public Td::ResultHandler {
     }
 
     send_query(G()->net_query_creator().create(telegram_api::messages_getExtendedMedia(
-        std::move(input_peer), MessagesManager::get_server_message_ids(message_ids_))));
+        std::move(input_peer), MessageId::get_server_message_ids(message_ids_))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -2013,7 +2013,7 @@ class ReadMessagesContentsQuery final : public Td::ResultHandler {
 
   void send(vector<MessageId> &&message_ids) {
     send_query(G()->net_query_creator().create(
-        telegram_api::messages_readMessageContents(MessagesManager::get_server_message_ids(message_ids))));
+        telegram_api::messages_readMessageContents(MessageId::get_server_message_ids(message_ids))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -2061,7 +2061,7 @@ class ReadChannelMessagesContentsQuery final : public Td::ResultHandler {
     }
 
     send_query(G()->net_query_creator().create(telegram_api::channels_readMessageContents(
-        std::move(input_channel), MessagesManager::get_server_message_ids(message_ids))));
+        std::move(input_channel), MessageId::get_server_message_ids(message_ids))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -2444,7 +2444,7 @@ class GetMessagePositionQuery final : public Td::ResultHandler {
       case telegram_api::messages_messages::ID: {
         auto messages = move_tl_object_as<telegram_api::messages_messages>(messages_ptr);
         if (messages->messages_.size() != 1 ||
-            MessagesManager::get_message_id(messages->messages_[0], false) != message_id_) {
+            MessageId::get_message_id(messages->messages_[0], false) != message_id_) {
           return promise_.set_error(Status::Error(400, "Message not found by the filter"));
         }
         return promise_.set_value(narrow_cast<int32>(messages->messages_.size()));
@@ -2452,7 +2452,7 @@ class GetMessagePositionQuery final : public Td::ResultHandler {
       case telegram_api::messages_messagesSlice::ID: {
         auto messages = move_tl_object_as<telegram_api::messages_messagesSlice>(messages_ptr);
         if (messages->messages_.size() != 1 ||
-            MessagesManager::get_message_id(messages->messages_[0], false) != message_id_) {
+            MessageId::get_message_id(messages->messages_[0], false) != message_id_) {
           return promise_.set_error(Status::Error(400, "Message not found by the filter"));
         }
         if (messages->offset_id_offset_ <= 0) {
@@ -2465,7 +2465,7 @@ class GetMessagePositionQuery final : public Td::ResultHandler {
       case telegram_api::messages_channelMessages::ID: {
         auto messages = move_tl_object_as<telegram_api::messages_channelMessages>(messages_ptr);
         if (messages->messages_.size() != 1 ||
-            MessagesManager::get_message_id(messages->messages_[0], false) != message_id_) {
+            MessageId::get_message_id(messages->messages_[0], false) != message_id_) {
           return promise_.set_error(Status::Error(400, "Message not found by the filter"));
         }
         if (messages->offset_id_offset_ <= 0) {
@@ -3649,7 +3649,7 @@ class SendMultiMediaQuery final : public Td::ResultHandler {
         is_result_wrong = true;
       }
       for (auto &sent_message : sent_messages) {
-        if (MessagesManager::get_message_dialog_id(sent_message.first) != dialog_id_) {
+        if (DialogId::get_message_dialog_id(sent_message.first) != dialog_id_) {
           is_result_wrong = true;
         }
       }
@@ -4098,7 +4098,7 @@ class ForwardMessagesQuery final : public Td::ResultHandler {
     auto query = G()->net_query_creator().create(
         telegram_api::messages_forwardMessages(
             flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-            false /*ignored*/, std::move(from_input_peer), MessagesManager::get_server_message_ids(message_ids),
+            false /*ignored*/, std::move(from_input_peer), MessageId::get_server_message_ids(message_ids),
             std::move(random_ids), std::move(to_input_peer), top_thread_message_id.get_server_message_id().get(),
             schedule_date, std::move(as_input_peer)),
         {{to_dialog_id, MessageContentType::Text}, {to_dialog_id, MessageContentType::Photo}});
@@ -4146,7 +4146,7 @@ class ForwardMessagesQuery final : public Td::ResultHandler {
         is_result_wrong = true;
       }
       for (auto &sent_message : sent_messages) {
-        if (MessagesManager::get_message_dialog_id(sent_message.first) != to_dialog_id_) {
+        if (DialogId::get_message_dialog_id(sent_message.first) != to_dialog_id_) {
           is_result_wrong = true;
         }
       }
@@ -4395,7 +4395,7 @@ class DeleteScheduledMessagesQuery final : public Td::ResultHandler {
       return on_error(Status::Error(400, "Can't access the chat"));
     }
     send_query(G()->net_query_creator().create(telegram_api::messages_deleteScheduledMessages(
-        std::move(input_peer), MessagesManager::get_scheduled_server_message_ids(message_ids_))));
+        std::move(input_peer), MessageId::get_scheduled_server_message_ids(message_ids_))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -4551,7 +4551,7 @@ class ReportPeerQuery final : public Td::ResultHandler {
           std::move(input_peer), report_reason.get_input_report_reason(), report_reason.get_message())));
     } else {
       send_query(G()->net_query_creator().create(
-          telegram_api::messages_report(std::move(input_peer), MessagesManager::get_server_message_ids(message_ids),
+          telegram_api::messages_report(std::move(input_peer), MessageId::get_server_message_ids(message_ids),
                                         report_reason.get_input_report_reason(), report_reason.get_message())));
     }
   }
@@ -6423,24 +6423,6 @@ void MessagesManager::update_message_reply_count(Dialog *d, MessageId message_id
   }
 }
 
-vector<MessageId> MessagesManager::get_message_ids(const vector<int64> &input_message_ids) {
-  vector<MessageId> message_ids;
-  message_ids.reserve(input_message_ids.size());
-  for (auto &input_message_id : input_message_ids) {
-    message_ids.push_back(MessageId(input_message_id));
-  }
-  return message_ids;
-}
-
-vector<int32> MessagesManager::get_server_message_ids(const vector<MessageId> &message_ids) {
-  return transform(message_ids, [](MessageId message_id) { return message_id.get_server_message_id().get(); });
-}
-
-vector<int32> MessagesManager::get_scheduled_server_message_ids(const vector<MessageId> &message_ids) {
-  return transform(message_ids,
-                   [](MessageId message_id) { return message_id.get_scheduled_server_message_id().get(); });
-}
-
 tl_object_ptr<telegram_api::InputPeer> MessagesManager::get_input_peer(DialogId dialog_id,
                                                                        AccessRights access_rights) const {
   switch (dialog_id.get_type()) {
@@ -6639,7 +6621,7 @@ void MessagesManager::skip_old_pending_pts_update(tl_object_ptr<telegram_api::Up
                                                   int32 old_pts, int32 pts_count, const char *source) {
   if (update->get_id() == telegram_api::updateNewMessage::ID) {
     auto update_new_message = static_cast<telegram_api::updateNewMessage *>(update.get());
-    auto full_message_id = get_full_message_id(update_new_message->message_, false);
+    auto full_message_id = FullMessageId::get_full_message_id(update_new_message->message_, false);
     if (update_message_ids_.count(full_message_id) > 0) {
       if (new_pts == old_pts || old_pts == std::numeric_limits<int32>::max()) {
         // apply sent message anyway if it is definitely non-deleted or being skipped because of pts overflow
@@ -7935,7 +7917,7 @@ void MessagesManager::add_pending_channel_update(DialogId dialog_id, tl_object_p
     if (new_pts <= old_pts) {  // very old or unuseful update
       if (update->get_id() == telegram_api::updateNewChannelMessage::ID) {
         auto update_new_channel_message = static_cast<telegram_api::updateNewChannelMessage *>(update.get());
-        auto message_id = get_message_id(update_new_channel_message->message_, false);
+        auto message_id = MessageId::get_message_id(update_new_channel_message->message_, false);
         FullMessageId full_message_id(dialog_id, message_id);
         if (update_message_ids_.count(full_message_id) > 0) {
           // apply sent channel message
@@ -8046,7 +8028,8 @@ void MessagesManager::process_pts_update(tl_object_ptr<telegram_api::Update> &&u
     case telegram_api::updateEditMessage::ID: {
       auto update = move_tl_object_as<telegram_api::updateEditMessage>(update_ptr);
       LOG(INFO) << "Process updateEditMessage";
-      bool had_message = have_message_force(get_full_message_id(update->message_, false), "updateEditMessage");
+      bool had_message =
+          have_message_force(FullMessageId::get_full_message_id(update->message_, false), "updateEditMessage");
       auto full_message_id =
           on_get_message(std::move(update->message_), false, false, false, false, false, "updateEditMessage");
       on_message_edited(full_message_id, update->pts_, had_message);
@@ -8140,7 +8123,8 @@ bool MessagesManager::process_channel_update(tl_object_ptr<telegram_api::Update>
     case telegram_api::updateEditChannelMessage::ID: {
       auto update = move_tl_object_as<telegram_api::updateEditChannelMessage>(update_ptr);
       LOG(INFO) << "Process updateEditChannelMessage";
-      bool had_message = have_message_force(get_full_message_id(update->message_, false), "updateEditChannelMessage");
+      bool had_message =
+          have_message_force(FullMessageId::get_full_message_id(update->message_, false), "updateEditChannelMessage");
       auto full_message_id =
           on_get_message(std::move(update->message_), false, true, false, false, false, "updateEditChannelMessage");
       if (full_message_id == FullMessageId()) {
@@ -9817,7 +9801,7 @@ void MessagesManager::get_channel_differences_if_needed(MessagesInfo &&messages_
       continue;
     }
 
-    auto dialog_id = get_message_dialog_id(message);
+    auto dialog_id = DialogId::get_message_dialog_id(message);
     if (need_channel_difference_to_add_message(dialog_id, message)) {
       run_after_channel_difference(dialog_id, mpas.get_promise());
     }
@@ -9886,7 +9870,7 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
   Dialog *d = get_dialog(dialog_id);
   CHECK(d != nullptr);
 
-  MessageId last_received_message_id = messages.empty() ? MessageId() : get_message_id(messages[0], false);
+  MessageId last_received_message_id = messages.empty() ? MessageId() : MessageId::get_message_id(messages[0], false);
   if (old_last_new_message_id < d->last_new_message_id && (from_the_end || old_last_new_message_id < from_message_id) &&
       last_received_message_id < d->last_new_message_id) {
     // new server messages were added to the dialog since the request was sent, but weren't received
@@ -9929,7 +9913,7 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
     // check that messages are received in decreasing message_id order
     MessageId cur_message_id = MessageId::max();
     for (const auto &message : messages) {
-      MessageId message_id = get_message_id(message, false);
+      MessageId message_id = MessageId::get_message_id(message, false);
       if (message_id >= cur_message_id) {
         string error = PSTRING() << "Receive messages in the wrong order in history of " << dialog_id << " from "
                                  << from_message_id << " with offset " << offset << ", limit " << limit
@@ -9954,7 +9938,7 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
   bool have_next = false;
 
   if (narrow_cast<int32>(messages.size()) < limit + offset && messages.size() <= 1) {
-    MessageId first_received_message_id = get_message_id(messages.back(), false);
+    MessageId first_received_message_id = MessageId::get_message_id(messages.back(), false);
     if (first_received_message_id >= from_message_id && d->first_database_message_id.is_valid() &&
         first_received_message_id >= d->first_database_message_id) {
       // it is likely that there are no more history messages on the server
@@ -9965,19 +9949,19 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
   if (d->last_new_message_id.is_valid()) {
     // remove too new messages from response
     while (!messages.empty()) {
-      if (get_message_dialog_id(messages[0]) == dialog_id &&
-          get_message_id(messages[0], false) <= d->last_new_message_id) {
+      if (DialogId::get_message_dialog_id(messages[0]) == dialog_id &&
+          MessageId::get_message_id(messages[0], false) <= d->last_new_message_id) {
         // the message is old enough
         break;
       }
 
-      LOG(INFO) << "Ignore too new " << get_message_id(messages[0], false);
+      LOG(INFO) << "Ignore too new " << MessageId::get_message_id(messages[0], false);
       messages.erase(messages.begin());
       if (messages.empty()) {
         // received no suitable messages; try again
         return promise.set_value(Unit());
       } else {
-        last_received_message_id = get_message_id(messages[0], false);
+        last_received_message_id = MessageId::get_message_id(messages[0], false);
       }
     }
   }
@@ -9996,13 +9980,13 @@ void MessagesManager::on_get_history(DialogId dialog_id, MessageId from_message_
   }
 
   for (auto &message : messages) {
-    auto expected_message_id = get_message_id(message, false);
+    auto expected_message_id = MessageId::get_message_id(message, false);
     if (!have_next && from_the_end && expected_message_id < d->last_message_id) {
       // last message in the dialog should be attached to the next message if there is some
       have_next = true;
     }
 
-    auto message_dialog_id = get_message_dialog_id(message);
+    auto message_dialog_id = DialogId::get_message_dialog_id(message);
     if (message_dialog_id != dialog_id) {
       LOG(ERROR) << "Receive " << expected_message_id << " in wrong " << message_dialog_id << " instead of "
                  << dialog_id << ": " << oneline(to_string(message));
@@ -10511,7 +10495,7 @@ void MessagesManager::on_get_messages_search_result(const string &query, int32 o
   auto &result = it->second.second;
   CHECK(result.empty());
   for (auto &message : messages) {
-    auto dialog_id = get_message_dialog_id(message);
+    auto dialog_id = DialogId::get_message_dialog_id(message);
     auto new_full_message_id = on_get_message(std::move(message), false, dialog_id.get_type() == DialogType::Channel,
                                               false, false, false, "search messages");
     if (new_full_message_id != FullMessageId()) {
@@ -10542,7 +10526,7 @@ void MessagesManager::on_get_outgoing_document_messages(vector<tl_object_ptr<tel
 
   FoundMessages found_messages;
   for (auto &message : messages) {
-    auto dialog_id = get_message_dialog_id(message);
+    auto dialog_id = DialogId::get_message_dialog_id(message);
     auto full_message_id = on_get_message(std::move(message), false, dialog_id.get_type() == DialogType::Channel, false,
                                           false, false, "on_get_outgoing_document_messages");
     if (full_message_id != FullMessageId()) {
@@ -10587,10 +10571,10 @@ void MessagesManager::on_get_scheduled_server_messages(DialogId dialog_id, uint3
   bool is_channel_message = dialog_id.get_type() == DialogType::Channel;
   bool has_scheduled_server_messages = false;
   for (auto &message : messages) {
-    auto message_dialog_id = get_message_dialog_id(message);
+    auto message_dialog_id = DialogId::get_message_dialog_id(message);
     if (message_dialog_id != dialog_id) {
-      LOG(ERROR) << "Receive " << get_message_id(message, true) << " in wrong " << message_dialog_id << " instead of "
-                 << dialog_id << ": " << oneline(to_string(message));
+      LOG(ERROR) << "Receive " << MessageId::get_message_id(message, true) << " in wrong " << message_dialog_id
+                 << " instead of " << dialog_id << ": " << oneline(to_string(message));
       continue;
     }
 
@@ -10662,7 +10646,7 @@ void MessagesManager::on_get_message_public_forwards(int32 total_count,
   vector<td_api::object_ptr<td_api::message>> result;
   FullMessageId last_full_message_id;
   for (auto &message : messages) {
-    auto dialog_id = get_message_dialog_id(message);
+    auto dialog_id = DialogId::get_message_dialog_id(message);
     auto new_full_message_id = on_get_message(std::move(message), false, dialog_id.get_type() == DialogType::Channel,
                                               false, false, false, "get message public forwards");
     if (new_full_message_id != FullMessageId()) {
@@ -11198,7 +11182,7 @@ void MessagesManager::delete_messages_on_server(DialogId dialog_id, vector<Messa
     case DialogType::User:
     case DialogType::Chat:
     case DialogType::Channel: {
-      auto server_message_ids = MessagesManager::get_server_message_ids(message_ids);
+      auto server_message_ids = MessageId::get_server_message_ids(message_ids);
       const size_t MAX_SLICE_SIZE = 100;  // server side limit
       for (size_t i = 0; i < server_message_ids.size(); i += MAX_SLICE_SIZE) {
         auto end_i = i + MAX_SLICE_SIZE;
@@ -13169,63 +13153,6 @@ void MessagesManager::on_update_viewed_messages_timeout(DialogId dialog_id) {
   update_viewed_messages_timeout_.add_timeout_in(dialog_id.get(), UPDATE_VIEWED_MESSAGES_PERIOD);
 }
 
-MessageId MessagesManager::get_message_id(const telegram_api::Message *message_ptr, bool is_scheduled) {
-  CHECK(message_ptr != nullptr)
-  switch (message_ptr->get_id()) {
-    case telegram_api::messageEmpty::ID: {
-      auto message = static_cast<const telegram_api::messageEmpty *>(message_ptr);
-      return is_scheduled ? MessageId() : MessageId(ServerMessageId(message->id_));
-    }
-    case telegram_api::message::ID: {
-      auto message = static_cast<const telegram_api::message *>(message_ptr);
-      return is_scheduled ? MessageId(ScheduledServerMessageId(message->id_), message->date_)
-                          : MessageId(ServerMessageId(message->id_));
-    }
-    case telegram_api::messageService::ID: {
-      auto message = static_cast<const telegram_api::messageService *>(message_ptr);
-      return is_scheduled ? MessageId(ScheduledServerMessageId(message->id_), message->date_)
-                          : MessageId(ServerMessageId(message->id_));
-    }
-    default:
-      UNREACHABLE();
-      return MessageId();
-  }
-}
-
-MessageId MessagesManager::get_message_id(const tl_object_ptr<telegram_api::Message> &message_ptr, bool is_scheduled) {
-  return get_message_id(message_ptr.get(), is_scheduled);
-}
-
-DialogId MessagesManager::get_message_dialog_id(const telegram_api::Message *message_ptr) {
-  CHECK(message_ptr != nullptr);
-  switch (message_ptr->get_id()) {
-    case telegram_api::messageEmpty::ID: {
-      auto message = static_cast<const telegram_api::messageEmpty *>(message_ptr);
-      return message->peer_id_ == nullptr ? DialogId() : DialogId(message->peer_id_);
-    }
-    case telegram_api::message::ID: {
-      auto message = static_cast<const telegram_api::message *>(message_ptr);
-      return DialogId(message->peer_id_);
-    }
-    case telegram_api::messageService::ID: {
-      auto message = static_cast<const telegram_api::messageService *>(message_ptr);
-      return DialogId(message->peer_id_);
-    }
-    default:
-      UNREACHABLE();
-      return DialogId();
-  }
-}
-
-DialogId MessagesManager::get_message_dialog_id(const tl_object_ptr<telegram_api::Message> &message_ptr) {
-  return get_message_dialog_id(message_ptr.get());
-}
-
-FullMessageId MessagesManager::get_full_message_id(const tl_object_ptr<telegram_api::Message> &message_ptr,
-                                                   bool is_scheduled) {
-  return {get_message_dialog_id(message_ptr), get_message_id(message_ptr, is_scheduled)};
-}
-
 int32 MessagesManager::get_message_date(const tl_object_ptr<telegram_api::Message> &message_ptr) {
   switch (message_ptr->get_id()) {
     case telegram_api::messageEmpty::ID:
@@ -14581,7 +14508,7 @@ MessagesManager::MessageInfo MessagesManager::parse_telegram_api_message(
   LOG_CHECK(message_ptr != nullptr) << source;
 
   MessageInfo message_info;
-  message_info.message_id = get_message_id(message_ptr, is_scheduled);
+  message_info.message_id = MessageId::get_message_id(message_ptr, is_scheduled);
   switch (message_ptr->get_id()) {
     case telegram_api::messageEmpty::ID:
       message_info.message_id = MessageId();
@@ -15832,7 +15759,7 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
   FlatHashMap<FullMessageId, DialogDate, FullMessageIdHash> full_message_id_to_dialog_date;
   FlatHashMap<FullMessageId, tl_object_ptr<telegram_api::Message>, FullMessageIdHash> full_message_id_to_message;
   for (auto &message : messages) {
-    auto full_message_id = get_full_message_id(message, false);
+    auto full_message_id = FullMessageId::get_full_message_id(message, false);
     if (!full_message_id.get_message_id().is_valid()) {
       continue;
     }
@@ -17028,21 +16955,7 @@ void MessagesManager::on_load_dialog_filter_dialogs(DialogFilterId dialog_filter
   }
   CHECK(is_update_chat_filters_sent_);
 
-  auto new_dialog_filter = td::make_unique<DialogFilter>(*old_dialog_filter);
-  for (auto dialog_id : dialog_ids) {
-    InputDialogId::remove(new_dialog_filter->pinned_dialog_ids, dialog_id);
-    InputDialogId::remove(new_dialog_filter->included_dialog_ids, dialog_id);
-    InputDialogId::remove(new_dialog_filter->excluded_dialog_ids, dialog_id);
-  }
-
-  if (*new_dialog_filter != *old_dialog_filter) {
-    LOG(INFO) << "Update " << dialog_filter_id << " from " << *old_dialog_filter << " to " << *new_dialog_filter;
-    edit_dialog_filter(std::move(new_dialog_filter), "on_load_dialog_filter_dialogs");
-    save_dialog_filters();
-    send_update_chat_filters();
-
-    synchronize_dialog_filters();
-  }
+  delete_dialogs_from_filter(old_dialog_filter, std::move(dialog_ids), "on_load_dialog_filter_dialogs");
 
   promise.set_value(Unit());
 }
@@ -17093,6 +17006,26 @@ void MessagesManager::load_dialog_filter(const DialogFilter *filter, bool force,
   }
 
   promise.set_value(Unit());
+}
+
+void MessagesManager::delete_dialogs_from_filter(const DialogFilter *dialog_filter, vector<DialogId> &&dialog_ids,
+                                                 const char *source) {
+  auto new_dialog_filter = td::make_unique<DialogFilter>(*dialog_filter);
+  for (auto dialog_id : dialog_ids) {
+    InputDialogId::remove(new_dialog_filter->pinned_dialog_ids, dialog_id);
+    InputDialogId::remove(new_dialog_filter->included_dialog_ids, dialog_id);
+    InputDialogId::remove(new_dialog_filter->excluded_dialog_ids, dialog_id);
+  }
+
+  if (*new_dialog_filter != *dialog_filter) {
+    LOG(INFO) << "Update " << dialog_filter->dialog_filter_id << " from " << *dialog_filter << " to "
+              << *new_dialog_filter;
+    edit_dialog_filter(std::move(new_dialog_filter), source);
+    save_dialog_filters();
+    send_update_chat_filters();
+
+    synchronize_dialog_filters();
+  }
 }
 
 void MessagesManager::get_recommended_dialog_filters(
@@ -18625,7 +18558,7 @@ void MessagesManager::process_discussion_message(
   td_->contacts_manager_->on_get_chats(std::move(result->chats_), "process_discussion_message");
 
   for (auto &message : result->messages_) {
-    auto message_dialog_id = get_message_dialog_id(message);
+    auto message_dialog_id = DialogId::get_message_dialog_id(message);
     if (message_dialog_id != expected_dialog_id) {
       return promise.set_error(Status::Error(500, "Expected messages in a different chat"));
     }
@@ -21950,7 +21883,7 @@ tl_object_ptr<td_api::chats> MessagesManager::get_chats_object(const std::pair<i
   return get_chats_object(dialog_ids.first, dialog_ids.second);
 }
 
-td_api::object_ptr<td_api::chatFilter> MessagesManager::get_chat_filter_object(DialogFilterId dialog_filter_id) const {
+td_api::object_ptr<td_api::chatFilter> MessagesManager::get_chat_filter_object(DialogFilterId dialog_filter_id) {
   CHECK(!td_->auth_manager_->is_bot());
   auto filter = get_dialog_filter(dialog_filter_id);
   if (filter == nullptr) {
@@ -21960,9 +21893,10 @@ td_api::object_ptr<td_api::chatFilter> MessagesManager::get_chat_filter_object(D
   return get_chat_filter_object(filter);
 }
 
-td_api::object_ptr<td_api::chatFilter> MessagesManager::get_chat_filter_object(const DialogFilter *filter) const {
-  auto get_chat_ids = [this,
-                       dialog_filter_id = filter->dialog_filter_id](const vector<InputDialogId> &input_dialog_ids) {
+td_api::object_ptr<td_api::chatFilter> MessagesManager::get_chat_filter_object(const DialogFilter *filter) {
+  vector<DialogId> left_dialog_ids;
+  auto get_chat_ids = [this, dialog_filter_id = filter->dialog_filter_id,
+                       &left_dialog_ids](const vector<InputDialogId> &input_dialog_ids) {
     vector<int64> chat_ids;
     chat_ids.reserve(input_dialog_ids.size());
     for (auto &input_dialog_id : input_dialog_ids) {
@@ -21973,6 +21907,7 @@ td_api::object_ptr<td_api::chatFilter> MessagesManager::get_chat_filter_object(c
           chat_ids.push_back(dialog_id.get());
         } else {
           LOG(INFO) << "Skip nonjoined " << dialog_id << " from " << dialog_filter_id;
+          left_dialog_ids.push_back(dialog_id);
         }
       } else {
         LOG(ERROR) << "Can't find " << dialog_id << " from " << dialog_filter_id;
@@ -21980,11 +21915,16 @@ td_api::object_ptr<td_api::chatFilter> MessagesManager::get_chat_filter_object(c
     }
     return chat_ids;
   };
-  return td_api::make_object<td_api::chatFilter>(
+
+  auto result = td_api::make_object<td_api::chatFilter>(
       filter->title, filter->get_icon_name(), get_chat_ids(filter->pinned_dialog_ids),
       get_chat_ids(filter->included_dialog_ids), get_chat_ids(filter->excluded_dialog_ids), filter->exclude_muted,
       filter->exclude_read, filter->exclude_archived, filter->include_contacts, filter->include_non_contacts,
       filter->include_bots, filter->include_groups, filter->include_channels);
+
+  delete_dialogs_from_filter(filter, std::move(left_dialog_ids), "get_chat_filter_object");
+
+  return result;
 }
 
 std::pair<bool, int32> MessagesManager::get_dialog_mute_until(DialogId dialog_id, const Dialog *d) const {
@@ -24062,7 +24002,7 @@ void MessagesManager::on_get_dialog_message_by_date_success(DialogId dialog_id, 
 
   for (auto &message : messages) {
     auto message_date = get_message_date(message);
-    auto message_dialog_id = get_message_dialog_id(message);
+    auto message_dialog_id = DialogId::get_message_dialog_id(message);
     if (message_dialog_id != dialog_id) {
       LOG(ERROR) << "Receive message in wrong " << message_dialog_id << " instead of " << dialog_id;
       continue;
@@ -31919,7 +31859,8 @@ void MessagesManager::check_send_message_result(int64 random_id, DialogId dialog
   };
 
   if (sent_messages.size() != 1u || sent_messages_random_ids.size() != 1u ||
-      *sent_messages_random_ids.begin() != random_id || get_message_dialog_id(sent_messages[0].first) != dialog_id ||
+      *sent_messages_random_ids.begin() != random_id ||
+      DialogId::get_message_dialog_id(sent_messages[0].first) != dialog_id ||
       is_invalid_poll_message(sent_messages[0].first)) {
     LOG(ERROR) << "Receive wrong result for sending message with random_id " << random_id << " from " << source
                << " to " << dialog_id << ": " << oneline(to_string(*updates_ptr));
@@ -33355,7 +33296,7 @@ void MessagesManager::on_create_new_dialog_success(int64 random_id, tl_object_pt
     return on_create_new_dialog_fail(random_id, Status::Error(500, "Scheduled message received"), std::move(promise));
   }
 
-  auto dialog_id = get_message_dialog_id(message);
+  auto dialog_id = DialogId::get_message_dialog_id(message);
   if (dialog_id.get_type() != expected_type) {
     return on_create_new_dialog_fail(random_id, Status::Error(500, "Chat of wrong type has been created"),
                                      std::move(promise));
@@ -38979,7 +38920,7 @@ bool MessagesManager::need_channel_difference_to_add_message(DialogId dialog_id,
   if (message_ptr == nullptr) {
     return true;
   }
-  if (get_message_dialog_id(message_ptr) != dialog_id) {
+  if (DialogId::get_message_dialog_id(message_ptr) != dialog_id) {
     return false;
   }
 
@@ -38991,7 +38932,7 @@ bool MessagesManager::need_channel_difference_to_add_message(DialogId dialog_id,
     return d->pts > 0 && !d->is_channel_difference_finished;
   }
 
-  return get_message_id(message_ptr, false) > d->last_new_message_id;
+  return MessageId::get_message_id(message_ptr, false) > d->last_new_message_id;
 }
 
 void MessagesManager::run_after_channel_difference(DialogId dialog_id, Promise<Unit> &&promise) {
@@ -39161,7 +39102,7 @@ void MessagesManager::process_get_channel_difference_updates(
       }
       case telegram_api::updateEditChannelMessage::ID: {
         auto *update = static_cast<const telegram_api::updateEditChannelMessage *>(update_ptr.get());
-        auto full_message_id = get_full_message_id(update->message_, false);
+        auto full_message_id = FullMessageId::get_full_message_id(update->message_, false);
         if (full_message_id.get_dialog_id() != dialog_id) {
           is_good_update = false;
         } else {
@@ -39195,7 +39136,7 @@ void MessagesManager::process_get_channel_difference_updates(
 
   for (auto &message : new_messages) {
     if (is_edited_message(message)) {
-      auto message_id = get_message_id(message, false);
+      auto message_id = MessageId::get_message_id(message, false);
       if (message_id.is_valid()) {
         changed_message_ids.insert(message_id);
       }
@@ -39224,7 +39165,7 @@ void MessagesManager::process_get_channel_difference_updates(
 
       if (update->get_id() == telegram_api::updateNewChannelMessage::ID) {
         auto update_new_channel_message = static_cast<telegram_api::updateNewChannelMessage *>(update.get());
-        auto message_id = get_message_id(update_new_channel_message->message_, false);
+        auto message_id = MessageId::get_message_id(update_new_channel_message->message_, false);
         FullMessageId full_message_id(dialog_id, message_id);
         if (update_message_ids_.count(full_message_id) > 0 && changed_message_ids.count(message_id) > 0) {
           changed_message_ids.erase(message_id);
@@ -39250,7 +39191,7 @@ void MessagesManager::process_get_channel_difference_updates(
 
   auto it = awaited_messages.begin();
   for (auto &message : new_messages) {
-    auto message_id = get_message_id(message, false);
+    auto message_id = MessageId::get_message_id(message, false);
     while (it != awaited_messages.end() && it->first < message_id) {
       on_get_message(std::move(it->second.message), true, true, false, true, true, "postponed channel update");
       it->second.promise.set_value(Unit());
@@ -39299,11 +39240,11 @@ void MessagesManager::on_get_channel_dialog(DialogId dialog_id, MessageId last_m
                                             vector<tl_object_ptr<telegram_api::Message>> &&messages) {
   FlatHashMap<FullMessageId, tl_object_ptr<telegram_api::Message>, FullMessageIdHash> full_message_id_to_message;
   for (auto &message : messages) {
-    auto message_id = get_message_id(message, false);
+    auto message_id = MessageId::get_message_id(message, false);
     if (!message_id.is_valid()) {
       continue;
     }
-    auto message_dialog_id = get_message_dialog_id(message);
+    auto message_dialog_id = DialogId::get_message_dialog_id(message);
     if (!message_dialog_id.is_valid()) {
       message_dialog_id = dialog_id;
     }
@@ -39533,7 +39474,7 @@ void MessagesManager::on_get_channel_difference(
         // check that new messages are received in increasing message_id order
         MessageId cur_message_id;
         for (const auto &message : difference->new_messages_) {
-          auto message_id = get_message_id(message, false);
+          auto message_id = MessageId::get_message_id(message, false);
           if (message_id <= cur_message_id) {
             LOG(ERROR) << "Receive " << cur_message_id << " after " << message_id << " in channelDifference of "
                        << dialog_id << " with pts " << request_pts << " and limit " << request_limit << ": "

@@ -6,8 +6,10 @@
 //
 #pragma once
 
+#include "td/telegram/ChannelId.h"
 #include "td/telegram/CustomEmojiId.h"
 #include "td/telegram/DialogId.h"
+#include "td/telegram/DialogNotificationSettings.h"
 #include "td/telegram/ForumTopic.h"
 #include "td/telegram/ForumTopicEditedData.h"
 #include "td/telegram/ForumTopicInfo.h"
@@ -22,6 +24,7 @@
 #include "td/utils/Promise.h"
 #include "td/utils/Status.h"
 #include "td/utils/WaitFreeHashMap.h"
+#include "td/utils/WaitFreeHashSet.h"
 
 namespace td {
 
@@ -115,6 +118,7 @@ class ForumTopicManager final : public Actor {
 
   struct DialogTopics {
     WaitFreeHashMap<MessageId, unique_ptr<Topic>, MessageIdHash> topics_;
+    WaitFreeHashSet<MessageId, MessageIdHash> deleted_topic_ids_;
   };
 
   void tear_down() final;

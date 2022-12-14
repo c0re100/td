@@ -1564,7 +1564,7 @@ class ReportChannelSpamQuery final : public Td::ResultHandler {
     CHECK(input_peer != nullptr);
 
     send_query(G()->net_query_creator().create(telegram_api::channels_reportSpam(
-        std::move(input_channel), std::move(input_peer), MessagesManager::get_server_message_ids(message_ids))));
+        std::move(input_channel), std::move(input_peer), MessageId::get_server_message_ids(message_ids))));
   }
 
   void on_result(BufferSlice packet) final {
@@ -11041,7 +11041,7 @@ void ContactsManager::update_user(User *u, UserId user_id, bool from_binlog, boo
     auto left_time = get_user_was_online(u, user_id) - G()->server_time_cached();
     if (left_time >= 0 && left_time < 30 * 86400) {
       left_time += 2.0;  // to guarantee expiration
-      LOG(DEBUG) << "Set online timeout for " << user_id << " in " << left_time;
+      LOG(DEBUG) << "Set online timeout for " << user_id << " in " << left_time << " seconds";
       user_online_timeout_.set_timeout_in(user_id.get(), left_time);
     } else {
       LOG(DEBUG) << "Cancel online timeout for " << user_id;
@@ -11068,7 +11068,7 @@ void ContactsManager::update_user(User *u, UserId user_id, bool from_binlog, boo
     auto until_date = u->emoji_status.get_until_date();
     auto left_time = until_date - unix_time;
     if (left_time >= 0 && left_time < 30 * 86400) {
-      LOG(DEBUG) << "Set emoji status timeout for " << user_id << " in " << left_time;
+      LOG(DEBUG) << "Set emoji status timeout for " << user_id << " in " << left_time << " seconds";
       user_emoji_status_timeout_.set_timeout_in(user_id.get(), left_time);
     } else {
       user_emoji_status_timeout_.cancel_timeout(user_id.get());
