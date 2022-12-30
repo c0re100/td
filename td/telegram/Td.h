@@ -470,9 +470,9 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::setUserPrivacySettingRules &request);
 
-  void on_request(uint64 id, const td_api::getDefaultMessageTtl &request);
+  void on_request(uint64 id, const td_api::getDefaultMessageAutoDeleteTime &request);
 
-  void on_request(uint64 id, const td_api::setDefaultMessageTtl &request);
+  void on_request(uint64 id, const td_api::setDefaultMessageAutoDeleteTime &request);
 
   void on_request(uint64 id, const td_api::getAccountTtl &request);
 
@@ -758,6 +758,10 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::toggleGeneralForumTopicIsHidden &request);
 
+  void on_request(uint64 id, const td_api::toggleForumTopicIsPinned &request);
+
+  void on_request(uint64 id, const td_api::setPinnedForumTopics &request);
+
   void on_request(uint64 id, const td_api::deleteForumTopic &request);
 
   void on_request(uint64 id, td_api::setGameScore &request);
@@ -892,7 +896,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::setChatPhoto &request);
 
-  void on_request(uint64 id, const td_api::setChatMessageTtl &request);
+  void on_request(uint64 id, const td_api::setChatMessageAutoDeleteTime &request);
 
   void on_request(uint64 id, const td_api::setChatPermissions &request);
 
@@ -1052,6 +1056,10 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::clearImportedContacts &request);
 
+  void on_request(uint64 id, td_api::setUserPersonalProfilePhoto &request);
+
+  void on_request(uint64 id, td_api::suggestUserProfilePhoto &request);
+
   void on_request(uint64 id, td_api::searchUserByPhoneNumber &request);
 
   void on_request(uint64 id, const td_api::sharePhoneNumber &request);
@@ -1118,7 +1126,9 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::toggleSupergroupIsAllHistoryAvailable &request);
 
-  void on_request(uint64 id, const td_api::toggleSupergroupIsAggressiveAntiSpamEnabled &request);
+  void on_request(uint64 id, const td_api::toggleSupergroupHasHiddenMembers &request);
+
+  void on_request(uint64 id, const td_api::toggleSupergroupHasAggressiveAntiSpamEnabled &request);
 
   void on_request(uint64 id, const td_api::toggleSupergroupIsForum &request);
 

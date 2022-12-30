@@ -444,7 +444,7 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateUserStatus> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserName> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserPhone> update, Promise<Unit> &&promise);
-  void on_update(tl_object_ptr<telegram_api::updateUserPhoto> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateUser> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserEmojiStatus> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateRecentEmojiStatuses> update, Promise<Unit> &&promise);
 
@@ -479,6 +479,9 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateReadChannelDiscussionInbox> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateReadChannelDiscussionOutbox> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopic> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopics> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updatePinnedMessages> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updatePinnedChannelMessages> update, Promise<Unit> &&promise);
@@ -564,10 +567,6 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateTranscribedAudio> update, Promise<Unit> &&promise);
 
   // unsupported updates
-
-  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopic> update, Promise<Unit> &&promise);
-
-  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopics> update, Promise<Unit> &&promise);
 };
 
 }  // namespace td

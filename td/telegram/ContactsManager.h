@@ -180,7 +180,6 @@ class ContactsManager final : public Actor {
 
   void on_update_user_name(UserId user_id, string &&first_name, string &&last_name, Usernames &&usernames);
   void on_update_user_phone_number(UserId user_id, string &&phone_number);
-  void on_update_user_photo(UserId user_id, tl_object_ptr<telegram_api::UserProfilePhoto> &&photo_ptr);
   void on_update_user_emoji_status(UserId user_id, tl_object_ptr<telegram_api::EmojiStatus> &&emoji_status);
   void on_update_user_online(UserId user_id, tl_object_ptr<telegram_api::UserStatus> &&status);
   void on_update_user_local_was_online(UserId user_id, int32 local_was_online);
@@ -188,7 +187,9 @@ class ContactsManager final : public Actor {
   void on_update_user_common_chat_count(UserId user_id, int32 common_chat_count);
   void on_update_user_need_phone_number_privacy_exception(UserId user_id, bool need_phone_number_privacy_exception);
 
-  void on_set_profile_photo(tl_object_ptr<telegram_api::photos_photo> &&photo, int64 old_photo_id);
+  void on_set_profile_photo(UserId user_id, tl_object_ptr<telegram_api::photos_photo> &&photo, bool is_fallback,
+                            int64 old_photo_id);
+
   void on_delete_profile_photo(int64 profile_photo_id, Promise<Unit> promise);
 
   void on_ignored_restriction_reasons_changed();
@@ -211,8 +212,10 @@ class ContactsManager final : public Actor {
   void on_update_channel_slow_mode_next_send_date(ChannelId channel_id, int32 slow_mode_next_send_date);
   void on_update_channel_is_all_history_available(ChannelId channel_id, bool is_all_history_available,
                                                   Promise<Unit> &&promise);
-  void on_update_channel_is_aggressive_anti_spam_enabled(ChannelId channel_id, bool is_aggressive_anti_spam_enabled,
-                                                         Promise<Unit> &&promise);
+  void on_update_channel_has_hidden_participants(ChannelId channel_id, bool has_hidden_participants,
+                                                 Promise<Unit> &&promise);
+  void on_update_channel_has_aggressive_anti_spam_enabled(ChannelId channel_id, bool has_aggressive_anti_spam_enabled,
+                                                          Promise<Unit> &&promise);
   void on_update_channel_default_permissions(ChannelId channel_id, RestrictedRights default_permissions);
   void on_update_channel_administrator_count(ChannelId channel_id, int32 administrator_count);
 
@@ -232,8 +235,6 @@ class ContactsManager final : public Actor {
                               vector<tl_object_ptr<telegram_api::botCommand>> &&bot_commands);
 
   void on_update_bot_menu_button(UserId bot_user_id, tl_object_ptr<telegram_api::BotMenuButton> &&bot_menu_button);
-
-  void on_update_fragment_prefixes();
 
   void on_update_dialog_administrators(DialogId dialog_id, vector<DialogAdministrator> &&administrators,
                                        bool have_access, bool from_database);
@@ -359,13 +360,19 @@ class ContactsManager final : public Actor {
 
   void get_is_location_visible(Promise<Unit> &&promise);
 
+  void register_suggested_profile_photo(const Photo &photo);
+
   FileId get_profile_photo_file_id(int64 photo_id) const;
 
-  void set_profile_photo(const td_api::object_ptr<td_api::InputChatPhoto> &input_photo, Promise<Unit> &&promise);
+  void set_profile_photo(const td_api::object_ptr<td_api::InputChatPhoto> &input_photo, bool is_fallback,
+                         Promise<Unit> &&promise);
 
-  void send_update_profile_photo_query(FileId file_id, int64 old_photo_id, Promise<Unit> &&promise);
+  void set_user_profile_photo(UserId user_id, const td_api::object_ptr<td_api::InputChatPhoto> &input_photo,
+                              bool only_suggest, Promise<Unit> &&promise);
 
-  void delete_profile_photo(int64 profile_photo_id, Promise<Unit> &&promise);
+  void send_update_profile_photo_query(FileId file_id, int64 old_photo_id, bool is_fallback, Promise<Unit> &&promise);
+
+  void delete_profile_photo(int64 profile_photo_id, bool is_recursive, Promise<Unit> &&promise);
 
   void set_name(const string &first_name, const string &last_name, Promise<Unit> &&promise);
 
@@ -401,8 +408,11 @@ class ContactsManager final : public Actor {
   void toggle_channel_is_all_history_available(ChannelId channel_id, bool is_all_history_available,
                                                Promise<Unit> &&promise);
 
-  void toggle_channel_is_aggressive_anti_spam_enabled(ChannelId channel_id, bool is_aggressive_anti_spam_enabled,
-                                                      Promise<Unit> &&promise);
+  void toggle_channel_has_hidden_participants(ChannelId channel_id, bool has_hidden_participants,
+                                              Promise<Unit> &&promise);
+
+  void toggle_channel_has_aggressive_anti_spam_enabled(ChannelId channel_id, bool has_aggressive_anti_spam_enabled,
+                                                       Promise<Unit> &&promise);
 
   void toggle_channel_is_forum(ChannelId channel_id, bool is_forum, Promise<Unit> &&promise);
 
@@ -604,6 +614,7 @@ class ContactsManager final : public Actor {
   bool get_channel_can_be_deleted(ChannelId channel_id) const;
   ChannelId get_channel_linked_channel_id(ChannelId channel_id);
   int32 get_channel_slow_mode_delay(ChannelId channel_id);
+  bool get_channel_effective_has_hidden_participants(ChannelId channel_id);
 
   void add_dialog_participant(DialogId dialog_id, UserId user_id, int32 forward_limit, Promise<Unit> &&promise);
 
@@ -736,7 +747,6 @@ class ContactsManager final : public Actor {
     bool need_apply_min_photo = false;
     bool can_be_added_to_attach_menu = false;
     bool attach_menu_enabled = false;
-    bool is_fragment_phone_number = false;
 
     bool is_photo_inited = false;
 
@@ -772,6 +782,8 @@ class ContactsManager final : public Actor {
   // do not forget to update drop_user_full and on_get_user_full
   struct UserFull {
     Photo photo;
+    Photo fallback_photo;
+    Photo personal_photo;
 
     string about;
     string private_forward_name;
@@ -799,7 +811,6 @@ class ContactsManager final : public Actor {
     bool voice_messages_forbidden = false;
 
     bool is_common_chat_count_changed = true;
-    bool are_files_changed = true;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_send_update = true;       // have new changes that need only to be sent to the client
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
@@ -991,13 +1002,14 @@ class ContactsManager final : public Actor {
     vector<UserId> bot_user_ids;
 
     bool can_get_participants = false;
+    bool has_hidden_participants = false;
     bool can_set_username = false;
     bool can_set_sticker_set = false;
     bool can_set_location = false;
     bool can_view_statistics = false;
     bool is_can_view_statistics_inited = false;
     bool is_all_history_available = true;
-    bool is_aggressive_anti_spam_enabled = true;
+    bool has_aggressive_anti_spam_enabled = false;
     bool can_be_deleted = false;
 
     bool is_slow_mode_next_send_date_changed = true;
@@ -1149,6 +1161,8 @@ class ContactsManager final : public Actor {
   static constexpr int32 USER_FULL_FLAG_HAS_GROUP_ADMINISTRATOR_RIGHTS = 1 << 17;
   static constexpr int32 USER_FULL_FLAG_HAS_BROADCAST_ADMINISTRATOR_RIGHTS = 1 << 18;
   static constexpr int32 USER_FULL_FLAG_HAS_VOICE_MESSAGES_FORBIDDEN = 1 << 20;
+  static constexpr int32 USER_FULL_FLAG_HAS_PERSONAL_PHOTO = 1 << 21;
+  static constexpr int32 USER_FULL_FLAG_HAS_FALLBACK_PHOTO = 1 << 22;
 
   static constexpr int32 CHAT_FLAG_USER_IS_CREATOR = 1 << 0;
   static constexpr int32 CHAT_FLAG_USER_HAS_LEFT = 1 << 2;
@@ -1226,12 +1240,7 @@ class ContactsManager final : public Actor {
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_DEFAULT_SEND_AS = 1 << 29;
   static constexpr int32 CHANNEL_FULL_FLAG_HAS_AVAILABLE_REACTIONS = 1 << 30;
   static constexpr int32 CHANNEL_FULL_FLAG2_HAS_ANTISPAM = 1 << 1;
-
-  static constexpr int32 CHAT_INVITE_FLAG_IS_CHANNEL = 1 << 0;
-  static constexpr int32 CHAT_INVITE_FLAG_IS_BROADCAST = 1 << 1;
-  static constexpr int32 CHAT_INVITE_FLAG_IS_PUBLIC = 1 << 2;
-  static constexpr int32 CHAT_INVITE_FLAG_IS_MEGAGROUP = 1 << 3;
-  static constexpr int32 CHAT_INVITE_FLAG_HAS_USERS = 1 << 4;
+  static constexpr int32 CHANNEL_FULL_FLAG2_ARE_PARTICIPANTS_HIDDEN = 1 << 2;
 
   static constexpr int32 USER_FULL_EXPIRE_TIME = 60;
   static constexpr int32 CHANNEL_FULL_EXPIRE_TIME = 60;
@@ -1340,8 +1349,12 @@ class ContactsManager final : public Actor {
                             const char *source);
   void apply_pending_user_photo(User *u, UserId user_id);
 
-  void upload_profile_photo(FileId file_id, bool is_animation, double main_frame_timestamp, Promise<Unit> &&promise,
-                            int reupload_count = 0, vector<int> bad_parts = {});
+  void set_profile_photo_impl(UserId user_id, const td_api::object_ptr<td_api::InputChatPhoto> &input_photo,
+                              bool is_fallback, bool only_suggest, Promise<Unit> &&promise);
+
+  void upload_profile_photo(UserId user_id, FileId file_id, bool is_fallback, bool only_suggest, bool is_animation,
+                            double main_frame_timestamp, Promise<Unit> &&promise, int reupload_count = 0,
+                            vector<int> bad_parts = {});
 
   void on_upload_profile_photo(FileId file_id, tl_object_ptr<telegram_api::InputFile> input_file);
   void on_upload_profile_photo_error(FileId file_id, Status status);
@@ -1358,9 +1371,11 @@ class ContactsManager final : public Actor {
                                                                bool need_phone_number_privacy_exception) const;
 
   UserPhotos *add_user_photos(UserId user_id);
-  void add_profile_photo_to_cache(UserId user_id, Photo &&photo);
-  bool delete_profile_photo_from_cache(UserId user_id, int64 profile_photo_id, bool send_updates);
-  void drop_user_photos(UserId user_id, bool is_empty, bool drop_user_full_photo, const char *source);
+  int64 get_user_full_profile_photo_id(const UserFull *user_full);
+  void add_set_profile_photo_to_cache(UserId user_id, Photo &&photo, bool is_fallback);
+  bool delete_my_profile_photo_from_cache(int64 profile_photo_id);
+  void drop_user_full_photos(UserFull *user_full, UserId user_id, int64 expected_photo_id, const char *source);
+  void drop_user_photos(UserId user_id, bool is_empty, const char *source);
   void drop_user_full(UserId user_id);
 
   void on_update_chat_status(Chat *c, ChatId chat_id, DialogParticipantStatus status);
@@ -1513,8 +1528,6 @@ class ContactsManager final : public Actor {
 
   bool is_user_contact(const User *u, UserId user_id, bool is_mutual) const;
 
-  bool is_fragment_phone_number(string phone_number) const;
-
   int32 get_user_was_online(const User *u, UserId user_id) const;
 
   int64 get_contacts_hash();
@@ -1662,14 +1675,23 @@ class ContactsManager final : public Actor {
 
   tl_object_ptr<td_api::basicGroup> get_basic_group_object_const(ChatId chat_id, const Chat *c) const;
 
-  tl_object_ptr<td_api::basicGroupFullInfo> get_basic_group_full_info_object(const ChatFull *chat_full) const;
+  tl_object_ptr<td_api::basicGroupFullInfo> get_basic_group_full_info_object(ChatId chat_id,
+                                                                             const ChatFull *chat_full) const;
 
   td_api::object_ptr<td_api::updateSupergroup> get_update_unknown_supergroup_object(ChannelId channel_id) const;
 
   static tl_object_ptr<td_api::supergroup> get_supergroup_object(ChannelId channel_id, const Channel *c);
 
-  tl_object_ptr<td_api::supergroupFullInfo> get_supergroup_full_info_object(const ChannelFull *channel_full,
-                                                                            ChannelId channel_id) const;
+  Status can_hide_chat_participants(ChatId chat_id) const;
+
+  Status can_hide_channel_participants(ChannelId channel_id, const ChannelFull *channel_full) const;
+
+  Status can_toggle_chat_aggressive_anti_spam(ChatId chat_id) const;
+
+  Status can_toggle_channel_aggressive_anti_spam(ChannelId channel_id, const ChannelFull *channel_full) const;
+
+  tl_object_ptr<td_api::supergroupFullInfo> get_supergroup_full_info_object(ChannelId channel_id,
+                                                                            const ChannelFull *channel_full) const;
 
   static tl_object_ptr<td_api::SecretChatState> get_secret_chat_state_object(SecretChatState state);
 
@@ -1866,13 +1888,20 @@ class ContactsManager final : public Actor {
   std::shared_ptr<UploadProfilePhotoCallback> upload_profile_photo_callback_;
 
   struct UploadedProfilePhoto {
+    UserId user_id;
+    bool is_fallback;
+    bool only_suggest;
     double main_frame_timestamp;
     bool is_animation;
     int reupload_count;
     Promise<Unit> promise;
 
-    UploadedProfilePhoto(double main_frame_timestamp, bool is_animation, int32 reupload_count, Promise<Unit> promise)
-        : main_frame_timestamp(main_frame_timestamp)
+    UploadedProfilePhoto(UserId user_id, bool is_fallback, bool only_suggest, double main_frame_timestamp,
+                         bool is_animation, int32 reupload_count, Promise<Unit> promise)
+        : user_id(user_id)
+        , is_fallback(is_fallback)
+        , only_suggest(only_suggest)
+        , main_frame_timestamp(main_frame_timestamp)
         , is_animation(is_animation)
         , reupload_count(reupload_count)
         , promise(std::move(promise)) {
@@ -1942,9 +1971,6 @@ class ContactsManager final : public Actor {
 
   vector<UserId> imported_contact_user_ids_;  // result of change_imported_contacts
   vector<int32> unimported_contact_invites_;  // result of change_imported_contacts
-
-  string fragment_prefixes_str_;
-  vector<string> fragment_prefixes_;
 
   MultiTimeout user_online_timeout_{"UserOnlineTimeout"};
   MultiTimeout user_emoji_status_timeout_{"UserEmojiStatusTimeout"};

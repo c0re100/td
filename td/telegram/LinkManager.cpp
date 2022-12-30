@@ -285,6 +285,12 @@ class LinkManager::InternalLinkConfirmPhone final : public InternalLink {
   }
 };
 
+class LinkManager::InternalLinkDefaultMessageAutoDeleteTimerSettings final : public InternalLink {
+  td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
+    return td_api::make_object<td_api::internalLinkTypeDefaultMessageAutoDeleteTimerSettings>();
+  }
+};
+
 class LinkManager::InternalLinkDialogInvite final : public InternalLink {
   string url_;
 
@@ -294,6 +300,12 @@ class LinkManager::InternalLinkDialogInvite final : public InternalLink {
 
  public:
   explicit InternalLinkDialogInvite(string url) : url_(std::move(url)) {
+  }
+};
+
+class LinkManager::InternalLinkEditProfileSettings final : public InternalLink {
+  td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
+    return td_api::make_object<td_api::internalLinkTypeEditProfileSettings>();
   }
 };
 
@@ -493,13 +505,15 @@ class LinkManager::InternalLinkSettings final : public InternalLink {
 
 class LinkManager::InternalLinkStickerSet final : public InternalLink {
   string sticker_set_name_;
+  bool expect_custom_emoji_;
 
   td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
-    return td_api::make_object<td_api::internalLinkTypeStickerSet>(sticker_set_name_);
+    return td_api::make_object<td_api::internalLinkTypeStickerSet>(sticker_set_name_, expect_custom_emoji_);
   }
 
  public:
-  explicit InternalLinkStickerSet(string sticker_set_name) : sticker_set_name_(std::move(sticker_set_name)) {
+  InternalLinkStickerSet(string sticker_set_name, bool expect_custom_emoji)
+      : sticker_set_name_(std::move(sticker_set_name)), expect_custom_emoji_(expect_custom_emoji) {
   }
 };
 
@@ -1120,6 +1134,10 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
     // premium_offer?ref=<referrer>
     return td::make_unique<InternalLinkPremiumFeatures>(get_arg("ref"));
   } else if (!path.empty() && path[0] == "settings") {
+    if (path.size() == 2 && path[1] == "auto_delete") {
+      // settings/auto_delete
+      return td::make_unique<InternalLinkDefaultMessageAutoDeleteTimerSettings>();
+    }
     if (path.size() == 2 && path[1] == "change_number") {
       // settings/change_number
       return td::make_unique<InternalLinkChangePhoneNumber>();
@@ -1127,6 +1145,10 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
     if (path.size() == 2 && path[1] == "devices") {
       // settings/devices
       return td::make_unique<InternalLinkActiveSessions>();
+    }
+    if (path.size() == 2 && path[1] == "edit_profile") {
+      // settings/edit_profile
+      return td::make_unique<InternalLinkEditProfileSettings>();
     }
     if (path.size() == 2 && path[1] == "folders") {
       // settings/folders
@@ -1156,7 +1178,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
     // addstickers?set=<name>
     // addemoji?set=<name>
     if (has_arg("set")) {
-      return td::make_unique<InternalLinkStickerSet>(get_arg("set"));
+      return td::make_unique<InternalLinkStickerSet>(get_arg("set"), path[0] == "addemoji");
     }
   } else if (path.size() == 1 && path[0] == "setlanguage") {
     // setlanguage?lang=<name>
@@ -1308,7 +1330,7 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
     if (path.size() >= 2 && !path[1].empty()) {
       // /addstickers/<name>
       // /addemoji/<name>
-      return td::make_unique<InternalLinkStickerSet>(path[1]);
+      return td::make_unique<InternalLinkStickerSet>(path[1], path[0] == "addemoji");
     }
   } else if (path[0] == "setlanguage") {
     if (path.size() >= 2 && !path[1].empty()) {

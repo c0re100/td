@@ -217,7 +217,8 @@ class MessagesManager final : public Actor {
   void on_get_messages_search_result(const string &query, int32 offset_date, DialogId offset_dialog_id,
                                      MessageId offset_message_id, int32 limit, MessageSearchFilter filter,
                                      int32 min_date, int32 max_date, int64 random_id, int32 total_count,
-                                     vector<tl_object_ptr<telegram_api::Message>> &&messages, Promise<Unit> &&promise);
+                                     vector<tl_object_ptr<telegram_api::Message>> &&messages, int32 next_rate,
+                                     Promise<Unit> &&promise);
   void on_failed_messages_search(int64 random_id);
 
   void on_get_outgoing_document_messages(vector<tl_object_ptr<telegram_api::Message>> &&messages,
@@ -231,7 +232,7 @@ class MessagesManager final : public Actor {
                                Promise<td_api::object_ptr<td_api::messages>> &&promise);
 
   void on_get_message_public_forwards(int32 total_count, vector<tl_object_ptr<telegram_api::Message>> &&messages,
-                                      Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
+                                      int32 next_rate, Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
 
   // if message is from_update, flags have_previous and have_next are ignored and must be both true
   FullMessageId on_get_message(tl_object_ptr<telegram_api::Message> message_ptr, bool from_update,
@@ -325,7 +326,8 @@ class MessagesManager final : public Actor {
       tl_object_ptr<telegram_api::updateChannelReadMessagesContents> &&update);
 
   void on_update_read_message_comments(DialogId dialog_id, MessageId message_id, MessageId max_message_id,
-                                       MessageId last_read_inbox_message_id, MessageId last_read_outbox_message_id);
+                                       MessageId last_read_inbox_message_id, MessageId last_read_outbox_message_id,
+                                       int32 unread_count);
 
   void on_update_channel_too_long(tl_object_ptr<telegram_api::updateChannelTooLong> &&update, bool force_apply);
 
@@ -746,12 +748,20 @@ class MessagesManager final : public Actor {
                                                                           MessageSearchFilter filter, int64 &random_id,
                                                                           bool use_db, Promise<Unit> &&promise);
 
-  std::pair<int32, vector<MessageId>> search_dialog_messages(DialogId dialog_id, const string &query,
-                                                             const td_api::object_ptr<td_api::MessageSender> &sender,
-                                                             MessageId from_message_id, int32 offset, int32 limit,
-                                                             MessageSearchFilter filter,
-                                                             MessageId top_thread_message_id, int64 &random_id,
-                                                             bool use_db, Promise<Unit> &&promise);
+  struct FoundDialogMessages {
+    vector<MessageId> message_ids;
+    MessageId next_from_message_id;
+    int32 total_count = 0;
+  };
+
+  td_api::object_ptr<td_api::foundChatMessages> get_found_chat_messages_object(
+      DialogId dialog_id, const FoundDialogMessages &found_dialog_messages, const char *source);
+
+  FoundDialogMessages search_dialog_messages(DialogId dialog_id, const string &query,
+                                             const td_api::object_ptr<td_api::MessageSender> &sender,
+                                             MessageId from_message_id, int32 offset, int32 limit,
+                                             MessageSearchFilter filter, MessageId top_thread_message_id,
+                                             int64 &random_id, bool use_db, Promise<Unit> &&promise);
 
   struct FoundMessages {
     vector<FullMessageId> full_message_ids;
@@ -765,14 +775,12 @@ class MessagesManager final : public Actor {
   FoundMessages offline_search_messages(DialogId dialog_id, const string &query, string offset, int32 limit,
                                         MessageSearchFilter filter, int64 &random_id, Promise<Unit> &&promise);
 
-  std::pair<int32, vector<FullMessageId>> search_messages(FolderId folder_id, bool ignore_folder_id,
-                                                          const string &query, int32 offset_date,
-                                                          DialogId offset_dialog_id, MessageId offset_message_id,
-                                                          int32 limit, MessageSearchFilter filter, int32 min_date,
-                                                          int32 max_date, int64 &random_id, Promise<Unit> &&promise);
+  FoundMessages search_messages(FolderId folder_id, bool ignore_folder_id, const string &query, const string &offset,
+                                int32 limit, MessageSearchFilter filter, int32 min_date, int32 max_date,
+                                int64 &random_id, Promise<Unit> &&promise);
 
-  std::pair<int32, vector<FullMessageId>> search_call_messages(MessageId from_message_id, int32 limit, bool only_missed,
-                                                               int64 &random_id, bool use_db, Promise<Unit> &&promise);
+  FoundMessages search_call_messages(const string &offset, int32 limit, bool only_missed, int64 &random_id, bool use_db,
+                                     Promise<Unit> &&promise);
 
   void search_outgoing_document_messages(const string &query, int32 limit,
                                          Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
@@ -1804,8 +1812,6 @@ class MessagesManager final : public Actor {
   static constexpr int64 MAX_ORDINARY_DIALOG_ORDER =
       9221294780217032704;  // == get_dialog_order(MessageId(), MIN_PINNED_DIALOG_DATE - 1)
 
-  static constexpr int32 UPDATE_CHANNEL_TO_LONG_FLAG_HAS_PTS = 1 << 0;
-
   static constexpr int32 CHANNEL_DIFFERENCE_FLAG_IS_FINAL = 1 << 0;
   static constexpr int32 CHANNEL_DIFFERENCE_FLAG_HAS_TIMEOUT = 1 << 1;
 
@@ -2212,7 +2218,7 @@ class MessagesManager final : public Actor {
 
   void on_message_reply_info_changed(DialogId dialog_id, const Message *m) const;
 
-  Result<FullMessageId> get_top_thread_full_message_id(DialogId dialog_id, const Message *m) const;
+  Result<FullMessageId> get_top_thread_full_message_id(DialogId dialog_id, const Message *m, bool allow_non_root) const;
 
   td_api::object_ptr<td_api::messageInteractionInfo> get_message_interaction_info_object(DialogId dialog_id,
                                                                                          const Message *m) const;
@@ -2558,7 +2564,7 @@ class MessagesManager final : public Actor {
 
   void send_update_chat_message_sender(const Dialog *d);
 
-  void send_update_chat_message_ttl(const Dialog *d);
+  void send_update_chat_message_auto_delete_time(const Dialog *d);
 
   void send_update_chat_has_scheduled_messages(Dialog *d, bool from_deletion);
 
@@ -2579,8 +2585,7 @@ class MessagesManager final : public Actor {
 
   static tl_object_ptr<td_api::MessageSchedulingState> get_message_scheduling_state_object(int32 send_date);
 
-  tl_object_ptr<td_api::message> get_message_object(DialogId dialog_id, const Message *m, const char *source,
-                                                    bool for_event_log = false) const;
+  tl_object_ptr<td_api::message> get_message_object(DialogId dialog_id, const Message *m, const char *source) const;
 
   static tl_object_ptr<td_api::messages> get_messages_object(int32 total_count,
                                                              vector<tl_object_ptr<td_api::message>> &&messages,
@@ -3532,6 +3537,7 @@ class MessagesManager final : public Actor {
   int64 added_message_count_ = 0;
 
   FlatHashSet<DialogId, DialogIdHash> loaded_dialogs_;  // dialogs loaded from database, but not added to dialogs_
+  FlatHashSet<DialogId, DialogIdHash> failed_to_load_dialogs_;
 
   FlatHashSet<DialogId, DialogIdHash> postponed_chat_read_inbox_updates_;
 
@@ -3550,13 +3556,10 @@ class MessagesManager final : public Actor {
   FlatHashMap<int64, FullMessageId> get_dialog_message_by_date_results_;
 
   FlatHashMap<int64, td_api::object_ptr<td_api::messageCalendar>> found_dialog_message_calendars_;
-  FlatHashMap<int64, std::pair<int32, vector<MessageId>>>
-      found_dialog_messages_;                                     // random_id -> [total_count, [message_id]...]
-  FlatHashMap<int64, DialogId> found_dialog_messages_dialog_id_;  // random_id -> dialog_id
-  FlatHashMap<int64, std::pair<int32, vector<FullMessageId>>>
-      found_messages_;  // random_id -> [total_count, [full_message_id]...]
-  FlatHashMap<int64, std::pair<int32, vector<FullMessageId>>>
-      found_call_messages_;  // random_id -> [total_count, [full_message_id]...]
+  FlatHashMap<int64, FoundDialogMessages> found_dialog_messages_;  // random_id -> FoundDialogMessages
+  FlatHashMap<int64, DialogId> found_dialog_messages_dialog_id_;   // random_id -> dialog_id
+  FlatHashMap<int64, FoundMessages> found_messages_;               // random_id -> FoundMessages
+  FlatHashMap<int64, FoundMessages> found_call_messages_;          // random_id -> FoundMessages
 
   FlatHashMap<int64, FoundMessages> found_fts_messages_;  // random_id -> FoundMessages
 

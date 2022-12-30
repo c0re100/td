@@ -433,6 +433,7 @@ class StickersManager final : public Actor {
     StickerFormat format_ = StickerFormat::Unknown;
     StickerType type_ = StickerType::Regular;
     bool is_premium_ = false;
+    bool has_text_color_ = false;
     bool is_from_database_ = false;
     bool is_being_reloaded_ = false;
     int32 point_ = -1;
@@ -447,7 +448,8 @@ class StickersManager final : public Actor {
     bool is_inited_ = false;  // basic information about the set
     bool was_loaded_ = false;
     bool is_loaded_ = false;
-    bool are_keywords_loaded_ = false;
+    bool are_keywords_loaded_ = false;               // stored in telegram_api::messages_stickerSet
+    bool is_sticker_has_text_color_loaded_ = false;  // stored in telegram_api::messages_stickerSet
 
     StickerSetId id_;
     int64 access_hash_ = 0;
@@ -474,11 +476,11 @@ class StickersManager final : public Actor {
     bool is_archived_ = false;
     bool is_official_ = false;
     bool is_viewed_ = true;
-    bool is_thumbnail_reloaded_ = false;
-    bool are_legacy_sticker_thumbnails_reloaded_ = false;
-    mutable bool was_update_sent_ = false;  // does the sticker set is known to the client
-    bool is_changed_ = true;                // have new changes that need to be sent to the client and database
-    bool need_save_to_database_ = true;     // have new changes that need only to be saved to the database
+    bool is_thumbnail_reloaded_ = false;                   // stored in telegram_api::stickerSet
+    bool are_legacy_sticker_thumbnails_reloaded_ = false;  // stored in telegram_api::stickerSet
+    mutable bool was_update_sent_ = false;                 // does the sticker set is known to the client
+    bool is_changed_ = true;             // have new changes that need to be sent to the client and database
+    bool need_save_to_database_ = true;  // have new changes that need only to be saved to the database
 
     vector<uint32> load_requests_;
     vector<uint32> load_without_stickers_requests_;
@@ -682,7 +684,9 @@ class StickersManager final : public Actor {
 
   void do_reload_sticker_set(StickerSetId sticker_set_id,
                              tl_object_ptr<telegram_api::InputStickerSet> &&input_sticker_set, int32 hash,
-                             Promise<Unit> &&promise) const;
+                             Promise<Unit> &&promise, const char *source);
+
+  void on_reload_sticker_set(StickerSetId sticker_set_id, Result<Unit> &&result);
 
   void do_get_premium_stickers(int32 limit, Promise<td_api::object_ptr<td_api::stickers>> &&promise);
 
@@ -1001,6 +1005,14 @@ class StickersManager final : public Actor {
   vector<Promise<Unit>> repair_recent_stickers_queries_[2];
   vector<Promise<Unit>> load_favorite_stickers_queries_;
   vector<Promise<Unit>> repair_favorite_stickers_queries_;
+
+  struct StickerSetReloadQueries {
+    vector<Promise<Unit>> sent_promises_;
+    int32 sent_hash_ = 0;
+    vector<Promise<Unit>> pending_promises_;
+    int32 pending_hash_ = 0;
+  };
+  FlatHashMap<StickerSetId, unique_ptr<StickerSetReloadQueries>, StickerSetIdHash> sticker_set_reload_queries_;
 
   vector<FileId> recent_sticker_file_ids_[2];
   FileSourceId recent_stickers_file_source_id_[2];

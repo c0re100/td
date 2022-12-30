@@ -11,6 +11,7 @@
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/ConfigManager.h"
 #include "td/telegram/ContactsManager.h"
+#include "td/telegram/CountryInfoManager.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/GitCommitHash.h"
 #include "td/telegram/Global.h"
@@ -111,17 +112,18 @@ OptionManager::OptionManager(Td *td)
   if (!have_option("chat_filter_chosen_chat_count_max")) {
     set_option_integer("chat_filter_chosen_chat_count_max", G()->is_test_dc() ? 5 : 100);
   }
-  if (!have_option("themed_emoji_statuses_sticker_set_id")) {
-    auto sticker_set_id =
-        G()->is_test_dc() ? static_cast<int64>(2964141614563343) : static_cast<int64>(773947703670341676);
-    set_option_integer("themed_emoji_statuses_sticker_set_id", sticker_set_id);
-  }
   if (!have_option("forum_member_count_min")) {
     set_option_integer("forum_member_count_min", G()->is_test_dc() ? 3 : 100);
   }
   if (!have_option("aggressive_anti_spam_supergroup_member_count_min")) {
     set_option_integer("aggressive_anti_spam_supergroup_member_count_min", G()->is_test_dc() ? 1 : 100);
   }
+  if (!have_option("pinned_forum_topic_count_max")) {
+    set_option_integer("pinned_forum_topic_count_max", G()->is_test_dc() ? 3 : 5);
+  }
+
+  set_option_empty("themed_emoji_statuses_sticker_set_id");
+  set_option_empty("themed_premium_statuses_sticker_set_id");
 }
 
 OptionManager::~OptionManager() = default;
@@ -245,7 +247,8 @@ bool OptionManager::is_internal_option(Slice name) {
   switch (name[0]) {
     case 'a':
       return name == "about_length_limit_default" || name == "about_length_limit_premium" ||
-             name == "animated_emoji_zoom" || name == "animation_search_emojis" || name == "animation_search_provider";
+             name == "aggressive_anti_spam_supergroup_member_count_min" || name == "animated_emoji_zoom" ||
+             name == "animation_search_emojis" || name == "animation_search_provider";
     case 'b':
       return name == "base_language_pack_version";
     case 'c':
@@ -266,6 +269,8 @@ bool OptionManager::is_internal_option(Slice name) {
       return name == "edit_time_limit" || name == "emoji_sounds";
     case 'f':
       return name == "fragment_prefixes";
+    case 'h':
+      return name == "hidden_members_group_size_min";
     case 'i':
       return name == "ignored_restriction_reasons";
     case 'l':
@@ -361,7 +366,7 @@ void OptionManager::on_option_updated(Slice name) {
         td_->stickers_manager_->on_update_favorite_stickers_limit();
       }
       if (name == "fragment_prefixes") {
-        send_closure(td_->contacts_manager_actor_, &ContactsManager::on_update_fragment_prefixes);
+        send_closure(td_->country_info_manager_actor_, &CountryInfoManager::on_update_fragment_prefixes);
       }
       break;
     case 'i':
@@ -521,7 +526,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.9");
+        return td_api::make_object<td_api::optionValueString>("1.8.10");
       }
       break;
   }

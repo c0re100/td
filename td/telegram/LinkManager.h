@@ -110,7 +110,9 @@ class LinkManager final : public Actor {
   class InternalLinkBotStartInGroup;
   class InternalLinkChangePhoneNumber;
   class InternalLinkConfirmPhone;
+  class InternalLinkDefaultMessageAutoDeleteTimerSettings;
   class InternalLinkDialogInvite;
+  class InternalLinkEditProfileSettings;
   class InternalLinkFilterSettings;
   class InternalLinkGame;
   class InternalLinkInstantView;

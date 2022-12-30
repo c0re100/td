@@ -114,6 +114,10 @@ StringBuilder &operator<<(StringBuilder &string_builder, MessageContentType cont
       return string_builder << "TopicCreate";
     case MessageContentType::TopicEdit:
       return string_builder << "TopicEdit";
+    case MessageContentType::SuggestProfilePhoto:
+      return string_builder << "SuggestProfilePhoto";
+    case MessageContentType::WriteAccessAllowed:
+      return string_builder << "WriteAccessAllowed";
     default:
       UNREACHABLE();
       return string_builder;
@@ -174,6 +178,8 @@ bool is_allowed_media_group_content(MessageContentType content_type) {
     case MessageContentType::GiftPremium:
     case MessageContentType::TopicCreate:
     case MessageContentType::TopicEdit:
+    case MessageContentType::SuggestProfilePhoto:
+    case MessageContentType::WriteAccessAllowed:
       return false;
     default:
       UNREACHABLE();
@@ -242,6 +248,8 @@ bool is_secret_message_content(int32 ttl, MessageContentType content_type) {
     case MessageContentType::GiftPremium:
     case MessageContentType::TopicCreate:
     case MessageContentType::TopicEdit:
+    case MessageContentType::SuggestProfilePhoto:
+    case MessageContentType::WriteAccessAllowed:
       return false;
     default:
       UNREACHABLE();
@@ -303,6 +311,8 @@ bool is_service_message_content(MessageContentType content_type) {
     case MessageContentType::GiftPremium:
     case MessageContentType::TopicCreate:
     case MessageContentType::TopicEdit:
+    case MessageContentType::SuggestProfilePhoto:
+    case MessageContentType::WriteAccessAllowed:
       return true;
     default:
       UNREACHABLE();
@@ -364,6 +374,8 @@ bool can_have_message_content_caption(MessageContentType content_type) {
     case MessageContentType::GiftPremium:
     case MessageContentType::TopicCreate:
     case MessageContentType::TopicEdit:
+    case MessageContentType::SuggestProfilePhoto:
+    case MessageContentType::WriteAccessAllowed:
       return false;
     default:
       UNREACHABLE();

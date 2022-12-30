@@ -42,6 +42,18 @@ class ForumTopic {
     return is_short_;
   }
 
+  bool update_last_read_outbox_message_id(MessageId last_read_outbox_message_id);
+
+  bool update_last_read_inbox_message_id(MessageId last_read_inbox_message_id, int32 unread_count);
+
+  bool set_is_pinned(bool is_pinned) {
+    if (is_pinned_ == is_pinned) {
+      return false;
+    }
+    is_pinned_ = is_pinned;
+    return true;
+  }
+
   DialogNotificationSettings *get_notification_settings() {
     return &notification_settings_;
   }

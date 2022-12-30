@@ -59,7 +59,8 @@ class ForumTopicManager final : public Actor {
                            vector<telegram_api::object_ptr<telegram_api::ForumTopic>> &&topics,
                            Promise<td_api::object_ptr<td_api::forumTopics>> &&promise);
 
-  void get_forum_topic_link(DialogId dialog_id, MessageId top_thread_message_id, Promise<string> &&promise);
+  void get_forum_topic_link(DialogId dialog_id, MessageId top_thread_message_id,
+                            Promise<td_api::object_ptr<td_api::messageLink>> &&promise);
 
   void get_forum_topics(DialogId dialog_id, string query, int32 offset_date, MessageId offset_message_id,
                         MessageId offset_top_thread_message_id, int32 limit,
@@ -77,13 +78,26 @@ class ForumTopicManager final : public Actor {
 
   void toggle_forum_topic_is_hidden(DialogId dialog_id, bool is_hidden, Promise<Unit> &&promise);
 
+  void toggle_forum_topic_is_pinned(DialogId dialog_id, MessageId top_thread_message_id, bool is_pinned,
+                                    Promise<Unit> &&promise);
+
+  void set_pinned_forum_topics(DialogId dialog_id, vector<MessageId> top_thread_message_ids, Promise<Unit> &&promise);
+
   void delete_forum_topic(DialogId dialog_id, MessageId top_thread_message_id, Promise<Unit> &&promise);
 
   void delete_all_dialog_topics(DialogId dialog_id);
 
+  void on_update_forum_topic_unread(DialogId dialog_id, MessageId top_thread_message_id, MessageId last_message_id,
+                                    MessageId last_read_inbox_message_id, MessageId last_read_outbox_message_id,
+                                    int32 unread_count);
+
   void on_update_forum_topic_notify_settings(DialogId dialog_id, MessageId top_thread_message_id,
                                              tl_object_ptr<telegram_api::peerNotifySettings> &&peer_notify_settings,
                                              const char *source);
+
+  void on_update_forum_topic_is_pinned(DialogId dialog_id, MessageId top_thread_message_id, bool is_pinned);
+
+  void on_update_pinned_forum_topics(DialogId dialog_id, vector<MessageId> top_thread_message_ids);
 
   void on_forum_topic_edited(DialogId dialog_id, MessageId top_thread_message_id,
                              const ForumTopicEditedData &edited_data);
@@ -131,7 +145,11 @@ class ForumTopicManager final : public Actor {
 
   DialogTopics *add_dialog_topics(DialogId dialog_id);
 
+  DialogTopics *get_dialog_topics(DialogId dialog_id);
+
   static Topic *add_topic(DialogTopics *dialog_topics, MessageId top_thread_message_id);
+
+  static Topic *get_topic(DialogTopics *dialog_topics, MessageId top_thread_message_id);
 
   Topic *add_topic(DialogId dialog_id, MessageId top_thread_message_id);
 

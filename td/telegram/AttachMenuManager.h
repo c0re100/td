@@ -50,7 +50,8 @@ class AttachMenuManager final : public Actor {
 
   FileSourceId get_attach_menu_bot_file_source_id(UserId user_id);
 
-  void toggle_bot_is_added_to_attach_menu(UserId user_id, bool is_added, Promise<Unit> &&promise);
+  void toggle_bot_is_added_to_attach_menu(UserId user_id, bool is_added, bool allow_write_access,
+                                          Promise<Unit> &&promise);
 
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
 
@@ -87,6 +88,7 @@ class AttachMenuManager final : public Actor {
     bool supports_group_dialogs_ = false;
     bool supports_broadcast_dialogs_ = false;
     bool supports_settings_ = false;
+    bool request_write_access_ = false;
     string name_;
     AttachMenuBotColor name_color_;
     FileId default_icon_file_id_;
@@ -97,7 +99,7 @@ class AttachMenuManager final : public Actor {
     AttachMenuBotColor icon_color_;
     FileId placeholder_file_id_;
 
-    static constexpr uint32 CACHE_VERSION = 1;
+    static constexpr uint32 CACHE_VERSION = 2;
     uint32 cache_version_ = 0;
 
     template <class StorerT>
