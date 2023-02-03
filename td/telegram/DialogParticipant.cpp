@@ -213,8 +213,8 @@ RestrictedRights::RestrictedRights(const td_api::object_ptr<td_api::chatPermissi
   *this = RestrictedRights(
       rights->can_send_messages_, rights->can_send_audios_, rights->can_send_documents_, rights->can_send_photos_,
       rights->can_send_videos_, rights->can_send_video_notes_, rights->can_send_voice_notes_,
-      rights->can_send_other_messages_, rights->can_send_other_messages_, rights->can_send_other_messages_,
-      rights->can_send_other_messages_, rights->can_add_web_page_previews_, rights->can_send_polls_,
+      rights->can_send_stickers_, rights->can_send_animations_, rights->can_send_games_,
+      rights->can_use_inline_bots_, rights->can_add_web_page_previews_, rights->can_send_polls_,
       rights->can_change_info_, rights->can_invite_users_, rights->can_pin_messages_, rights->can_manage_topics_);
 }
 
@@ -247,7 +247,7 @@ td_api::object_ptr<td_api::chatPermissions> RestrictedRights::get_chat_permissio
   return td_api::make_object<td_api::chatPermissions>(
       can_send_messages(), can_send_audios(), can_send_documents(), can_send_photos(), can_send_videos(),
       can_send_video_notes(), can_send_voice_notes(), can_send_polls(),
-      can_send_stickers() || can_send_animations() || can_send_games() || can_use_inline_bots(),
+      can_send_stickers(), can_send_animations(), can_send_games(), can_use_inline_bots(),
       can_add_web_page_previews(), can_change_info_and_settings(), can_invite_users(), can_pin_messages(),
       can_manage_topics());
 }
