@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -54,6 +54,8 @@ class AttachMenuManager final : public Actor {
                                           Promise<Unit> &&promise);
 
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
+
+  static string get_attach_menu_bots_database_key();
 
  private:
   static const int32 PING_WEB_VIEW_TIMEOUT = 60;
@@ -134,8 +136,6 @@ class AttachMenuManager final : public Actor {
   void remove_bot_from_attach_menu(UserId user_id);
 
   void send_update_attach_menu_bots() const;
-
-  static string get_attach_menu_bots_database_key();
 
   void save_attach_menu_bots();
 

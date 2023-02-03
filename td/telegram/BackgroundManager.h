@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -160,7 +160,7 @@ class BackgroundManager final : public Actor {
   FlatHashMap<BackgroundId, unique_ptr<Background>, BackgroundIdHash> backgrounds_;
 
   FlatHashMap<BackgroundId, std::pair<int64, FileSourceId>, BackgroundIdHash>
-      background_id_to_file_source_id_;  // id -> [access_hash, file_source_id]
+      background_id_to_file_source_id_;  // background_id -> [access_hash, file_source_id]
 
   FlatHashMap<string, BackgroundId> name_to_background_id_;
 

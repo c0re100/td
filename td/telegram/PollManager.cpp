@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -1822,7 +1822,7 @@ void PollManager::on_binlog_events(vector<BinlogEvent> &&events) {
         }
 
         SetPollAnswerLogEvent log_event;
-        log_event_parse(log_event, event.data_).ensure();
+        log_event_parse(log_event, event.get_data()).ensure();
 
         auto dialog_id = log_event.full_message_id_.get_dialog_id();
 
@@ -1841,7 +1841,7 @@ void PollManager::on_binlog_events(vector<BinlogEvent> &&events) {
         }
 
         StopPollLogEvent log_event;
-        log_event_parse(log_event, event.data_).ensure();
+        log_event_parse(log_event, event.get_data()).ensure();
 
         auto dialog_id = log_event.full_message_id_.get_dialog_id();
 

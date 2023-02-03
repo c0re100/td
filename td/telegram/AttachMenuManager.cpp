@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -829,7 +829,7 @@ Result<AttachMenuManager::AttachMenuBot> AttachMenuManager::get_attach_menu_bot(
 
 void AttachMenuManager::reload_attach_menu_bots(Promise<Unit> &&promise) {
   if (!is_active()) {
-    return;
+    return promise.set_error(Status::Error(400, "Can't reload attachment menu bots"));
   }
 
   reload_attach_menu_bots_queries_.push_back(std::move(promise));
@@ -931,6 +931,10 @@ void AttachMenuManager::get_attach_menu_bot(UserId user_id,
 }
 
 void AttachMenuManager::reload_attach_menu_bot(UserId user_id, Promise<Unit> &&promise) {
+  if (!is_active()) {
+    return promise.set_error(Status::Error(400, "Can't reload attachment menu bot"));
+  }
+
   TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(user_id));
 
   auto wrapped_promise = PromiseCreator::lambda(

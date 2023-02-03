@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -375,7 +375,7 @@ class FileManager final : public FileLoadManager::Callback {
 
     // After on_upload_ok all uploads of this file will be paused till merge, delete_partial_remote_location or
     // explicit upload request with the same file_id.
-    // Also upload may be resumed after some other merges.
+    // Also, upload may be resumed after some other merge.
     virtual void on_upload_ok(FileId file_id, tl_object_ptr<telegram_api::InputFile> input_file) = 0;
     virtual void on_upload_encrypted_ok(FileId file_id, tl_object_ptr<telegram_api::InputEncryptedFile> input_file) = 0;
     virtual void on_upload_secure_ok(FileId file_id, tl_object_ptr<telegram_api::InputSecureFile> input_file) = 0;
@@ -452,6 +452,7 @@ class FileManager final : public FileLoadManager::Callback {
   bool set_content(FileId file_id, BufferSlice bytes);
 
   void check_local_location(FileId file_id, bool skip_file_size_checks);
+  void check_local_location_async(FileId file_id, bool skip_file_size_checks);
 
   void download(FileId file_id, std::shared_ptr<DownloadCallback> callback, int32 new_priority, int64 offset,
                 int64 limit, Promise<td_api::object_ptr<td_api::file>> promise);
@@ -470,9 +471,10 @@ class FileManager final : public FileLoadManager::Callback {
 
   void delete_file(FileId file_id, Promise<Unit> promise, const char *source);
 
-  void external_file_generate_write_part(int64 id, int64 offset, string data, Promise<> promise);
-  void external_file_generate_progress(int64 id, int64 expected_size, int64 local_prefix_size, Promise<> promise);
-  void external_file_generate_finish(int64 id, Status status, Promise<> promise);
+  void external_file_generate_write_part(int64 generation_id, int64 offset, string data, Promise<> promise);
+  void external_file_generate_progress(int64 generation_id, int64 expected_size, int64 local_prefix_size,
+                                       Promise<> promise);
+  void external_file_generate_finish(int64 generation_id, Status status, Promise<> promise);
 
   Result<FileId> from_persistent_id(CSlice persistent_id, FileType file_type) TD_WARN_UNUSED_RESULT;
   FileView get_file_view(FileId file_id) const;
@@ -659,7 +661,6 @@ class FileManager final : public FileLoadManager::Callback {
 
   void on_force_reupload_success(FileId file_id);
 
-  // void release_file_node(FileNodeId id);
   void do_cancel_download(FileNodePtr node);
   void do_cancel_upload(FileNodePtr node);
   void do_cancel_generate(FileNodePtr node);

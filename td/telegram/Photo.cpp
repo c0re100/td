@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -14,11 +14,13 @@
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/PhotoFormat.h"
 #include "td/telegram/PhotoSizeSource.h"
+#include "td/telegram/Td.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/common.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
+#include "td/utils/overloaded.h"
 #include "td/utils/SliceBuilder.h"
 
 #include <algorithm>
@@ -292,15 +294,15 @@ Photo get_encrypted_file_photo(FileManager *file_manager, unique_ptr<EncryptedFi
   return res;
 }
 
-Photo get_photo(FileManager *file_manager, tl_object_ptr<telegram_api::Photo> &&photo, DialogId owner_dialog_id) {
+Photo get_photo(Td *td, tl_object_ptr<telegram_api::Photo> &&photo, DialogId owner_dialog_id) {
   if (photo == nullptr || photo->get_id() == telegram_api::photoEmpty::ID) {
     return Photo();
   }
   CHECK(photo->get_id() == telegram_api::photo::ID);
-  return get_photo(file_manager, move_tl_object_as<telegram_api::photo>(photo), owner_dialog_id);
+  return get_photo(td, move_tl_object_as<telegram_api::photo>(photo), owner_dialog_id);
 }
 
-Photo get_photo(FileManager *file_manager, tl_object_ptr<telegram_api::photo> &&photo, DialogId owner_dialog_id) {
+Photo get_photo(Td *td, tl_object_ptr<telegram_api::photo> &&photo, DialogId owner_dialog_id) {
   CHECK(photo != nullptr);
   Photo res;
 
@@ -315,8 +317,8 @@ Photo get_photo(FileManager *file_manager, tl_object_ptr<telegram_api::photo> &&
 
   DcId dc_id = DcId::create(photo->dc_id_);
   for (auto &size_ptr : photo->sizes_) {
-    auto photo_size = get_photo_size(file_manager, PhotoSizeSource::thumbnail(FileType::Photo, 0), photo->id_,
-                                     photo->access_hash_, photo->file_reference_.as_slice().str(), dc_id,
+    auto photo_size = get_photo_size(td->file_manager_.get(), PhotoSizeSource::thumbnail(FileType::Photo, 0),
+                                     photo->id_, photo->access_hash_, photo->file_reference_.as_slice().str(), dc_id,
                                      owner_dialog_id, std::move(size_ptr), PhotoFormat::Jpeg);
     if (photo_size.get_offset() == 0) {
       PhotoSize &size = photo_size.get<0>();
@@ -332,12 +334,21 @@ Photo get_photo(FileManager *file_manager, tl_object_ptr<telegram_api::photo> &&
   }
 
   for (auto &size_ptr : photo->video_sizes_) {
-    auto animation = get_animation_size(file_manager, PhotoSizeSource::thumbnail(FileType::Photo, 0), photo->id_,
-                                        photo->access_hash_, photo->file_reference_.as_slice().str(), dc_id,
-                                        owner_dialog_id, std::move(size_ptr));
-    if (animation.type != 0 && animation.dimensions.width == animation.dimensions.height) {
-      res.animations.push_back(std::move(animation));
+    auto animation =
+        process_video_size(td, PhotoSizeSource::thumbnail(FileType::Photo, 0), photo->id_, photo->access_hash_,
+                           photo->file_reference_.as_slice().str(), dc_id, owner_dialog_id, std::move(size_ptr));
+    if (animation.empty()) {
+      continue;
     }
+    animation.visit(overloaded(
+        [&](AnimationSize &&animation_size) {
+          if (animation_size.type != 0 && animation_size.dimensions.width == animation_size.dimensions.height) {
+            res.animations.push_back(std::move(animation_size));
+          }
+        },
+        [&](unique_ptr<StickerPhotoSize> &&sticker_photo_size) {
+          res.sticker_photo_size = std::move(sticker_photo_size);
+        }));
   }
 
   return res;
@@ -381,10 +392,12 @@ tl_object_ptr<td_api::chatPhoto> get_chat_photo_object(FileManager *file_manager
     LOG(ERROR) << "Have small animation without big animation in " << photo;
     small_animation = nullptr;
   }
+  auto chat_photo_sticker =
+      photo.sticker_photo_size == nullptr ? nullptr : photo.sticker_photo_size->get_chat_photo_sticker_object();
   return td_api::make_object<td_api::chatPhoto>(
       photo.id.get(), photo.date, get_minithumbnail_object(photo.minithumbnail),
       get_photo_sizes_object(file_manager, photo.photos), get_animated_chat_photo_object(file_manager, big_animation),
-      get_animated_chat_photo_object(file_manager, small_animation));
+      get_animated_chat_photo_object(file_manager, small_animation), std::move(chat_photo_sticker));
 }
 
 void photo_delete_thumbnail(Photo &photo) {
@@ -572,7 +585,8 @@ FileId get_photo_thumbnail_file_id(const Photo &photo) {
 }
 
 bool operator==(const Photo &lhs, const Photo &rhs) {
-  return lhs.id.get() == rhs.id.get() && lhs.photos == rhs.photos && lhs.animations == rhs.animations;
+  return lhs.id.get() == rhs.id.get() && lhs.photos == rhs.photos && lhs.animations == rhs.animations &&
+         lhs.sticker_photo_size == rhs.sticker_photo_size;
 }
 
 bool operator!=(const Photo &lhs, const Photo &rhs) {
@@ -583,6 +597,9 @@ StringBuilder &operator<<(StringBuilder &string_builder, const Photo &photo) {
   string_builder << "[ID = " << photo.id.get() << ", photos = " << format::as_array(photo.photos);
   if (!photo.animations.empty()) {
     string_builder << ", animations = " << format::as_array(photo.animations);
+  }
+  if (photo.sticker_photo_size != nullptr) {
+    string_builder << ", sticker = " << *photo.sticker_photo_size;
   }
   return string_builder << ']';
 }

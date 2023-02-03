@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -35,7 +35,7 @@ Game::Game(Td *td, string title, string description, tl_object_ptr<telegram_api:
     : title_(std::move(title)), description_(std::move(description)) {
   CHECK(td != nullptr);
   CHECK(photo != nullptr);
-  photo_ = get_photo(td->file_manager_.get(), std::move(photo), owner_dialog_id);
+  photo_ = get_photo(td, std::move(photo), owner_dialog_id);
   if (photo_.is_empty()) {
     LOG(ERROR) << "Receive empty photo for game " << title_;
     photo_.id = 0;  // to prevent null photo in td_api

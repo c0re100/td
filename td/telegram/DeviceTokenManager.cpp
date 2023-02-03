@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -229,6 +229,13 @@ void DeviceTokenManager::register_device(tl_object_ptr<td_api::DeviceToken> devi
       auto device_token = static_cast<td_api::deviceTokenTizenPush *>(device_token_ptr.get());
       token = std::move(device_token->reg_id_);
       token_type = TokenType::Tizen;
+      break;
+    }
+    case td_api::deviceTokenHuaweiPush::ID: {
+      auto device_token = static_cast<td_api::deviceTokenHuaweiPush *>(device_token_ptr.get());
+      token = std::move(device_token->token_);
+      token_type = TokenType::Huawei;
+      encrypt = device_token->encrypt_;
       break;
     }
     default:

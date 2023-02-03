@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -32,8 +32,10 @@
 #include "td/telegram/PremiumGiftOption.h"
 #include "td/telegram/PublicDialogType.h"
 #include "td/telegram/QueryCombiner.h"
+#include "td/telegram/QueryMerger.h"
 #include "td/telegram/RestrictionReason.h"
 #include "td/telegram/SecretChatId.h"
+#include "td/telegram/StickerPhotoSize.h"
 #include "td/telegram/StickerSetId.h"
 #include "td/telegram/SuggestedAction.h"
 #include "td/telegram/td_api.h"
@@ -724,7 +726,7 @@ class ContactsManager final : public Actor {
 
     FlatHashSet<int64> photo_ids;
 
-    FlatHashMap<DialogId, int32, DialogIdHash> online_member_dialogs;  // id -> time
+    FlatHashMap<DialogId, int32, DialogIdHash> online_member_dialogs;  // dialog_id -> time
 
     static constexpr uint32 CACHE_VERSION = 4;
     uint32 cache_version = 0;
@@ -840,8 +842,8 @@ class ContactsManager final : public Actor {
     ChannelId migrated_to_channel_id;
 
     DialogParticipantStatus status = DialogParticipantStatus::Banned(0);
-    RestrictedRights default_permissions{false, false, false, false, false, false,
-                                         false, false, false, false, false, false};
+    RestrictedRights default_permissions{false, false, false, false, false, false, false, false, false,
+                                         false, false, false, false, false, false, false, false};
 
     static constexpr uint32 CACHE_VERSION = 4;
     uint32 cache_version = 0;
@@ -912,8 +914,8 @@ class ContactsManager final : public Actor {
     Usernames usernames;
     vector<RestrictionReason> restriction_reasons;
     DialogParticipantStatus status = DialogParticipantStatus::Banned(0);
-    RestrictedRights default_permissions{false, false, false, false, false, false,
-                                         false, false, false, false, false, false};
+    RestrictedRights default_permissions{false, false, false, false, false, false, false, false, false,
+                                         false, false, false, false, false, false, false, false};
     int32 date = 0;
     int32 participant_count = 0;
 
@@ -1875,6 +1877,10 @@ class ContactsManager final : public Actor {
 
   FlatHashMap<SecretChatId, vector<Promise<Unit>>, SecretChatIdHash> load_secret_chat_from_database_queries_;
   FlatHashSet<SecretChatId, SecretChatIdHash> loaded_from_database_secret_chats_;
+
+  QueryMerger get_user_queries_{"GetUserMerger", 3, 50};
+  QueryMerger get_chat_queries_{"GetChatMerger", 3, 50};
+  QueryMerger get_channel_queries_{"GetChannelMerger", 100, 1};  // can't merge getChannel queries without access hash
 
   QueryCombiner get_user_full_queries_{"GetUserFullCombiner", 2.0};
   QueryCombiner get_chat_full_queries_{"GetChatFullCombiner", 2.0};

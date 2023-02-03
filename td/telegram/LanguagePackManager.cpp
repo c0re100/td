@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -291,10 +291,10 @@ string LanguagePackManager::get_main_language_code() {
   }
 
   if (info == nullptr) {
-    LOG(WARNING) << "Failed to find information about chosen language " << language_code_
-                 << ", ensure that valid language pack ID is used";
+    LOG(INFO) << "Failed to find information about chosen language " << language_code_
+              << ", ensure that valid language pack ID is used";
     if (!is_custom_language_code(language_code_)) {
-      search_language_info(language_code_, Auto());
+      get_languages(false, Auto());
     }
   } else {
     if (!info->base_language_code_.empty()) {
@@ -340,7 +340,7 @@ vector<string> LanguagePackManager::get_used_language_codes() {
     LOG(INFO) << "Failed to find information about chosen language " << language_code_
               << ", ensure that valid language pack ID is used";
     if (!is_custom_language_code(language_code_)) {
-      search_language_info(language_code_, Auto());
+      get_languages(false, Auto());
     }
   } else {
     if (!info->base_language_code_.empty()) {
@@ -1688,7 +1688,7 @@ Result<LanguagePackManager::LanguageInfo> LanguagePackManager::get_language_info
     return Status::Error(400, "Language pack plural code must be encoded in UTF-8");
   }
   if (!clean_input_string(language_pack_info->translation_url_)) {
-    return Status::Error(400, "Language pack translation url must be encoded in UTF-8");
+    return Status::Error(400, "Language pack translation URL must be encoded in UTF-8");
   }
   if (language_pack_info->total_string_count_ < 0) {
     language_pack_info->total_string_count_ = 0;

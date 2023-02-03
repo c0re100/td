@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -16,6 +16,7 @@
 #include "td/telegram/MessageEntity.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/PremiumGiftOption.h"
+#include "td/telegram/SuggestedAction.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UpdatesManager.h"
@@ -74,6 +75,9 @@ static td_api::object_ptr<td_api::PremiumFeature> get_premium_feature_object(Sli
   if (premium_feature == "app_icons") {
     return td_api::make_object<td_api::premiumFeatureAppIcons>();
   }
+  if (premium_feature == "translations") {
+    return td_api::make_object<td_api::premiumFeatureRealTimeChatTranslation>();
+  }
   return nullptr;
 }
 
@@ -90,7 +94,11 @@ static Result<tl_object_ptr<telegram_api::InputStorePaymentPurpose>> get_input_s
       if (p->is_restore_) {
         flags |= telegram_api::inputStorePaymentPremiumSubscription::RESTORE_MASK;
       }
-      return make_tl_object<telegram_api::inputStorePaymentPremiumSubscription>(flags, false /*ignored*/);
+      if (p->is_upgrade_) {
+        flags |= telegram_api::inputStorePaymentPremiumSubscription::UPGRADE_MASK;
+      }
+      return make_tl_object<telegram_api::inputStorePaymentPremiumSubscription>(flags, false /*ignored*/,
+                                                                                false /*ignored*/);
     }
     case td_api::storePaymentPurposeGiftedPremium::ID: {
       auto p = static_cast<const td_api::storePaymentPurposeGiftedPremium *>(purpose.get());
@@ -165,9 +173,9 @@ class GetPremiumPromoQuery final : public Td::ResultHandler {
     }
 
     auto period_options = get_premium_gift_options(std::move(promo->period_options_));
-    promise_.set_value(td_api::make_object<td_api::premiumState>(get_formatted_text_object(state, true, 0),
-                                                                 get_premium_payment_options_object(period_options),
-                                                                 std::move(animations)));
+    promise_.set_value(td_api::make_object<td_api::premiumState>(
+        get_formatted_text_object(state, true, 0), get_premium_state_payment_options_object(period_options),
+        std::move(animations)));
   }
 
   void on_error(Status status) final {
@@ -199,10 +207,10 @@ class CanPurchasePremiumQuery final : public Td::ResultHandler {
     }
 
     bool result = result_ptr.ok();
-    if (result) {
-      return promise_.set_value(Unit());
+    if (!result) {
+      return on_error(Status::Error(400, "Premium can't be purchased"));
     }
-    on_error(Status::Error(400, "Premium can't be purchased"));
+    promise_.set_value(Unit());
   }
 
   void on_error(Status status) final {
@@ -367,6 +375,8 @@ static string get_premium_source(const td_api::PremiumFeature *feature) {
       return "forum_topic_icon";
     case td_api::premiumFeatureAppIcons::ID:
       return "app_icons";
+    case td_api::premiumFeatureRealTimeChatTranslation::ID:
+      return "translations";
     default:
       UNREACHABLE();
   }
@@ -459,7 +469,8 @@ void get_premium_features(Td *td, const td_api::object_ptr<td_api::PremiumSource
       G()->get_option_string(
           "premium_features",
           "double_limits,more_upload,faster_download,voice_to_text,no_ads,infinite_reactions,premium_stickers,"
-          "animated_emoji,advanced_chat_management,profile_badge,emoji_status,animated_userpics,app_icons"),
+          "animated_emoji,advanced_chat_management,profile_badge,emoji_status,animated_userpics,app_icons,"
+          "translations"),
       ',');
   vector<td_api::object_ptr<td_api::PremiumFeature>> features;
   for (const auto &premium_feature : premium_features) {
@@ -531,6 +542,10 @@ void can_purchase_premium(Td *td, td_api::object_ptr<td_api::StorePaymentPurpose
 
 void assign_app_store_transaction(Td *td, const string &receipt,
                                   td_api::object_ptr<td_api::StorePaymentPurpose> &&purpose, Promise<Unit> &&promise) {
+  if (purpose != nullptr && purpose->get_id() == td_api::storePaymentPurposePremiumSubscription::ID) {
+    dismiss_suggested_action(SuggestedAction{SuggestedAction::Type::UpgradePremium}, Promise<Unit>());
+    dismiss_suggested_action(SuggestedAction{SuggestedAction::Type::SubscribeToAnnualPremium}, Promise<Unit>());
+  }
   td->create_handler<AssignAppStoreTransactionQuery>(std::move(promise))->send(receipt, std::move(purpose));
 }
 
@@ -538,6 +553,10 @@ void assign_play_market_transaction(Td *td, const string &package_name, const st
                                     const string &purchase_token,
                                     td_api::object_ptr<td_api::StorePaymentPurpose> &&purpose,
                                     Promise<Unit> &&promise) {
+  if (purpose != nullptr && purpose->get_id() == td_api::storePaymentPurposePremiumSubscription::ID) {
+    dismiss_suggested_action(SuggestedAction{SuggestedAction::Type::UpgradePremium}, Promise<Unit>());
+    dismiss_suggested_action(SuggestedAction{SuggestedAction::Type::SubscribeToAnnualPremium}, Promise<Unit>());
+  }
   td->create_handler<AssignPlayMarketTransactionQuery>(std::move(promise))
       ->send(package_name, store_product_id, purchase_token, std::move(purpose));
 }

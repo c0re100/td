@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -191,10 +191,6 @@ inline void Scheduler::before_tail_send(const ActorId<> &actor_id) {
   // TODO
 }
 
-inline void Scheduler::inc_wait_generation() {
-  wait_generation_ += 2;
-}
-
 template <ActorSendType send_type, class RunFuncT, class EventFuncT>
 void Scheduler::send_impl(const ActorId<> &actor_id, const RunFuncT &run_func, const EventFuncT &event_func) {
   ActorInfo *actor_info = actor_id.get_actor_info();
@@ -210,19 +206,12 @@ void Scheduler::send_impl(const ActorId<> &actor_id, const RunFuncT &run_func, c
   CHECK(has_guard_ || !on_current_sched);
 
   if (likely(send_type == ActorSendType::Immediate && on_current_sched && !actor_info->is_running() &&
-             !actor_info->must_wait(wait_generation_))) {  // run immediately
-    if (likely(actor_info->mailbox_.empty())) {
-      EventGuard guard(this, actor_info);
-      run_func(actor_info);
-    } else {
-      flush_mailbox(actor_info, &run_func, &event_func);
-    }
+             actor_info->mailbox_.empty())) {  // run immediately
+    EventGuard guard(this, actor_info);
+    run_func(actor_info);
   } else {
     if (on_current_sched) {
       add_to_mailbox(actor_info, event_func());
-      if (send_type == ActorSendType::Later) {
-        actor_info->set_wait_generation(wait_generation_);
-      }
     } else {
       send_to_scheduler(actor_sched_id, actor_id, event_func());
     }

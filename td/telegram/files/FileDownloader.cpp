@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -245,16 +245,16 @@ Result<std::pair<NetQueryPtr, bool>> FileDownloader::start_part(Part part, int32
     }
 #endif
     DcId dc_id = remote_.is_web() ? G()->get_webfile_dc_id() : remote_.get_dc_id();
-    auto id = UniqueId::next(UniqueId::Type::Default, static_cast<uint8>(QueryType::Default));
+    auto unique_id = UniqueId::next(UniqueId::Type::Default, static_cast<uint8>(QueryType::Default));
     net_query =
         remote_.is_web()
             ? G()->net_query_creator().create(
-                  id,
+                  unique_id,
                   telegram_api::upload_getWebFile(remote_.as_input_web_file_location(), narrow_cast<int32>(part.offset),
                                                   narrow_cast<int32>(size)),
                   {}, dc_id, net_query_type, NetQuery::AuthFlag::On)
             : G()->net_query_creator().create(
-                  id,
+                  unique_id,
                   telegram_api::upload_getFile(flags, false /*ignored*/, false /*ignored*/,
                                                remote_.as_input_file_location(), part.offset, narrow_cast<int32>(size)),
                   {}, dc_id, net_query_type, NetQuery::AuthFlag::On);
@@ -351,7 +351,7 @@ Result<size_t> FileDownloader::process_part(Part part, NetQueryPtr net_query) {
     string iv = cdn_encryption_iv_;
     as<uint32>(&iv[12]) = offset;
     ctr_state.init(cdn_encryption_key_, iv);
-    ctr_state.decrypt(bytes.as_slice(), bytes.as_slice());
+    ctr_state.decrypt(bytes.as_slice(), bytes.as_mutable_slice());
   }
   if (encryption_key_.is_secret()) {
     LOG_CHECK(next_part_ == part.id) << tag("expected part.id", next_part_) << "!=" << tag("part.id", part.id);
@@ -360,8 +360,8 @@ Result<size_t> FileDownloader::process_part(Part part, NetQueryPtr net_query) {
     if (part.size % 16 != 0) {
       next_part_stop_ = true;
     }
-    aes_ige_decrypt(as_slice(encryption_key_.key()), as_slice(encryption_key_.mutable_iv()), bytes.as_slice(),
-                    bytes.as_slice());
+    aes_ige_decrypt(as_slice(encryption_key_.key()), as_mutable_slice(encryption_key_.mutable_iv()), bytes.as_slice(),
+                    bytes.as_mutable_slice());
   }
 
   auto slice = bytes.as_slice().substr(0, part.size);
@@ -445,7 +445,7 @@ Result<FileLoader::CheckInfo> FileDownloader::check_loop(int64 checked_prefix_si
       auto size = narrow_cast<size_t>(end_offset - begin_offset);
       auto slice = BufferSlice(size);
       TRY_STATUS(acquire_fd());
-      TRY_RESULT(read_size, fd_.pread(slice.as_slice(), begin_offset));
+      TRY_RESULT(read_size, fd_.pread(slice.as_mutable_slice(), begin_offset));
       if (size != read_size) {
         return Status::Error("Failed to read file to check hash");
       }

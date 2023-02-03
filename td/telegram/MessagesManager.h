@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -58,6 +58,7 @@
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/ServerMessageId.h"
+#include "td/telegram/StickerPhotoSize.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
@@ -287,6 +288,10 @@ class MessagesManager final : public Actor {
 
   void on_update_dialog_is_marked_as_unread(DialogId dialog_id, bool is_marked_as_unread);
 
+  void on_update_dialog_is_translatable(DialogId dialog_id, bool is_translatable);
+
+  void update_is_translatable(bool new_is_premium);
+
   void on_update_dialog_is_blocked(DialogId dialog_id, bool is_blocked);
 
   void on_update_dialog_last_pinned_message_id(DialogId dialog_id, MessageId last_pinned_message_id);
@@ -462,6 +467,9 @@ class MessagesManager final : public Actor {
 
   Status send_screenshot_taken_notification_message(DialogId dialog_id);
 
+  void share_dialog_with_bot(FullMessageId full_message_id, int32 button_id, DialogId shared_dialog_id,
+                             bool expect_user, bool only_check, Promise<Unit> &&promise);
+
   Result<MessageId> add_local_message(DialogId dialog_id, td_api::object_ptr<td_api::MessageSender> &&sender,
                                       MessageId reply_to_message_id, bool disable_notification,
                                       tl_object_ptr<td_api::InputMessageContent> &&input_message_content)
@@ -634,8 +642,8 @@ class MessagesManager final : public Actor {
 
   void get_message_viewers(FullMessageId full_message_id, Promise<td_api::object_ptr<td_api::users>> &&promise);
 
-  void translate_text(const string &text, const string &from_language_code, const string &to_language_code,
-                      Promise<td_api::object_ptr<td_api::text>> &&promise);
+  void translate_message_text(FullMessageId full_message_id, const string &to_language_code,
+                              Promise<td_api::object_ptr<td_api::formattedText>> &&promise);
 
   void recognize_speech(FullMessageId full_message_id, Promise<Unit> &&promise);
 
@@ -678,6 +686,8 @@ class MessagesManager final : public Actor {
 
   Status toggle_dialog_is_marked_as_unread(DialogId dialog_id, bool is_marked_as_unread) TD_WARN_UNUSED_RESULT;
 
+  Status toggle_dialog_is_translatable(DialogId dialog_id, bool is_translatable) TD_WARN_UNUSED_RESULT;
+
   Status toggle_message_sender_is_blocked(const td_api::object_ptr<td_api::MessageSender> &sender,
                                           bool is_blocked) TD_WARN_UNUSED_RESULT;
 
@@ -692,7 +702,7 @@ class MessagesManager final : public Actor {
   DialogId create_new_group_chat(const vector<UserId> &user_ids, const string &title, MessageTtl message_ttl,
                                  int64 &random_id, Promise<Unit> &&promise);
 
-  DialogId create_new_channel_chat(const string &title, bool is_megagroup, const string &description,
+  DialogId create_new_channel_chat(const string &title, bool is_forum, bool is_megagroup, const string &description,
                                    const DialogLocation &location, bool for_import, MessageTtl message_ttl,
                                    int64 &random_id, Promise<Unit> &&promise);
 
@@ -1379,6 +1389,8 @@ class MessagesManager final : public Actor {
     bool is_theme_name_inited = false;
     bool is_available_reactions_inited = false;
     bool had_yet_unsent_message_id_overflow = false;
+    bool need_repair_unread_reaction_count = false;
+    bool is_translatable = false;
 
     bool increment_view_counter = false;
 
@@ -1599,7 +1611,7 @@ class MessagesManager final : public Actor {
    protected:
     MessagesIteratorBase() = default;
 
-    // points iterator to message with greatest id which is less or equal than message_id
+    // points iterator to message with greatest identifier which is less or equal than message_id
     MessagesIteratorBase(const Message *root, MessageId message_id) {
       size_t last_right_pos = 0;
       while (root != nullptr) {
@@ -1783,6 +1795,7 @@ class MessagesManager final : public Actor {
   class SetDialogFolderIdOnServerLogEvent;
   class ToggleDialogIsBlockedOnServerLogEvent;
   class ToggleDialogIsMarkedAsUnreadOnServerLogEvent;
+  class ToggleDialogIsTranslatableOnServerLogEvent;
   class ToggleDialogIsPinnedOnServerLogEvent;
   class ToggleDialogReportSpamStateOnServerLogEvent;
   class UnpinAllDialogMessagesOnServerLogEvent;
@@ -2086,7 +2099,8 @@ class MessagesManager final : public Actor {
 
   void restore_message_reply_to_message_id(Dialog *d, Message *m);
 
-  Message *continue_send_message(DialogId dialog_id, unique_ptr<Message> &&m, uint64 log_event_id);
+  Message *continue_send_message(DialogId dialog_id, unique_ptr<Message> &&m, bool *need_update_dialog_pos,
+                                 uint64 log_event_id);
 
   bool is_message_unload_enabled() const;
 
@@ -2255,6 +2269,8 @@ class MessagesManager final : public Actor {
   void repair_server_unread_count(DialogId dialog_id, int32 unread_count, const char *source);
 
   void repair_channel_server_unread_count(Dialog *d);
+
+  void repair_dialog_unread_reaction_count(Dialog *d, Promise<Unit> &&promise, const char *source);
 
   void read_history_outbox(DialogId dialog_id, MessageId max_message_id, int32 read_date = -1);
 
@@ -2654,6 +2670,8 @@ class MessagesManager final : public Actor {
 
   void set_dialog_is_marked_as_unread(Dialog *d, bool is_marked_as_unread);
 
+  void set_dialog_is_translatable(Dialog *d, bool is_translatable);
+
   void set_dialog_is_blocked(Dialog *d, bool is_blocked);
 
   void set_dialog_has_bots(Dialog *d, bool has_bots);
@@ -2685,6 +2703,8 @@ class MessagesManager final : public Actor {
   void toggle_dialog_is_pinned_on_server(DialogId dialog_id, bool is_pinned, uint64 log_event_id);
 
   void toggle_dialog_is_marked_as_unread_on_server(DialogId dialog_id, bool is_marked_as_unread, uint64 log_event_id);
+
+  void toggle_dialog_is_translatable_on_server(DialogId dialog_id, bool is_translatable, uint64 log_event_id);
 
   void toggle_dialog_is_blocked_on_server(DialogId dialog_id, bool is_blocked, uint64 log_event_id);
 
@@ -3342,6 +3362,8 @@ class MessagesManager final : public Actor {
 
   static uint64 save_toggle_dialog_is_marked_as_unread_on_server_log_event(DialogId dialog_id,
                                                                            bool is_marked_as_unread);
+
+  static uint64 save_toggle_dialog_is_translatable_on_server_log_event(DialogId dialog_id, bool is_translatable);
 
   static uint64 save_toggle_dialog_is_blocked_on_server_log_event(DialogId dialog_id, bool is_blocked);
 

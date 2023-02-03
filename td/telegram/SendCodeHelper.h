@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -32,6 +32,8 @@ class SendCodeHelper {
   telegram_api::auth_sendCode send_code(string phone_number, const Settings &settings, int32 api_id,
                                         const string &api_hash);
 
+  telegram_api::auth_requestFirebaseSms request_firebase_sms(const string &token);
+
   telegram_api::account_sendVerifyEmailCode send_verify_email_code(const string &email_address);
 
   telegram_api::account_sendChangePhoneCode send_change_phone_code(Slice phone_number, const Settings &settings);
@@ -57,14 +59,15 @@ class SendCodeHelper {
 
  private:
   struct AuthenticationCodeInfo {
-    enum class Type : int32 { None, Message, Sms, Call, FlashCall, MissedCall, Fragment };
+    enum class Type : int32 { None, Message, Sms, Call, FlashCall, MissedCall, Fragment, FirebaseAndroid, FirebaseIos };
     Type type = Type::None;
     int32 length = 0;
+    int32 push_timeout = 0;
     string pattern;
 
     AuthenticationCodeInfo() = default;
-    AuthenticationCodeInfo(Type type, int length, string pattern)
-        : type(type), length(length), pattern(std::move(pattern)) {
+    AuthenticationCodeInfo(Type type, int32 length, string pattern, int32 push_timeout = 0)
+        : type(type), length(length), push_timeout(push_timeout), pattern(std::move(pattern)) {
     }
 
     template <class StorerT>

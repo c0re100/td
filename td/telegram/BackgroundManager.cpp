@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -157,7 +157,6 @@ class UploadBackgroundQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
-    CHECK(status.is_error());
     CHECK(file_id_.is_valid());
     if (begins_with(status.message(), "FILE_PART_") && ends_with(status.message(), "_MISSING")) {
       // TODO td_->background_manager_->on_upload_background_file_part_missing(file_id_, to_integer<int32>(status.message().substr(10)));

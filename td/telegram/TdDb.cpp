@@ -1,11 +1,12 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #include "td/telegram/TdDb.h"
 
+#include "td/telegram/AttachMenuManager.h"
 #include "td/telegram/DialogDb.h"
 #include "td/telegram/files/FileDb.h"
 #include "td/telegram/Global.h"
@@ -32,7 +33,9 @@
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/port/Clocks.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/Random.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/StringBuilder.h"
@@ -54,6 +57,17 @@ std::string get_sqlite_path(const TdParameters &parameters) {
 
 Status init_binlog(Binlog &binlog, string path, BinlogKeyValue<Binlog> &binlog_pmc, BinlogKeyValue<Binlog> &config_pmc,
                    TdDb::OpenedDatabase &events, DbKey key) {
+  auto r_binlog_stat = stat(path);
+  if (r_binlog_stat.is_ok()) {
+    auto since_last_open = Clocks::system() - static_cast<double>(r_binlog_stat.ok().mtime_nsec_) * 1e-9;
+    if (since_last_open >= 86400) {
+      LOG(WARNING) << "Binlog wasn't opened for " << since_last_open << " seconds";
+    }
+    if (since_last_open > 0 && since_last_open < 1e12) {
+      events.since_last_open = static_cast<int64>(since_last_open);
+    }
+  }
+
   auto callback = [&](const BinlogEvent &event) {
     switch (event.type_) {
       case LogEvent::HandlerType::SecretChats:
@@ -110,6 +124,7 @@ Status init_binlog(Binlog &binlog, string path, BinlogKeyValue<Binlog> &binlog_p
       case LogEvent::HandlerType::DeleteDialogMessagesByDateOnServer:
       case LogEvent::HandlerType::ReadAllDialogReactionsOnServer:
       case LogEvent::HandlerType::DeleteTopicHistoryOnServer:
+      case LogEvent::HandlerType::ToggleDialogIsTranslatableOnServer:
         events.to_messages_manager.push_back(event.clone());
         break;
       case LogEvent::HandlerType::UpdateScopeNotificationSettingsOnServer:
@@ -133,9 +148,12 @@ Status init_binlog(Binlog &binlog, string path, BinlogKeyValue<Binlog> &binlog_p
     }
   };
 
-  auto binlog_info = binlog.init(std::move(path), callback, std::move(key));
-  if (binlog_info.is_error()) {
-    return binlog_info.move_as_error();
+  auto init_status = binlog.init(std::move(path), callback, std::move(key));
+  if (init_status.is_error()) {
+    if (init_status.code() == static_cast<int>(Binlog::Error::WrongPassword)) {
+      return Status::Error(401, "Wrong database encryption key");
+    }
+    return Status::Error(400, init_status.message());
   }
   return Status::OK();
 }
@@ -387,6 +405,7 @@ Status TdDb::init_sqlite(const TdParameters &parameters, const DbKey &key, const
     binlog_pmc.erase("saved_contact_count");
     binlog_pmc.erase("old_featured_sticker_set_count");
     binlog_pmc.erase("invalidate_old_featured_sticker_sets");
+    binlog_pmc.erase(AttachMenuManager::get_attach_menu_bots_database_key());
   }
   binlog_pmc.force_sync({});
 
@@ -482,7 +501,10 @@ void TdDb::open_impl(TdParameters parameters, DbKey key, Promise<OpenedDatabase>
       db->sql_connection_->get().close();
     }
     SqliteDb::destroy(get_sqlite_path(parameters)).ignore();
-    TRY_STATUS_PROMISE(promise, db->init_sqlite(parameters, new_sqlite_key, old_sqlite_key, *binlog_pmc));
+    init_sqlite_status = db->init_sqlite(parameters, new_sqlite_key, old_sqlite_key, *binlog_pmc);
+    if (init_sqlite_status.is_error()) {
+      return promise.set_error(Status::Error(400, init_sqlite_status.message()));
+    }
   }
   if (drop_sqlite_key) {
     binlog_pmc->erase("sqlite_key");
@@ -544,16 +566,16 @@ Status TdDb::check_parameters(TdParameters &parameters) {
   auto r_database_directory = prepare_dir(parameters.database_directory);
   if (r_database_directory.is_error()) {
     VLOG(td_init) << "Invalid database_directory";
-    return Status::Error(PSLICE() << "Can't init database in the directory \"" << parameters.database_directory
-                                  << "\": " << r_database_directory.error());
+    return Status::Error(400, PSLICE() << "Can't init database in the directory \"" << parameters.database_directory
+                                       << "\": " << r_database_directory.error());
   }
   parameters.database_directory = r_database_directory.move_as_ok();
 
   auto r_files_directory = prepare_dir(parameters.files_directory);
   if (r_files_directory.is_error()) {
     VLOG(td_init) << "Invalid files_directory";
-    return Status::Error(PSLICE() << "Can't init files directory \"" << parameters.files_directory
-                                  << "\": " << r_files_directory.error());
+    return Status::Error(400, PSLICE() << "Can't init files directory \"" << parameters.files_directory
+                                       << "\": " << r_files_directory.error());
   }
   parameters.files_directory = r_files_directory.move_as_ok();
 

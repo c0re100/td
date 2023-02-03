@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -181,9 +181,9 @@ Result<SimpleConfig> decode_config(Slice input) {
   MutableSlice data_cbc = data_rsa_slice.substr(32);
   UInt256 key;
   UInt128 iv;
-  as_slice(key).copy_from(data_rsa_slice.substr(0, 32));
-  as_slice(iv).copy_from(data_rsa_slice.substr(16, 16));
-  aes_cbc_decrypt(as_slice(key), as_slice(iv), data_cbc, data_cbc);
+  as_mutable_slice(key).copy_from(data_rsa_slice.substr(0, 32));
+  as_mutable_slice(iv).copy_from(data_rsa_slice.substr(16, 16));
+  aes_cbc_decrypt(as_slice(key), as_mutable_slice(iv), data_cbc, data_cbc);
 
   CHECK(data_cbc.size() == 224);
   string hash(32, ' ');
@@ -420,7 +420,7 @@ static ActorOwn<> get_full_config(DcOption option, Promise<tl_object_ptr<telegra
     void on_server_salt_updated(std::vector<mtproto::ServerSalt> server_salts) final {
       // nop
     }
-    void on_update(BufferSlice &&update) final {
+    void on_update(BufferSlice &&update, uint64 auth_key_id) final {
       // nop
     }
     void on_result(NetQueryPtr net_query) final {
@@ -468,6 +468,7 @@ static ActorOwn<> get_full_config(DcOption option, Promise<tl_object_ptr<telegra
       return G()->get_server_time_difference();
     }
     void add_auth_key_listener(unique_ptr<Listener> listener) final {
+      CHECK(listener != nullptr);
       if (listener->notify()) {
         auth_key_listeners_.push_back(std::move(listener));
       }
@@ -493,7 +494,10 @@ static ActorOwn<> get_full_config(DcOption option, Promise<tl_object_ptr<telegra
 
     std::vector<unique_ptr<Listener>> auth_key_listeners_;
     void notify() {
-      td::remove_if(auth_key_listeners_, [&](auto &listener) { return !listener->notify(); });
+      td::remove_if(auth_key_listeners_, [&](auto &listener) {
+        CHECK(listener != nullptr);
+        return !listener->notify();
+      });
     }
 
     string auth_key_key() const {
@@ -521,8 +525,8 @@ static ActorOwn<> get_full_config(DcOption option, Promise<tl_object_ptr<telegra
         int_dc_id += 10000;
       }
       session_ = create_actor<Session>("ConfigSession", std::move(session_callback), std::move(auth_data), raw_dc_id,
-                                       int_dc_id, false /*is_main*/, true /*use_pfs*/, false /*is_cdn*/,
-                                       false /*need_destroy_auth_key*/, mtproto::AuthKey(),
+                                       int_dc_id, false /*is_primary*/, false /*is_main*/, true /*use_pfs*/,
+                                       false /*is_cdn*/, false /*need_destroy_auth_key*/, mtproto::AuthKey(),
                                        std::vector<mtproto::ServerSalt>());
       auto query = G()->net_query_creator().create_unauth(telegram_api::help_getConfig(), DcId::empty());
       query->total_timeout_limit_ = 60 * 60 * 24;
@@ -823,9 +827,9 @@ class ConfigRecoverer final : public Actor {
           case 2:
             return get_simple_config_firebase_remote_config;
           case 4:
-            return get_simple_config_firebase_realtime;
-          case 9:
             return get_simple_config_firebase_firestore;
+          case 9:
+            return get_simple_config_firebase_realtime;
           case 0:
           case 3:
           case 8:
@@ -1356,7 +1360,7 @@ void ConfigManager::process_config(tl_object_ptr<telegram_api::config> config) {
   }
   if (is_from_main_dc) {
     options.set_option_integer("webfile_dc_id", config->webfile_dc_id_);
-    if ((config->flags_ & telegram_api::config::TMP_SESSIONS_MASK) != 0) {
+    if ((config->flags_ & telegram_api::config::TMP_SESSIONS_MASK) != 0 && config->tmp_sessions_ > 1) {
       options.set_option_integer("session_count", config->tmp_sessions_);
     } else {
       options.set_option_empty("session_count");
@@ -1463,8 +1467,6 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   CHECK(config != nullptr);
   LOG(INFO) << "Receive app config " << to_string(config);
 
-  const bool archive_and_mute = G()->get_option_boolean("archive_and_mute_new_chats_from_unknown_users");
-
   string autologin_token;
   vector<string> autologin_domains;
   vector<string> url_auth_domains;
@@ -1492,7 +1494,6 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   bool is_premium_available = false;
   int32 stickers_premium_by_emoji_num = 0;
   int32 stickers_normal_by_emoji_per_premium_num = 2;
-  int32 forum_upgrade_participants_min = 200;
   int32 telegram_antispam_group_size_min = 100;
   int32 topics_pinned_limit = -1;
   vector<string> fragment_prefixes;
@@ -1500,9 +1501,10 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
       telegram_api::JSONValue *value = key_value->value_.get();
-      if (key == "default_emoji_statuses_stickerset_id" || key == "getfile_experimental_params" ||
-          key == "message_animated_emoji_max" || key == "reactions_in_chat_max" || key == "stickers_emoji_cache_time" ||
-          key == "test" || key == "upload_max_fileparts_default" || key == "upload_max_fileparts_premium" ||
+      if (key == "default_emoji_statuses_stickerset_id" || key == "forum_upgrade_participants_min" ||
+          key == "getfile_experimental_params" || key == "message_animated_emoji_max" ||
+          key == "reactions_in_chat_max" || key == "stickers_emoji_cache_time" || key == "test" ||
+          key == "upload_max_fileparts_default" || key == "upload_max_fileparts_premium" ||
           key == "wallet_blockchain_name" || key == "wallet_config" || key == "wallet_enabled") {
         continue;
       }
@@ -1664,6 +1666,8 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       if (key == "pending_suggestions") {
         if (value->get_id() == telegram_api::jsonArray::ID) {
           auto actions = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
+          const bool archive_and_mute = G()->get_option_boolean("archive_and_mute_new_chats_from_unknown_users");
+          auto otherwise_relogin_days = G()->get_option_integer("otherwise_relogin_days");
           for (auto &action : actions) {
             auto action_str = get_json_value_string(std::move(action), key);
             SuggestedAction suggested_action(action_str);
@@ -1671,6 +1675,9 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
               if (archive_and_mute &&
                   suggested_action == SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats}) {
                 LOG(INFO) << "Skip EnableArchiveAndMuteNewChats suggested action";
+              } else if (otherwise_relogin_days > 0 &&
+                         suggested_action == SuggestedAction{SuggestedAction::Type::SetPassword}) {
+                LOG(INFO) << "Skip SetPassword suggested action";
               } else {
                 suggested_actions.push_back(suggested_action);
               }
@@ -1843,10 +1850,6 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         G()->set_option_integer(key, setting_value);
         continue;
       }
-      if (key == "forum_upgrade_participants_min") {
-        forum_upgrade_participants_min = get_json_value_int(std::move(key_value->value_), key);
-        continue;
-      }
       if (key == "telegram_antispam_user_id") {
         auto setting_value = get_json_value_long(std::move(key_value->value_), key);
         G()->set_option_integer("anti_spam_bot_user_id", setting_value);
@@ -1970,9 +1973,6 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   } else {
     options.set_option_integer("reactions_uniq_max", reactions_uniq_max);
   }
-  if (forum_upgrade_participants_min >= 0) {
-    options.set_option_integer("forum_member_count_min", forum_upgrade_participants_min);
-  }
   if (telegram_antispam_group_size_min >= 0) {
     options.set_option_integer("aggressive_anti_spam_supergroup_member_count_min", telegram_antispam_group_size_min);
   }
@@ -2032,7 +2032,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
 
 void ConfigManager::get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const {
   if (!suggested_actions_.empty()) {
-    updates.push_back(get_update_suggested_actions_object(suggested_actions_, {}));
+    updates.push_back(get_update_suggested_actions_object(suggested_actions_, {}, "get_current_state"));
   }
 }
 

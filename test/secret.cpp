@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -382,14 +382,14 @@ class FakeBinlog final
   void force_flush() final {
   }
 
-  uint64 next_id() final {
-    auto res = last_id_;
-    last_id_++;
+  uint64 next_event_id() final {
+    auto res = last_event_id_;
+    last_event_id_++;
     return res;
   }
-  uint64 next_id(int32 shift) final {
-    auto res = last_id_;
-    last_id_ += shift;
+  uint64 next_event_id(int32 shift) final {
+    auto res = last_event_id_;
+    last_event_id_ += shift;
     return res;
   }
   template <class F>
@@ -405,7 +405,7 @@ class FakeBinlog final
     cancel_timeout();
     for (auto &pending : pending_events_) {
       auto &event = pending.event;
-      if (!event.empty()) {
+      if (!event.is_empty()) {
         // LOG(ERROR) << "FORGET EVENT: " << event.id_ << " " << event;
       }
     }
@@ -420,7 +420,7 @@ class FakeBinlog final
   }
   void close_and_destroy_impl(Promise<> promise) final {
   }
-  void add_raw_event_impl(uint64 id, BufferSlice &&raw_event, Promise<> promise, BinlogDebugInfo info) final {
+  void add_raw_event_impl(uint64 event_id, BufferSlice &&raw_event, Promise<> promise, BinlogDebugInfo info) final {
     auto event = BinlogEvent(std::move(raw_event), info);
     LOG(INFO) << "ADD EVENT: " << event.id_ << " " << event;
     pending_events_.emplace_back();
@@ -439,7 +439,7 @@ class FakeBinlog final
     for (size_t i = 0; i <= pos; i++) {
       auto &pending = pending_events_[i];
       auto event = std::move(pending.event);
-      if (!event.empty()) {
+      if (!event.is_empty()) {
         LOG(INFO) << "SAVE EVENT: " << event.id_ << " " << event;
         events_processor_.add_event(std::move(event)).ensure();
       }
@@ -464,7 +464,7 @@ class FakeBinlog final
     }
   }
   bool has_request_sync = false;
-  uint64 last_id_ = 1;
+  uint64 last_event_id_ = 1;
   detail::BinlogEventsProcessor events_processor_;
 
   struct PendingEvent {
@@ -832,7 +832,7 @@ class Master final : public Actor {
     config.version_ = 12;
     auto storer = TLObjectStorer<my_api::messages_dhConfig>(config);
     BufferSlice answer(storer.size());
-    auto real_size = storer.store(answer.as_slice().ubegin());
+    auto real_size = storer.store(answer.as_mutable_slice().ubegin());
     CHECK(real_size == answer.size());
     net_query->set_ok(std::move(answer));
     send_closure(std::move(callback), &NetQueryCallback::on_result, std::move(net_query));
@@ -857,7 +857,7 @@ class Master final : public Actor {
     my_api::encryptedChat encrypted_chat(123, 321, 0, 1, 2, BufferSlice(), request_encryption.key_fingerprint_);
     auto storer = TLObjectStorer<my_api::encryptedChat>(encrypted_chat);
     BufferSlice answer(storer.size());
-    auto real_size = storer.store(answer.as_slice().ubegin());
+    auto real_size = storer.store(answer.as_mutable_slice().ubegin());
     CHECK(real_size == answer.size());
     net_query->set_ok(std::move(answer));
     send_closure(std::move(callback), &NetQueryCallback::on_result, std::move(net_query));
@@ -899,8 +899,8 @@ class Master final : public Actor {
   void process_net_query_send_encrypted(BufferSlice data, NetQueryPtr net_query,
                                         ActorShared<NetQueryCallback> callback) {
     BufferSlice answer(8);
-    answer.as_slice().fill(0);
-    as<int32>(answer.as_slice().begin()) = static_cast<int32>(my_api::messages_sentEncryptedMessage::ID);
+    answer.as_mutable_slice().fill(0);
+    as<int32>(answer.as_mutable_slice().begin()) = static_cast<int32>(my_api::messages_sentEncryptedMessage::ID);
     net_query->set_ok(std::move(answer));
     send_closure(std::move(callback), &NetQueryCallback::on_result, std::move(net_query));
 

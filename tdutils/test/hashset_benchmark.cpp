@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -204,7 +204,7 @@ static void BM_Get(benchmark::State &state) {
   }
 
   std::size_t key_i = 0;
-  td::random_shuffle(td::as_mutable_span(keys), rnd);
+  td::rand_shuffle(td::as_mutable_span(keys), rnd);
   auto next_key = [&] {
     key_i++;
     if (key_i == data.size()) {

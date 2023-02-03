@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -13,6 +13,7 @@
 #include "td/telegram/AudiosManager.h"
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/AutoDownloadSettings.h"
+#include "td/telegram/AutosaveManager.h"
 #include "td/telegram/BackgroundId.h"
 #include "td/telegram/BackgroundManager.h"
 #include "td/telegram/BackgroundType.h"
@@ -43,6 +44,7 @@
 #include "td/telegram/DownloadManager.h"
 #include "td/telegram/DownloadManagerCallback.h"
 #include "td/telegram/EmailVerification.h"
+#include "td/telegram/EmojiGroupType.h"
 #include "td/telegram/EmojiStatus.h"
 #include "td/telegram/FileReferenceManager.h"
 #include "td/telegram/files/FileGcParameters.h"
@@ -124,6 +126,7 @@
 #include "td/telegram/ThemeManager.h"
 #include "td/telegram/TopDialogCategory.h"
 #include "td/telegram/TopDialogManager.h"
+#include "td/telegram/TranslationManager.h"
 #include "td/telegram/UpdatesManager.h"
 #include "td/telegram/UserId.h"
 #include "td/telegram/Version.h"
@@ -1683,6 +1686,7 @@ class CreateNewSecretChatRequest final : public RequestActor<SecretChatId> {
 
 class CreateNewSupergroupChatRequest final : public RequestActor<> {
   string title_;
+  bool is_forum_;
   bool is_megagroup_;
   string description_;
   DialogLocation location_;
@@ -1693,8 +1697,9 @@ class CreateNewSupergroupChatRequest final : public RequestActor<> {
   DialogId dialog_id_;
 
   void do_run(Promise<Unit> &&promise) final {
-    dialog_id_ = td_->messages_manager_->create_new_channel_chat(
-        title_, is_megagroup_, description_, location_, for_import_, message_ttl_, random_id_, std::move(promise));
+    dialog_id_ =
+        td_->messages_manager_->create_new_channel_chat(title_, is_forum_, is_megagroup_, description_, location_,
+                                                        for_import_, message_ttl_, random_id_, std::move(promise));
   }
 
   void do_send_result() final {
@@ -1703,11 +1708,12 @@ class CreateNewSupergroupChatRequest final : public RequestActor<> {
   }
 
  public:
-  CreateNewSupergroupChatRequest(ActorShared<Td> td, uint64 request_id, string title, bool is_megagroup,
+  CreateNewSupergroupChatRequest(ActorShared<Td> td, uint64 request_id, string title, bool is_forum, bool is_megagroup,
                                  string description, td_api::object_ptr<td_api::chatLocation> &&location,
                                  bool for_import, int32 message_ttl)
       : RequestActor(std::move(td), request_id)
       , title_(std::move(title))
+      , is_forum_(is_forum)
       , is_megagroup_(is_megagroup)
       , description_(std::move(description))
       , location_(std::move(location))
@@ -2755,6 +2761,7 @@ bool Td::is_authentication_request(int32 id) {
     case td_api::setTdlibParameters::ID:
     case td_api::getAuthorizationState::ID:
     case td_api::setAuthenticationPhoneNumber::ID:
+    case td_api::sendAuthenticationFirebaseSms::ID:
     case td_api::setAuthenticationEmailAddress::ID:
     case td_api::resendAuthenticationCode::ID:
     case td_api::checkAuthenticationEmailCode::ID:
@@ -3058,7 +3065,7 @@ std::shared_ptr<Td::ResultHandler> Td::extract_handler(uint64 id) {
   return result;
 }
 
-void Td::on_update(BufferSlice &&update) {
+void Td::on_update(BufferSlice &&update, uint64 auth_key_id) {
   if (close_flag_ > 1) {
     return;
   }
@@ -3070,6 +3077,7 @@ void Td::on_update(BufferSlice &&update) {
     LOG(ERROR) << "Failed to fetch update: " << parser.get_error() << format::as_hex_dump<4>(update.as_slice());
     updates_manager_->schedule_get_difference("failed to fetch update");
   } else {
+    updates_manager_->on_update_from_auth_key_id(auth_key_id);
     updates_manager_->on_get_updates(std::move(ptr), Promise<Unit>());
     if (auth_manager_->is_bot() && auth_manager_->is_authorized()) {
       alarm_timeout_.set_timeout_in(PING_SERVER_ALARM_ID,
@@ -3114,8 +3122,6 @@ void Td::on_connection_state_changed(ConnectionState new_state) {
 }
 
 void Td::start_up() {
-  always_wait_for_mailbox();
-
   uint64 check_endianness = 0x0706050403020100;
   auto check_endianness_raw = reinterpret_cast<const unsigned char *>(&check_endianness);
   for (unsigned char c = 0; c < 8; c++) {
@@ -3191,6 +3197,8 @@ void Td::dec_actor_refcnt() {
       LOG(DEBUG) << "AudiosManager was cleared" << timer;
       auth_manager_.reset();
       LOG(DEBUG) << "AuthManager was cleared" << timer;
+      autosave_manager_.reset();
+      LOG(DEBUG) << "AutosaveManager was cleared" << timer;
       background_manager_.reset();
       LOG(DEBUG) << "BackgroundManager was cleared" << timer;
       callback_queries_manager_.reset();
@@ -3233,6 +3241,8 @@ void Td::dec_actor_refcnt() {
       LOG(DEBUG) << "ThemeManager was cleared" << timer;
       top_dialog_manager_.reset();
       LOG(DEBUG) << "TopDialogManager was cleared" << timer;
+      translation_manager_.reset();
+      LOG(DEBUG) << "TranslationManager was cleared" << timer;
       updates_manager_.reset();
       LOG(DEBUG) << "UpdatesManager was cleared" << timer;
       video_notes_manager_.reset();
@@ -3387,6 +3397,8 @@ void Td::clear() {
   LOG(DEBUG) << "AttachMenuManager actor was cleared" << timer;
   auth_manager_actor_.reset();
   LOG(DEBUG) << "AuthManager actor was cleared" << timer;
+  autosave_manager_actor_.reset();
+  LOG(DEBUG) << "AutosaveManager actor was cleared" << timer;
   background_manager_actor_.reset();
   LOG(DEBUG) << "BackgroundManager actor was cleared" << timer;
   contacts_manager_actor_.reset();
@@ -3425,6 +3437,8 @@ void Td::clear() {
   LOG(DEBUG) << "ThemeManager actor was cleared" << timer;
   top_dialog_manager_actor_.reset();
   LOG(DEBUG) << "TopDialogManager actor was cleared" << timer;
+  translation_manager_actor_.reset();
+  LOG(DEBUG) << "TranslationManager actor was cleared" << timer;
   updates_manager_actor_.reset();
   LOG(DEBUG) << "UpdatesManager actor was cleared" << timer;
   video_notes_manager_actor_.reset();
@@ -3471,7 +3485,7 @@ void Td::close_impl(bool destroy_flag) {
   close_flag_ = 1;
   G()->set_close_flag();
   send_closure(auth_manager_actor_, &AuthManager::on_closing, destroy_flag);
-  updates_manager_->timeout_expired();  // save pts and qts
+  updates_manager_->timeout_expired();  // save PTS and QTS
 
   // wait till all request_actors will stop
   request_actors_.clear();
@@ -3547,8 +3561,7 @@ void Td::init(Result<TdDb::OpenedDatabase> r_opened_database) {
   CHECK(set_parameters_request_id_ != 0);
   if (r_opened_database.is_error()) {
     LOG(WARNING) << "Failed to open database: " << r_opened_database.error();
-    send_closure(actor_id(this), &Td::send_error, set_parameters_request_id_,
-                 Status::Error(400, r_opened_database.error().message()));
+    send_closure(actor_id(this), &Td::send_error, set_parameters_request_id_, r_opened_database.move_as_error());
     return finish_set_parameters();
   }
   auto events = r_opened_database.move_as_ok();
@@ -3577,14 +3590,22 @@ void Td::init(Result<TdDb::OpenedDatabase> r_opened_database) {
     }
   });
 
-  options_.language_pack = G()->get_option_string("localization_target");
-  options_.language_code = G()->get_option_string("language_pack_id");
-  options_.parameters = G()->get_option_string("connection_parameters");
-  options_.tz_offset = static_cast<int32>(G()->get_option_integer("utc_time_offset"));
-  options_.is_emulator = G()->get_option_boolean("is_emulator");
+  if (events.since_last_open >= 3600) {
+    auto old_since_last_open = option_manager_->get_option_integer("since_last_open");
+    if (events.since_last_open > old_since_last_open) {
+      option_manager_->set_option_integer("since_last_open", events.since_last_open);
+    }
+  }
+
+  options_.language_pack = option_manager_->get_option_string("localization_target");
+  options_.language_code = option_manager_->get_option_string("language_pack_id");
+  options_.parameters = option_manager_->get_option_string("connection_parameters");
+  options_.tz_offset = static_cast<int32>(option_manager_->get_option_integer("utc_time_offset"));
+  options_.is_emulator = option_manager_->get_option_boolean("is_emulator");
   // options_.proxy = Proxy();
   G()->set_mtproto_header(make_unique<MtprotoHeader>(options_));
-  G()->set_store_all_files_in_files_directory(G()->get_option_boolean("store_all_files_in_files_directory"));
+  G()->set_store_all_files_in_files_directory(
+      option_manager_->get_option_boolean("store_all_files_in_files_directory"));
 
   VLOG(td_init) << "Create NetQueryDispatcher";
   auto net_query_dispatcher = make_unique<NetQueryDispatcher>([&] { return create_reference(); });
@@ -3846,6 +3867,9 @@ void Td::init_managers() {
   attach_menu_manager_ = make_unique<AttachMenuManager>(this, create_reference());
   attach_menu_manager_actor_ = register_actor("AttachMenuManager", attach_menu_manager_.get());
   G()->set_attach_menu_manager(attach_menu_manager_actor_.get());
+  autosave_manager_ = make_unique<AutosaveManager>(this, create_reference());
+  autosave_manager_actor_ = register_actor("AutosaveManager", autosave_manager_.get());
+  G()->set_autosave_manager(autosave_manager_actor_.get());
   background_manager_ = make_unique<BackgroundManager>(this, create_reference());
   background_manager_actor_ = register_actor("BackgroundManager", background_manager_.get());
   G()->set_background_manager(background_manager_actor_.get());
@@ -3895,6 +3919,8 @@ void Td::init_managers() {
   top_dialog_manager_ = make_unique<TopDialogManager>(this, create_reference());
   top_dialog_manager_actor_ = register_actor("TopDialogManager", top_dialog_manager_.get());
   G()->set_top_dialog_manager(top_dialog_manager_actor_.get());
+  translation_manager_ = make_unique<TranslationManager>(this, create_reference());
+  translation_manager_actor_ = register_actor("TranslationManager", translation_manager_.get());
   updates_manager_ = make_unique<UpdatesManager>(this, create_reference());
   updates_manager_actor_ = register_actor("UpdatesManager", updates_manager_.get());
   G()->set_updates_manager(updates_manager_actor_.get());
@@ -4160,6 +4186,11 @@ void Td::on_request(uint64 id, td_api::setAuthenticationPhoneNumber &request) {
   CLEAN_INPUT_STRING(request.phone_number_);
   send_closure(auth_manager_actor_, &AuthManager::set_phone_number, id, std::move(request.phone_number_),
                std::move(request.settings_));
+}
+
+void Td::on_request(uint64 id, td_api::sendAuthenticationFirebaseSms &request) {
+  CLEAN_INPUT_STRING(request.token_);
+  send_closure(auth_manager_actor_, &AuthManager::set_firebase_token, id, std::move(request.token_));
 }
 
 void Td::on_request(uint64 id, td_api::setAuthenticationEmailAddress &request) {
@@ -4700,12 +4731,17 @@ void Td::on_request(uint64 id, td_api::getMessageLinkInfo &request) {
 
 void Td::on_request(uint64 id, td_api::translateText &request) {
   CHECK_IS_USER();
-  CLEAN_INPUT_STRING(request.text_);
-  CLEAN_INPUT_STRING(request.from_language_code_);
   CLEAN_INPUT_STRING(request.to_language_code_);
   CREATE_REQUEST_PROMISE();
-  messages_manager_->translate_text(request.text_, request.from_language_code_, request.to_language_code_,
-                                    std::move(promise));
+  translation_manager_->translate_text(std::move(request.text_), request.to_language_code_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::translateMessageText &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.to_language_code_);
+  CREATE_REQUEST_PROMISE();
+  messages_manager_->translate_message_text({DialogId(request.chat_id_), MessageId(request.message_id_)},
+                                            request.to_language_code_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::recognizeSpeech &request) {
@@ -4913,6 +4949,24 @@ void Td::on_request(uint64 id, const td_api::setAutoDownloadSettings &request) {
   CREATE_OK_REQUEST_PROMISE();
   set_auto_download_settings(this, get_net_type(request.type_), get_auto_download_settings(request.settings_),
                              std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getAutosaveSettings &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  autosave_manager_->get_autosave_settings(std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::setAutosaveSettings &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  autosave_manager_->set_autosave_settings(std::move(request.scope_), std::move(request.settings_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::clearAutosaveSettingsExceptions &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  autosave_manager_->clear_autosave_settings_excpetions(std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getTopChats &request) {
@@ -5725,7 +5779,7 @@ void Td::on_request(uint64 id, td_api::createNewSupergroupChat &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.title_);
   CLEAN_INPUT_STRING(request.description_);
-  CREATE_REQUEST(CreateNewSupergroupChatRequest, std::move(request.title_), !request.is_channel_,
+  CREATE_REQUEST(CreateNewSupergroupChatRequest, std::move(request.title_), request.is_forum_, !request.is_channel_,
                  std::move(request.description_), std::move(request.location_), request.for_import_,
                  request.message_auto_delete_time_);
 }
@@ -6181,6 +6235,12 @@ void Td::on_request(uint64 id, const td_api::toggleChatIsPinned &request) {
   CHECK_IS_USER();
   answer_ok_query(id, messages_manager_->toggle_dialog_is_pinned(DialogListId(request.chat_list_),
                                                                  DialogId(request.chat_id_), request.is_pinned_));
+}
+
+void Td::on_request(uint64 id, const td_api::toggleChatIsTranslatable &request) {
+  CHECK_IS_USER();
+  answer_ok_query(
+      id, messages_manager_->toggle_dialog_is_translatable(DialogId(request.chat_id_), request.is_translatable_));
 }
 
 void Td::on_request(uint64 id, const td_api::toggleChatIsMarkedAsUnread &request) {
@@ -7128,9 +7188,18 @@ void Td::on_request(uint64 id, td_api::getStickers &request) {
 
 void Td::on_request(uint64 id, td_api::searchStickers &request) {
   CHECK_IS_USER();
-  CLEAN_INPUT_STRING(request.emoji_);
+  CLEAN_INPUT_STRING(request.emojis_);
   CREATE_REQUEST_PROMISE();
-  stickers_manager_->search_stickers(std::move(request.emoji_), request.limit_, std::move(promise));
+  auto sticker_type = get_sticker_type(request.sticker_type_);
+  if (sticker_type == StickerType::Regular) {
+    // legacy
+    if (request.emojis_ == "⭐️⭐️") {
+      request.emojis_ == "⭐️";
+    } else if (request.emojis_ == "📂⭐️") {
+      request.emojis_ == "📂";
+    }
+  }
+  stickers_manager_->search_stickers(sticker_type, std::move(request.emojis_), request.limit_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getPremiumStickers &request) {
@@ -7320,6 +7389,12 @@ void Td::on_request(uint64 id, td_api::searchEmojis &request) {
                  std::move(request.input_language_codes_));
 }
 
+void Td::on_request(uint64 id, const td_api::getEmojiCategories &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  stickers_manager_->get_emoji_groups(get_emoji_group_type(request.type_), std::move(promise));
+}
+
 void Td::on_request(uint64 id, td_api::getAnimatedEmoji &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.emoji_);
@@ -7338,6 +7413,16 @@ void Td::on_request(uint64 id, const td_api::getCustomEmojiStickers &request) {
   stickers_manager_->get_custom_emoji_stickers(
       transform(request.custom_emoji_ids_, [](int64 custom_emoji_id) { return CustomEmojiId(custom_emoji_id); }), true,
       std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getDefaultChatPhotoCustomEmojiStickers &request) {
+  CREATE_REQUEST_PROMISE();
+  stickers_manager_->get_default_dialog_photo_custom_emoji_stickers(false, false, std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getDefaultProfilePhotoCustomEmojiStickers &request) {
+  CREATE_REQUEST_PROMISE();
+  stickers_manager_->get_default_dialog_photo_custom_emoji_stickers(true, false, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getSavedAnimations &request) {
@@ -7624,6 +7709,22 @@ void Td::on_request(uint64 id, const td_api::getLoginUrl &request) {
   CREATE_REQUEST_PROMISE();
   link_manager_->get_login_url({DialogId(request.chat_id_), MessageId(request.message_id_)}, request.button_id_,
                                request.allow_write_access_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::shareUserWithBot &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  messages_manager_->share_dialog_with_bot({DialogId(request.chat_id_), MessageId(request.message_id_)},
+                                           request.button_id_, DialogId(UserId(request.shared_user_id_)), true,
+                                           request.only_check_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::shareChatWithBot &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  messages_manager_->share_dialog_with_bot({DialogId(request.chat_id_), MessageId(request.message_id_)},
+                                           request.button_id_, DialogId(request.shared_chat_id_), false,
+                                           request.only_check_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::getInlineQueryResults &request) {
@@ -8089,7 +8190,7 @@ void Td::on_request(uint64 id, const td_api::getPremiumFeatures &request) {
 void Td::on_request(uint64 id, const td_api::getPremiumStickerExamples &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  stickers_manager_->search_stickers("⭐️⭐️", 100, std::move(promise));
+  stickers_manager_->search_stickers(StickerType::Regular, "⭐️⭐️", 100, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::viewPremiumFeature &request) {

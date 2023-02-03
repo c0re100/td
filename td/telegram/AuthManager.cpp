@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -284,6 +284,16 @@ void AuthManager::set_phone_number(uint64 query_id, string phone_number,
                                               std::move(phone_number), settings, api_id_, api_hash_)));
 }
 
+void AuthManager::set_firebase_token(uint64 query_id, string token) {
+  if (state_ != State::WaitCode) {
+    return on_query_error(query_id, Status::Error(400, "Call to sendAuthenticationFirebaseSms unexpected"));
+  }
+  on_new_query(query_id);
+
+  start_net_query(NetQueryType::RequestFirebaseSms,
+                  G()->net_query_creator().create_unauth(send_code_helper_.request_firebase_sms(token)));
+}
+
 void AuthManager::set_email_address(uint64 query_id, string email_address) {
   if (state_ != State::WaitEmailAddress) {
     if (state_ == State::WaitEmailCode && net_query_id_ == 0) {
@@ -555,7 +565,14 @@ void AuthManager::start_net_query(NetQueryType net_query_type, NetQueryPtr net_q
   G()->net_query_dispatcher().dispatch_with_callback(std::move(net_query), actor_shared(this));
 }
 
-void AuthManager::on_sent_code(telegram_api::object_ptr<telegram_api::auth_sentCode> &&sent_code) {
+void AuthManager::on_sent_code(telegram_api::object_ptr<telegram_api::auth_SentCode> &&sent_code_ptr) {
+  auto sent_code_id = sent_code_ptr->get_id();
+  if (sent_code_id != telegram_api::auth_sentCode::ID) {
+    CHECK(sent_code_id == telegram_api::auth_sentCodeSuccess::ID);
+    auto sent_code_success = move_tl_object_as<telegram_api::auth_sentCodeSuccess>(sent_code_ptr);
+    return on_get_authorization(std::move(sent_code_success->authorization_));
+  }
+  auto sent_code = telegram_api::move_object_as<telegram_api::auth_sentCode>(sent_code_ptr);
   auto code_type_id = sent_code->type_->get_id();
   if (code_type_id == telegram_api::auth_sentCodeTypeSetUpEmailRequired::ID) {
     auto code_type = move_tl_object_as<telegram_api::auth_sentCodeTypeSetUpEmailRequired>(std::move(sent_code->type_));
@@ -580,6 +597,7 @@ void AuthManager::on_sent_code(telegram_api::object_ptr<telegram_api::auth_sentC
     send_code_helper_.on_sent_code(std::move(sent_code));
     update_state(State::WaitCode, true);
   }
+  on_query_ok();
 }
 
 void AuthManager::on_send_code_result(NetQueryPtr &result) {
@@ -591,7 +609,6 @@ void AuthManager::on_send_code_result(NetQueryPtr &result) {
 
   LOG(INFO) << "Receive " << to_string(sent_code);
   on_sent_code(std::move(sent_code));
-  on_query_ok();
 }
 
 void AuthManager::on_send_email_code_result(NetQueryPtr &result) {
@@ -627,7 +644,6 @@ void AuthManager::on_verify_email_address_result(NetQueryPtr &result) {
 
   auto verified_login = telegram_api::move_object_as<telegram_api::account_emailVerifiedLogin>(email_verified);
   on_sent_code(std::move(verified_login->sent_code_));
-  on_query_ok();
 }
 
 void AuthManager::on_request_qr_code_result(NetQueryPtr &result, bool is_import) {
@@ -818,6 +834,14 @@ void AuthManager::on_check_password_recovery_code_result(NetQueryPtr &result) {
   on_query_ok();
 }
 
+void AuthManager::on_request_firebase_sms_result(NetQueryPtr &result) {
+  auto r_bool = fetch_result<telegram_api::auth_requestFirebaseSms>(result->ok());
+  if (r_bool.is_error()) {
+    return on_query_error(r_bool.move_as_error());
+  }
+  on_query_ok();
+}
+
 void AuthManager::on_authentication_result(NetQueryPtr &result, bool is_from_current_query) {
   auto r_sign_in = fetch_result<telegram_api::auth_signIn>(result->ok());
   if (r_sign_in.is_error()) {
@@ -953,11 +977,15 @@ void AuthManager::on_get_authorization(tl_object_ptr<telegram_api::auth_Authoriz
     log_out(0);
     return;
   }
-  if ((auth->flags_ & telegram_api::auth_authorization::TMP_SESSIONS_MASK) != 0) {
+  if (auth->tmp_sessions_ > 0) {
     td_->option_manager_->set_option_integer("session_count", auth->tmp_sessions_);
   }
   if (auth->setup_password_required_ && auth->otherwise_relogin_days_ > 0) {
     td_->option_manager_->set_option_integer("otherwise_relogin_days", auth->otherwise_relogin_days_);
+  }
+  if (!auth->future_auth_token_.empty()) {
+    td_->option_manager_->set_option_string("authentication_token",
+                                            base64url_encode(auth->future_auth_token_.as_slice()));
   }
   td_->attach_menu_manager_->init();
   td_->messages_manager_->on_authorization_success();
@@ -1069,6 +1097,9 @@ void AuthManager::on_result(NetQueryPtr result) {
       break;
     case NetQueryType::CheckPasswordRecoveryCode:
       on_check_password_recovery_code_result(result);
+      break;
+    case NetQueryType::RequestFirebaseSms:
+      on_request_firebase_sms_result(result);
       break;
     case NetQueryType::LogOut:
       on_log_out_result(result);

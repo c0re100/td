@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -75,17 +75,17 @@ TEST(DB, binlog_encryption) {
   {
     td::Binlog binlog;
     binlog.init(binlog_name.str(), [](const td::BinlogEvent &x) {}).ensure();
-    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_id(), 1, 0, td::create_storer("AAAA")),
+    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_event_id(), 1, 0, td::create_storer("AAAA")),
                          td::BinlogDebugInfo{__FILE__, __LINE__});
-    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_id(), 1, 0, td::create_storer("BBBB")),
+    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_event_id(), 1, 0, td::create_storer("BBBB")),
                          td::BinlogDebugInfo{__FILE__, __LINE__});
-    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_id(), 1, 0, td::create_storer(long_data)),
+    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_event_id(), 1, 0, td::create_storer(long_data)),
                          td::BinlogDebugInfo{__FILE__, __LINE__});
     LOG(INFO) << "SET PASSWORD";
     binlog.change_key(cucumber);
     binlog.change_key(hello);
     LOG(INFO) << "OK";
-    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_id(), 1, 0, td::create_storer("CCCC")),
+    binlog.add_raw_event(td::BinlogEvent::create_raw(binlog.next_event_id(), 1, 0, td::create_storer("CCCC")),
                          td::BinlogDebugInfo{__FILE__, __LINE__});
     binlog.close().ensure();
   }
@@ -105,7 +105,7 @@ TEST(DB, binlog_encryption) {
     td::Binlog binlog;
     binlog
         .init(
-            binlog_name.str(), [&](const td::BinlogEvent &x) { v.push_back(x.data_.str()); }, hello)
+            binlog_name.str(), [&](const td::BinlogEvent &x) { v.push_back(x.get_data().str()); }, hello)
         .ensure();
     CHECK(v == td::vector<td::string>({"AAAA", "BBBB", long_data, "CCCC"}));
   }
@@ -117,7 +117,7 @@ TEST(DB, binlog_encryption) {
     LOG(INFO) << "RESTART";
     td::Binlog binlog;
     auto status = binlog.init(
-        binlog_name.str(), [&](const td::BinlogEvent &x) { v.push_back(x.data_.str()); }, cucumber);
+        binlog_name.str(), [&](const td::BinlogEvent &x) { v.push_back(x.get_data().str()); }, cucumber);
     CHECK(status.is_error());
   }
 
@@ -128,7 +128,7 @@ TEST(DB, binlog_encryption) {
     LOG(INFO) << "RESTART";
     td::Binlog binlog;
     auto status = binlog.init(
-        binlog_name.str(), [&](const td::BinlogEvent &x) { v.push_back(x.data_.str()); }, cucumber, hello);
+        binlog_name.str(), [&](const td::BinlogEvent &x) { v.push_back(x.get_data().str()); }, cucumber, hello);
     CHECK(v == td::vector<td::string>({"AAAA", "BBBB", long_data, "CCCC"}));
   }
 }

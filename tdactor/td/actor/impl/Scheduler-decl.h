@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -200,8 +200,6 @@ class Scheduler {
   template <ActorSendType send_type, class RunFuncT, class EventFuncT>
   void send_impl(const ActorId<> &actor_id, const RunFuncT &run_func, const EventFuncT &event_func);
 
-  void inc_wait_generation();
-
   Timestamp run_timeout();
   void run_mailbox();
   Timestamp run_events(Timestamp timeout);
@@ -231,7 +229,6 @@ class Scheduler {
   bool has_guard_ = false;
   bool close_flag_ = false;
 
-  uint32 wait_generation_ = 1;
   int32 sched_id_ = 0;
   int32 sched_n_ = 0;
   std::shared_ptr<MpscPollableQueue<EventFull>> inbound_queue_;

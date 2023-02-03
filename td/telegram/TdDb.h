@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -67,6 +67,8 @@ class TdDb {
     vector<BinlogEvent> to_messages_manager;
     vector<BinlogEvent> to_notification_manager;
     vector<BinlogEvent> to_notification_settings_manager;
+
+    int64 since_last_open = 0;
   };
   static void open(int32 scheduler_id, TdParameters parameters, DbKey key, Promise<OpenedDatabase> &&promise);
 

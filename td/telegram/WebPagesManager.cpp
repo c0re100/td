@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -207,7 +207,7 @@ class WebPagesManager::WebPageInstantView {
 
   friend StringBuilder &operator<<(StringBuilder &string_builder,
                                    const WebPagesManager::WebPageInstantView &instant_view) {
-    return string_builder << "InstantView(url = " << instant_view.url << ", size = " << instant_view.page_blocks.size()
+    return string_builder << "InstantView(URL = " << instant_view.url << ", size = " << instant_view.page_blocks.size()
                           << ", view_count = " << instant_view.view_count << ", hash = " << instant_view.hash
                           << ", is_empty = " << instant_view.is_empty << ", is_v2 = " << instant_view.is_v2
                           << ", is_rtl = " << instant_view.is_rtl << ", is_full = " << instant_view.is_full
@@ -492,7 +492,7 @@ WebPageId WebPagesManager::on_get_web_page(tl_object_ptr<telegram_api::WebPage> 
       page->site_name = std::move(web_page->site_name_);
       page->title = std::move(web_page->title_);
       page->description = std::move(web_page->description_);
-      page->photo = get_photo(td_->file_manager_.get(), std::move(web_page->photo_), owner_dialog_id);
+      page->photo = get_photo(td_, std::move(web_page->photo_), owner_dialog_id);
       page->embed_url = std::move(web_page->embed_url_);
       page->embed_type = std::move(web_page->embed_type_);
       page->embed_dimensions = get_dimensions(web_page->embed_width_, web_page->embed_height_, "webPage");
@@ -696,7 +696,7 @@ void WebPagesManager::on_get_web_page_by_url(const string &url, WebPageId web_pa
   }
 
   if (cached_web_page_id.is_valid() && web_page_id.is_valid() && web_page_id != cached_web_page_id) {
-    LOG(ERROR) << "Url \"" << url << "\" preview is changed from " << cached_web_page_id << " to " << web_page_id;
+    LOG(ERROR) << "URL \"" << url << "\" preview is changed from " << cached_web_page_id << " to " << web_page_id;
   }
 
   cached_web_page_id = web_page_id;
@@ -781,7 +781,7 @@ void WebPagesManager::on_get_web_page_preview_success(int64 request_id, const st
 
 void WebPagesManager::on_get_web_page_preview_fail(int64 request_id, const string &url, Status error,
                                                    Promise<Unit> &&promise) {
-  LOG(INFO) << "Clean up getting of web page preview with url \"" << url << '"';
+  LOG(INFO) << "Clean up getting of web page preview with URL \"" << url << '"';
   CHECK(error.is_error());
   promise.set_error(std::move(error));
 }
@@ -830,7 +830,7 @@ tl_object_ptr<td_api::webPage> WebPagesManager::get_web_page_preview_result(int6
 }
 
 void WebPagesManager::get_web_page_instant_view(const string &url, bool force_full, Promise<WebPageId> &&promise) {
-  LOG(INFO) << "Trying to get web page instant view for the url \"" << url << '"';
+  LOG(INFO) << "Trying to get web page instant view for the URL \"" << url << '"';
   if (url.empty()) {
     return promise.set_value(WebPageId());
   }
@@ -910,6 +910,10 @@ void WebPagesManager::load_web_page_instant_view(WebPageId web_page_id, bool for
 }
 
 void WebPagesManager::reload_web_page_instant_view(WebPageId web_page_id) {
+  if (G()->close_flag()) {
+    return update_web_page_instant_view_load_requests(web_page_id, true, Global::request_aborted_error());
+  }
+
   LOG(INFO) << "Reload " << web_page_id << " instant view";
   const WebPage *web_page = get_web_page(web_page_id);
   CHECK(web_page != nullptr && !web_page->instant_view.is_empty);
@@ -918,9 +922,6 @@ void WebPagesManager::reload_web_page_instant_view(WebPageId web_page_id) {
     send_closure(actor_id, &WebPagesManager::update_web_page_instant_view_load_requests, web_page_id, true,
                  std::move(result));
   });
-
-  TRY_STATUS_PROMISE(promise, G()->close_status());
-
   td_->create_handler<GetWebPageQuery>(std::move(promise))
       ->send(web_page_id, web_page->url, web_page->instant_view.is_full ? web_page->instant_view.hash : 0);
 }
@@ -975,7 +976,7 @@ void WebPagesManager::on_load_web_page_instant_view_from_database(WebPageId web_
 
 void WebPagesManager::update_web_page_instant_view_load_requests(WebPageId web_page_id, bool force_update,
                                                                  Result<WebPageId> r_web_page_id) {
-  if (G()->close_flag()) {
+  if (G()->close_flag() && r_web_page_id.is_ok()) {
     r_web_page_id = Global::request_aborted_error();
   }
   LOG(INFO) << "Update load requests for " << web_page_id;
@@ -1046,16 +1047,16 @@ WebPageId WebPagesManager::get_web_page_by_url(const string &url) const {
 
   auto it = url_to_web_page_id_.find(url);
   if (it != url_to_web_page_id_.end()) {
-    LOG(INFO) << "Return " << it->second << " for the url \"" << url << '"';
+    LOG(INFO) << "Return " << it->second << " for the URL \"" << url << '"';
     return it->second;
   }
 
-  LOG(INFO) << "Can't find web page identifier for the url \"" << url << '"';
+  LOG(INFO) << "Can't find web page identifier for the URL \"" << url << '"';
   return WebPageId();
 }
 
 void WebPagesManager::get_web_page_by_url(const string &url, Promise<WebPageId> &&promise) {
-  LOG(INFO) << "Trying to get web page identifier for the url \"" << url << '"';
+  LOG(INFO) << "Trying to get web page identifier for the URL \"" << url << '"';
   if (url.empty()) {
     return promise.set_value(WebPageId());
   }
@@ -1089,7 +1090,7 @@ void WebPagesManager::load_web_page_by_url(string url, Promise<WebPageId> &&prom
 void WebPagesManager::on_load_web_page_id_by_url_from_database(string url, string value, Promise<WebPageId> &&promise) {
   TRY_STATUS_PROMISE(promise, G()->close_status());
 
-  LOG(INFO) << "Successfully loaded url \"" << url << "\" of size " << value.size() << " from database";
+  LOG(INFO) << "Successfully loaded URL \"" << url << "\" of size " << value.size() << " from database";
   //  G()->td_db()->get_sqlite_pmc()->erase(get_web_page_url_database_key(web_page_id), Auto());
   //  value.clear();
 
@@ -1415,7 +1416,7 @@ void WebPagesManager::on_get_web_page_instant_view(WebPage *web_page, tl_object_
   CHECK(page != nullptr);
   FlatHashMap<int64, unique_ptr<Photo>> photos;
   for (auto &photo_ptr : page->photos_) {
-    Photo photo = get_photo(td_->file_manager_.get(), std::move(photo_ptr), owner_dialog_id);
+    Photo photo = get_photo(td_, std::move(photo_ptr), owner_dialog_id);
     if (photo.is_empty() || photo.id.get() == 0) {
       LOG(ERROR) << "Receive empty photo in web page instant view for " << web_page->url;
     } else {
@@ -1562,7 +1563,7 @@ void WebPagesManager::on_binlog_web_page_event(BinlogEvent &&event) {
   }
 
   WebPageLogEvent log_event;
-  log_event_parse(log_event, event.data_).ensure();
+  log_event_parse(log_event, event.get_data()).ensure();
 
   auto web_page_id = log_event.web_page_id;
   if (!web_page_id.is_valid()) {

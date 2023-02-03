@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -23,6 +23,7 @@
 #include "td/utils/port/signals.h"
 #include "td/utils/Promise.h"
 #include "td/utils/Random.h"
+#include "td/utils/tests.h"
 
 #include <iostream>
 #include <map>
@@ -220,14 +221,12 @@ class InitTask : public Task {
  private:
   Options options_;
   td::Promise<> promise_;
-  bool start_flag_{false};
 
   void start_up() override {
-    send_query(td::make_tl_object<td::td_api::getAuthorizationState>(),
-               [this](auto res) { this->process_authorization_state(res.move_as_ok()); });
+    send_query(td::make_tl_object<td::td_api::getOption>("version"),
+               [](auto res) { LOG(INFO) << td::td_api::to_string(res.ok()); });
   }
   void process_authorization_state(td::tl_object_ptr<td::td_api::Object> authorization_state) {
-    start_flag_ = true;
     td::tl_object_ptr<td::td_api::Function> function;
     switch (authorization_state->get_id()) {
       case td::td_api::authorizationStateReady::ID:
@@ -266,9 +265,6 @@ class InitTask : public Task {
     });
   }
   void process_update(std::shared_ptr<TestClient::Update> update) override {
-    if (!start_flag_) {
-      return;
-    }
     if (!update->object) {
       return;
     }
@@ -437,7 +433,7 @@ class TestDownloadFile : public Task {
       begin = end;
     }
 
-    random_shuffle(as_mutable_span(ranges_), rnd);
+    rand_shuffle(as_mutable_span(ranges_), rnd);
     start_chunk();
   }
 

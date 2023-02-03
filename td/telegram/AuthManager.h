@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -37,6 +37,7 @@ class AuthManager final : public NetActor {
 
   void set_phone_number(uint64 query_id, string phone_number,
                         td_api::object_ptr<td_api::phoneNumberAuthenticationSettings> settings);
+  void set_firebase_token(uint64 query_id, string token);
   void set_email_address(uint64 query_id, string email_address);
   void resend_authentication_code(uint64 query_id);
   void check_email_code(uint64 query_id, EmailVerification &&code);
@@ -90,6 +91,7 @@ class AuthManager final : public NetActor {
     RequestPasswordRecovery,
     CheckPasswordRecoveryCode,
     RecoverPassword,
+    RequestFirebaseSms,
     BotAuthentication,
     Authentication,
     LogOut,
@@ -296,7 +298,7 @@ class AuthManager final : public NetActor {
   void send_log_out_query();
   void destroy_auth_keys();
 
-  void on_sent_code(telegram_api::object_ptr<telegram_api::auth_sentCode> &&sent_code);
+  void on_sent_code(telegram_api::object_ptr<telegram_api::auth_SentCode> &&sent_code_ptr);
 
   void on_send_code_result(NetQueryPtr &result);
   void on_send_email_code_result(NetQueryPtr &result);
@@ -305,6 +307,7 @@ class AuthManager final : public NetActor {
   void on_get_password_result(NetQueryPtr &result);
   void on_request_password_recovery_result(NetQueryPtr &result);
   void on_check_password_recovery_code_result(NetQueryPtr &result);
+  void on_request_firebase_sms_result(NetQueryPtr &result);
   void on_authentication_result(NetQueryPtr &result, bool is_from_current_query);
   void on_log_out_result(NetQueryPtr &result);
   void on_delete_account_result(NetQueryPtr &result);

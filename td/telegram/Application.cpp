@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -127,7 +127,7 @@ void on_save_app_log_binlog_event(Td *td, BinlogEvent &&event) {
   CHECK(event.id_ != 0);
   CHECK(event.type_ == LogEvent::HandlerType::SaveAppLog);
   SaveAppLogLogEvent log_event;
-  log_event_parse(log_event, event.data_).ensure();
+  log_event_parse(log_event, event.get_data()).ensure();
 
   save_app_log_impl(td, std::move(log_event.input_app_event_out_), event.id_, Promise<Unit>());
 }

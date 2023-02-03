@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -263,11 +263,14 @@ class TlsHelloCalcLength {
   }
 
   Result<size_t> finish() {
+    if (status_.is_error()) {
+      return std::move(status_);
+    }
     if (size_ > 514) {
-      on_error(Status::Error("Too long for zero padding"));
+      return Status::Error("Too long for zero padding");
     }
     if (size_ < 11 + 32) {
-      on_error(Status::Error("Too small for hash"));
+      return Status::Error("Too small for hash");
     }
     int zero_pad = 515 - static_cast<int>(size_);
     using Op = TlsHello::Op;
@@ -275,9 +278,8 @@ class TlsHelloCalcLength {
     do_op(Op::zero(zero_pad), nullptr);
     do_op(Op::end_scope(), nullptr);
     if (!scope_offset_.empty()) {
-      on_error(Status::Error("Unbalanced scopes"));
+      return Status::Error("Unbalanced scopes");
     }
-    TRY_STATUS(std::move(status_));
     return size_;
   }
 
@@ -488,7 +490,7 @@ Status TlsInit::wait_hello_response() {
   }
 
   auto response = fd_.input_buffer().cut_head(it.begin().clone()).move_as_buffer_slice();
-  auto response_rand_slice = response.as_slice().substr(11, 32);
+  auto response_rand_slice = response.as_mutable_slice().substr(11, 32);
   auto response_rand = response_rand_slice.str();
   std::fill(response_rand_slice.begin(), response_rand_slice.end(), '\0');
   std::string hash_dest(32, '\0');

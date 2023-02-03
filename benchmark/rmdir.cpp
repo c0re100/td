@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -17,8 +17,23 @@ int main(int argc, char *argv[]) {
   auto status = td::walk_path(dir, [&](td::CSlice path, auto type) {
     if (type != td::WalkPath::Type::EnterDir) {
       cnt++;
-      LOG(INFO) << path << " " << (type == td::WalkPath::Type::ExitDir);
     }
+    auto type_name = [&] {
+      switch (type) {
+        case td::WalkPath::Type::EnterDir:
+          return td::CSlice("Open");
+        case td::WalkPath::Type::ExitDir:
+          return td::CSlice("Exit");
+        case td::WalkPath::Type::RegularFile:
+          return td::CSlice("File");
+        case td::WalkPath::Type::Symlink:
+          return td::CSlice("Link");
+        default:
+          UNREACHABLE();
+          return td::CSlice();
+      }
+    }();
+    LOG(INFO) << type_name << ' ' << path;
     //if (is_dir) {
     // td::rmdir(path);
     //} else {

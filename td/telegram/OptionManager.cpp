@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -62,19 +62,10 @@ OptionManager::OptionManager(Td *td)
     if (!is_internal_option(name)) {
       send_closure(G()->td(), &Td::send_update,
                    td_api::make_object<td_api::updateOption>(name, get_option_value_object(name_value.second)));
-    } else if (name == "otherwise_relogin_days") {
-      auto days = narrow_cast<int32>(get_option_integer(name));
-      if (days > 0) {
-        vector<SuggestedAction> added_actions{SuggestedAction{SuggestedAction::Type::SetPassword, DialogId(), days}};
-        send_closure(G()->td(), &Td::send_update, get_update_suggested_actions_object(added_actions, {}));
-      }
-    } else if (name == "default_reaction") {
-      auto value = get_option_string(name);
-      if (value.empty()) {
-        // legacy
-        set_option_empty(name);
-      } else {
-        send_update_default_reaction_type(value);
+    } else {
+      auto update = get_internal_option_update(name);
+      if (update != nullptr) {
+        send_closure(G()->td(), &Td::send_update, std::move(update));
       }
     }
   }
@@ -112,9 +103,6 @@ OptionManager::OptionManager(Td *td)
   if (!have_option("chat_filter_chosen_chat_count_max")) {
     set_option_integer("chat_filter_chosen_chat_count_max", G()->is_test_dc() ? 5 : 100);
   }
-  if (!have_option("forum_member_count_min")) {
-    set_option_integer("forum_member_count_min", G()->is_test_dc() ? 3 : 100);
-  }
   if (!have_option("aggressive_anti_spam_supergroup_member_count_min")) {
     set_option_integer("aggressive_anti_spam_supergroup_member_count_min", G()->is_test_dc() ? 1 : 100);
   }
@@ -122,6 +110,7 @@ OptionManager::OptionManager(Td *td)
     set_option_integer("pinned_forum_topic_count_max", G()->is_test_dc() ? 3 : 5);
   }
 
+  set_option_empty("forum_member_count_min");
   set_option_empty("themed_emoji_statuses_sticker_set_id");
   set_option_empty("themed_premium_statuses_sticker_set_id");
 }
@@ -200,7 +189,7 @@ void OptionManager::set_option(Slice name, Slice value) {
   CHECK(!name.empty());
   CHECK(Scheduler::instance()->sched_id() == current_scheduler_id_);
   if (value.empty()) {
-    if (option_pmc_->erase(name.str()) == 0) {
+    if (options_->erase(name.str()) == 0) {
       return;
     }
     option_pmc_->erase(name.str());
@@ -218,6 +207,11 @@ void OptionManager::set_option(Slice name, Slice value) {
   if (!is_internal_option(name)) {
     send_closure(G()->td(), &Td::send_update,
                  td_api::make_object<td_api::updateOption>(name.str(), get_option_value_object(get_option(name))));
+  } else {
+    auto update = get_internal_option_update(name);
+    if (update != nullptr) {
+      send_closure(G()->td(), &Td::send_update, std::move(update));
+    }
   }
 }
 
@@ -289,9 +283,9 @@ bool OptionManager::is_internal_option(Slice name) {
              name == "revoke_time_limit" || name == "revoke_pm_time_limit";
     case 's':
       return name == "saved_animations_limit" || name == "saved_gifs_limit_default" ||
-             name == "saved_gifs_limit_premium" || name == "session_count" || name == "stickers_faved_limit_default" ||
-             name == "stickers_faved_limit_premium" || name == "stickers_normal_by_emoji_per_premium_num" ||
-             name == "stickers_premium_by_emoji_num";
+             name == "saved_gifs_limit_premium" || name == "session_count" || name == "since_last_open" ||
+             name == "stickers_faved_limit_default" || name == "stickers_faved_limit_premium" ||
+             name == "stickers_normal_by_emoji_per_premium_num" || name == "stickers_premium_by_emoji_num";
     case 'v':
       return name == "video_note_size_max";
     case 'w':
@@ -299,6 +293,20 @@ bool OptionManager::is_internal_option(Slice name) {
     default:
       return false;
   }
+}
+
+td_api::object_ptr<td_api::Update> OptionManager::get_internal_option_update(Slice name) const {
+  if (name == "default_reaction") {
+    return get_update_default_reaction_type(get_option_string(name));
+  }
+  if (name == "otherwise_relogin_days") {
+    auto days = narrow_cast<int32>(get_option_integer(name));
+    if (days > 0) {
+      vector<SuggestedAction> added_actions{SuggestedAction{SuggestedAction::Type::SetPassword, DialogId(), days}};
+      return get_update_suggested_actions_object(added_actions, {}, "get_internal_option_update");
+    }
+  }
+  return nullptr;
 }
 
 const vector<Slice> &OptionManager::get_synchronous_options() {
@@ -336,9 +344,6 @@ void OptionManager::on_option_updated(Slice name) {
       }
       break;
     case 'd':
-      if (name == "default_reaction") {
-        send_update_default_reaction_type(get_option_string(name));
-      }
       if (name == "dice_emojis") {
         send_closure(td_->stickers_manager_actor_, &StickersManager::on_update_dice_emojis);
       }
@@ -415,13 +420,6 @@ void OptionManager::on_option_updated(Slice name) {
     case 'o':
       if (name == "online_cloud_timeout_ms") {
         send_closure(td_->notification_manager_actor_, &NotificationManager::on_online_cloud_timeout_changed);
-      }
-      if (name == "otherwise_relogin_days") {
-        auto days = narrow_cast<int32>(get_option_integer(name));
-        if (days > 0) {
-          vector<SuggestedAction> added_actions{SuggestedAction{SuggestedAction::Type::SetPassword, DialogId(), days}};
-          send_closure(G()->td(), &Td::send_update, get_update_suggested_actions_object(added_actions, {}));
-        }
       }
       break;
     case 'r':
@@ -526,7 +524,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.10");
+        return td_api::make_object<td_api::optionValueString>("1.8.11");
       }
       break;
   }
@@ -872,6 +870,11 @@ void OptionManager::get_current_state(vector<td_api::object_ptr<td_api::Update>>
     if (!is_internal_option(option.first)) {
       updates.push_back(
           td_api::make_object<td_api::updateOption>(option.first, get_option_value_object(option.second)));
+    } else {
+      auto update = get_internal_option_update(option.first);
+      if (update != nullptr) {
+        updates.push_back(std::move(update));
+      }
     }
   }
 }

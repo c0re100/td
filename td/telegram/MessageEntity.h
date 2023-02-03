@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -15,6 +15,7 @@
 
 #include "td/utils/common.h"
 #include "td/utils/FlatHashSet.h"
+#include "td/utils/HashTableUtils.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
@@ -131,6 +132,18 @@ struct FormattedText {
   void parse(ParserT &parser);
 };
 
+struct FormattedTextHash {
+  uint32 operator()(const FormattedText &formatted_text) const {
+    auto hash = Hash<string>()(formatted_text.text);
+    for (auto &entity : formatted_text.entities) {
+      hash = hash * 2023654985u + Hash<int32>()(static_cast<int32>(entity.type));
+      hash = hash * 2023654985u + Hash<int32>()(entity.length);
+      hash = hash * 2023654985u + Hash<int32>()(entity.offset);
+    }
+    return hash;
+  }
+};
+
 StringBuilder &operator<<(StringBuilder &string_builder, const FormattedText &text);
 
 inline bool operator==(const FormattedText &lhs, const FormattedText &rhs) {
@@ -181,7 +194,7 @@ FormattedText parse_markdown_v3(FormattedText text);
 
 FormattedText get_markdown_v3(FormattedText text);
 
-Result<vector<MessageEntity>> parse_html(string &text);
+Result<vector<MessageEntity>> parse_html(string &str);
 
 vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(const ContactsManager *contacts_manager,
                                                                               const vector<MessageEntity> &entities,
@@ -200,6 +213,14 @@ vector<MessageEntity> get_message_entities(const ContactsManager *contacts_manag
 
 vector<MessageEntity> get_message_entities(Td *td, vector<tl_object_ptr<secret_api::MessageEntity>> &&secret_entities,
                                            bool is_premium, MultiPromiseActor &load_data_multipromise);
+
+telegram_api::object_ptr<telegram_api::textWithEntities> get_input_text_with_entities(
+    const ContactsManager *contacts_manager, const FormattedText &text, const char *source);
+
+FormattedText get_formatted_text(const ContactsManager *contacts_manager,
+                                 telegram_api::object_ptr<telegram_api::textWithEntities> text_with_entities,
+                                 bool allow_empty, bool skip_new_entities, bool skip_bot_commands,
+                                 bool skip_media_timestamps, bool for_draft, const char *source);
 
 // like clean_input_string but also validates entities
 Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool allow_empty, bool skip_new_entities,

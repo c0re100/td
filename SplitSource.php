@@ -280,6 +280,7 @@ function split_file($file, $chunks, $undo) {
                 'attach_menu_manager[_(-][^.]|AttachMenuManager[^;>]' => "AttachMenuManager",
                 'audios_manager[_(-][^.]|AudiosManager' => "AudiosManager",
                 'auth_manager[_(-][^.]|AuthManager' => 'AuthManager',
+                'autosave_manager[_(-][^.]|AutosaveManager' => 'AutosaveManager',
                 'background_manager[_(-][^.]|BackgroundManager' => "BackgroundManager",
                 'contacts_manager[_(-][^.]|ContactsManager([^ ;.]| [^*])' => 'ContactsManager',
                 'country_info_manager[_(-][^.]|CountryInfoManager' => 'CountryInfoManager',
@@ -311,6 +312,7 @@ function split_file($file, $chunks, $undo) {
                 'theme_manager[_(-][^.]|ThemeManager' => "ThemeManager",
                 'TopDialogCategory|get_top_dialog_category' => 'TopDialogCategory',
                 'top_dialog_manager[_(-][^.]|TopDialogManager' => 'TopDialogManager',
+                'translation_manager[_(-][^.]|TranslationManager' => "TranslationManager",
                 'updates_manager[_(-][^.]|UpdatesManager|get_difference[)]|updateSentMessage|dummyUpdate' => 'UpdatesManager',
                 'WebPageId(Hash)?' => 'WebPageId',
                 'web_pages_manager[_(-][^.]|WebPagesManager' => 'WebPagesManager');

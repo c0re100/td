@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -44,6 +44,8 @@ Result<telegram_api::auth_resendCode> SendCodeHelper::resend_code() const {
 telegram_api::object_ptr<telegram_api::codeSettings> SendCodeHelper::get_input_code_settings(const Settings &settings) {
   int32 flags = 0;
   vector<BufferSlice> logout_tokens;
+  string device_token;
+  bool is_app_sandbox = false;
   if (settings != nullptr) {
     if (settings->allow_flash_call_) {
       flags |= telegram_api::codeSettings::ALLOW_FLASHCALL_MASK;
@@ -56,6 +58,16 @@ telegram_api::object_ptr<telegram_api::codeSettings> SendCodeHelper::get_input_c
     }
     if (settings->allow_sms_retriever_api_) {
       flags |= telegram_api::codeSettings::ALLOW_APP_HASH_MASK;
+    }
+    if (settings->firebase_authentication_settings_ != nullptr) {
+      flags |= telegram_api::codeSettings::ALLOW_FIREBASE_MASK;
+      if (settings->firebase_authentication_settings_->get_id() == td_api::firebaseAuthenticationSettingsIos::ID) {
+        flags |= telegram_api::codeSettings::TOKEN_MASK;
+        auto ios_settings = static_cast<const td_api::firebaseAuthenticationSettingsIos *>(
+            settings->firebase_authentication_settings_.get());
+        device_token = ios_settings->device_token_;
+        is_app_sandbox = ios_settings->is_app_sandbox_;
+      }
     }
     constexpr size_t MAX_LOGOUT_TOKENS = 20;  // server-side limit
     for (const auto &token : settings->authentication_tokens_) {
@@ -71,14 +83,30 @@ telegram_api::object_ptr<telegram_api::codeSettings> SendCodeHelper::get_input_c
       flags |= telegram_api::codeSettings::LOGOUT_TOKENS_MASK;
     }
   }
-  return telegram_api::make_object<telegram_api::codeSettings>(
-      flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, std::move(logout_tokens));
+  return telegram_api::make_object<telegram_api::codeSettings>(flags, false /*ignored*/, false /*ignored*/,
+                                                               false /*ignored*/, false /*ignored*/, false /*ignored*/,
+                                                               std::move(logout_tokens), device_token, is_app_sandbox);
 }
 
 telegram_api::auth_sendCode SendCodeHelper::send_code(string phone_number, const Settings &settings, int32 api_id,
                                                       const string &api_hash) {
   phone_number_ = std::move(phone_number);
   return telegram_api::auth_sendCode(phone_number_, api_id, api_hash, get_input_code_settings(settings));
+}
+
+telegram_api::auth_requestFirebaseSms SendCodeHelper::request_firebase_sms(const string &token) {
+  string safety_net_token;
+  string ios_push_secret;
+  int32 flags = 0;
+#if TD_ANDROID
+  flags |= telegram_api::auth_requestFirebaseSms::SAFETY_NET_TOKEN_MASK;
+  safety_net_token = token;
+#elif TD_DARWIN
+  flags |= telegram_api::auth_requestFirebaseSms::IOS_PUSH_SECRET_MASK;
+  ios_push_secret = token;
+#endif
+  return telegram_api::auth_requestFirebaseSms(flags, phone_number_, phone_code_hash_, safety_net_token,
+                                               ios_push_secret);
 }
 
 telegram_api::account_sendVerifyEmailCode SendCodeHelper::send_verify_email_code(const string &email_address) {
@@ -157,6 +185,18 @@ SendCodeHelper::AuthenticationCodeInfo SendCodeHelper::get_sent_authentication_c
       return AuthenticationCodeInfo{AuthenticationCodeInfo::Type::Fragment, code_type->length_,
                                     std::move(code_type->url_)};
     }
+    case telegram_api::auth_sentCodeTypeFirebaseSms::ID: {
+      auto code_type = move_tl_object_as<telegram_api::auth_sentCodeTypeFirebaseSms>(sent_code_type_ptr);
+      if ((code_type->flags_ & telegram_api::auth_sentCodeTypeFirebaseSms::NONCE_MASK) != 0) {
+        return AuthenticationCodeInfo{AuthenticationCodeInfo::Type::FirebaseAndroid, code_type->length_,
+                                      code_type->nonce_.as_slice().str()};
+      }
+      if ((code_type->flags_ & telegram_api::auth_sentCodeTypeFirebaseSms::RECEIPT_MASK) != 0) {
+        return AuthenticationCodeInfo{AuthenticationCodeInfo::Type::FirebaseIos, code_type->length_,
+                                      std::move(code_type->receipt_), code_type->push_timeout_};
+      }
+      return AuthenticationCodeInfo{AuthenticationCodeInfo::Type::Sms, code_type->length_, ""};
+    }
     case telegram_api::auth_sentCodeTypeEmailCode::ID:
     case telegram_api::auth_sentCodeTypeSetUpEmailRequired::ID:
     default:
@@ -184,6 +224,12 @@ td_api::object_ptr<td_api::AuthenticationCodeType> SendCodeHelper::get_authentic
     case AuthenticationCodeInfo::Type::Fragment:
       return td_api::make_object<td_api::authenticationCodeTypeFragment>(authentication_code_info.pattern,
                                                                          authentication_code_info.length);
+    case AuthenticationCodeInfo::Type::FirebaseAndroid:
+      return td_api::make_object<td_api::authenticationCodeTypeFirebaseAndroid>(authentication_code_info.pattern,
+                                                                                authentication_code_info.length);
+    case AuthenticationCodeInfo::Type::FirebaseIos:
+      return td_api::make_object<td_api::authenticationCodeTypeFirebaseIos>(
+          authentication_code_info.pattern, authentication_code_info.push_timeout, authentication_code_info.length);
     default:
       UNREACHABLE();
       return nullptr;

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -141,6 +141,7 @@ void VoiceNotesManager::register_voice_note(FileId voice_note_file_id, FullMessa
     return;
   }
   LOG(INFO) << "Register voice note " << voice_note_file_id << " from " << full_message_id << " from " << source;
+  CHECK(voice_note_file_id.is_valid());
   bool is_inserted = voice_note_messages_[voice_note_file_id].insert(full_message_id).second;
   LOG_CHECK(is_inserted) << source << ' ' << voice_note_file_id << ' ' << full_message_id;
   is_inserted = message_voice_notes_.emplace(full_message_id, voice_note_file_id).second;
@@ -154,6 +155,7 @@ void VoiceNotesManager::unregister_voice_note(FileId voice_note_file_id, FullMes
     return;
   }
   LOG(INFO) << "Unregister voice note " << voice_note_file_id << " from " << full_message_id << " from " << source;
+  CHECK(voice_note_file_id.is_valid());
   auto &message_ids = voice_note_messages_[voice_note_file_id];
   auto is_deleted = message_ids.erase(full_message_id) > 0;
   LOG_CHECK(is_deleted) << source << ' ' << voice_note_file_id << ' ' << full_message_id;

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -51,24 +51,24 @@ struct AesCtrEncryptionEvent {
     return 2;
   }
 
-  BufferSlice key_salt_;
-  BufferSlice iv_;
-  BufferSlice key_hash_;
+  string key_salt_;
+  string iv_;
+  string key_hash_;
 
-  BufferSlice generate_key(const DbKey &db_key) const {
+  string generate_key(const DbKey &db_key) const {
     CHECK(!db_key.is_empty());
-    BufferSlice key(key_size());
+    string key(key_size(), '\0');
     size_t iteration_count = kdf_iteration_count();
     if (db_key.is_raw_key()) {
       iteration_count = kdf_fast_iteration_count();
     }
-    pbkdf2_sha256(db_key.data(), key_salt_.as_slice(), narrow_cast<int>(iteration_count), key.as_slice());
+    pbkdf2_sha256(db_key.data(), key_salt_, narrow_cast<int>(iteration_count), key);
     return key;
   }
 
-  static BufferSlice generate_hash(Slice key) {
-    BufferSlice hash(hash_size());
-    hmac_sha256(key, "cucumbers everywhere", hash.as_slice());
+  static string generate_hash(Slice key) {
+    string hash(hash_size(), '\0');
+    hmac_sha256(key, "cucumbers everywhere", hash);
     return hash;
   }
 
@@ -139,7 +139,8 @@ class BinlogReader {
     }
 
     event->debug_info_ = BinlogDebugInfo{__FILE__, __LINE__};
-    TRY_STATUS(event->init(input_->cut_head(size_).move_as_buffer_slice()));
+    event->init(input_->cut_head(size_).move_as_buffer_slice());
+    TRY_STATUS(event->validate());
     offset_ += size_;
     event->offset_ = offset_;
     state_ = State::ReadLength;
@@ -208,15 +209,15 @@ Status Binlog::init(string path, const Callback &callback, DbKey db_key, DbKey o
     close().ignore();
     return status;
   }
-  info_.last_id = processor_->last_id();
-  last_id_ = processor_->last_id();
+  info_.last_event_id = processor_->last_event_id();
+  last_event_id_ = processor_->last_event_id();
   if (info_.wrong_password) {
     close().ignore();
-    return Status::Error(Error::WrongPassword, "Wrong password");
+    return Status::Error(static_cast<int>(Error::WrongPassword), "Wrong password");
   }
 
   if ((!db_key_.is_empty() && !db_key_used_) || (db_key_.is_empty() && encryption_type_ != EncryptionType::None)) {
-    aes_ctr_key_salt_ = BufferSlice();
+    aes_ctr_key_salt_ = string();
     do_reindex();
   }
 
@@ -304,7 +305,7 @@ void Binlog::close(Promise<> promise) {
 
 void Binlog::change_key(DbKey new_db_key) {
   db_key_ = std::move(new_db_key);
-  aes_ctr_key_salt_ = BufferSlice();
+  aes_ctr_key_salt_ = string();
   do_reindex();
 }
 
@@ -328,41 +329,37 @@ void Binlog::do_event(BinlogEvent &&event) {
     auto validate_status = event.validate();
     if (validate_status.is_error()) {
       LOG(FATAL) << "Failed to validate binlog event " << validate_status << " "
-                 << format::as_hex_dump<4>(Slice(event.raw_event_.as_slice().truncate(28)));
+                 << format::as_hex_dump<4>(as_slice(event.raw_event_).truncate(28));
     }
     VLOG(binlog) << "Write binlog event: " << format::cond(state_ == State::Reindex, "[reindex] ")
                  << event.public_to_string();
     switch (encryption_type_) {
-      case EncryptionType::None: {
+      case EncryptionType::None:
         buffer_writer_.append(event.raw_event_.clone());
         break;
-      }
-      case EncryptionType::AesCtr: {
-        buffer_writer_.append(event.raw_event_.as_slice());
+      case EncryptionType::AesCtr:
+        buffer_writer_.append(as_slice(event.raw_event_));
         break;
-      }
     }
   }
 
   if (event.type_ < 0) {
     if (event.type_ == BinlogEvent::ServiceTypes::AesCtrEncryption) {
       detail::AesCtrEncryptionEvent encryption_event;
-      encryption_event.parse(TlParser(event.data_));
+      encryption_event.parse(TlParser(event.get_data()));
 
-      BufferSlice key;
-      if (aes_ctr_key_salt_.as_slice() == encryption_event.key_salt_.as_slice()) {
-        key = BufferSlice(as_slice(aes_ctr_key_));
+      string key;
+      if (aes_ctr_key_salt_ == encryption_event.key_salt_) {
+        key = as_slice(aes_ctr_key_).str();
       } else if (!db_key_.is_empty()) {
         key = encryption_event.generate_key(db_key_);
       }
 
-      if (detail::AesCtrEncryptionEvent::generate_hash(key.as_slice()).as_slice() !=
-          encryption_event.key_hash_.as_slice()) {
+      if (detail::AesCtrEncryptionEvent::generate_hash(key) != encryption_event.key_hash_) {
         CHECK(state_ == State::Load);
         if (!old_db_key_.is_empty()) {
           key = encryption_event.generate_key(old_db_key_);
-          if (detail::AesCtrEncryptionEvent::generate_hash(key.as_slice()).as_slice() !=
-              encryption_event.key_hash_.as_slice()) {
+          if (detail::AesCtrEncryptionEvent::generate_hash(key) != encryption_event.key_hash_) {
             info_.wrong_password = true;
           }
         } else {
@@ -374,8 +371,8 @@ void Binlog::do_event(BinlogEvent &&event) {
 
       encryption_type_ = EncryptionType::AesCtr;
 
-      aes_ctr_key_salt_ = encryption_event.key_salt_.copy();
-      update_encryption(key.as_slice(), encryption_event.iv_.as_slice());
+      aes_ctr_key_salt_ = encryption_event.key_salt_;
+      update_encryption(key, encryption_event.iv_);
 
       if (state_ == State::Load) {
         update_read_encryption();
@@ -552,6 +549,7 @@ Status Binlog::load_binlog(const Callback &callback, const Callback &debug_callb
   }
 
   auto offset = processor_->offset();
+  CHECK(offset >= 0);
   processor_->for_each([&](BinlogEvent &event) {
     VLOG(binlog) << "Replay binlog event: " << event.public_to_string();
     if (callback) {
@@ -583,9 +581,9 @@ Status Binlog::load_binlog(const Callback &callback, const Callback &debug_callb
 }
 
 void Binlog::update_encryption(Slice key, Slice iv) {
-  as_slice(aes_ctr_key_).copy_from(key);
+  as_mutable_slice(aes_ctr_key_).copy_from(key);
   UInt128 aes_ctr_iv;
-  as_slice(aes_ctr_iv).copy_from(iv);
+  as_mutable_slice(aes_ctr_iv).copy_from(iv);
   aes_ctr_state_.init(as_slice(aes_ctr_key_), as_slice(aes_ctr_iv));
 }
 
@@ -599,22 +597,22 @@ void Binlog::reset_encryption() {
   EncryptionEvent event;
 
   if (aes_ctr_key_salt_.empty()) {
-    event.key_salt_ = BufferSlice(EncryptionEvent::default_salt_size());
-    Random::secure_bytes(event.key_salt_.as_slice());
+    event.key_salt_.resize(EncryptionEvent::default_salt_size());
+    Random::secure_bytes(event.key_salt_);
   } else {
-    event.key_salt_ = aes_ctr_key_salt_.clone();
+    event.key_salt_ = aes_ctr_key_salt_;
   }
-  event.iv_ = BufferSlice(EncryptionEvent::iv_size());
-  Random::secure_bytes(event.iv_.as_slice());
+  event.iv_.resize(EncryptionEvent::iv_size());
+  Random::secure_bytes(event.iv_);
 
-  BufferSlice key;
-  if (aes_ctr_key_salt_.as_slice() == event.key_salt_.as_slice()) {
-    key = BufferSlice(as_slice(aes_ctr_key_));
+  string key;
+  if (aes_ctr_key_salt_ == event.key_salt_) {
+    key = as_slice(aes_ctr_key_).str();
   } else {
     key = event.generate_key(db_key_);
   }
 
-  event.key_hash_ = EncryptionEvent::generate_hash(key.as_slice());
+  event.key_hash_ = EncryptionEvent::generate_hash(key);
 
   do_event(BinlogEvent(
       BinlogEvent::create_raw(0, BinlogEvent::ServiceTypes::AesCtrEncryption, 0, create_default_storer(event)),

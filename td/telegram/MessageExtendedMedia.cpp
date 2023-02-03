@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -53,7 +53,7 @@ MessageExtendedMedia::MessageExtendedMedia(
             break;
           }
 
-          photo_ = get_photo(td->file_manager_.get(), std::move(photo->photo_), owner_dialog_id);
+          photo_ = get_photo(td, std::move(photo->photo_), owner_dialog_id);
           if (photo_.is_empty()) {
             break;
           }

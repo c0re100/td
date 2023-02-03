@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -130,6 +130,8 @@ class UpdatesManager final : public Actor {
 
   void schedule_get_difference(const char *source);
 
+  void on_update_from_auth_key_id(uint64 auth_key_id);
+
   void ping_server();
 
   bool running_get_difference() const {
@@ -225,7 +227,7 @@ class UpdatesManager final : public Actor {
   std::multimap<int32, PendingSeqUpdates> postponed_updates_;    // updates received during getDifference
   std::multimap<int32, PendingSeqUpdates> pending_seq_updates_;  // updates with too big seq
 
-  std::map<int32, PendingQtsUpdate> pending_qts_updates_;  // updates with too big qts
+  std::map<int32, PendingQtsUpdate> pending_qts_updates_;  // updates with too big QTS
 
   Timeout pts_gap_timeout_;
 
@@ -239,7 +241,10 @@ class UpdatesManager final : public Actor {
   double next_data_reload_time_ = 0.0;
   Timeout data_reload_timeout_;
 
+  bool is_ping_sent_ = false;
+
   bool running_get_difference_ = false;
+  bool finished_first_get_difference_ = false;
   int32 last_get_difference_pts_ = 0;
   int32 last_get_difference_qts_ = 0;
   int32 min_postponed_update_pts_ = 0;
@@ -248,6 +253,13 @@ class UpdatesManager final : public Actor {
 
   FlatHashMap<int64, TranscribedAudioHandler> pending_audio_transcriptions_;
   MultiTimeout pending_audio_transcription_timeout_{"PendingAudioTranscriptionTimeout"};
+
+  struct SessionInfo {
+    uint64 update_count = 0;
+    double first_update_time = 0.0;
+    double last_update_time = 0.0;
+  };
+  FlatHashMap<uint64, SessionInfo> session_infos_;
 
   void start_up() final;
 
@@ -277,6 +289,10 @@ class UpdatesManager final : public Actor {
   Promise<> add_qts(int32 qts);
   void on_qts_ack(PtsManager::PtsId ack_token);
   void save_qts(int32 qts);
+
+  bool can_postpone_updates() const {
+    return finished_first_get_difference_;
+  }
 
   void set_date(int32 date, bool from_update, string date_source);
 
@@ -362,6 +378,8 @@ class UpdatesManager final : public Actor {
   static void try_reload_data_static(void *td);
 
   void try_reload_data();
+
+  uint64 get_most_unused_auth_key_id();
 
   static vector<int32> get_update_ids(const telegram_api::Updates *updates_ptr);
 
@@ -565,6 +583,8 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateSavedRingtones> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateTranscribedAudio> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateAutoSaveSettings> update, Promise<Unit> &&promise);
 
   // unsupported updates
 };

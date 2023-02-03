@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -254,7 +254,7 @@ void update_expired_message_content(unique_ptr<MessageContent> &content);
 
 void update_failed_to_send_message_content(Td *td, unique_ptr<MessageContent> &content);
 
-void add_message_content_dependencies(Dependencies &dependencies, const MessageContent *message_content);
+void add_message_content_dependencies(Dependencies &dependencies, const MessageContent *message_content, bool is_bot);
 
 void update_forum_topic_info_by_service_message_content(Td *td, const MessageContent *content, DialogId dialog_id,
                                                         MessageId top_thread_message_id);

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -3377,8 +3377,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
             VLOG(notifications) << "Have attached photo";
             loc_key.resize(loc_key.rfind('_') + 1);
             loc_key += "PHOTO";
-            attached_photo = get_photo(td_->file_manager_.get(),
-                                       telegram_api::move_object_as<telegram_api::photo>(result), dialog_id);
+            attached_photo = get_photo(td_, telegram_api::move_object_as<telegram_api::photo>(result), dialog_id);
           } else {
             LOG(ERROR) << "Receive attached photo for " << loc_key;
           }
@@ -4187,7 +4186,7 @@ void NotificationManager::on_binlog_events(vector<BinlogEvent> &&events) {
       case LogEvent::HandlerType::AddMessagePushNotification: {
         CHECK(is_inited_);
         AddMessagePushNotificationLogEvent log_event;
-        log_event_parse(log_event, event.data_).ensure();
+        log_event_parse(log_event, event.get_data()).ensure();
 
         add_message_push_notification(
             log_event.dialog_id_, log_event.message_id_, log_event.random_id_, log_event.sender_user_id_,
@@ -4204,7 +4203,7 @@ void NotificationManager::on_binlog_events(vector<BinlogEvent> &&events) {
       case LogEvent::HandlerType::EditMessagePushNotification: {
         CHECK(is_inited_);
         EditMessagePushNotificationLogEvent log_event;
-        log_event_parse(log_event, event.data_).ensure();
+        log_event_parse(log_event, event.get_data()).ensure();
 
         edit_message_push_notification(
             log_event.dialog_id_, log_event.message_id_, log_event.edit_date_, log_event.loc_key_, log_event.arg_,

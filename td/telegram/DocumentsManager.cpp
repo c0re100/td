@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -332,12 +332,16 @@ Document DocumentsManager::on_get_document(RemoteDocument remote_document, Dialo
         }
       }
     }
-    for (auto &thumb : document->video_thumbs_) {
+    for (auto &thumb_ptr : document->video_thumbs_) {
+      if (thumb_ptr->get_id() != telegram_api::videoSize::ID) {
+        continue;
+      }
+      auto thumb = move_tl_object_as<telegram_api::videoSize>(thumb_ptr);
       if (thumb->type_ == "v") {
         if (!animated_thumbnail.file_id.is_valid()) {
           animated_thumbnail =
-              get_animation_size(td_->file_manager_.get(), PhotoSizeSource::thumbnail(FileType::Thumbnail, 0), id,
-                                 access_hash, file_reference, DcId::create(dc_id), owner_dialog_id, std::move(thumb));
+              get_animation_size(td_, PhotoSizeSource::thumbnail(FileType::Thumbnail, 0), id, access_hash,
+                                 file_reference, DcId::create(dc_id), owner_dialog_id, std::move(thumb));
         }
       } else if (thumb->type_ == "f") {
         if (!premium_animation_file_id.is_valid()) {

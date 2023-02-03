@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -913,7 +913,7 @@ LinkManager::LinkInfo LinkManager::get_link_info(Slice link) {
       if (is_valid_username(subdomain) && subdomain != "addemoji" && subdomain != "addstickers" &&
           subdomain != "addtheme" && subdomain != "auth" && subdomain != "confirmphone" && subdomain != "invoice" &&
           subdomain != "joinchat" && subdomain != "login" && subdomain != "proxy" && subdomain != "setlanguage" &&
-          subdomain != "share" && subdomain != "socks") {
+          subdomain != "share" && subdomain != "socks" && subdomain != "web" && subdomain != "k" && subdomain != "z") {
         result.type_ = LinkType::TMe;
         result.query_ = PSTRING() << '/' << subdomain << http_url.query_;
         return result;
@@ -925,6 +925,11 @@ LinkManager::LinkInfo LinkManager::get_link_info(Slice link) {
 
     string cur_t_me_url;
     vector<Slice> t_me_urls{Slice("t.me"), Slice("telegram.me"), Slice("telegram.dog")};
+#if TD_EMSCRIPTEN
+    t_me_urls.push_back(Slice("web.t.me"));
+    t_me_urls.push_back(Slice("k.t.me"));
+    t_me_urls.push_back(Slice("z.t.me"));
+#endif
     if (Scheduler::context() != nullptr) {  // for tests only
       cur_t_me_url = G()->get_option_string("t_me_url");
       if (tolower_begins_with(cur_t_me_url, "http://") || tolower_begins_with(cur_t_me_url, "https://")) {
@@ -1574,11 +1579,16 @@ void LinkManager::get_external_link_info(string &&link, Promise<td_api::object_p
     return promise.set_value(std::move(default_result));
   }
 
-  bool skip_confirm = td::contains(whitelisted_domains_, r_url.ok().host_);
+  auto url = r_url.move_as_ok();
+  if (!url.userinfo_.empty() || url.is_ipv6_) {
+    return promise.set_value(std::move(default_result));
+  }
+
+  bool skip_confirm = td::contains(whitelisted_domains_, url.host_);
   default_result->skip_confirm_ = skip_confirm;
 
-  if (!td::contains(autologin_domains_, r_url.ok().host_)) {
-    if (td::contains(url_auth_domains_, r_url.ok().host_)) {
+  if (!td::contains(autologin_domains_, url.host_)) {
+    if (td::contains(url_auth_domains_, url.host_)) {
       td_->create_handler<RequestUrlAuthQuery>(std::move(promise))->send(link, FullMessageId(), 0);
       return;
     }
@@ -1600,7 +1610,6 @@ void LinkManager::get_external_link_info(string &&link, Promise<td_api::object_p
     return promise.set_value(std::move(default_result));
   }
 
-  auto url = r_url.move_as_ok();
   url.protocol_ = HttpUrl::Protocol::Https;
   Slice path = url.query_;
   path.truncate(url.query_.find_first_of("?#"));

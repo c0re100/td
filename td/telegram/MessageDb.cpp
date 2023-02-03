@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -565,7 +565,7 @@ class MessageDbImpl final : public MessageDbSyncInterface {
           prev_found_message_id = message_id;
         }
 
-        // left_message_id is always an id of suitable message, let's return it
+        // left_message_id is always an identifier of suitable message, let's return it
         return get_message({dialog_id, MessageId(left_message_id)});
       }
     }
