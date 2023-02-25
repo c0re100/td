@@ -19,6 +19,7 @@
 #include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/SpecialStickerSetType.h"
 #include "td/telegram/StickerFormat.h"
+#include "td/telegram/StickerMaskPosition.h"
 #include "td/telegram/StickerSetId.h"
 #include "td/telegram/StickerType.h"
 #include "td/telegram/td_api.h"
@@ -452,10 +453,7 @@ class StickersManager final : public Actor {
     bool has_text_color_ = false;
     bool is_from_database_ = false;
     bool is_being_reloaded_ = false;
-    int32 point_ = -1;
-    double x_shift_ = 0;
-    double y_shift_ = 0;
-    double scale_ = 0;
+    StickerMaskPosition mask_position_;
     int32 emoji_receive_date_ = 0;
   };
 
@@ -628,8 +626,6 @@ class StickersManager final : public Actor {
 
   static double get_sticker_set_minithumbnail_zoom(const StickerSet *sticker_set);
 
-  static tl_object_ptr<td_api::MaskPoint> get_mask_point_object(int32 point);
-
   td_api::object_ptr<td_api::thumbnail> get_sticker_set_thumbnail_object(const StickerSet *sticker_set) const;
 
   tl_object_ptr<td_api::stickerSetInfo> get_sticker_set_info_object(StickerSetId sticker_set_id, size_t covers_limit,
@@ -696,8 +692,6 @@ class StickersManager final : public Actor {
 
   StickerSetId on_get_input_sticker_set(FileId sticker_file_id, tl_object_ptr<telegram_api::InputStickerSet> &&set_ptr,
                                         MultiPromiseActor *load_data_multipromise_ptr = nullptr);
-
-  string get_sticker_set_short_name(FileId sticker_id) const;
 
   void on_resolve_sticker_set_short_name(FileId sticker_file_id, const string &short_name);
 
@@ -863,6 +857,12 @@ class StickersManager final : public Actor {
 
   void do_set_sticker_set_thumbnail(UserId user_id, string short_name, tl_object_ptr<td_api::InputFile> &&thumbnail,
                                     Promise<td_api::object_ptr<td_api::stickerSet>> &&promise);
+
+  struct StickerInputDocument {
+    string sticker_set_short_name_;
+    telegram_api::object_ptr<telegram_api::inputDocument> input_document_;
+  };
+  Result<StickerInputDocument> get_sticker_input_document(const tl_object_ptr<td_api::InputFile> &sticker) const;
 
   bool update_sticker_set_cache(const StickerSet *sticker_set, Promise<Unit> &promise);
 

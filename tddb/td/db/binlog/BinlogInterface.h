@@ -63,6 +63,17 @@ class BinlogInterface {
     return seq_no;
   }
 
+  virtual uint64 erase_batch(vector<uint64> event_ids) {
+    if (event_ids.empty()) {
+      return 0;
+    }
+    uint64 seq_no = next_event_id(0);
+    for (auto event_id : event_ids) {
+      erase(event_id);
+    }
+    return seq_no;
+  }
+
   virtual void force_sync(Promise<> promise) = 0;
   virtual void force_flush() = 0;
   virtual void change_key(DbKey db_key, Promise<> promise) = 0;

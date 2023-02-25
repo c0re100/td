@@ -5572,6 +5572,7 @@ void MessagesManager::Dialog::store(StorerT &storer) const {
     STORE_FLAG(has_history_generation);
     STORE_FLAG(need_repair_unread_reaction_count);
     STORE_FLAG(is_translatable);
+    STORE_FLAG(need_repair_unread_mention_count);
     END_STORE_FLAGS();
   }
 
@@ -5836,6 +5837,7 @@ void MessagesManager::Dialog::parse(ParserT &parser) {
     PARSE_FLAG(has_history_generation);
     PARSE_FLAG(need_repair_unread_reaction_count);
     PARSE_FLAG(is_translatable);
+    PARSE_FLAG(need_repair_unread_mention_count);
     END_PARSE_FLAGS();
   } else {
     need_repair_action_bar = false;
@@ -12448,8 +12450,23 @@ void MessagesManager::read_channel_message_content_from_updates(Dialog *d, Messa
   Message *m = get_message_force(d, message_id, "read_channel_message_content_from_updates");
   if (m != nullptr) {
     read_message_content(d, m, false, "read_channel_message_content_from_updates");
-  } else if (message_id > d->last_new_message_id && d->last_new_message_id.is_valid()) {
-    get_channel_difference(d->dialog_id, d->pts, true, "read_channel_message_content_from_updates");
+  } else {
+    if (!have_input_peer(d->dialog_id, AccessRights::Read)) {
+      LOG(INFO) << "Ignore updateChannelReadMessagesContents in inaccessible " << d->dialog_id;
+      if (d->unread_mention_count != 0) {
+        set_dialog_unread_mention_count(d, 0);
+      }
+      return;
+    }
+    if (message_id > d->last_new_message_id && d->last_new_message_id.is_valid()) {
+      get_channel_difference(d->dialog_id, d->pts, true, "read_channel_message_content_from_updates");
+    } else {
+      // there is no message, so the update can be ignored
+      if (d->unread_mention_count > 0) {
+        // but if the chat has unread mentions, then number of unread mentions could have been changed
+        repair_dialog_unread_mention_count(d, "read_channel_message_content_from_updates");
+      }
+    }
   }
 }
 
@@ -12621,6 +12638,20 @@ void MessagesManager::repair_dialog_unread_reaction_count(Dialog *d, Promise<Uni
   }
 
   send_get_dialog_query(d->dialog_id, std::move(promise), 0, source);
+}
+
+void MessagesManager::repair_dialog_unread_mention_count(Dialog *d, const char *source) {
+  CHECK(d != nullptr);
+
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+  if (!d->need_repair_unread_mention_count) {
+    d->need_repair_unread_mention_count = true;
+    on_dialog_updated(d->dialog_id, "repair_dialog_unread_mention_count");
+  }
+
+  send_get_dialog_query(d->dialog_id, Promise<Unit>(), 0, source);
 }
 
 void MessagesManager::read_history_inbox(DialogId dialog_id, MessageId max_message_id, int32 unread_count,
@@ -16182,7 +16213,15 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
       }
     }
 
-    if (!G()->parameters().use_message_db || is_new) {
+    if (!G()->parameters().use_message_db || is_new || d->need_repair_unread_mention_count) {
+      if (d->need_repair_unread_mention_count) {
+        if (d->unread_mention_count != dialog->unread_mentions_count_) {
+          LOG(INFO) << "Repaired unread mention count in " << dialog_id << " from " << d->unread_mention_count << " to "
+                    << dialog->unread_mentions_count_;
+        }
+        d->need_repair_unread_mention_count = false;
+        on_dialog_updated(dialog_id, "repaired dialog unread mention count");
+      }
       if (d->unread_mention_count != dialog->unread_mentions_count_) {
         set_dialog_unread_mention_count(d, dialog->unread_mentions_count_);
         update_dialog_mention_notification_count(d);
@@ -16200,7 +16239,7 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
       }
       if (d->unread_reaction_count != dialog->unread_reactions_count_) {
         set_dialog_unread_reaction_count(d, dialog->unread_reactions_count_);
-        // update_dialog_mention_notification_count(d);
+        // update_dialog_reaction_notification_count(d);
         send_update_chat_unread_reaction_count(d, source);
       }
     }
@@ -16354,6 +16393,12 @@ bool MessagesManager::can_unload_message(const Dialog *d, const Message *m) cons
   CHECK(d != nullptr);
   CHECK(m != nullptr);
   CHECK(m->message_id.is_valid());
+  FullMessageId full_message_id{d->dialog_id, m->message_id};
+  if (td_->auth_manager_->is_bot() && !G()->parameters().use_file_db) {
+    return !m->message_id.is_yet_unsent() && replied_by_yet_unsent_messages_.count(full_message_id) == 0 &&
+           m->edited_content == nullptr && m->message_id != d->last_pinned_message_id &&
+           m->message_id != d->last_edited_message_id;
+  }
   // don't want to unload messages from opened dialogs
   // don't want to unload messages to which there are replies in yet unsent messages
   // don't want to unload message with active reply markup
@@ -16362,7 +16407,6 @@ bool MessagesManager::can_unload_message(const Dialog *d, const Message *m) cons
   // don't want to unload messages from the last album
   // can't unload from memory last dialog, last database messages, yet unsent messages, being edited media messages and active live locations
   // can't unload messages in dialog with active suffix load query
-  FullMessageId full_message_id{d->dialog_id, m->message_id};
   return !d->is_opened && m->message_id != d->last_message_id && m->message_id != d->last_database_message_id &&
          !m->message_id.is_yet_unsent() && active_live_location_full_message_ids_.count(full_message_id) == 0 &&
          replied_by_yet_unsent_messages_.count(full_message_id) == 0 && m->edited_content == nullptr &&
@@ -23989,9 +24033,7 @@ MessagesManager::FoundMessages MessagesManager::offline_search_messages(DialogId
 
 void MessagesManager::on_message_db_fts_result(Result<MessageDbFtsResult> result, string offset, int32 limit,
                                                int64 random_id, Promise<Unit> &&promise) {
-  if (G()->close_flag() && result.is_ok()) {
-    result = Global::request_aborted_error();
-  }
+  G()->ignore_result_if_closing(result);
   if (result.is_error()) {
     found_fts_messages_.erase(random_id);
     return promise.set_error(result.move_as_error());
@@ -24021,9 +24063,7 @@ void MessagesManager::on_message_db_fts_result(Result<MessageDbFtsResult> result
 void MessagesManager::on_message_db_calls_result(Result<MessageDbCallsResult> result, int64 random_id,
                                                  MessageId first_db_message_id, MessageSearchFilter filter,
                                                  Promise<Unit> &&promise) {
-  if (G()->close_flag() && result.is_ok()) {
-    result = Global::request_aborted_error();
-  }
+  G()->ignore_result_if_closing(result);
   if (result.is_error()) {
     found_call_messages_.erase(random_id);
     return promise.set_error(result.move_as_error());
@@ -30128,12 +30168,8 @@ void MessagesManager::import_messages(DialogId dialog_id, const td_api::object_p
                                       Promise<Unit> &&promise) {
   TRY_STATUS_PROMISE(promise, can_import_messages(dialog_id));
 
-  auto r_file_id = td_->file_manager_->get_input_file_id(FileType::Document, message_file, dialog_id, false, false);
-  if (r_file_id.is_error()) {
-    // TODO TRY_RESULT_PROMISE(promise, ...);
-    return promise.set_error(Status::Error(400, r_file_id.error().message()));
-  }
-  FileId file_id = r_file_id.ok();
+  TRY_RESULT_PROMISE(promise, file_id,
+                     td_->file_manager_->get_input_file_id(FileType::Document, message_file, dialog_id, false, false));
 
   vector<FileId> attached_file_ids;
   attached_file_ids.reserve(attached_files.size());
@@ -30145,12 +30181,9 @@ void MessagesManager::import_messages(DialogId dialog_id, const td_api::object_p
       LOG(INFO) << "Skip attached file of type " << file_type;
       continue;
     }
-    auto r_attached_file_id = td_->file_manager_->get_input_file_id(file_type, attached_file, dialog_id, false, false);
-    if (r_attached_file_id.is_error()) {
-      // TODO TRY_RESULT_PROMISE(promise, ...);
-      return promise.set_error(Status::Error(400, r_attached_file_id.error().message()));
-    }
-    attached_file_ids.push_back(r_attached_file_id.ok());
+    TRY_RESULT_PROMISE(promise, attached_file_id,
+                       td_->file_manager_->get_input_file_id(file_type, attached_file, dialog_id, false, false));
+    attached_file_ids.push_back(attached_file_id);
   }
 
   upload_imported_messages(dialog_id, td_->file_manager_->dup_file_id(file_id, "import_messages"),
@@ -30218,9 +30251,7 @@ void MessagesManager::upload_imported_message_attachment(DialogId dialog_id, int
 }
 
 void MessagesManager::on_imported_message_attachments_uploaded(int64 random_id, Result<Unit> &&result) {
-  if (G()->close_flag() && result.is_ok()) {
-    result = Global::request_aborted_error();
-  }
+  G()->ignore_result_if_closing(result);
 
   auto it = pending_message_imports_.find(random_id);
   CHECK(it != pending_message_imports_.end());
@@ -30947,9 +30978,7 @@ void MessagesManager::on_get_message_notifications_from_database(DialogId dialog
                                                                  int32 limit,
                                                                  Result<vector<MessageDbDialogMessage>> result,
                                                                  Promise<vector<Notification>> promise) {
-  if (G()->close_flag() && result.is_ok()) {
-    result = Global::request_aborted_error();
-  }
+  G()->ignore_result_if_closing(result);
   if (result.is_error()) {
     return promise.set_error(result.move_as_error());
   }
@@ -34701,12 +34730,8 @@ void MessagesManager::set_dialog_photo(DialogId dialog_id, const tl_object_ptr<t
   }
 
   auto file_type = is_animation ? FileType::Animation : FileType::Photo;
-  auto r_file_id = td_->file_manager_->get_input_file_id(file_type, *input_file, dialog_id, true, false);
-  if (r_file_id.is_error()) {
-    // TODO promise.set_error(std::move(status));
-    return promise.set_error(Status::Error(400, r_file_id.error().message()));
-  }
-  FileId file_id = r_file_id.ok();
+  TRY_RESULT_PROMISE(promise, file_id,
+                     td_->file_manager_->get_input_file_id(file_type, *input_file, dialog_id, true, false));
   if (!file_id.is_valid()) {
     send_edit_dialog_photo_query(dialog_id, FileId(), make_tl_object<telegram_api::inputChatPhotoEmpty>(),
                                  std::move(promise));
@@ -38213,6 +38238,9 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<Message> &&last_datab
   }
   if (d->need_repair_unread_reaction_count) {
     repair_dialog_unread_reaction_count(d, Promise<Unit>(), "fix_new_dialog");
+  }
+  if (d->need_repair_unread_mention_count) {
+    repair_dialog_unread_mention_count(d, "fix_new_dialog");
   }
 }
 

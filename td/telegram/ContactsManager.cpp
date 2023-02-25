@@ -7158,12 +7158,8 @@ void ContactsManager::set_profile_photo_impl(UserId user_id,
   }
 
   auto file_type = is_animation ? FileType::Animation : FileType::Photo;
-  auto r_file_id = td_->file_manager_->get_input_file_id(file_type, *input_file, DialogId(user_id), false, false);
-  if (r_file_id.is_error()) {
-    // TODO promise.set_error(std::move(status));
-    return promise.set_error(Status::Error(400, r_file_id.error().message()));
-  }
-  FileId file_id = r_file_id.ok();
+  TRY_RESULT_PROMISE(promise, file_id,
+                     td_->file_manager_->get_input_file_id(file_type, *input_file, DialogId(user_id), false, false));
   CHECK(file_id.is_valid());
 
   upload_profile_photo(user_id, td_->file_manager_->dup_file_id(file_id, "set_profile_photo_impl"), is_fallback,
@@ -9181,9 +9177,7 @@ void ContactsManager::reload_created_public_dialogs(PublicDialogType type,
 }
 
 void ContactsManager::finish_get_created_public_dialogs(PublicDialogType type, Result<Unit> &&result) {
-  if (G()->close_flag() && result.is_ok()) {
-    result = Global::request_aborted_error();
-  }
+  G()->ignore_result_if_closing(result);
 
   auto index = static_cast<int32>(type);
   auto promises = std::move(get_created_public_channels_queries_[index]);
@@ -16621,10 +16615,12 @@ void ContactsManager::reload_channel(ChannelId channel_id, Promise<Unit> &&promi
   have_channel_force(channel_id);
   auto input_channel = get_input_channel(channel_id);
   if (input_channel == nullptr) {
-    input_channel = make_tl_object<telegram_api::inputChannel>(channel_id.get(), 0);
+    // requests with 0 access_hash must not be merged
+    td_->create_handler<GetChannelsQuery>(std::move(promise))
+        ->send(telegram_api::make_object<telegram_api::inputChannel>(channel_id.get(), 0));
+    return;
   }
 
-  // requests with 0 access_hash must not be merged
   get_channel_queries_.add_query(channel_id.get(), std::move(promise));
 }
 

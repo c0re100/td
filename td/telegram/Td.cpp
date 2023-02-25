@@ -1555,25 +1555,6 @@ class GetChatScheduledMessagesRequest final : public RequestActor<> {
   }
 };
 
-class GetWebPagePreviewRequest final : public RequestOnceActor {
-  td_api::object_ptr<td_api::formattedText> text_;
-
-  int64 request_id_ = 0;
-
-  void do_run(Promise<Unit> &&promise) final {
-    request_id_ = td_->web_pages_manager_->get_web_page_preview(std::move(text_), std::move(promise));
-  }
-
-  void do_send_result() final {
-    send_result(td_->web_pages_manager_->get_web_page_preview_result(request_id_));
-  }
-
- public:
-  GetWebPagePreviewRequest(ActorShared<Td> td, uint64 request_id, td_api::object_ptr<td_api::formattedText> text)
-      : RequestOnceActor(std::move(td), request_id), text_(std::move(text)) {
-  }
-};
-
 class GetWebPageInstantViewRequest final : public RequestActor<WebPageId> {
   string url_;
   bool force_full_;
@@ -4304,6 +4285,8 @@ void Td::on_request(uint64 id, const td_api::getCurrentState &request) {
 
     config_manager_.get_actor_unsafe()->get_current_state(updates);
 
+    autosave_manager_->get_current_state(updates);
+
     // TODO updateFileGenerationStart generation_id:int64 original_path:string destination_path:string conversion:string = Update;
     // TODO updateCall call:call = Update;
     // TODO updateGroupCall call:groupCall = Update;
@@ -5743,7 +5726,8 @@ void Td::on_request(uint64 id, const td_api::resendMessages &request) {
 
 void Td::on_request(uint64 id, td_api::getWebPagePreview &request) {
   CHECK_IS_USER();
-  CREATE_REQUEST(GetWebPagePreviewRequest, std::move(request.text_));
+  CREATE_REQUEST_PROMISE();
+  web_pages_manager_->get_web_page_preview(std::move(request.text_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::getWebPageInstantView &request) {
@@ -6689,7 +6673,7 @@ void Td::on_request(uint64 id, td_api::preliminaryUploadFile &request) {
   auto r_file_id = file_manager_->get_input_file_id(file_type, request.file_, DialogId(), false, is_secret,
                                                     !is_secure && !is_secret, is_secure);
   if (r_file_id.is_error()) {
-    return send_error_raw(id, 400, r_file_id.error().message());
+    return send_error_raw(id, r_file_id.error().code(), r_file_id.error().message());
   }
   auto file_id = r_file_id.ok();
   auto upload_file_id = file_manager_->dup_file_id(file_id, "preliminaryUploadFile");

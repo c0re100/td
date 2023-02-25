@@ -56,6 +56,8 @@ class ConcurrentBinlog final : public BinlogInterface {
     return path_;
   }
 
+  uint64 erase_batch(vector<uint64> event_ids) final;
+
  private:
   void init_impl(unique_ptr<Binlog> binlog, int scheduler_id);
   void close_impl(Promise<> promise) final;

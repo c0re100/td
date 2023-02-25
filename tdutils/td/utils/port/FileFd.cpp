@@ -157,11 +157,25 @@ Result<FileFd> FileFd::open(CSlice filepath, int32 flags, int32 mode) {
   }
 #endif
 
-  int native_fd = detail::skip_eintr([&] { return ::open(filepath.c_str(), native_flags, static_cast<mode_t>(mode)); });
-  if (native_fd < 0) {
-    return OS_ERROR(PSLICE() << "File \"" << filepath << "\" can't be " << PrintFlags{flags});
+  while (1) {
+    int native_fd =
+        detail::skip_eintr([&] { return ::open(filepath.c_str(), native_flags, static_cast<mode_t>(mode)); });
+    if (native_fd < 0) {
+      return OS_ERROR(PSLICE() << "File \"" << filepath << "\" can't be " << PrintFlags{flags});
+    }
+    // Avoid the use of low-numbered file descriptors, which can be used directly by some other functions
+    constexpr int MINIMUM_FILE_DESCRIPTOR = 3;
+    if (native_fd < MINIMUM_FILE_DESCRIPTOR) {
+      ::close(native_fd);
+      LOG(ERROR) << "Receive " << native_fd << " as a file descriptor";
+      int dummy_fd = detail::skip_eintr([&] { return ::open("/dev/null", O_RDONLY, 0); });
+      if (dummy_fd < 0) {
+        return OS_ERROR("Can't open /dev/null");
+      }
+      continue;
+    }
+    return from_native_fd(NativeFd(native_fd));
   }
-  return from_native_fd(NativeFd(native_fd));
 #elif TD_PORT_WINDOWS
   // TODO: support modes
   auto r_filepath = to_wstring(filepath);
@@ -633,6 +647,16 @@ Status FileFd::sync() {
     return OS_ERROR("Sync failed");
   }
   return Status::OK();
+}
+
+Status FileFd::sync_barrier() {
+  CHECK(!empty());
+#if TD_DARWIN && defined(F_BARRIERFSYNC)
+  if (detail::skip_eintr([&] { return fcntl(get_native_fd().fd(), F_BARRIERFSYNC); }) != -1) {
+    return Status::OK();
+  }
+#endif
+  return sync();
 }
 
 Status FileFd::seek(int64 position) {
