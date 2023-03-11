@@ -63,7 +63,7 @@ void FileLoader::update_local_file_location(const LocalFileLocation &local) {
     return;
   }
   auto prefix_info = r_prefix_info.move_as_ok();
-  auto status = parts_manager_.set_known_prefix(narrow_cast<size_t>(prefix_info.size), prefix_info.is_ready);
+  auto status = parts_manager_.set_known_prefix(prefix_info.size, prefix_info.is_ready);
   if (status.is_error()) {
     on_error(std::move(status));
     stop_flag_ = true;
@@ -115,11 +115,10 @@ void FileLoader::start_up() {
   // This error is definitely ok, because we are using actual size of the file on disk (mtime is checked by
   // somebody else). And actual size could change arbitrarily.
   //
-  // 2. size is unknown/zero, size is not final, some parts of file are already uploaded
+  // 2. File size is not final, and some parts ending after known file size were uploaded
   // pm.init(0, 100000, false, 10, {0, 1, 2}, false, true).ensure_error();
-  // This case is more complicated
-  // It means that at some point we got inconsistent state. Like deleted local location, but left partial remote
-  // location untouched. This is completely possible at this point, but probably should be fixed.
+  // This can happen only if file state became inconsistent at some point. For example, local location was deleted,
+  // but partial remote location was kept. This is possible, but probably should be fixed.
   auto status =
       parts_manager_.init(size, expected_size, is_size_final, part_size, ready_parts, use_part_count_limit, is_upload);
   LOG(DEBUG) << "Start " << (is_upload ? "up" : "down") << "loading a file of size " << size << " with expected "
@@ -197,7 +196,7 @@ Status FileLoader::do_loop() {
       break;
     }
     if (resource_state_.unused() < narrow_cast<int64>(parts_manager_.get_part_size())) {
-      VLOG(file_loader) << "Got only " << resource_state_.unused() << " resource";
+      VLOG(file_loader) << "Receive only " << resource_state_.unused() << " resource";
       break;
     }
     TRY_RESULT(part, parts_manager_.start_part());
@@ -269,7 +268,7 @@ void FileLoader::on_result(NetQueryPtr query) {
   }
   auto it = part_map_.find(unique_id);
   if (it == part_map_.end()) {
-    LOG(WARNING) << "Got result for unknown part";
+    LOG(WARNING) << "Receive result for unknown part";
     return;
   }
 

@@ -142,25 +142,35 @@ class RawConnectionDefault final : public RawConnection {
 
   ConnectionManager::ConnectionToken connection_token_;
 
+  void on_read(size_t size, Callback &callback) {
+    if (size <= 0) {
+      return;
+    }
+
+    if (stats_callback_) {
+      stats_callback_->on_read(size);
+    }
+    callback.on_read(size);
+  }
+
   Status flush_read(const AuthKey &auth_key, Callback &callback) {
     auto r = socket_fd_.flush_read();
     if (r.is_ok()) {
-      if (stats_callback_) {
-        stats_callback_->on_read(r.ok());
-      }
-      callback.on_read(r.ok());
+      on_read(r.ok(), callback);
     }
     while (transport_->can_read()) {
       BufferSlice packet;
       uint32 quick_ack = 0;
       TRY_RESULT(wait_size, transport_->read_next(&packet, &quick_ack));
-      if (!is_aligned_pointer<4>(packet.as_slice().ubegin())) {
+      auto old_pointer = packet.as_slice().ubegin();
+      if (!is_aligned_pointer<4>(old_pointer)) {
         BufferSlice new_packet(packet.size());
         new_packet.as_mutable_slice().copy_from(packet.as_slice());
         packet = std::move(new_packet);
       }
       LOG_CHECK(is_aligned_pointer<4>(packet.as_slice().ubegin()))
-          << packet.as_slice().ubegin() << ' ' << packet.size() << ' ' << wait_size;
+          << old_pointer << ' ' << packet.as_slice().ubegin() << ' ' << BufferSlice(0).as_slice().ubegin() << ' '
+          << packet.size() << ' ' << wait_size << ' ' << quick_ack;
       if (wait_size != 0) {
         constexpr size_t MAX_PACKET_SIZE = (1 << 22) + 1024;
         if (wait_size > MAX_PACKET_SIZE) {
@@ -365,6 +375,17 @@ class RawConnectionHttp final : public RawConnection {
   std::shared_ptr<MpscPollableQueue<Result<BufferSlice>>> answers_;
   std::vector<BufferSlice> to_send_;
 
+  void on_read(size_t size, Callback &callback) {
+    if (size <= 0) {
+      return;
+    }
+
+    if (stats_callback_) {
+      stats_callback_->on_read(size);
+    }
+    callback.on_read(size);
+  }
+
   void send_packet(BufferSlice packet) {
     CHECK(mode_ == Send);
     mode_ = Receive;
@@ -379,10 +400,7 @@ class RawConnectionHttp final : public RawConnection {
       }
       for (int i = 0; i < packets_n; i++) {
         TRY_RESULT(packet, answers_->reader_get_unsafe());
-        if (stats_callback_) {
-          stats_callback_->on_read(packet.size());
-        }
-        callback.on_read(packet.size());
+        on_read(packet.size(), callback);
         CHECK(mode_ == Receive);
         mode_ = Send;
 

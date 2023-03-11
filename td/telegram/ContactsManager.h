@@ -35,7 +35,6 @@
 #include "td/telegram/QueryMerger.h"
 #include "td/telegram/RestrictionReason.h"
 #include "td/telegram/SecretChatId.h"
-#include "td/telegram/StickerPhotoSize.h"
 #include "td/telegram/StickerSetId.h"
 #include "td/telegram/SuggestedAction.h"
 #include "td/telegram/td_api.h"
@@ -433,6 +432,8 @@ class ContactsManager final : public Actor {
   void report_channel_anti_spam_false_positive(ChannelId channel_id, MessageId message_id, Promise<Unit> &&promise);
 
   void delete_dialog(DialogId dialog_id, Promise<Unit> &&promise);
+
+  void send_update_add_chat_members_privacy_forbidden(DialogId dialog_id, vector<UserId> user_ids, const char *source);
 
   void get_channel_statistics_dc_id(DialogId dialog_id, bool for_full_statistics, Promise<DcId> &&promise);
 

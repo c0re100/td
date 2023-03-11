@@ -10,7 +10,6 @@
 #include "td/telegram/telegram_api.h"
 
 #include "td/utils/common.h"
-#include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
 
 namespace td {
@@ -32,7 +31,7 @@ class StickerMaskPosition {
 
   explicit StickerMaskPosition(const telegram_api::object_ptr<telegram_api::maskCoords> &mask_coords);
 
-  telegram_api::object_ptr<telegram_api::maskCoords> get_input_mask_coords_object() const;
+  telegram_api::object_ptr<telegram_api::maskCoords> get_input_mask_coords() const;
 
   td_api::object_ptr<td_api::maskPosition> get_mask_position_object() const;
 

@@ -38,8 +38,10 @@
 #include "td/telegram/MessageReplyInfo.h"
 #include "td/telegram/MessageSearchFilter.h"
 #include "td/telegram/MessagesInfo.h"
+#include "td/telegram/MessageSource.h"
 #include "td/telegram/MessageThreadInfo.h"
 #include "td/telegram/MessageTtl.h"
+#include "td/telegram/MessageViewer.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/Notification.h"
@@ -58,7 +60,6 @@
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/ServerMessageId.h"
-#include "td/telegram/StickerPhotoSize.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
@@ -640,7 +641,8 @@ class MessagesManager final : public Actor {
                                   DialogId dialog_id, MessageId message_id, DialogId expected_dialog_id,
                                   MessageId expected_message_id, Promise<MessageThreadInfo> promise);
 
-  void get_message_viewers(FullMessageId full_message_id, Promise<td_api::object_ptr<td_api::users>> &&promise);
+  void get_message_viewers(FullMessageId full_message_id,
+                           Promise<td_api::object_ptr<td_api::messageViewers>> &&promise);
 
   void translate_message_text(FullMessageId full_message_id, const string &to_language_code,
                               Promise<td_api::object_ptr<td_api::formattedText>> &&promise);
@@ -716,7 +718,7 @@ class MessagesManager final : public Actor {
 
   Status close_dialog(DialogId dialog_id) TD_WARN_UNUSED_RESULT;
 
-  Status view_messages(DialogId dialog_id, MessageId top_thread_message_id, const vector<MessageId> &message_ids,
+  Status view_messages(DialogId dialog_id, vector<MessageId> message_ids, MessageSource source,
                        bool force_read) TD_WARN_UNUSED_RESULT;
 
   void finish_get_message_views(DialogId dialog_id, const vector<MessageId> &message_ids);
@@ -1135,6 +1137,7 @@ class MessagesManager final : public Actor {
     int32 date = 0;
     int32 edit_date = 0;
     int32 send_date = 0;
+    int32 sending_id = 0;
 
     int64 random_id = 0;
 
@@ -1315,6 +1318,7 @@ class MessagesManager final : public Actor {
     int32 unload_dialog_delay_seed = 0;
     int64 last_media_album_id = 0;
     uint32 history_generation = 0;
+    uint32 open_count = 0;
 
     FolderId folder_id;
     vector<DialogListId> dialog_list_ids;  // TODO replace with mask
@@ -1355,7 +1359,6 @@ class MessagesManager final : public Actor {
     bool know_action_bar = false;
     bool has_outgoing_messages = false;
 
-    bool is_opened = false;
     bool was_opened = false;
 
     bool need_restore_reply_markup = true;
@@ -1756,15 +1759,17 @@ class MessagesManager final : public Actor {
     bool update_stickersets_order = false;
     bool protect_content = false;
     int32 schedule_date = 0;
+    int32 sending_id = 0;
 
     MessageSendOptions() = default;
     MessageSendOptions(bool disable_notification, bool from_background, bool update_stickersets_order,
-                       bool protect_content, int32 schedule_date)
+                       bool protect_content, int32 schedule_date, int32 sending_id)
         : disable_notification(disable_notification)
         , from_background(from_background)
         , update_stickersets_order(update_stickersets_order)
         , protect_content(protect_content)
-        , schedule_date(schedule_date) {
+        , schedule_date(schedule_date)
+        , sending_id(sending_id) {
     }
   };
 
@@ -1922,6 +1927,7 @@ class MessagesManager final : public Actor {
 
   static Status can_use_message_send_options(const MessageSendOptions &options,
                                              const unique_ptr<MessageContent> &content, int32 ttl);
+
   static Status can_use_message_send_options(const MessageSendOptions &options, const InputMessageContent &content);
 
   Status can_use_top_thread_message_id(Dialog *d, MessageId top_thread_message_id, MessageId reply_to_message_id);
@@ -2011,7 +2017,7 @@ class MessagesManager final : public Actor {
 
   Result<td_api::object_ptr<td_api::message>> forward_message(DialogId to_dialog_id, MessageId top_thread_message_id,
                                                               DialogId from_dialog_id, MessageId message_id,
-                                                              tl_object_ptr<td_api::messageSendOptions> &&options,
+                                                              td_api::object_ptr<td_api::messageSendOptions> &&options,
                                                               bool in_game_share,
                                                               MessageCopyOptions &&copy_options) TD_WARN_UNUSED_RESULT;
 
@@ -2051,7 +2057,7 @@ class MessagesManager final : public Actor {
 
   Result<ForwardedMessages> get_forwarded_messages(DialogId to_dialog_id, MessageId top_thread_message_id,
                                                    DialogId from_dialog_id, const vector<MessageId> &message_ids,
-                                                   tl_object_ptr<td_api::messageSendOptions> &&options,
+                                                   td_api::object_ptr<td_api::messageSendOptions> &&options,
                                                    bool in_game_share, vector<MessageCopyOptions> &&copy_options);
 
   void do_send_media(DialogId dialog_id, Message *m, FileId file_id, FileId thumbnail_file_id,
@@ -3061,8 +3067,8 @@ class MessagesManager final : public Actor {
   void on_get_discussion_message(DialogId dialog_id, MessageId message_id, MessageThreadInfo &&message_thread_info,
                                  Promise<MessageThreadInfo> &&promise);
 
-  void on_get_message_viewers(DialogId dialog_id, vector<UserId> user_ids, bool is_recursive,
-                              Promise<td_api::object_ptr<td_api::users>> &&promise);
+  void on_get_message_viewers(DialogId dialog_id, MessageViewers message_viewers, bool is_recursive,
+                              Promise<td_api::object_ptr<td_api::messageViewers>> &&promise);
 
   static MessageId get_first_database_message_id_by_index(const Dialog *d, MessageSearchFilter filter);
 

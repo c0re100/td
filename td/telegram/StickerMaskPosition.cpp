@@ -6,8 +6,6 @@
 //
 #include "td/telegram/StickerMaskPosition.h"
 
-#include "td/utils/logging.h"
-
 namespace td {
 
 static td_api::object_ptr<td_api::MaskPoint> get_mask_point_object(int32 point) {
@@ -60,10 +58,11 @@ StickerMaskPosition::StickerMaskPosition(const td_api::object_ptr<td_api::maskPo
     }
   }();
   x_shift_ = mask_position->x_shift_;
-  y_shift_ = mask_position->y_shift_, scale_ = mask_position->scale_;
+  y_shift_ = mask_position->y_shift_;
+  scale_ = mask_position->scale_;
 }
 
-telegram_api::object_ptr<telegram_api::maskCoords> StickerMaskPosition::get_input_mask_coords_object() const {
+telegram_api::object_ptr<telegram_api::maskCoords> StickerMaskPosition::get_input_mask_coords() const {
   if (point_ < 0) {
     return nullptr;
   }

@@ -644,6 +644,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::clickAnimatedEmojiMessage &request);
 
+  void on_request(uint64 id, const td_api::getInternalLink &request);
+
   void on_request(uint64 id, const td_api::getInternalLinkType &request);
 
   void on_request(uint64 id, td_api::getExternalLinkInfo &request);
@@ -1118,6 +1120,14 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::setDefaultChannelAdministratorRights &request);
 
+  void on_request(uint64 id, td_api::setBotInfoDescription &request);
+
+  void on_request(uint64 id, const td_api::getBotInfoDescription &request);
+
+  void on_request(uint64 id, td_api::setBotInfoShortDescription &request);
+
+  void on_request(uint64 id, const td_api::getBotInfoShortDescription &request);
+
   void on_request(uint64 id, const td_api::setLocation &request);
 
   void on_request(uint64 id, td_api::setProfilePhoto &request);
@@ -1200,9 +1210,21 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::setStickerSetThumbnail &request);
 
+  void on_request(uint64 id, td_api::setCustomEmojiStickerSetThumbnail &request);
+
+  void on_request(uint64 id, td_api::setStickerSetTitle &request);
+
+  void on_request(uint64 id, td_api::deleteStickerSet &request);
+
   void on_request(uint64 id, td_api::setStickerPositionInSet &request);
 
-  void on_request(uint64 id, td_api::removeStickerFromSet &request);
+  void on_request(uint64 id, const td_api::removeStickerFromSet &request);
+
+  void on_request(uint64 id, td_api::setStickerEmojis &request);
+
+  void on_request(uint64 id, td_api::setStickerKeywords &request);
+
+  void on_request(uint64 id, td_api::setStickerMaskPosition &request);
 
   void on_request(uint64 id, const td_api::getRecentStickers &request);
 
@@ -1317,6 +1339,10 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::getInlineQueryResults &request);
 
   void on_request(uint64 id, td_api::answerInlineQuery &request);
+
+  void on_request(uint64 id, td_api::searchWebApp &request);
+
+  void on_request(uint64 id, td_api::getWebAppLinkUrl &request);
 
   void on_request(uint64 id, td_api::getWebAppUrl &request);
 
@@ -1449,6 +1475,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::getDeepLinkInfo &request);
 
   void on_request(uint64 id, const td_api::getApplicationConfig &request);
+
+  void on_request(uint64 id, td_api::addApplicationChangelog &request);
 
   void on_request(uint64 id, td_api::saveApplicationLogEvent &request);
 

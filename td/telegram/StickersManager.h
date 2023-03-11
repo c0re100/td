@@ -81,6 +81,8 @@ class StickersManager final : public Actor {
 
   tl_object_ptr<td_api::stickers> get_stickers_object(const vector<FileId> &sticker_ids) const;
 
+  td_api::object_ptr<td_api::sticker> get_custom_emoji_sticker_object(CustomEmojiId custom_emoji_id);
+
   tl_object_ptr<td_api::DiceStickers> get_dice_stickers_object(const string &emoji, int32 value) const;
 
   int32 get_dice_success_animation_frame_number(const string &emoji, int32 value) const;
@@ -256,6 +258,8 @@ class StickersManager final : public Actor {
 
   void on_update_move_sticker_set_to_top(StickerType sticker_type, StickerSetId sticker_set_id);
 
+  void on_sticker_set_deleted(const string &short_name);
+
   std::pair<int32, vector<StickerSetId>> get_archived_sticker_sets(StickerType sticker_type,
                                                                    StickerSetId offset_sticker_set_id, int32 limit,
                                                                    bool force, Promise<Unit> &&promise);
@@ -285,7 +289,8 @@ class StickersManager final : public Actor {
 
   void move_sticker_set_to_top_by_custom_emoji_ids(const vector<CustomEmojiId> &custom_emoji_ids);
 
-  FileId upload_sticker_file(UserId user_id, tl_object_ptr<td_api::inputSticker> &&sticker, Promise<Unit> &&promise);
+  FileId upload_sticker_file(UserId user_id, StickerFormat sticker_format,
+                             const td_api::object_ptr<td_api::InputFile> &input_file, Promise<Unit> &&promise);
 
   void get_suggested_sticker_set_name(string title, Promise<string> &&promise);
 
@@ -295,20 +300,37 @@ class StickersManager final : public Actor {
   static td_api::object_ptr<td_api::CheckStickerSetNameResult> get_check_sticker_set_name_result_object(
       CheckStickerSetNameResult result);
 
-  void create_new_sticker_set(UserId user_id, string title, string short_name, StickerType sticker_type,
+  void create_new_sticker_set(UserId user_id, string title, string short_name, StickerFormat sticker_format,
+                              StickerType sticker_type, bool has_text_color,
                               vector<td_api::object_ptr<td_api::inputSticker>> &&stickers, string software,
                               Promise<td_api::object_ptr<td_api::stickerSet>> &&promise);
 
-  void add_sticker_to_set(UserId user_id, string short_name, tl_object_ptr<td_api::inputSticker> &&sticker,
-                          Promise<td_api::object_ptr<td_api::stickerSet>> &&promise);
+  void add_sticker_to_set(UserId user_id, string short_name, td_api::object_ptr<td_api::inputSticker> &&sticker,
+                          Promise<Unit> &&promise);
 
   void set_sticker_set_thumbnail(UserId user_id, string short_name, tl_object_ptr<td_api::InputFile> &&thumbnail,
-                                 Promise<td_api::object_ptr<td_api::stickerSet>> &&promise);
+                                 Promise<Unit> &&promise);
 
-  void set_sticker_position_in_set(const tl_object_ptr<td_api::InputFile> &sticker, int32 position,
+  void set_custom_emoji_sticker_set_thumbnail(string short_name, CustomEmojiId custom_emoji_id,
+                                              Promise<Unit> &&promise);
+
+  void set_sticker_set_title(string short_name, string title, Promise<Unit> &&promise);
+
+  void delete_sticker_set(string short_name, Promise<Unit> &&promise);
+
+  void set_sticker_position_in_set(const td_api::object_ptr<td_api::InputFile> &sticker, int32 position,
                                    Promise<Unit> &&promise);
 
-  void remove_sticker_from_set(const tl_object_ptr<td_api::InputFile> &sticker, Promise<Unit> &&promise);
+  void remove_sticker_from_set(const td_api::object_ptr<td_api::InputFile> &sticker, Promise<Unit> &&promise);
+
+  void set_sticker_emojis(const td_api::object_ptr<td_api::InputFile> &sticker, const string &emojis,
+                          Promise<Unit> &&promise);
+
+  void set_sticker_keywords(const td_api::object_ptr<td_api::InputFile> &sticker, vector<string> &&keywords,
+                            Promise<Unit> &&promise);
+
+  void set_sticker_mask_position(const td_api::object_ptr<td_api::InputFile> &sticker,
+                                 td_api::object_ptr<td_api::maskPosition> &&mask_position, Promise<Unit> &&promise);
 
   vector<FileId> get_recent_stickers(bool is_attached, Promise<Unit> &&promise);
 
@@ -397,7 +419,7 @@ class StickersManager final : public Actor {
   template <class ParserT>
   FileId parse_sticker(bool in_sticker_set, ParserT &parser);
 
-  void on_uploaded_sticker_file(FileId file_id, tl_object_ptr<telegram_api::MessageMedia> media,
+  void on_uploaded_sticker_file(FileId file_id, bool is_url, tl_object_ptr<telegram_api::MessageMedia> media,
                                 Promise<Unit> &&promise);
 
   void on_find_stickers_success(const string &emoji, tl_object_ptr<telegram_api::messages_Stickers> &&stickers);
@@ -507,6 +529,7 @@ class StickersManager final : public Actor {
     string short_name_;
     StickerType sticker_type_ = StickerType::Regular;
     StickerFormat sticker_format_ = StickerFormat::Unknown;
+    bool has_text_color_ = false;
     vector<FileId> file_ids_;
     vector<tl_object_ptr<td_api::inputSticker>> stickers_;
     string software_;
@@ -517,13 +540,13 @@ class StickersManager final : public Actor {
     string short_name_;
     FileId file_id_;
     tl_object_ptr<td_api::inputSticker> sticker_;
-    Promise<td_api::object_ptr<td_api::stickerSet>> promise_;
+    Promise<Unit> promise_;
   };
 
   struct PendingSetStickerSetThumbnail {
     string short_name_;
     FileId file_id_;
-    Promise<td_api::object_ptr<td_api::stickerSet>> promise_;
+    Promise<Unit> promise_;
   };
 
   struct PendingGetAnimatedEmojiClickSticker {
@@ -734,7 +757,7 @@ class StickersManager final : public Actor {
 
   int64 get_featured_sticker_sets_hash(StickerType sticker_type) const;
 
-  int64 get_recent_stickers_hash(const vector<FileId> &sticker_ids) const;
+  int64 get_recent_stickers_hash(const vector<FileId> &sticker_ids, const char *source) const;
 
   void load_installed_sticker_sets(StickerType sticker_type, Promise<Unit> &&promise);
 
@@ -828,11 +851,12 @@ class StickersManager final : public Actor {
 
   std::pair<vector<FileId>, vector<FileId>> split_stickers_by_premium(const StickerSet *sticker_set) const;
 
-  Result<std::tuple<FileId, bool, bool, StickerFormat>> prepare_input_file(
-      const tl_object_ptr<td_api::InputFile> &input_file, StickerFormat format, StickerType type, bool for_thumbnail);
+  Result<std::tuple<FileId, bool, bool>> prepare_input_file(const tl_object_ptr<td_api::InputFile> &input_file,
+                                                            StickerFormat sticker_format, StickerType sticker_type,
+                                                            bool for_thumbnail);
 
-  Result<std::tuple<FileId, bool, bool, StickerFormat>> prepare_input_sticker(td_api::inputSticker *sticker,
-                                                                              StickerType sticker_type);
+  Result<std::tuple<FileId, bool, bool>> prepare_input_sticker(td_api::inputSticker *sticker,
+                                                               StickerFormat sticker_format, StickerType sticker_type);
 
   tl_object_ptr<telegram_api::inputStickerSetItem> get_input_sticker(const td_api::inputSticker *sticker,
                                                                      FileId file_id) const;
@@ -850,13 +874,16 @@ class StickersManager final : public Actor {
 
   void on_added_sticker_uploaded(int64 random_id, Result<Unit> result);
 
-  void do_add_sticker_to_set(UserId user_id, string short_name, tl_object_ptr<td_api::inputSticker> &&sticker,
-                             Promise<td_api::object_ptr<td_api::stickerSet>> &&promise);
+  void do_add_sticker_to_set(UserId user_id, string short_name, td_api::object_ptr<td_api::inputSticker> &&sticker,
+                             Promise<Unit> &&promise);
 
   void on_sticker_set_thumbnail_uploaded(int64 random_id, Result<Unit> result);
 
   void do_set_sticker_set_thumbnail(UserId user_id, string short_name, tl_object_ptr<td_api::InputFile> &&thumbnail,
-                                    Promise<td_api::object_ptr<td_api::stickerSet>> &&promise);
+                                    Promise<Unit> &&promise);
+
+  void do_set_custom_emoji_sticker_set_thumbnail(string short_name, CustomEmojiId custom_emoji_id,
+                                                 Promise<Unit> &&promise);
 
   struct StickerInputDocument {
     string sticker_set_short_name_;
@@ -1013,6 +1040,8 @@ class StickersManager final : public Actor {
                                     Result<telegram_api::object_ptr<telegram_api::emojiURL>> &&r_emoji_url);
 
   void on_load_emoji_groups_from_database(EmojiGroupType group_type, string used_language_codes, string value);
+
+  void on_load_emoji_group_icons(EmojiGroupType group_type, EmojiGroupList group_list);
 
   void reload_emoji_groups(EmojiGroupType group_type, string used_language_codes);
 

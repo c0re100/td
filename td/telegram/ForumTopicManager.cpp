@@ -16,13 +16,13 @@
 #include "td/telegram/ForumTopicIcon.h"
 #include "td/telegram/ForumTopicInfo.hpp"
 #include "td/telegram/Global.h"
+#include "td/telegram/LinkManager.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/MessageThreadDb.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/NotificationManager.h"
 #include "td/telegram/NotificationSettingsManager.h"
-#include "td/telegram/OptionManager.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
@@ -724,7 +724,7 @@ void ForumTopicManager::get_forum_topic_link(DialogId dialog_id, MessageId top_t
   auto channel_id = dialog_id.get_channel_id();
 
   SliceBuilder sb;
-  sb << td_->option_manager_->get_option_string("t_me_url", "https://t.me/");
+  sb << LinkManager::get_t_me_url();
 
   bool is_public = false;
   auto dialog_username = td_->contacts_manager_->get_channel_first_username(channel_id);

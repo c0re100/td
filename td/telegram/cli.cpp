@@ -436,7 +436,8 @@ class CliClient final : public Actor {
   static char get_delimiter(Slice str) {
     FlatHashSet<char> chars;
     for (auto c : trim(str)) {
-      if (!is_alnum(c) && c != '-' && c != '@' && c != '.' && c != '/' && c != '\0' && static_cast<uint8>(c) <= 127) {
+      if (!is_alnum(c) && c != '_' && c != '-' && c != '@' && c != '.' && c != '/' && c != '\0' &&
+          static_cast<uint8>(c) <= 127) {
         chars.insert(c);
       }
     }
@@ -1862,7 +1863,8 @@ class CliClient final : public Actor {
     auto id = send_request(td_api::make_object<td_api::sendMessage>(
         chat_id, message_thread_id_, reply_to_message_id,
         td_api::make_object<td_api::messageSendOptions>(disable_notification, from_background, true, true,
-                                                        as_message_scheduling_state(schedule_date_)),
+                                                        as_message_scheduling_state(schedule_date_),
+                                                        Random::fast(1, 1000)),
         nullptr, std::move(input_message_content)));
     if (id != 0) {
       query_id_to_send_message_info_[id].start_time = Time::now();
@@ -1870,8 +1872,8 @@ class CliClient final : public Actor {
   }
 
   td_api::object_ptr<td_api::messageSendOptions> default_message_send_options() const {
-    return td_api::make_object<td_api::messageSendOptions>(false, false, false, true,
-                                                           as_message_scheduling_state(schedule_date_));
+    return td_api::make_object<td_api::messageSendOptions>(
+        false, false, false, true, as_message_scheduling_state(schedule_date_), Random::fast(1, 1000));
   }
 
   void send_get_background_url(td_api::object_ptr<td_api::BackgroundType> &&background_type) {
@@ -2888,9 +2890,7 @@ class CliClient final : public Actor {
       const string &name = args;
       send_request(td_api::make_object<td_api::checkStickerSetName>(name));
     } else if (op == "usf" || op == "usfa" || op == "usfv") {
-      send_request(td_api::make_object<td_api::uploadStickerFile>(
-          -1, td_api::make_object<td_api::inputSticker>(as_input_file(args), "😀", as_sticker_format(op),
-                                                        as_mask_position(op))));
+      send_request(td_api::make_object<td_api::uploadStickerFile>(-1, as_sticker_format(op), as_input_file(args)));
     } else if (op == "cnss" || op == "cnssa" || op == "cnssv" || op == "cnssm" || op == "cnsse") {
       string title;
       string name;
@@ -2898,11 +2898,11 @@ class CliClient final : public Actor {
       get_args(args, title, name, stickers);
       auto input_stickers =
           transform(autosplit(stickers), [op](Slice sticker) -> td_api::object_ptr<td_api::inputSticker> {
-            return td_api::make_object<td_api::inputSticker>(as_input_file(sticker), "😀", as_sticker_format(op),
-                                                             as_mask_position(op));
+            return td_api::make_object<td_api::inputSticker>(as_input_file(sticker), "😀", as_mask_position(op),
+                                                             vector<string>{"keyword"});
           });
-      send_request(td_api::make_object<td_api::createNewStickerSet>(my_id_, title, name, as_sticker_type(op),
-                                                                    std::move(input_stickers), "tg_cli"));
+      send_request(td_api::make_object<td_api::createNewStickerSet>(
+          my_id_, title, name, as_sticker_format(op), as_sticker_type(op), false, std::move(input_stickers), "tg_cli"));
     } else if (op == "sss") {
       send_request(td_api::make_object<td_api::searchStickerSet>(args));
     } else if (op == "siss") {
@@ -3649,6 +3649,8 @@ class CliClient final : public Actor {
       execute(td_api::make_object<td_api::getThemeParametersJsonString>(as_theme_parameters()));
     } else if (op == "gac") {
       send_request(td_api::make_object<td_api::getApplicationConfig>());
+    } else if (op == "aac") {
+      send_request(td_api::make_object<td_api::addApplicationChangelog>(args));
     } else if (op == "sale") {
       string type;
       ChatId chat_id;
@@ -3740,17 +3742,30 @@ class CliClient final : public Actor {
       get_args(args, user_id, is_added, allow_write_access);
       send_request(
           td_api::make_object<td_api::toggleBotIsAddedToAttachmentMenu>(user_id, is_added, allow_write_access));
+    } else if (op == "swa") {
+      UserId bot_user_id;
+      string short_name;
+      get_args(args, bot_user_id, short_name);
+      send_request(td_api::make_object<td_api::searchWebApp>(bot_user_id, short_name));
+    } else if (op == "gwalu") {
+      ChatId chat_id;
+      UserId bot_user_id;
+      string short_name;
+      string start_parameter;
+      get_args(args, chat_id, bot_user_id, short_name, start_parameter);
+      send_request(td_api::make_object<td_api::getWebAppLinkUrl>(chat_id, bot_user_id, short_name, start_parameter,
+                                                                 as_theme_parameters(), "android", true));
     } else if (op == "gwau") {
-      UserId user_id;
+      UserId bot_user_id;
       string url;
-      get_args(args, user_id, url);
-      send_request(td_api::make_object<td_api::getWebAppUrl>(user_id, url, as_theme_parameters(), "android"));
+      get_args(args, bot_user_id, url);
+      send_request(td_api::make_object<td_api::getWebAppUrl>(bot_user_id, url, as_theme_parameters(), "android"));
     } else if (op == "swad") {
-      UserId user_id;
+      UserId bot_user_id;
       string button_text;
       string data;
-      get_args(args, user_id, button_text, data);
-      send_request(td_api::make_object<td_api::sendWebAppData>(user_id, button_text, data));
+      get_args(args, bot_user_id, button_text, data);
+      send_request(td_api::make_object<td_api::sendWebAppData>(bot_user_id, button_text, data));
     } else if (op == "owa") {
       ChatId chat_id;
       UserId bot_user_id;
@@ -5011,14 +5026,14 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::removeRecentHashtag>(hashtag));
     } else if (op == "view" || op == "viewt") {
       ChatId chat_id;
-      MessageThreadId message_thread_id;
       string message_ids;
       get_args(args, chat_id, message_ids);
+      td_api::object_ptr<td_api::MessageSource> source;
       if (op == "viewt") {
-        get_args(message_ids, message_thread_id, message_ids);
+        source = td_api::make_object<td_api::messageSourceMessageThreadHistory>();
       }
       send_request(
-          td_api::make_object<td_api::viewMessages>(chat_id, message_thread_id, as_message_ids(message_ids), true));
+          td_api::make_object<td_api::viewMessages>(chat_id, as_message_ids(message_ids), std::move(source), true));
     } else if (op == "omc") {
       ChatId chat_id;
       MessageId message_id;

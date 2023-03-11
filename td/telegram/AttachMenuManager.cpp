@@ -23,6 +23,7 @@
 #include "td/telegram/TdDb.h"
 #include "td/telegram/TdParameters.h"
 #include "td/telegram/ThemeManager.h"
+#include "td/telegram/WebApp.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
@@ -34,6 +35,85 @@
 #include "td/utils/tl_helpers.h"
 
 namespace td {
+
+class GetBotAppQuery final : public Td::ResultHandler {
+  Promise<telegram_api::object_ptr<telegram_api::messages_botApp>> promise_;
+
+ public:
+  explicit GetBotAppQuery(Promise<telegram_api::object_ptr<telegram_api::messages_botApp>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send(telegram_api::object_ptr<telegram_api::InputUser> &&input_user, const string &short_name) {
+    auto input_bot_app =
+        telegram_api::make_object<telegram_api::inputBotAppShortName>(std::move(input_user), short_name);
+    send_query(G()->net_query_creator().create(telegram_api::messages_getBotApp(std::move(input_bot_app), 0)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_getBotApp>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for GetBotAppQuery: " << to_string(ptr);
+    promise_.set_value(std::move(ptr));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class RequestAppWebViewQuery final : public Td::ResultHandler {
+  Promise<string> promise_;
+
+ public:
+  explicit RequestAppWebViewQuery(Promise<string> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(DialogId dialog_id, telegram_api::object_ptr<telegram_api::InputUser> &&input_user,
+            const string &web_app_short_name, const string &start_parameter,
+            const td_api::object_ptr<td_api::themeParameters> &theme, const string &platform, bool allow_write_access) {
+    telegram_api::object_ptr<telegram_api::dataJSON> theme_parameters;
+    int32 flags = 0;
+    if (theme != nullptr) {
+      flags |= telegram_api::messages_requestAppWebView::THEME_PARAMS_MASK;
+
+      theme_parameters = make_tl_object<telegram_api::dataJSON>(string());
+      theme_parameters->data_ = ThemeManager::get_theme_parameters_json_string(theme, false);
+    }
+    if (allow_write_access) {
+      flags |= telegram_api::messages_requestAppWebView::WRITE_ALLOWED_MASK;
+    }
+    if (!start_parameter.empty()) {
+      flags |= telegram_api::messages_requestAppWebView::START_PARAM_MASK;
+    }
+    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    CHECK(input_peer != nullptr);
+    auto input_bot_app =
+        telegram_api::make_object<telegram_api::inputBotAppShortName>(std::move(input_user), web_app_short_name);
+    send_query(G()->net_query_creator().create(telegram_api::messages_requestAppWebView(
+        flags, false /*ignored*/, std::move(input_peer), std::move(input_bot_app), start_parameter,
+        std::move(theme_parameters), platform)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_requestAppWebView>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for RequestAppWebViewQuery: " << to_string(ptr);
+    promise_.set_value(std::move(ptr->url_));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
 
 class RequestWebViewQuery final : public Td::ResultHandler {
   Promise<td_api::object_ptr<td_api::webAppInfo>> promise_;
@@ -213,7 +293,6 @@ class GetAttachMenuBotsQuery final : public Td::ResultHandler {
 
     auto ptr = result_ptr.move_as_ok();
     LOG(INFO) << "Receive result for GetAttachMenuBotsQuery: " << to_string(ptr);
-
     promise_.set_value(std::move(ptr));
   }
 
@@ -615,12 +694,79 @@ void AttachMenuManager::schedule_ping_web_view() {
   ping_web_view_timeout_.set_timeout_in(PING_WEB_VIEW_TIMEOUT);
 }
 
+void AttachMenuManager::get_web_app(UserId bot_user_id, const string &web_app_short_name,
+                                    Promise<td_api::object_ptr<td_api::foundWebApp>> &&promise) {
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(bot_user_id));
+  TRY_RESULT_PROMISE(promise, bot_data, td_->contacts_manager_->get_bot_data(bot_user_id));
+  auto query_promise =
+      PromiseCreator::lambda([actor_id = actor_id(this), bot_user_id, web_app_short_name, promise = std::move(promise)](
+                                 Result<telegram_api::object_ptr<telegram_api::messages_botApp>> result) mutable {
+        send_closure(actor_id, &AttachMenuManager::on_get_web_app, bot_user_id, std::move(web_app_short_name),
+                     std::move(result), std::move(promise));
+      });
+  td_->create_handler<GetBotAppQuery>(std::move(query_promise))->send(std::move(input_user), web_app_short_name);
+}
+
+void AttachMenuManager::on_get_web_app(UserId bot_user_id, string web_app_short_name,
+                                       Result<telegram_api::object_ptr<telegram_api::messages_botApp>> result,
+                                       Promise<td_api::object_ptr<td_api::foundWebApp>> promise) {
+  G()->ignore_result_if_closing(result);
+  if (result.is_error() && result.error().message() == "BOT_APP_INVALID") {
+    return promise.set_value(nullptr);
+  }
+  TRY_RESULT_PROMISE(promise, bot_app, std::move(result));
+  if (bot_app->app_->get_id() != telegram_api::botApp::ID) {
+    CHECK(bot_app->app_->get_id() != telegram_api::botAppNotModified::ID);
+    LOG(ERROR) << "Receive " << to_string(bot_app);
+    return promise.set_error(Status::Error(500, "Receive invalid response"));
+  }
+
+  WebApp web_app(td_, telegram_api::move_object_as<telegram_api::botApp>(bot_app->app_), DialogId(bot_user_id));
+  auto file_ids = web_app.get_file_ids(td_);
+  if (!file_ids.empty()) {
+    auto file_source_id = get_web_app_file_source_id(bot_user_id, web_app_short_name);
+    for (auto file_id : file_ids) {
+      td_->file_manager_->add_file_source(file_id, file_source_id);
+    }
+  }
+  promise.set_value(td_api::make_object<td_api::foundWebApp>(web_app.get_web_app_object(td_),
+                                                             bot_app->request_write_access_, !bot_app->inactive_));
+}
+
+void AttachMenuManager::reload_web_app(UserId bot_user_id, const string &web_app_short_name, Promise<Unit> &&promise) {
+  get_web_app(bot_user_id, web_app_short_name,
+              PromiseCreator::lambda(
+                  [promise = std::move(promise)](Result<td_api::object_ptr<td_api::foundWebApp>> result) mutable {
+                    if (result.is_error()) {
+                      promise.set_error(result.move_as_error());
+                    } else {
+                      promise.set_value(Unit());
+                    }
+                  }));
+}
+
+void AttachMenuManager::request_app_web_view(DialogId dialog_id, UserId bot_user_id, string &&web_app_short_name,
+                                             string &&start_parameter,
+                                             const td_api::object_ptr<td_api::themeParameters> &theme,
+                                             string &&platform, bool allow_write_access, Promise<string> &&promise) {
+  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
+    dialog_id = DialogId(bot_user_id);
+  }
+  TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(bot_user_id));
+  TRY_RESULT_PROMISE(promise, bot_data, td_->contacts_manager_->get_bot_data(bot_user_id));
+
+  td_->create_handler<RequestAppWebViewQuery>(std::move(promise))
+      ->send(dialog_id, std::move(input_user), web_app_short_name, start_parameter, theme, platform,
+             allow_write_access);
+}
+
 void AttachMenuManager::request_web_view(DialogId dialog_id, UserId bot_user_id, MessageId top_thread_message_id,
                                          MessageId reply_to_message_id, string &&url,
                                          td_api::object_ptr<td_api::themeParameters> &&theme, string &&platform,
                                          Promise<td_api::object_ptr<td_api::webAppInfo>> &&promise) {
   TRY_STATUS_PROMISE(promise, td_->contacts_manager_->get_bot_data(bot_user_id));
   TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(bot_user_id));
+  TRY_RESULT_PROMISE(promise, bot_data, td_->contacts_manager_->get_bot_data(bot_user_id));
 
   if (!td_->messages_manager_->have_dialog_force(dialog_id, "request_web_view")) {
     return promise.set_error(Status::Error(400, "Chat not found"));
@@ -1003,6 +1149,19 @@ FileSourceId AttachMenuManager::get_attach_menu_bot_file_source_id(UserId user_i
     source_id = td_->file_reference_manager_->create_attach_menu_bot_file_source(user_id);
   }
   VLOG(file_references) << "Return " << source_id << " for attach menu bot " << user_id;
+  return source_id;
+}
+
+FileSourceId AttachMenuManager::get_web_app_file_source_id(UserId user_id, const string &short_name) {
+  if (!user_id.is_valid() || !is_active()) {
+    return FileSourceId();
+  }
+
+  auto &source_id = web_app_file_source_ids_[user_id][short_name];
+  if (!source_id.is_valid()) {
+    source_id = td_->file_reference_manager_->create_web_app_file_source(user_id, short_name);
+  }
+  VLOG(file_references) << "Return " << source_id << " for Web App " << user_id << '/' << short_name;
   return source_id;
 }
 

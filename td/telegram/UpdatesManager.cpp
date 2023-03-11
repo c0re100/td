@@ -56,6 +56,7 @@
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.hpp"
 #include "td/telegram/ThemeManager.h"
 #include "td/telegram/Usernames.h"
@@ -801,7 +802,6 @@ bool UpdatesManager::is_acceptable_message(const telegram_api::Message *message_
         case telegram_api::messageActionTopicCreate::ID:
         case telegram_api::messageActionTopicEdit::ID:
         case telegram_api::messageActionSuggestProfilePhoto::ID:
-        case telegram_api::messageActionAttachMenuBotAllowed::ID:
           break;
         case telegram_api::messageActionChatCreate::ID: {
           auto chat_create = static_cast<const telegram_api::messageActionChatCreate *>(action);
@@ -1175,6 +1175,33 @@ vector<tl_object_ptr<telegram_api::Update>> *UpdatesManager::get_updates(telegra
       get_updates(static_cast<const telegram_api::Updates *>(updates_ptr)));
 }
 
+vector<UserId> UpdatesManager::extract_group_invite_privacy_forbidden_updates(
+    tl_object_ptr<telegram_api::Updates> &updates_ptr) {
+  auto updates = get_updates(updates_ptr.get());
+  if (updates == nullptr) {
+    LOG(ERROR) << "Can't find updateGroupInvitePrivacyForbidden updates";
+    return {};
+  }
+  LOG(INFO) << "Extract updateGroupInvitePrivacyForbidden updates from " << updates->size() << " updates";
+  vector<UserId> user_ids;
+  for (auto &update_ptr : *updates) {
+    if (update_ptr->get_id() != telegram_api::updateGroupInvitePrivacyForbidden::ID) {
+      continue;
+    }
+    auto update = telegram_api::move_object_as<telegram_api::updateGroupInvitePrivacyForbidden>(update_ptr);
+    UserId user_id(update->user_id_);
+    if (!user_id.is_valid()) {
+      LOG(ERROR) << "Receive " << to_string(update);
+      continue;
+    }
+    user_ids.push_back(user_id);
+  }
+  if (!user_ids.empty()) {
+    td::remove_if(*updates, [](auto &update) { return update == nullptr; });
+  }
+  return user_ids;
+}
+
 FlatHashSet<int64> UpdatesManager::get_sent_messages_random_ids(const telegram_api::Updates *updates_ptr) {
   FlatHashSet<int64> random_ids;
   auto updates = get_updates(updates_ptr);
@@ -1352,8 +1379,13 @@ vector<int32> UpdatesManager::get_update_ids(const telegram_api::Updates *update
     case telegram_api::updateShortChatMessage::ID:
     case telegram_api::updateShortSentMessage::ID:
       return {updates_type};
-    case telegram_api::updateShort::ID:
-      return {static_cast<const telegram_api::updateShort *>(updates_ptr)->update_->get_id()};
+    case telegram_api::updateShort::ID: {
+      const auto *update = static_cast<const telegram_api::updateShort *>(updates_ptr)->update_.get();
+      if (update != nullptr) {
+        return {update->get_id()};
+      }
+      return {updates_type};
+    }
     case telegram_api::updatesCombined::ID:
       updates = &static_cast<const telegram_api::updatesCombined *>(updates_ptr)->updates_;
       break;
@@ -1364,7 +1396,14 @@ vector<int32> UpdatesManager::get_update_ids(const telegram_api::Updates *update
       UNREACHABLE();
   }
 
-  return transform(*updates, [](const tl_object_ptr<telegram_api::Update> &update) { return update->get_id(); });
+  vector<int32> result;
+  result.reserve(updates->size());
+  for (auto &update : *updates) {
+    if (update != nullptr) {
+      result.push_back(update->get_id());
+    }
+  }
+  return result;
 }
 
 vector<DialogId> UpdatesManager::get_chat_dialog_ids(const telegram_api::Updates *updates_ptr) {
@@ -2505,7 +2544,7 @@ void UpdatesManager::add_pending_pts_update(tl_object_ptr<telegram_api::Update> 
   }
 
   if (running_get_difference_ || !postponed_pts_updates_.empty()) {
-    LOG(INFO) << "Save pending update got while running getDifference from " << source;
+    LOG(INFO) << "Save pending update received while running getDifference from " << source;
     postpone_pts_update(std::move(update), new_pts, pts_count, receive_time, std::move(promise));
     return;
   }
@@ -2640,8 +2679,8 @@ void UpdatesManager::process_qts_update(tl_object_ptr<telegram_api::Update> &&up
       auto update = move_tl_object_as<telegram_api::updateChatParticipant>(update_ptr);
       td_->contacts_manager_->on_update_chat_participant(
           ChatId(update->chat_id_), UserId(update->actor_id_), update->date_,
-          DialogInviteLink(std::move(update->invite_), "updateChatParticipant"), std::move(update->prev_participant_),
-          std::move(update->new_participant_));
+          DialogInviteLink(std::move(update->invite_), true, "updateChatParticipant"),
+          std::move(update->prev_participant_), std::move(update->new_participant_));
       add_qts(qts).set_value(Unit());
       break;
     }
@@ -2649,7 +2688,7 @@ void UpdatesManager::process_qts_update(tl_object_ptr<telegram_api::Update> &&up
       auto update = move_tl_object_as<telegram_api::updateChannelParticipant>(update_ptr);
       td_->contacts_manager_->on_update_channel_participant(
           ChannelId(update->channel_id_), UserId(update->actor_id_), update->date_,
-          DialogInviteLink(std::move(update->invite_), "updateChannelParticipant"),
+          DialogInviteLink(std::move(update->invite_), true, "updateChannelParticipant"),
           std::move(update->prev_participant_), std::move(update->new_participant_));
       add_qts(qts).set_value(Unit());
       break;
@@ -2658,7 +2697,7 @@ void UpdatesManager::process_qts_update(tl_object_ptr<telegram_api::Update> &&up
       auto update = move_tl_object_as<telegram_api::updateBotChatInviteRequester>(update_ptr);
       td_->contacts_manager_->on_update_chat_invite_requester(
           DialogId(update->peer_), UserId(update->user_id_), std::move(update->about_), update->date_,
-          DialogInviteLink(std::move(update->invite_), "updateBotChatInviteRequester"));
+          DialogInviteLink(std::move(update->invite_), true, "updateBotChatInviteRequester"));
       add_qts(qts).set_value(Unit());
       break;
     }
@@ -3928,6 +3967,12 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateTranscribedAudi
   } else {
     it->second(std::move(update));
   }
+  promise.set_value(Unit());
+}
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateGroupInvitePrivacyForbidden> update,
+                               Promise<Unit> &&promise) {
+  LOG(ERROR) << "Receive " << to_string(update);
   promise.set_value(Unit());
 }
 

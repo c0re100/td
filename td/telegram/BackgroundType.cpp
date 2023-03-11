@@ -6,6 +6,7 @@
 //
 #include "td/telegram/BackgroundType.h"
 
+#include "td/utils/base64.h"
 #include "td/utils/HttpUrl.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -142,7 +143,7 @@ Result<BackgroundFill> BackgroundFill::get_background_fill(Slice name) {
   }
 
   auto get_color = [](Slice color_string) -> Result<int32> {
-    auto r_color = hex_to_integer_safe<uint32>(color_string);
+    auto r_color = hex_to_integer_safe<uint32>(url_decode(color_string, true));
     if (r_color.is_error() || color_string.size() > 6) {
       return Status::Error(400, "WALLPAPER_INVALID");
     }
@@ -178,7 +179,7 @@ Result<BackgroundFill> BackgroundFill::get_background_fill(Slice name) {
 
     Slice prefix("rotation=");
     if (begins_with(parameters, prefix)) {
-      rotation_angle = to_integer<int32>(parameters.substr(prefix.size()));
+      rotation_angle = to_integer<int32>(url_decode(parameters.substr(prefix.size()), true));
       if (!is_valid_rotation_angle(rotation_angle)) {
         rotation_angle = 0;
       }
@@ -275,7 +276,7 @@ void BackgroundType::apply_parameters_from_link(Slice name) {
   }
 }
 
-string BackgroundType::get_link() const {
+string BackgroundType::get_link(bool is_first) const {
   string mode;
   if (is_blurred_) {
     mode = "blur";
@@ -303,7 +304,7 @@ string BackgroundType::get_link() const {
       return link;
     }
     case Type::Fill:
-      return fill_.get_link(true);
+      return fill_.get_link(is_first);
     default:
       UNREACHABLE();
       return string();
@@ -367,6 +368,10 @@ Result<BackgroundType> BackgroundType::get_background_type(const td_api::Backgro
 Result<BackgroundType> BackgroundType::get_local_background_type(Slice name) {
   TRY_RESULT(fill, BackgroundFill::get_background_fill(name));
   return BackgroundType(fill);
+}
+
+bool BackgroundType::is_background_name_local(Slice name) {
+  return name.size() <= 13u || name.find('?') <= 13u || !is_base64url_characters(name.substr(0, name.find('?')));
 }
 
 BackgroundType::BackgroundType(bool is_fill, bool is_pattern,
