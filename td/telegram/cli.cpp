@@ -1922,6 +1922,8 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::confirmQrCodeAuthentication>(args));
     } else if (op == "gcs") {
       send_request(td_api::make_object<td_api::getCurrentState>());
+    } else if (op == "raea") {
+      send_request(td_api::make_object<td_api::resetAuthenticationEmailAddress>());
     } else if (op == "rapr") {
       send_request(td_api::make_object<td_api::requestAuthenticationPasswordRecovery>());
     } else if (op == "caprc") {
@@ -5296,6 +5298,8 @@ class CliClient final : public Actor {
       string text;
       get_args(args, user_id, text);
       send_request(td_api::make_object<td_api::setUserSupportInfo>(user_id, as_formatted_text(text)));
+    } else if (op == "gsn") {
+      send_request(td_api::make_object<td_api::getSupportName>());
     } else if (op == "touch") {
       auto r_fd = FileFd::open(args, FileFd::Read | FileFd::Write);
       if (r_fd.is_error()) {

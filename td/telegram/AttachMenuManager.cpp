@@ -21,7 +21,6 @@
 #include "td/telegram/StateManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 #include "td/telegram/ThemeManager.h"
 #include "td/telegram/WebApp.h"
 
@@ -571,7 +570,7 @@ void AttachMenuManager::init() {
   }
   is_inited_ = true;
 
-  if (!G()->parameters().use_chat_info_db) {
+  if (!G()->use_chat_info_database()) {
     G()->td_db()->get_binlog_pmc()->erase(get_attach_menu_bots_database_key());
   } else {
     auto attach_menu_bots_string = G()->td_db()->get_binlog_pmc()->get(get_attach_menu_bots_database_key());
@@ -749,7 +748,8 @@ void AttachMenuManager::request_app_web_view(DialogId dialog_id, UserId bot_user
                                              string &&start_parameter,
                                              const td_api::object_ptr<td_api::themeParameters> &theme,
                                              string &&platform, bool allow_write_access, Promise<string> &&promise) {
-  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
+  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read) ||
+      dialog_id.get_type() == DialogType::SecretChat) {
     dialog_id = DialogId(bot_user_id);
   }
   TRY_RESULT_PROMISE(promise, input_user, td_->contacts_manager_->get_input_user(bot_user_id));
@@ -1247,7 +1247,7 @@ string AttachMenuManager::get_attach_menu_bots_database_key() {
 }
 
 void AttachMenuManager::save_attach_menu_bots() {
-  if (!G()->parameters().use_chat_info_db) {
+  if (!G()->use_chat_info_database()) {
     return;
   }
 

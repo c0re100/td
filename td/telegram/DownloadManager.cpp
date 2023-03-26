@@ -11,7 +11,6 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
@@ -367,7 +366,7 @@ class DownloadManagerImpl final : public DownloadManager {
   }
 
   static bool is_database_enabled() {
-    return G()->parameters().use_message_db;
+    return G()->use_message_database();
   }
 
   static string pmc_key(const FileInfo &file_info) {

@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.12 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.13 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -149,6 +149,9 @@ if (CLANG OR GCC)
     elseif (APPLE)
       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-no_pie")
     endif()
+    include(AddCXXCompilerFlag)
+    add_cxx_compiler_flag("-static-libstdc++")
+    add_cxx_compiler_flag("-static-libgcc")
   endif()
 endif()
 
@@ -745,7 +748,6 @@ set(TDLIB_SOURCE
   td/telegram/Td.h
   td/telegram/TdCallback.h
   td/telegram/TdDb.h
-  td/telegram/TdParameters.h
   td/telegram/TermsOfService.h
   td/telegram/ThemeManager.h
   td/telegram/TopDialogCategory.h

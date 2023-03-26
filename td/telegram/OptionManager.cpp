@@ -524,7 +524,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.12");
+        return td_api::make_object<td_api::optionValueString>("1.8.13");
       }
       break;
   }
@@ -653,6 +653,9 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
       if (!is_bot && set_boolean_option("disable_top_chats")) {
         return;
       }
+      if (set_boolean_option("disable_network_statistics")) {
+        return;
+      }
       if (set_boolean_option("disable_persistent_network_statistics")) {
         return;
       }
@@ -673,6 +676,9 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
         return;
       }
       if (set_boolean_option("ignore_default_disable_notification")) {
+        return;
+      }
+      if (set_boolean_option("ignore_file_names")) {
         return;
       }
       if (set_boolean_option("ignore_inline_thumbnails")) {

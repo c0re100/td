@@ -59,10 +59,14 @@ class StatsCallback final : public mtproto::RawConnection::StatsCallback {
   }
 
   void on_read(uint64 bytes) final {
-    net_stats_callback_->on_read(bytes);
+    if (net_stats_callback_ != nullptr) {
+      net_stats_callback_->on_read(bytes);
+    }
   }
   void on_write(uint64 bytes) final {
-    net_stats_callback_->on_write(bytes);
+    if (net_stats_callback_ != nullptr) {
+      net_stats_callback_->on_write(bytes);
+    }
   }
 
   void on_pong() final {
@@ -415,7 +419,7 @@ void ConnectionCreator::enable_proxy_impl(int32 proxy_id) {
 void ConnectionCreator::disable_proxy_impl() {
   if (active_proxy_id_ == 0) {
     send_closure(G()->messages_manager(), &MessagesManager::remove_sponsored_dialog);
-    send_closure(G()->td(), &Td::schedule_get_promo_data, 0);
+    send_closure(G()->td(), &Td::reload_promo_data);
     return;
   }
   CHECK(proxies_.count(active_proxy_id_) == 1);
@@ -450,7 +454,7 @@ void ConnectionCreator::on_proxy_changed(bool from_db) {
   if (active_proxy_id_ == 0 || !from_db) {
     send_closure(G()->messages_manager(), &MessagesManager::remove_sponsored_dialog);
   }
-  send_closure(G()->td(), &Td::schedule_get_promo_data, 0);
+  send_closure(G()->td(), &Td::reload_promo_data);
 
   loop();
 }

@@ -8,7 +8,6 @@
 
 #include "td/telegram/Global.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 
 #include "td/utils/common.h"
 #include "td/utils/filesystem.h"
@@ -105,7 +104,7 @@ bool for_suggested_file_name(CSlice name, bool use_pmc, bool use_random, F &&cal
   auto stem = path_view.file_stem();
   auto ext = path_view.extension();
   bool active = true;
-  if (!stem.empty() && !G()->parameters().ignore_file_names) {
+  if (!stem.empty() && !G()->get_option_boolean("ignore_file_names")) {
     active = callback(PSLICE() << stem << Ext{ext});
     for (int i = 0; active && i < 10; i++) {
       active = callback(PSLICE() << stem << "_(" << i << ")" << Ext{ext});

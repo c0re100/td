@@ -19,7 +19,6 @@
 #include "td/telegram/StateManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 
 #include "td/actor/PromiseFuture.h"
 
@@ -529,7 +528,7 @@ void TopDialogManager::init() {
     return;
   }
 
-  is_active_ = G()->parameters().use_chat_info_db && !td_->auth_manager_->is_bot();
+  is_active_ = G()->use_chat_info_database() && !td_->auth_manager_->is_bot();
   is_enabled_ = !G()->get_option_boolean("disable_top_chats");
   update_rating_e_decay();
 

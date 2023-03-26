@@ -22,7 +22,6 @@
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.h"
 
 #include "td/db/SqliteKeyValueAsync.h"
@@ -546,7 +545,7 @@ void AnimationsManager::load_saved_animations(Promise<Unit> &&promise) {
   }
   load_saved_animations_queries_.push_back(std::move(promise));
   if (load_saved_animations_queries_.size() == 1u) {
-    if (G()->parameters().use_file_db) {  // otherwise there is no sqlite_pmc, TODO
+    if (G()->use_sqlite_pmc()) {
       LOG(INFO) << "Trying to load saved animations from database";
       G()->td_db()->get_sqlite_pmc()->get("ans", PromiseCreator::lambda([](string value) {
                                             send_closure(G()->animations_manager(),
@@ -856,7 +855,7 @@ void AnimationsManager::send_update_saved_animations(bool from_database) {
 }
 
 void AnimationsManager::save_saved_animations_to_database() {
-  if (G()->parameters().use_file_db) {
+  if (G()->use_sqlite_pmc()) {
     LOG(INFO) << "Save saved animations to database";
     AnimationListLogEvent log_event(saved_animation_ids_);
     G()->td_db()->get_sqlite_pmc()->set("ans", log_event_store(log_event).as_slice().str(), Auto());

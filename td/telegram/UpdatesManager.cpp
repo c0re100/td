@@ -56,7 +56,6 @@
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.hpp"
 #include "td/telegram/ThemeManager.h"
 #include "td/telegram/Usernames.h"
@@ -450,7 +449,7 @@ void UpdatesManager::save_pts(int32 pts) {
     G()->td_db()->get_binlog_pmc()->erase("updates.pts");
     last_pts_save_time_ -= 2 * MAX_PTS_SAVE_DELAY;
     pending_pts_ = 0;
-  } else if (!G()->ignore_background_updates()) {
+  } else if (!td_->ignore_background_updates()) {
     auto now = Time::now();
     auto delay = last_pts_save_time_ + MAX_PTS_SAVE_DELAY - now;
     if (delay <= 0 || !td_->auth_manager_->is_bot()) {
@@ -467,7 +466,7 @@ void UpdatesManager::save_pts(int32 pts) {
 }
 
 void UpdatesManager::save_qts(int32 qts) {
-  if (!G()->ignore_background_updates()) {
+  if (!td_->ignore_background_updates()) {
     auto now = Time::now();
     auto delay = last_qts_save_time_ + MAX_PTS_SAVE_DELAY - now;
     if (delay <= 0 || !td_->auth_manager_->is_bot()) {
@@ -544,7 +543,7 @@ void UpdatesManager::set_date(int32 date, bool from_update, string date_source) 
 
     date_ = date;
     date_source_ = std::move(date_source);
-    if (!G()->ignore_background_updates()) {
+    if (!td_->ignore_background_updates()) {
       G()->td_db()->get_binlog_pmc()->set("updates.date", to_string(date));
     }
   } else if (date < date_) {
@@ -1175,6 +1174,25 @@ vector<tl_object_ptr<telegram_api::Update>> *UpdatesManager::get_updates(telegra
       get_updates(static_cast<const telegram_api::Updates *>(updates_ptr)));
 }
 
+bool UpdatesManager::are_empty_updates(const telegram_api::Updates *updates_ptr) {
+  switch (updates_ptr->get_id()) {
+    case telegram_api::updatesTooLong::ID:
+    case telegram_api::updateShortSentMessage::ID:
+      return true;
+    case telegram_api::updateShortMessage::ID:
+    case telegram_api::updateShortChatMessage::ID:
+    case telegram_api::updateShort::ID:
+      return false;
+    case telegram_api::updatesCombined::ID:
+      return static_cast<const telegram_api::updatesCombined *>(updates_ptr)->updates_.empty();
+    case telegram_api::updates::ID:
+      return static_cast<const telegram_api::updates *>(updates_ptr)->updates_.empty();
+    default:
+      UNREACHABLE();
+      return true;
+  }
+}
+
 vector<UserId> UpdatesManager::extract_group_invite_privacy_forbidden_updates(
     tl_object_ptr<telegram_api::Updates> &updates_ptr) {
   auto updates = get_updates(updates_ptr.get());
@@ -1507,12 +1525,11 @@ void UpdatesManager::init_state() {
     return;
   }
 
-  bool drop_state = !G()->parameters().use_file_db && !G()->parameters().use_secret_chats &&
-                    td_->auth_manager_->is_bot() &&
+  bool drop_state = td_->can_ignore_background_updates() && td_->auth_manager_->is_bot() &&
                     td_->option_manager_->get_option_integer("since_last_open") >= 2 * 86400;
 
   auto pmc = G()->td_db()->get_binlog_pmc();
-  if (G()->ignore_background_updates() || drop_state) {
+  if (td_->ignore_background_updates() || drop_state) {
     // just in case
     pmc->erase("updates.pts");
     pmc->erase("updates.qts");

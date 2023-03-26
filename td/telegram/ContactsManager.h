@@ -90,6 +90,8 @@ class ContactsManager final : public Actor {
 
   Result<tl_object_ptr<telegram_api::InputUser>> get_input_user(UserId user_id) const;
 
+  tl_object_ptr<telegram_api::InputUser> get_input_user_force(UserId user_id) const;
+
   // TODO get_input_chat ???
 
   tl_object_ptr<telegram_api::InputChannel> get_input_channel(ChannelId channel_id) const;
@@ -264,6 +266,14 @@ class ContactsManager final : public Actor {
   void on_get_inactive_channels(vector<tl_object_ptr<telegram_api::Chat>> &&chats, Promise<Unit> &&promise);
 
   void remove_inactive_channel(ChannelId channel_id);
+
+  void register_message_users(FullMessageId full_message_id, vector<UserId> user_ids);
+
+  void register_message_channels(FullMessageId full_message_id, vector<ChannelId> channel_ids);
+
+  void unregister_message_users(FullMessageId full_message_id, vector<UserId> user_ids);
+
+  void unregister_message_channels(FullMessageId full_message_id, vector<ChannelId> channel_ids);
 
   UserId get_my_id() const;
 
@@ -563,8 +573,8 @@ class ContactsManager final : public Actor {
   FileSourceId get_user_full_file_source_id(UserId user_id);
   void reload_user_full(UserId user_id, Promise<Unit> &&promise);
 
-  std::pair<int32, vector<const Photo *>> get_user_profile_photos(UserId user_id, int32 offset, int32 limit,
-                                                                  Promise<Unit> &&promise);
+  void get_user_profile_photos(UserId user_id, int32 offset, int32 limit,
+                               Promise<td_api::object_ptr<td_api::chatPhotos>> &&promise);
   void reload_user_profile_photo(UserId user_id, int64 photo_id, Promise<Unit> &&promise);
   FileSourceId get_user_profile_photo_file_source_id(UserId user_id, int64 photo_id);
 
@@ -1080,11 +1090,19 @@ class ContactsManager final : public Actor {
     bool is_megagroup = false;
   };
 
+  struct PendingGetPhotoRequest {
+    int32 offset = 0;
+    int32 limit = 0;
+    int32 retry_count = 0;
+    Promise<td_api::object_ptr<td_api::chatPhotos>> promise;
+  };
+
   struct UserPhotos {
     vector<Photo> photos;
     int32 count = -1;
     int32 offset = -1;
-    bool getting_now = false;
+
+    vector<PendingGetPhotoRequest> pending_requests;
   };
 
   struct DialogNearby {
@@ -1252,11 +1270,13 @@ class ContactsManager final : public Actor {
   static constexpr int32 ACCOUNT_UPDATE_LAST_NAME = 1 << 1;
   static constexpr int32 ACCOUNT_UPDATE_ABOUT = 1 << 2;
 
-  static bool have_input_peer_user(const User *u, AccessRights access_rights);
+  bool have_input_peer_user(const User *u, UserId user_id, AccessRights access_rights) const;
   static bool have_input_peer_chat(const Chat *c, AccessRights access_rights);
   bool have_input_peer_channel(const Channel *c, ChannelId channel_id, AccessRights access_rights,
                                bool from_linked = false) const;
   static bool have_input_encrypted_peer(const SecretChat *secret_chat, AccessRights access_rights);
+
+  tl_object_ptr<telegram_api::InputPeer> get_simple_input_peer(DialogId dialog_id) const;
 
   const User *get_user(UserId user_id) const;
   User *get_user(UserId user_id);
@@ -1374,6 +1394,8 @@ class ContactsManager final : public Actor {
                                                                bool need_phone_number_privacy_exception) const;
 
   UserPhotos *add_user_photos(UserId user_id);
+  void send_get_user_photos_query(UserId user_id, const UserPhotos *user_photos);
+  void on_get_user_profile_photos(UserId user_id, Result<Unit> &&result);
   int64 get_user_full_profile_photo_id(const UserFull *user_full);
   void add_set_profile_photo_to_cache(UserId user_id, Photo &&photo, bool is_fallback);
   bool delete_my_profile_photo_from_cache(int64 profile_photo_id);
@@ -1664,13 +1686,17 @@ class ContactsManager final : public Actor {
 
   void on_dismiss_suggested_action(SuggestedAction action, Result<Unit> &&result);
 
-  static td_api::object_ptr<td_api::updateUser> get_update_unknown_user_object(UserId user_id);
+  td_api::object_ptr<td_api::updateUser> get_update_user_object(UserId user_id, const User *u) const;
+
+  td_api::object_ptr<td_api::updateUser> get_update_unknown_user_object(UserId user_id) const;
 
   td_api::object_ptr<td_api::UserStatus> get_user_status_object(UserId user_id, const User *u) const;
 
   tl_object_ptr<td_api::user> get_user_object(UserId user_id, const User *u) const;
 
   tl_object_ptr<td_api::userFullInfo> get_user_full_info_object(UserId user_id, const UserFull *user_full) const;
+
+  td_api::object_ptr<td_api::updateBasicGroup> get_update_basic_group_object(ChatId chat_id, const Chat *c);
 
   static td_api::object_ptr<td_api::updateBasicGroup> get_update_unknown_basic_group_object(ChatId chat_id);
 
@@ -1680,6 +1706,9 @@ class ContactsManager final : public Actor {
 
   tl_object_ptr<td_api::basicGroupFullInfo> get_basic_group_full_info_object(ChatId chat_id,
                                                                              const ChatFull *chat_full) const;
+
+  td_api::object_ptr<td_api::updateSupergroup> get_update_supergroup_object(ChannelId channel_id,
+                                                                            const Channel *c) const;
 
   td_api::object_ptr<td_api::updateSupergroup> get_update_unknown_supergroup_object(ChannelId channel_id) const;
 
@@ -1697,6 +1726,9 @@ class ContactsManager final : public Actor {
                                                                             const ChannelFull *channel_full) const;
 
   static tl_object_ptr<td_api::SecretChatState> get_secret_chat_state_object(SecretChatState state);
+
+  td_api::object_ptr<td_api::updateSecretChat> get_update_secret_chat_object(SecretChatId secret_chat_id,
+                                                                             const SecretChat *secret_chat);
 
   static td_api::object_ptr<td_api::updateSecretChat> get_update_unknown_secret_chat_object(
       SecretChatId secret_chat_id);
@@ -1929,6 +1961,9 @@ class ContactsManager final : public Actor {
   FlatHashMap<ChannelId, vector<DialogParticipant>, ChannelIdHash> cached_channel_participants_;
 
   FlatHashMap<string, UserId> resolved_phone_numbers_;
+
+  FlatHashMap<UserId, FlatHashSet<FullMessageId, FullMessageIdHash>, UserIdHash> user_messages_;
+  FlatHashMap<ChannelId, FlatHashSet<FullMessageId, FullMessageIdHash>, ChannelIdHash> channel_messages_;
 
   // bot-administrators only
   struct ChannelParticipantInfo {

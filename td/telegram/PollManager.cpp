@@ -14,6 +14,7 @@
 #include "td/telegram/DialogId.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
+#include "td/telegram/MessageId.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/PollId.hpp"
@@ -21,7 +22,6 @@
 #include "td/telegram/StateManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 #include "td/telegram/telegram_api.hpp"
 #include "td/telegram/UpdatesManager.h"
 
@@ -357,7 +357,7 @@ void PollManager::save_poll(const Poll *poll, PollId poll_id) {
   CHECK(!is_local_poll_id(poll_id));
   poll->was_saved = true;
 
-  if (!G()->parameters().use_message_db) {
+  if (!G()->use_message_database()) {
     return;
   }
 
@@ -377,9 +377,8 @@ void PollManager::on_load_poll_from_database(PollId poll_id, string value) {
   CHECK(!have_poll(poll_id));
   if (!value.empty()) {
     auto poll = make_unique<Poll>();
-    auto status = log_event_parse(*poll, value);
-    if (status.is_error()) {
-      LOG(FATAL) << status << ": " << format::as_hex_dump<4>(Slice(value));
+    if (log_event_parse(*poll, value).is_error()) {
+      return;
     }
     for (auto &user_id : poll->recent_voter_user_ids) {
       td_->contacts_manager_->have_user_force(user_id);
@@ -389,7 +388,9 @@ void PollManager::on_load_poll_from_database(PollId poll_id, string value) {
         poll->is_closed = true;
       } else {
         CHECK(!is_local_poll_id(poll_id));
-        close_poll_timeout_.set_timeout_in(poll_id.get(), poll->close_date - G()->server_time() + 1e-3);
+        if (!G()->close_flag()) {
+          close_poll_timeout_.set_timeout_in(poll_id.get(), poll->close_date - G()->server_time() + 1e-3);
+        }
       }
     }
     polls_[poll_id] = std::move(poll);
@@ -405,7 +406,7 @@ PollManager::Poll *PollManager::get_poll_force(PollId poll_id) {
   if (poll != nullptr) {
     return poll;
   }
-  if (!G()->parameters().use_message_db) {
+  if (!G()->use_message_database()) {
     return nullptr;
   }
   if (!poll_id.is_valid() || loaded_from_database_polls_.count(poll_id)) {
@@ -653,7 +654,9 @@ void PollManager::register_poll(PollId poll_id, FullMessageId full_message_id, c
   CHECK(have_poll(poll_id));
   if (full_message_id.get_message_id().is_scheduled() || !full_message_id.get_message_id().is_server()) {
     other_poll_messages_[poll_id].insert(full_message_id);
-    unload_poll_timeout_.cancel_timeout(poll_id.get());
+    if (!G()->close_flag()) {
+      unload_poll_timeout_.cancel_timeout(poll_id.get());
+    }
     return;
   }
   LOG(INFO) << "Register " << poll_id << " from " << full_message_id << " from " << source;
@@ -661,10 +664,12 @@ void PollManager::register_poll(PollId poll_id, FullMessageId full_message_id, c
   auto poll = get_poll(poll_id);
   CHECK(poll != nullptr);
   if (!td_->auth_manager_->is_bot() && !is_local_poll_id(poll_id) &&
-      !(poll->is_closed && poll->is_updated_after_close)) {
+      !(poll->is_closed && poll->is_updated_after_close) && !G()->close_flag()) {
     update_poll_timeout_.add_timeout_in(poll_id.get(), 0);
   }
-  unload_poll_timeout_.cancel_timeout(poll_id.get());
+  if (!G()->close_flag()) {
+    unload_poll_timeout_.cancel_timeout(poll_id.get());
+  }
 }
 
 void PollManager::unregister_poll(PollId poll_id, FullMessageId full_message_id, const char *source) {
@@ -694,13 +699,18 @@ void PollManager::unregister_poll(PollId poll_id, FullMessageId full_message_id,
   }
   if (message_ids.empty()) {
     server_poll_messages_.erase(poll_id);
-    update_poll_timeout_.cancel_timeout(poll_id.get());
+    if (!G()->close_flag()) {
+      update_poll_timeout_.cancel_timeout(poll_id.get(), "unregister_poll");
+    }
 
     schedule_poll_unload(poll_id);
   }
 }
 
 bool PollManager::can_unload_poll(PollId poll_id) {
+  if (G()->close_flag()) {
+    return false;
+  }
   if (is_local_poll_id(poll_id) || server_poll_messages_.count(poll_id) != 0 ||
       other_poll_messages_.count(poll_id) != 0 || pending_answers_.count(poll_id) != 0 ||
       being_closed_polls_.count(poll_id) != 0) {
@@ -831,7 +841,9 @@ void PollManager::do_set_poll_answer(PollId poll_id, FullMessageId full_message_
     binlog_erase(G()->td_db()->get_binlog(), log_event_id);
     return;
   }
-  unload_poll_timeout_.cancel_timeout(poll_id.get());
+  if (!G()->close_flag()) {
+    unload_poll_timeout_.cancel_timeout(poll_id.get());
+  }
 
   auto &pending_answer = pending_answers_[poll_id];
   if (!pending_answer.promises_.empty() && pending_answer.options_ == options) {
@@ -844,7 +856,7 @@ void PollManager::do_set_poll_answer(PollId poll_id, FullMessageId full_message_
     binlog_erase(G()->td_db()->get_binlog(), log_event_id);
     return;
   }
-  if (log_event_id == 0 && G()->parameters().use_message_db) {
+  if (log_event_id == 0 && G()->use_message_database()) {
     SetPollAnswerLogEvent log_event;
     log_event.poll_id_ = poll_id;
     log_event.full_message_id_ = full_message_id;
@@ -1069,6 +1081,8 @@ void PollManager::get_poll_voters(PollId poll_id, FullMessageId full_message_id,
 
 void PollManager::on_get_poll_voters(PollId poll_id, int32 option_id, string offset, int32 limit,
                                      Result<tl_object_ptr<telegram_api::messages_votesList>> &&result) {
+  G()->ignore_result_if_closing(result);
+
   auto poll = get_poll(poll_id);
   CHECK(poll != nullptr);
   if (option_id < 0 || static_cast<size_t>(option_id) >= poll->options.size()) {
@@ -1201,7 +1215,7 @@ void PollManager::do_stop_poll(PollId poll_id, FullMessageId full_message_id, un
   LOG(INFO) << "Stop " << poll_id << " from " << full_message_id;
   CHECK(poll_id.is_valid());
 
-  if (log_event_id == 0 && G()->parameters().use_message_db && reply_markup == nullptr) {
+  if (log_event_id == 0 && G()->use_message_database() && reply_markup == nullptr) {
     StopPollLogEvent log_event{poll_id, full_message_id};
     log_event_id =
         binlog_add(G()->td_db()->get_binlog(), LogEvent::HandlerType::StopPoll, get_log_event_storer(log_event));
@@ -1335,7 +1349,7 @@ void PollManager::on_unload_poll_timeout(PollId poll_id) {
 
   LOG(INFO) << "Unload " << poll_id;
 
-  update_poll_timeout_.cancel_timeout(poll_id.get());
+  update_poll_timeout_.cancel_timeout(poll_id.get(), "on_unload_poll_timeout");
   close_poll_timeout_.cancel_timeout(poll_id.get());
 
   auto is_deleted = polls_.erase(poll_id) > 0;
@@ -1347,12 +1361,17 @@ void PollManager::on_unload_poll_timeout(PollId poll_id) {
 }
 
 void PollManager::forget_local_poll(PollId poll_id) {
+  if (G()->close_flag()) {
+    return;
+  }
   CHECK(is_local_poll_id(poll_id));
   unload_poll_timeout_.set_timeout_in(poll_id.get(), UNLOAD_POLL_DELAY);
 }
 
 void PollManager::on_get_poll_results(PollId poll_id, uint64 generation,
                                       Result<tl_object_ptr<telegram_api::Updates>> result) {
+  G()->ignore_result_if_closing(result);
+
   auto poll = get_poll(poll_id);
   if (poll == nullptr) {
     return;
@@ -1599,10 +1618,10 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
         if (close_date != 0) {
           if (close_date <= G()->server_time()) {
             poll->is_closed = true;
-          } else {
+          } else if (!G()->close_flag()) {
             close_poll_timeout_.set_timeout_in(poll_id.get(), close_date - G()->server_time() + 1e-3);
           }
-        } else {
+        } else if (!G()->close_flag()) {
           close_poll_timeout_.cancel_timeout(poll_id.get());
         }
       } else {
@@ -1768,7 +1787,7 @@ PollId PollManager::on_get_poll(PollId poll_id, tl_object_ptr<telegram_api::poll
     is_changed = true;
   }
 
-  if (!is_bot && !poll->is_closed) {
+  if (!is_bot && !poll->is_closed && !G()->close_flag()) {
     auto timeout = get_polling_timeout();
     LOG(INFO) << "Schedule updating of " << poll_id << " in " << timeout;
     update_poll_timeout_.set_timeout_in(poll_id.get(), timeout);
@@ -1823,7 +1842,7 @@ void PollManager::on_binlog_events(vector<BinlogEvent> &&events) {
   for (auto &event : events) {
     switch (event.type_) {
       case LogEvent::HandlerType::SetPollAnswer: {
-        if (!G()->parameters().use_message_db) {
+        if (!G()->use_message_database()) {
           binlog_erase(G()->td_db()->get_binlog(), event.id_);
           break;
         }
@@ -1842,7 +1861,7 @@ void PollManager::on_binlog_events(vector<BinlogEvent> &&events) {
         break;
       }
       case LogEvent::HandlerType::StopPoll: {
-        if (!G()->parameters().use_message_db) {
+        if (!G()->use_message_database()) {
           binlog_erase(G()->td_db()->get_binlog(), event.id_);
           break;
         }

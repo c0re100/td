@@ -18,7 +18,6 @@
 #include "td/telegram/misc.h"
 #include "td/telegram/SecureStorage.h"
 #include "td/telegram/TdDb.h"
-#include "td/telegram/TdParameters.h"
 #include "td/telegram/Version.h"
 
 #include "td/actor/SleepActor.h"
@@ -821,7 +820,7 @@ void prepare_path_for_pmc(FileType file_type, string &path) {
 }  // namespace
 
 FileManager::FileManager(unique_ptr<Context> context) : context_(std::move(context)) {
-  if (G()->parameters().use_file_db) {
+  if (G()->use_file_database()) {
     file_db_ = G()->td_db()->get_file_db_shared();
   }
 
