@@ -4794,25 +4794,9 @@ void Td::on_request(uint64 id, td_api::optimizeStorage &request) {
 
     file_types.push_back(get_file_type(*file_type));
   }
-  std::vector<DialogId> owner_dialog_ids;
-  for (auto chat_id : request.chat_ids_) {
-    DialogId dialog_id(chat_id);
-    if (!dialog_id.is_valid() && dialog_id != DialogId()) {
-      return send_error_raw(id, 400, "Wrong chat identifier");
-    }
-    owner_dialog_ids.push_back(dialog_id);
-  }
-  std::vector<DialogId> exclude_owner_dialog_ids;
-  for (auto chat_id : request.exclude_chat_ids_) {
-    DialogId dialog_id(chat_id);
-    if (!dialog_id.is_valid() && dialog_id != DialogId()) {
-      return send_error_raw(id, 400, "Wrong chat identifier");
-    }
-    exclude_owner_dialog_ids.push_back(dialog_id);
-  }
   FileGcParameters parameters(request.size_, request.ttl_, request.count_, request.immunity_delay_,
-                              std::move(file_types), std::move(owner_dialog_ids), std::move(exclude_owner_dialog_ids),
-                              request.chat_limit_);
+                              std::move(file_types), DialogId::get_dialog_ids(request.chat_ids_),
+                              DialogId::get_dialog_ids(request.exclude_chat_ids_), request.chat_limit_);
 
   CREATE_REQUEST_PROMISE();
   auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<FileStats> result) mutable {
@@ -6247,9 +6231,8 @@ void Td::on_request(uint64 id, const td_api::toggleChatDefaultDisableNotificatio
 
 void Td::on_request(uint64 id, const td_api::setPinnedChats &request) {
   CHECK_IS_USER();
-  answer_ok_query(id, messages_manager_->set_pinned_dialogs(
-                          DialogListId(request.chat_list_),
-                          transform(request.chat_ids_, [](int64 chat_id) { return DialogId(chat_id); })));
+  answer_ok_query(id, messages_manager_->set_pinned_dialogs(DialogListId(request.chat_list_),
+                                                            DialogId::get_dialog_ids(request.chat_ids_)));
 }
 
 void Td::on_request(uint64 id, const td_api::getAttachmentMenuBot &request) {
@@ -7483,9 +7466,8 @@ void Td::on_request(uint64 id, td_api::getEmojiSuggestionsUrl &request) {
 
 void Td::on_request(uint64 id, const td_api::getCustomEmojiStickers &request) {
   CREATE_REQUEST_PROMISE();
-  stickers_manager_->get_custom_emoji_stickers(
-      transform(request.custom_emoji_ids_, [](int64 custom_emoji_id) { return CustomEmojiId(custom_emoji_id); }), true,
-      std::move(promise));
+  stickers_manager_->get_custom_emoji_stickers(CustomEmojiId::get_custom_emoji_ids(request.custom_emoji_ids_), true,
+                                               std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getDefaultChatPhotoCustomEmojiStickers &request) {
