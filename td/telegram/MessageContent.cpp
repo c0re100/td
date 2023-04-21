@@ -11,6 +11,7 @@
 #include "td/telegram/AudiosManager.h"
 #include "td/telegram/AudiosManager.hpp"
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/BackgroundInfo.hpp"
 #include "td/telegram/CallDiscardReason.h"
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ChatId.h"
@@ -49,6 +50,7 @@
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessageSearchFilter.h"
 #include "td/telegram/MessageSender.h"
+#include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/OptionManager.h"
@@ -471,7 +473,7 @@ class MessageChatSetTtl final : public MessageContent {
 
 class MessageUnsupported final : public MessageContent {
  public:
-  static constexpr int32 CURRENT_VERSION = 17;
+  static constexpr int32 CURRENT_VERSION = 18;
   int32 version = CURRENT_VERSION;
 
   MessageUnsupported() = default;
@@ -804,11 +806,17 @@ class MessageGiftPremium final : public MessageContent {
  public:
   string currency;
   int64 amount = 0;
+  string crypto_currency;
+  int64 crypto_amount = 0;
   int32 months = 0;
 
   MessageGiftPremium() = default;
-  MessageGiftPremium(string &&currency, int64 amount, int32 months)
-      : currency(std::move(currency)), amount(amount), months(months) {
+  MessageGiftPremium(string &&currency, int64 amount, string &&crypto_currency, int64 crypto_amount, int32 months)
+      : currency(std::move(currency))
+      , amount(amount)
+      , crypto_currency(std::move(crypto_currency))
+      , crypto_amount(crypto_amount)
+      , months(months) {
   }
 
   MessageContentType get_type() const final {
@@ -887,6 +895,21 @@ class MessageWebViewWriteAccessAllowed final : public MessageContent {
 
   MessageContentType get_type() const final {
     return MessageContentType::WebViewWriteAccessAllowed;
+  }
+};
+
+class MessageSetBackground final : public MessageContent {
+ public:
+  MessageId old_message_id;
+  BackgroundInfo background_info;
+
+  MessageSetBackground() = default;
+  MessageSetBackground(MessageId old_message_id, BackgroundInfo background_info)
+      : old_message_id(old_message_id), background_info(std::move(background_info)) {
+  }
+
+  MessageContentType get_type() const final {
+    return MessageContentType::SetBackground;
   }
 };
 
@@ -1228,11 +1251,17 @@ static void store(const MessageContent *content, StorerT &storer) {
     }
     case MessageContentType::GiftPremium: {
       const auto *m = static_cast<const MessageGiftPremium *>(content);
+      bool has_crypto_amount = !m->crypto_currency.empty();
       BEGIN_STORE_FLAGS();
+      STORE_FLAG(has_crypto_amount);
       END_STORE_FLAGS();
       store(m->currency, storer);
       store(m->amount, storer);
       store(m->months, storer);
+      if (has_crypto_amount) {
+        store(m->crypto_currency, storer);
+        store(m->crypto_amount, storer);
+      }
       break;
     }
     case MessageContentType::TopicCreate: {
@@ -1262,6 +1291,18 @@ static void store(const MessageContent *content, StorerT &storer) {
     case MessageContentType::WebViewWriteAccessAllowed: {
       const auto *m = static_cast<const MessageWebViewWriteAccessAllowed *>(content);
       store(m->web_app, storer);
+      break;
+    }
+    case MessageContentType::SetBackground: {
+      const auto *m = static_cast<const MessageSetBackground *>(content);
+      bool has_message_id = m->old_message_id.is_valid();
+      BEGIN_STORE_FLAGS();
+      STORE_FLAG(has_message_id);
+      END_STORE_FLAGS();
+      if (has_message_id) {
+        store(m->old_message_id, storer);
+      }
+      store(m->background_info, storer);
       break;
     }
     default:
@@ -1730,11 +1771,17 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
     }
     case MessageContentType::GiftPremium: {
       auto m = make_unique<MessageGiftPremium>();
+      bool has_crypto_amount;
       BEGIN_PARSE_FLAGS();
+      PARSE_FLAG(has_crypto_amount);
       END_PARSE_FLAGS();
       parse(m->currency, parser);
       parse(m->amount, parser);
       parse(m->months, parser);
+      if (has_crypto_amount) {
+        parse(m->crypto_currency, parser);
+        parse(m->crypto_amount, parser);
+      }
       content = std::move(m);
       break;
     }
@@ -1773,6 +1820,19 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
     case MessageContentType::WebViewWriteAccessAllowed: {
       auto m = make_unique<MessageWebViewWriteAccessAllowed>();
       parse(m->web_app, parser);
+      content = std::move(m);
+      break;
+    }
+    case MessageContentType::SetBackground: {
+      auto m = make_unique<MessageSetBackground>();
+      bool has_message_id;
+      BEGIN_PARSE_FLAGS();
+      PARSE_FLAG(has_message_id);
+      END_PARSE_FLAGS();
+      if (has_message_id) {
+        parse(m->old_message_id, parser);
+      }
+      parse(m->background_info, parser);
       content = std::move(m);
       break;
     }
@@ -2401,6 +2461,7 @@ bool can_have_input_media(const Td *td, const MessageContent *content, bool is_s
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       return false;
     case MessageContentType::Animation:
     case MessageContentType::Audio:
@@ -2528,6 +2589,7 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       break;
     default:
       UNREACHABLE();
@@ -2655,6 +2717,7 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       break;
     default:
       UNREACHABLE();
@@ -2825,6 +2888,7 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td) {
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       break;
     default:
       UNREACHABLE();
@@ -3013,6 +3077,7 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       UNREACHABLE();
   }
   return Status::OK();
@@ -3148,6 +3213,7 @@ static int32 get_message_content_media_index_mask(const MessageContent *content,
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       return 0;
     default:
       UNREACHABLE();
@@ -3171,6 +3237,15 @@ MessageId get_message_content_pinned_message_id(const MessageContent *content) {
       return static_cast<const MessagePinMessage *>(content)->message_id;
     default:
       return MessageId();
+  }
+}
+
+BackgroundInfo get_message_content_background_info(const MessageContent *content) {
+  switch (content->get_type()) {
+    case MessageContentType::SetBackground:
+      return static_cast<const MessageSetBackground *>(content)->background_info;
+    default:
+      return BackgroundInfo();
   }
 }
 
@@ -3198,6 +3273,14 @@ FullMessageId get_message_content_replied_message_id(DialogId dialog_id, const M
       auto reply_in_dialog_id = m->invoice_dialog_id.is_valid() ? m->invoice_dialog_id : dialog_id;
       return {reply_in_dialog_id, m->invoice_message_id};
     }
+    case MessageContentType::SetBackground: {
+      auto *m = static_cast<const MessageSetBackground *>(content);
+      if (!m->old_message_id.is_valid()) {
+        return FullMessageId();
+      }
+
+      return {dialog_id, m->old_message_id};
+    }
     default:
       return FullMessageId();
   }
@@ -3207,6 +3290,15 @@ std::pair<InputGroupCallId, bool> get_message_content_group_call_info(const Mess
   CHECK(content->get_type() == MessageContentType::GroupCall);
   const auto *m = static_cast<const MessageGroupCall *>(content);
   return {m->input_group_call_id, m->duration >= 0};
+}
+
+UserId get_message_content_contact_user_id(const MessageContent *content) {
+  switch (content->get_type()) {
+    case MessageContentType::Contact:
+      return static_cast<const MessageContact *>(content)->contact.get_user_id();
+    default:
+      return UserId();
+  }
 }
 
 vector<UserId> get_message_content_added_user_ids(const MessageContent *content) {
@@ -3900,7 +3992,9 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
     case MessageContentType::GiftPremium: {
       const auto *old_ = static_cast<const MessageGiftPremium *>(old_content);
       const auto *new_ = static_cast<const MessageGiftPremium *>(new_content);
-      if (old_->currency != new_->currency || old_->amount != new_->amount || old_->months != new_->months) {
+      if (old_->currency != new_->currency || old_->amount != new_->amount ||
+          old_->crypto_currency != new_->crypto_currency || old_->crypto_amount != new_->crypto_amount ||
+          old_->months != new_->months) {
         need_update = true;
       }
       break;
@@ -3951,6 +4045,14 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
       const auto *old_ = static_cast<const MessageWebViewWriteAccessAllowed *>(old_content);
       const auto *new_ = static_cast<const MessageWebViewWriteAccessAllowed *>(new_content);
       if (old_->web_app != new_->web_app) {
+        need_update = true;
+      }
+      break;
+    }
+    case MessageContentType::SetBackground: {
+      const auto *old_ = static_cast<const MessageSetBackground *>(old_content);
+      const auto *new_ = static_cast<const MessageSetBackground *>(new_content);
+      if (old_->old_message_id != new_->old_message_id || old_->background_info != new_->background_info) {
         need_update = true;
       }
       break;
@@ -4093,6 +4195,7 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       LOG(ERROR) << "Receive new file " << new_file_id << " in a sent message of the type " << content_type;
       break;
     default:
@@ -5084,6 +5187,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       return nullptr;
     default:
       UNREACHABLE();
@@ -5389,7 +5493,18 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
         LOG(ERROR) << "Receive invalid premium gift price " << action->amount_;
         action->amount_ = 0;
       }
-      return td::make_unique<MessageGiftPremium>(std::move(action->currency_), action->amount_, action->months_);
+      if (action->crypto_currency_.empty()) {
+        if (action->crypto_amount_ != 0) {
+          LOG(ERROR) << "Receive premium gift crypto price " << action->crypto_amount_ << " without currency";
+          action->crypto_amount_ = 0;
+        }
+      } else if (action->crypto_amount_ <= 0) {
+        LOG(ERROR) << "Receive invalid premium gift crypto price " << action->crypto_amount_;
+        action->crypto_amount_ = 0;
+      }
+      return td::make_unique<MessageGiftPremium>(std::move(action->currency_), action->amount_,
+                                                 std::move(action->crypto_currency_), action->crypto_amount_,
+                                                 action->months_);
     }
     case telegram_api::messageActionTopicCreate::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionTopicCreate>(action_ptr);
@@ -5422,6 +5537,28 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       }
 
       return make_unique<MessageRequestedDialog>(dialog_id, action->button_id_);
+    }
+    case telegram_api::messageActionSetChatWallPaper::ID: {
+      auto action = move_tl_object_as<telegram_api::messageActionSetChatWallPaper>(action_ptr);
+      BackgroundInfo background_info(td, std::move(action->wallpaper_));
+      if (!background_info.is_valid()) {
+        break;
+      }
+      return make_unique<MessageSetBackground>(MessageId(), std::move(background_info));
+    }
+    case telegram_api::messageActionSetSameChatWallPaper::ID: {
+      if (reply_in_dialog_id.is_valid() && reply_in_dialog_id != owner_dialog_id) {
+        LOG(ERROR) << "Receive old background message with " << reply_to_message_id << " in " << owner_dialog_id
+                   << " in another " << reply_in_dialog_id;
+        reply_to_message_id = MessageId();
+        reply_in_dialog_id = DialogId();
+      }
+      auto action = move_tl_object_as<telegram_api::messageActionSetSameChatWallPaper>(action_ptr);
+      BackgroundInfo background_info(td, std::move(action->wallpaper_));
+      if (!background_info.is_valid()) {
+        break;
+      }
+      return make_unique<MessageSetBackground>(reply_to_message_id, std::move(background_info));
     }
     default:
       UNREACHABLE();
@@ -5620,9 +5757,10 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
             m->provider_payment_charge_id);
       } else {
         auto invoice_dialog_id = m->invoice_dialog_id.is_valid() ? m->invoice_dialog_id : dialog_id;
-        return make_tl_object<td_api::messagePaymentSuccessful>(invoice_dialog_id.get(), m->invoice_message_id.get(),
-                                                                m->currency, m->total_amount, m->is_recurring,
-                                                                m->is_first_recurring, m->invoice_payload);
+        return make_tl_object<td_api::messagePaymentSuccessful>(
+            td->messages_manager_->get_chat_id_object(invoice_dialog_id, "messagePaymentSuccessful"),
+            m->invoice_message_id.get(), m->currency, m->total_amount, m->is_recurring, m->is_first_recurring,
+            m->invoice_payload);
       }
     }
     case MessageContentType::ContactRegistered:
@@ -5702,8 +5840,17 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     }
     case MessageContentType::GiftPremium: {
       const auto *m = static_cast<const MessageGiftPremium *>(content);
+      int64 gifter_user_id = 0;
+      if (dialog_id.get_type() == DialogType::User) {
+        auto user_id = dialog_id.get_user_id();
+        if (user_id != ContactsManager::get_service_notifications_user_id() &&
+            !td->contacts_manager_->is_user_bot(user_id) && !td->contacts_manager_->is_user_support(user_id)) {
+          gifter_user_id = td->contacts_manager_->get_user_id_object(user_id, "MessageGiftPremium");
+        }
+      }
       return make_tl_object<td_api::messageGiftedPremium>(
-          m->currency, m->amount, m->months, td->stickers_manager_->get_premium_gift_sticker_object(m->months));
+          gifter_user_id, m->currency, m->amount, m->crypto_currency, m->crypto_amount, m->months,
+          td->stickers_manager_->get_premium_gift_sticker_object(m->months));
     }
     case MessageContentType::TopicCreate: {
       const auto *m = static_cast<const MessageTopicCreate *>(content);
@@ -5727,15 +5874,30 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::RequestedDialog: {
       const auto *m = static_cast<const MessageRequestedDialog *>(content);
       if (m->dialog_id.get_type() == DialogType::User) {
-        return make_tl_object<td_api::messageUserShared>(
-            td->contacts_manager_->get_user_id_object(m->dialog_id.get_user_id(), "MessageRequestedDialog"),
-            m->button_id);
+        int64 user_id;
+        if (td->auth_manager_->is_bot()) {
+          user_id = m->dialog_id.get_user_id().get();
+        } else {
+          user_id = td->contacts_manager_->get_user_id_object(m->dialog_id.get_user_id(), "MessageRequestedDialog");
+        }
+        return make_tl_object<td_api::messageUserShared>(user_id, m->button_id);
       }
-      return make_tl_object<td_api::messageChatShared>(m->dialog_id.get(), m->button_id);
+      int64 chat_id;
+      if (td->auth_manager_->is_bot()) {
+        chat_id = m->dialog_id.get();
+      } else {
+        chat_id = td->messages_manager_->get_chat_id_object(m->dialog_id, "messageChatShared");
+      }
+      return make_tl_object<td_api::messageChatShared>(chat_id, m->button_id);
     }
     case MessageContentType::WebViewWriteAccessAllowed: {
       const auto *m = static_cast<const MessageWebViewWriteAccessAllowed *>(content);
       return td_api::make_object<td_api::messageBotWriteAccessAllowed>(m->web_app.get_web_app_object(td));
+    }
+    case MessageContentType::SetBackground: {
+      const auto *m = static_cast<const MessageSetBackground *>(content);
+      return td_api::make_object<td_api::messageChatSetBackground>(m->old_message_id.get(),
+                                                                   m->background_info.get_chat_background_object(td));
     }
     default:
       UNREACHABLE();
@@ -6041,6 +6203,9 @@ vector<FileId> get_message_content_file_ids(const MessageContent *content, const
       return photo_get_file_ids(static_cast<const MessageSuggestProfilePhoto *>(content)->photo);
     case MessageContentType::WebViewWriteAccessAllowed:
       return static_cast<const MessageWebViewWriteAccessAllowed *>(content)->web_app.get_file_ids(td);
+    case MessageContentType::SetBackground:
+      // background file references are repaired independently
+      return {};
     default:
       return {};
   }
@@ -6138,6 +6303,7 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
+    case MessageContentType::SetBackground:
       return string();
     default:
       UNREACHABLE();
@@ -6435,6 +6601,8 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
       break;
     }
     case MessageContentType::WebViewWriteAccessAllowed:
+      break;
+    case MessageContentType::SetBackground:
       break;
     default:
       UNREACHABLE();

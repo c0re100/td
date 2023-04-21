@@ -17,6 +17,7 @@
 #include "td/telegram/ConfigManager.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogAction.h"
+#include "td/telegram/DialogFilterManager.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/DialogInviteLink.h"
 #include "td/telegram/DialogParticipant.h"
@@ -513,8 +514,10 @@ Promise<> UpdatesManager::set_pts(int32 pts, const char *source) {
 
     result = add_pts(pts);
     if (last_get_difference_pts_ < get_pts() - FORCED_GET_DIFFERENCE_PTS_DIFF) {
+      if (last_get_difference_pts_ != 0) {
+        schedule_get_difference("rare PTS getDifference");
+      }
       last_get_difference_pts_ = get_pts();
-      schedule_get_difference("rare PTS getDifference");
     }
   } else if (pts < get_pts() && (pts > 1 || td_->option_manager_->get_option_integer("session_count") <= 1)) {
     LOG(ERROR) << "Receive wrong PTS = " << pts << " from " << source << ". Current PTS = " << get_pts();
@@ -801,6 +804,8 @@ bool UpdatesManager::is_acceptable_message(const telegram_api::Message *message_
         case telegram_api::messageActionTopicCreate::ID:
         case telegram_api::messageActionTopicEdit::ID:
         case telegram_api::messageActionSuggestProfilePhoto::ID:
+        case telegram_api::messageActionSetChatWallPaper::ID:
+        case telegram_api::messageActionSetSameChatWallPaper::ID:
           break;
         case telegram_api::messageActionChatCreate::ID: {
           auto chat_create = static_cast<const telegram_api::messageActionChatCreate *>(action);
@@ -2705,7 +2710,7 @@ void UpdatesManager::process_qts_update(tl_object_ptr<telegram_api::Update> &&up
       auto update = move_tl_object_as<telegram_api::updateChannelParticipant>(update_ptr);
       td_->contacts_manager_->on_update_channel_participant(
           ChannelId(update->channel_id_), UserId(update->actor_id_), update->date_,
-          DialogInviteLink(std::move(update->invite_), true, "updateChannelParticipant"),
+          DialogInviteLink(std::move(update->invite_), true, "updateChannelParticipant"), update->via_chatlist_,
           std::move(update->prev_participant_), std::move(update->new_participant_));
       add_qts(qts).set_value(Unit());
       break;
@@ -3656,18 +3661,15 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDialogUnreadMar
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDialogFilter> update, Promise<Unit> &&promise) {
-  td_->messages_manager_->on_update_dialog_filters();
-  promise.set_value(Unit());
+  td_->dialog_filter_manager_->on_update_dialog_filters(std::move(promise));
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDialogFilters> update, Promise<Unit> &&promise) {
-  td_->messages_manager_->on_update_dialog_filters();
-  promise.set_value(Unit());
+  td_->dialog_filter_manager_->on_update_dialog_filters(std::move(promise));
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDialogFilterOrder> update, Promise<Unit> &&promise) {
-  td_->messages_manager_->on_update_dialog_filters();
-  promise.set_value(Unit());
+  td_->dialog_filter_manager_->on_update_dialog_filters(std::move(promise));
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateDcOptions> update, Promise<Unit> &&promise) {

@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include "td/telegram/DialogFilterDialogInfo.h"
 #include "td/telegram/DialogFilterId.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/FolderId.h"
@@ -32,7 +33,7 @@ class DialogFilter {
                                                     bool with_id);
 
   static Result<unique_ptr<DialogFilter>> create_dialog_filter(Td *td, DialogFilterId dialog_filter_id,
-                                                               td_api::object_ptr<td_api::chatFilter> filter);
+                                                               td_api::object_ptr<td_api::chatFolder> filter);
 
   void set_dialog_is_pinned(InputDialogId input_dialog_id, bool is_pinned);
 
@@ -46,12 +47,20 @@ class DialogFilter {
 
   bool is_empty(bool for_server) const;
 
+  bool is_shareable() const {
+    return is_shareable_;
+  }
+
   const DialogFilterId &get_dialog_filter_id() const {
     return dialog_filter_id_;
   }
 
-  const vector<InputDialogId> &get_pinned_dialog_ids() const {
+  const vector<InputDialogId> &get_pinned_input_dialog_ids() const {
     return pinned_dialog_ids_;
+  }
+
+  void set_has_my_invite_links(bool has_my_invite_links) {
+    has_my_invites_ = has_my_invite_links;
   }
 
   bool is_dialog_pinned(DialogId dialog_id) const;
@@ -62,17 +71,21 @@ class DialogFilter {
 
   Status check_limits() const;
 
+  void update_from(const DialogFilter &old_filter);
+
   static string get_emoji_by_icon_name(const string &icon_name);
+
+  static string get_icon_name_by_emoji(const string &emoji);
 
   string get_icon_name() const;
 
-  static string get_default_icon_name(const td_api::chatFilter *filter);
+  static string get_default_icon_name(const td_api::chatFolder *filter);
 
   telegram_api::object_ptr<telegram_api::DialogFilter> get_input_dialog_filter() const;
 
-  td_api::object_ptr<td_api::chatFilter> get_chat_filter_object(const vector<DialogId> &unknown_dialog_ids) const;
+  td_api::object_ptr<td_api::chatFolder> get_chat_folder_object(const vector<DialogId> &unknown_dialog_ids) const;
 
-  td_api::object_ptr<td_api::chatFilterInfo> get_chat_filter_info_object() const;
+  td_api::object_ptr<td_api::chatFolderInfo> get_chat_folder_info_object() const;
 
   void for_each_dialog(std::function<void(const InputDialogId &)> callback) const;
 
@@ -83,12 +96,11 @@ class DialogFilter {
 
   void sort_input_dialog_ids(const Td *td, const char *source);
 
+  vector<DialogId> get_dialogs_for_invite_link(Td *td);
+
   vector<FolderId> get_folder_ids() const;
 
-  bool can_have_archived_dialogs() const;
-
-  bool need_dialog(const Td *td, DialogId dialog_id, bool has_unread_mentions, bool is_muted, bool has_unread_messages,
-                   FolderId folder_id) const;
+  bool need_dialog(const Td *td, const DialogFilterDialogInfo &dialog_info) const;
 
   static vector<DialogFilterId> get_dialog_filter_ids(const vector<unique_ptr<DialogFilter>> &dialog_filters,
                                                       int32 main_dialog_list_position);
@@ -99,8 +111,6 @@ class DialogFilter {
   static bool are_similar(const DialogFilter &lhs, const DialogFilter &rhs);
 
   static bool are_equivalent(const DialogFilter &lhs, const DialogFilter &rhs);
-
-  static bool are_flags_equal(const DialogFilter &lhs, const DialogFilter &rhs);
 
   template <class StorerT>
   void store(StorerT &storer) const;
@@ -123,9 +133,13 @@ class DialogFilter {
   bool include_bots_ = false;
   bool include_groups_ = false;
   bool include_channels_ = false;
+  bool is_shareable_ = false;
+  bool has_my_invites_ = false;
 
   static FlatHashMap<string, string> emoji_to_icon_name_;
   static FlatHashMap<string, string> icon_name_to_emoji_;
+
+  static bool are_flags_equal(const DialogFilter &lhs, const DialogFilter &rhs);
 
   static void init_icon_names();
 
@@ -138,6 +152,7 @@ class DialogFilter {
 
 inline bool operator==(const DialogFilter &lhs, const DialogFilter &rhs) {
   return lhs.dialog_filter_id_ == rhs.dialog_filter_id_ && lhs.title_ == rhs.title_ && lhs.emoji_ == rhs.emoji_ &&
+         lhs.is_shareable_ == rhs.is_shareable_ && lhs.has_my_invites_ == rhs.has_my_invites_ &&
          lhs.pinned_dialog_ids_ == rhs.pinned_dialog_ids_ && lhs.included_dialog_ids_ == rhs.included_dialog_ids_ &&
          lhs.excluded_dialog_ids_ == rhs.excluded_dialog_ids_ && DialogFilter::are_flags_equal(lhs, rhs);
 }

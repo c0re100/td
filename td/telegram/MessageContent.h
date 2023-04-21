@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include "td/telegram/BackgroundInfo.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/EncryptedFile.h"
 #include "td/telegram/files/FileId.h"
@@ -135,11 +136,15 @@ StickerType get_message_content_sticker_type(const Td *td, const MessageContent 
 
 MessageId get_message_content_pinned_message_id(const MessageContent *content);
 
+BackgroundInfo get_message_content_background_info(const MessageContent *content);
+
 string get_message_content_theme_name(const MessageContent *content);
 
 FullMessageId get_message_content_replied_message_id(DialogId dialog_id, const MessageContent *content);
 
 std::pair<InputGroupCallId, bool> get_message_content_group_call_info(const MessageContent *content);
+
+UserId get_message_content_contact_user_id(const MessageContent *content);
 
 vector<UserId> get_message_content_added_user_ids(const MessageContent *content);
 

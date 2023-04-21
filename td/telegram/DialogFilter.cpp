@@ -26,48 +26,84 @@
 namespace td {
 
 int32 DialogFilter::get_max_filter_dialogs() {
-  return narrow_cast<int32>(G()->get_option_integer("chat_filter_chosen_chat_count_max", 100));
+  return narrow_cast<int32>(G()->get_option_integer("chat_folder_chosen_chat_count_max", 100));
 }
 
 unique_ptr<DialogFilter> DialogFilter::get_dialog_filter(
     telegram_api::object_ptr<telegram_api::DialogFilter> filter_ptr, bool with_id) {
-  if (filter_ptr->get_id() != telegram_api::dialogFilter::ID) {
-    LOG(ERROR) << "Ignore " << to_string(filter_ptr);
-    return nullptr;
-  }
-  auto filter = telegram_api::move_object_as<telegram_api::dialogFilter>(filter_ptr);
-  DialogFilterId dialog_filter_id(filter->id_);
-  if (with_id) {
-    if (!dialog_filter_id.is_valid()) {
-      LOG(ERROR) << "Receive invalid " << to_string(filter);
-      return nullptr;
-    }
-  } else {
-    dialog_filter_id = DialogFilterId();
-  }
-  auto dialog_filter = make_unique<DialogFilter>();
-  dialog_filter->dialog_filter_id_ = dialog_filter_id;
-  dialog_filter->title_ = std::move(filter->title_);
-  dialog_filter->emoji_ = std::move(filter->emoticon_);
   FlatHashSet<DialogId, DialogIdHash> added_dialog_ids;
-  dialog_filter->pinned_dialog_ids_ = InputDialogId::get_input_dialog_ids(filter->pinned_peers_, &added_dialog_ids);
-  dialog_filter->included_dialog_ids_ = InputDialogId::get_input_dialog_ids(filter->include_peers_, &added_dialog_ids);
-  dialog_filter->excluded_dialog_ids_ = InputDialogId::get_input_dialog_ids(filter->exclude_peers_, &added_dialog_ids);
-  auto flags = filter->flags_;
-  dialog_filter->exclude_muted_ = (flags & telegram_api::dialogFilter::EXCLUDE_MUTED_MASK) != 0;
-  dialog_filter->exclude_read_ = (flags & telegram_api::dialogFilter::EXCLUDE_READ_MASK) != 0;
-  dialog_filter->exclude_archived_ = (flags & telegram_api::dialogFilter::EXCLUDE_ARCHIVED_MASK) != 0;
-  dialog_filter->include_contacts_ = (flags & telegram_api::dialogFilter::CONTACTS_MASK) != 0;
-  dialog_filter->include_non_contacts_ = (flags & telegram_api::dialogFilter::NON_CONTACTS_MASK) != 0;
-  dialog_filter->include_bots_ = (flags & telegram_api::dialogFilter::BOTS_MASK) != 0;
-  dialog_filter->include_groups_ = (flags & telegram_api::dialogFilter::GROUPS_MASK) != 0;
-  dialog_filter->include_channels_ = (flags & telegram_api::dialogFilter::BROADCASTS_MASK) != 0;
-  return dialog_filter;
+  switch (filter_ptr->get_id()) {
+    case telegram_api::dialogFilter::ID: {
+      auto filter = telegram_api::move_object_as<telegram_api::dialogFilter>(filter_ptr);
+      DialogFilterId dialog_filter_id(filter->id_);
+      if (with_id) {
+        if (!dialog_filter_id.is_valid()) {
+          LOG(ERROR) << "Receive invalid " << to_string(filter);
+          return nullptr;
+        }
+      } else {
+        dialog_filter_id = DialogFilterId();
+      }
+      auto dialog_filter = make_unique<DialogFilter>();
+      dialog_filter->dialog_filter_id_ = dialog_filter_id;
+      dialog_filter->title_ = std::move(filter->title_);
+      dialog_filter->emoji_ = std::move(filter->emoticon_);
+      dialog_filter->pinned_dialog_ids_ = InputDialogId::get_input_dialog_ids(filter->pinned_peers_, &added_dialog_ids);
+      dialog_filter->included_dialog_ids_ =
+          InputDialogId::get_input_dialog_ids(filter->include_peers_, &added_dialog_ids);
+      dialog_filter->excluded_dialog_ids_ =
+          InputDialogId::get_input_dialog_ids(filter->exclude_peers_, &added_dialog_ids);
+      auto flags = filter->flags_;
+      dialog_filter->exclude_muted_ = (flags & telegram_api::dialogFilter::EXCLUDE_MUTED_MASK) != 0;
+      dialog_filter->exclude_read_ = (flags & telegram_api::dialogFilter::EXCLUDE_READ_MASK) != 0;
+      dialog_filter->exclude_archived_ = (flags & telegram_api::dialogFilter::EXCLUDE_ARCHIVED_MASK) != 0;
+      dialog_filter->include_contacts_ = (flags & telegram_api::dialogFilter::CONTACTS_MASK) != 0;
+      dialog_filter->include_non_contacts_ = (flags & telegram_api::dialogFilter::NON_CONTACTS_MASK) != 0;
+      dialog_filter->include_bots_ = (flags & telegram_api::dialogFilter::BOTS_MASK) != 0;
+      dialog_filter->include_groups_ = (flags & telegram_api::dialogFilter::GROUPS_MASK) != 0;
+      dialog_filter->include_channels_ = (flags & telegram_api::dialogFilter::BROADCASTS_MASK) != 0;
+      return dialog_filter;
+    }
+    case telegram_api::dialogFilterChatlist::ID: {
+      auto filter = telegram_api::move_object_as<telegram_api::dialogFilterChatlist>(filter_ptr);
+      DialogFilterId dialog_filter_id(filter->id_);
+      if (with_id) {
+        if (!dialog_filter_id.is_valid()) {
+          LOG(ERROR) << "Receive invalid " << to_string(filter);
+          return nullptr;
+        }
+      } else {
+        dialog_filter_id = DialogFilterId();
+      }
+      auto dialog_filter = make_unique<DialogFilter>();
+      dialog_filter->dialog_filter_id_ = dialog_filter_id;
+      dialog_filter->title_ = std::move(filter->title_);
+      dialog_filter->emoji_ = std::move(filter->emoticon_);
+      dialog_filter->pinned_dialog_ids_ = InputDialogId::get_input_dialog_ids(filter->pinned_peers_, &added_dialog_ids);
+      dialog_filter->included_dialog_ids_ =
+          InputDialogId::get_input_dialog_ids(filter->include_peers_, &added_dialog_ids);
+      dialog_filter->is_shareable_ = true;
+      dialog_filter->has_my_invites_ = filter->has_my_invites_;
+      return dialog_filter;
+    }
+    default:
+      LOG(ERROR) << "Ignore " << to_string(filter_ptr);
+      return nullptr;
+  }
 }
 
 Result<unique_ptr<DialogFilter>> DialogFilter::create_dialog_filter(Td *td, DialogFilterId dialog_filter_id,
-                                                                    td_api::object_ptr<td_api::chatFilter> filter) {
-  CHECK(filter != nullptr);
+                                                                    td_api::object_ptr<td_api::chatFolder> filter) {
+  if (filter == nullptr) {
+    return Status::Error(400, "Chat folder must be non-empty");
+  }
+  string icon_name;
+  if (filter->icon_ != nullptr) {
+    icon_name = std::move(filter->icon_->name_);
+  }
+  if (!clean_input_string(filter->title_) || !clean_input_string(icon_name)) {
+    return Status::Error(400, "Strings must be encoded in UTF-8");
+  }
 
   auto dialog_filter = make_unique<DialogFilter>();
   dialog_filter->dialog_filter_id_ = dialog_filter_id;
@@ -75,7 +111,7 @@ Result<unique_ptr<DialogFilter>> DialogFilter::create_dialog_filter(Td *td, Dial
   FlatHashSet<int64> added_dialog_ids;
   auto add_chats = [td, &added_dialog_ids](vector<InputDialogId> &input_dialog_ids, const vector<int64> &chat_ids) {
     for (const auto &chat_id : chat_ids) {
-      if (!added_dialog_ids.insert(chat_id).second) {
+      if (chat_id == 0 || !added_dialog_ids.insert(chat_id).second) {
         // do not allow duplicate chat_ids
         continue;
       }
@@ -92,8 +128,8 @@ Result<unique_ptr<DialogFilter>> DialogFilter::create_dialog_filter(Td *td, Dial
   if (dialog_filter->title_.empty()) {
     return Status::Error(400, "Title must be non-empty");
   }
-  dialog_filter->emoji_ = get_emoji_by_icon_name(filter->icon_name_);
-  if (dialog_filter->emoji_.empty() && !filter->icon_name_.empty()) {
+  dialog_filter->emoji_ = get_emoji_by_icon_name(icon_name);
+  if (dialog_filter->emoji_.empty() && !icon_name.empty()) {
     return Status::Error(400, "Invalid icon name specified");
   }
   dialog_filter->exclude_muted_ = filter->exclude_muted_;
@@ -104,9 +140,23 @@ Result<unique_ptr<DialogFilter>> DialogFilter::create_dialog_filter(Td *td, Dial
   dialog_filter->include_bots_ = filter->include_bots_;
   dialog_filter->include_groups_ = filter->include_groups_;
   dialog_filter->include_channels_ = filter->include_channels_;
+  dialog_filter->is_shareable_ = filter->is_shareable_;
+  dialog_filter->has_my_invites_ = false;
 
   TRY_STATUS(dialog_filter->check_limits());
   dialog_filter->sort_input_dialog_ids(td, "create_dialog_filter");
+
+  Status status;
+  dialog_filter->for_each_dialog(
+      [messages_manager = td->messages_manager_.get(), &status](const InputDialogId &input_dialog_id) {
+        if (status.is_error()) {
+          return;
+        }
+        status = messages_manager->can_add_dialog_to_filter(input_dialog_id.get_dialog_id());
+      });
+  if (status.is_error()) {
+    return std::move(status);
+  }
 
   return std::move(dialog_filter);
 }
@@ -127,7 +177,9 @@ void DialogFilter::set_dialog_is_pinned(InputDialogId input_dialog_id, bool is_p
 void DialogFilter::set_pinned_dialog_ids(vector<InputDialogId> &&input_dialog_ids) {
   FlatHashSet<DialogId, DialogIdHash> new_pinned_dialog_ids;
   for (auto input_dialog_id : input_dialog_ids) {
-    new_pinned_dialog_ids.insert(input_dialog_id.get_dialog_id());
+    auto dialog_id = input_dialog_id.get_dialog_id();
+    CHECK(dialog_id.is_valid());
+    new_pinned_dialog_ids.insert(dialog_id);
   }
 
   auto old_pinned_dialog_ids = std::move(pinned_dialog_ids_);
@@ -234,6 +286,17 @@ Status DialogFilter::check_limits() const {
   if (is_empty(false)) {
     return Status::Error(400, "Folder must contain at least 1 chat");
   }
+  if (is_shareable_) {
+    if (!excluded_dialog_ids_.empty()) {
+      return Status::Error(400, "Shareable folders can't have excluded chats");
+    }
+    if (include_contacts_ || include_non_contacts_ || include_bots_ || include_groups_ || include_channels_ ||
+        exclude_archived_ || exclude_read_ || exclude_muted_) {
+      return Status::Error(400, "Shareable folders can't have chat filters");
+    }
+  } else if (has_my_invites_) {
+    LOG(ERROR) << "Have shareable folder with invite links";
+  }
 
   if (include_contacts_ && include_non_contacts_ && include_bots_ && include_groups_ && include_channels_ &&
       exclude_archived_ && !exclude_read_ && !exclude_muted_) {
@@ -241,6 +304,10 @@ Status DialogFilter::check_limits() const {
   }
 
   return Status::OK();
+}
+
+void DialogFilter::update_from(const DialogFilter &old_filter) {
+  has_my_invites_ = old_filter.has_my_invites_;
 }
 
 string DialogFilter::get_emoji_by_icon_name(const string &icon_name) {
@@ -252,13 +319,17 @@ string DialogFilter::get_emoji_by_icon_name(const string &icon_name) {
   return string();
 }
 
-string DialogFilter::get_icon_name() const {
+string DialogFilter::get_icon_name_by_emoji(const string &emoji) {
   init_icon_names();
-  auto it = emoji_to_icon_name_.find(emoji_);
+  auto it = emoji_to_icon_name_.find(emoji);
   if (it != emoji_to_icon_name_.end()) {
     return it->second;
   }
   return string();
+}
+
+string DialogFilter::get_icon_name() const {
+  return get_icon_name_by_emoji(emoji_);
 }
 
 string DialogFilter::get_chosen_or_default_icon_name() const {
@@ -299,9 +370,10 @@ string DialogFilter::get_chosen_or_default_icon_name() const {
   return "Custom";
 }
 
-string DialogFilter::get_default_icon_name(const td_api::chatFilter *filter) {
-  if (!filter->icon_name_.empty() && !get_emoji_by_icon_name(filter->icon_name_).empty()) {
-    return filter->icon_name_;
+string DialogFilter::get_default_icon_name(const td_api::chatFolder *filter) {
+  if (filter->icon_ != nullptr && !filter->icon_->name_.empty() &&
+      !get_emoji_by_icon_name(filter->icon_->name_).empty()) {
+    return filter->icon_->name_;
   }
 
   if (!filter->pinned_chat_ids_.empty() || !filter->included_chat_ids_.empty() || !filter->excluded_chat_ids_.empty()) {
@@ -337,6 +409,18 @@ string DialogFilter::get_default_icon_name(const td_api::chatFilter *filter) {
 }
 
 telegram_api::object_ptr<telegram_api::DialogFilter> DialogFilter::get_input_dialog_filter() const {
+  if (is_shareable_) {
+    int32 flags = 0;
+    if (!emoji_.empty()) {
+      flags |= telegram_api::dialogFilterChatlist::EMOTICON_MASK;
+    }
+    if (has_my_invites_) {
+      flags |= telegram_api::dialogFilterChatlist::HAS_MY_INVITES_MASK;
+    }
+    return telegram_api::make_object<telegram_api::dialogFilterChatlist>(
+        flags, false /*ignored*/, dialog_filter_id_.get(), title_, emoji_,
+        InputDialogId::get_input_peers(pinned_dialog_ids_), InputDialogId::get_input_peers(included_dialog_ids_));
+  }
   int32 flags = 0;
   if (!emoji_.empty()) {
     flags |= telegram_api::dialogFilter::EMOTICON_MASK;
@@ -373,7 +457,7 @@ telegram_api::object_ptr<telegram_api::DialogFilter> DialogFilter::get_input_dia
       InputDialogId::get_input_peers(excluded_dialog_ids_));
 }
 
-td_api::object_ptr<td_api::chatFilter> DialogFilter::get_chat_filter_object(
+td_api::object_ptr<td_api::chatFolder> DialogFilter::get_chat_folder_object(
     const vector<DialogId> &unknown_dialog_ids) const {
   auto get_chat_ids = [unknown_dialog_ids](const vector<InputDialogId> &input_dialog_ids) {
     vector<int64> chat_ids;
@@ -387,15 +471,21 @@ td_api::object_ptr<td_api::chatFilter> DialogFilter::get_chat_filter_object(
     return chat_ids;
   };
 
-  return td_api::make_object<td_api::chatFilter>(
-      title_, get_icon_name(), get_chat_ids(pinned_dialog_ids_), get_chat_ids(included_dialog_ids_),
+  td_api::object_ptr<td_api::chatFolderIcon> icon;
+  auto icon_name = get_icon_name();
+  if (!icon_name.empty()) {
+    icon = td_api::make_object<td_api::chatFolderIcon>(icon_name);
+  }
+  return td_api::make_object<td_api::chatFolder>(
+      title_, std::move(icon), is_shareable_, get_chat_ids(pinned_dialog_ids_), get_chat_ids(included_dialog_ids_),
       get_chat_ids(excluded_dialog_ids_), exclude_muted_, exclude_read_, exclude_archived_, include_contacts_,
       include_non_contacts_, include_bots_, include_groups_, include_channels_);
 }
 
-td_api::object_ptr<td_api::chatFilterInfo> DialogFilter::get_chat_filter_info_object() const {
-  return td_api::make_object<td_api::chatFilterInfo>(dialog_filter_id_.get(), title_,
-                                                     get_chosen_or_default_icon_name());
+td_api::object_ptr<td_api::chatFolderInfo> DialogFilter::get_chat_folder_info_object() const {
+  return td_api::make_object<td_api::chatFolderInfo>(
+      dialog_filter_id_.get(), title_, td_api::make_object<td_api::chatFolderIcon>(get_chosen_or_default_icon_name()),
+      has_my_invites_);
 }
 
 void DialogFilter::for_each_dialog(std::function<void(const InputDialogId &)> callback) const {
@@ -541,6 +631,22 @@ unique_ptr<DialogFilter> DialogFilter::merge_dialog_filter_changes(const DialogF
   update_value(new_filter->include_groups_, old_server_filter->include_groups_, new_server_filter->include_groups_);
   update_value(new_filter->include_channels_, old_server_filter->include_channels_,
                new_server_filter->include_channels_);
+  update_value(new_filter->is_shareable_, old_server_filter->is_shareable_, new_server_filter->is_shareable_);
+  update_value(new_filter->has_my_invites_, old_server_filter->has_my_invites_, new_server_filter->has_my_invites_);
+
+  if (new_filter->is_shareable_) {
+    new_filter->exclude_muted_ = false;
+    new_filter->exclude_read_ = false;
+    new_filter->exclude_archived_ = false;
+    new_filter->include_contacts_ = false;
+    new_filter->include_non_contacts_ = false;
+    new_filter->include_bots_ = false;
+    new_filter->include_groups_ = false;
+    new_filter->include_channels_ = false;
+    new_filter->excluded_dialog_ids_.clear();
+  } else {
+    new_filter->has_my_invites_ = false;
+  }
 
   if (new_filter->check_limits().is_error()) {
     LOG(WARNING) << "Failed to merge local and remote changes in " << new_filter->dialog_filter_id_
@@ -550,6 +656,12 @@ unique_ptr<DialogFilter> DialogFilter::merge_dialog_filter_changes(const DialogF
 
   update_value(new_filter->title_, old_server_filter->title_, new_server_filter->title_);
   update_value(new_filter->emoji_, old_server_filter->emoji_, new_server_filter->emoji_);
+
+  LOG(INFO) << "Old  local filter: " << *old_filter;
+  LOG(INFO) << "Old server filter: " << *old_server_filter;
+  LOG(INFO) << "New server filter: " << *new_server_filter;
+  LOG(INFO) << "New  local filter: " << *new_filter;
+
   return new_filter;
 }
 
@@ -585,19 +697,53 @@ void DialogFilter::sort_input_dialog_ids(const Td *td, const char *source) {
   });
 }
 
+vector<DialogId> DialogFilter::get_dialogs_for_invite_link(Td *td) {
+  if (!excluded_dialog_ids_.empty() || exclude_muted_ || exclude_read_ || exclude_archived_ || include_contacts_ ||
+      include_non_contacts_ || include_bots_ || include_groups_ || include_channels_) {
+    return {};
+  }
+  vector<DialogId> result;
+  for_each_dialog([&](const InputDialogId &input_dialog_id) {
+    auto dialog_id = input_dialog_id.get_dialog_id();
+    if (!td->messages_manager_->have_dialog_force(dialog_id, "get_dialogs_for_invite_link")) {
+      return;
+    }
+    bool is_good = false;
+    switch (dialog_id.get_type()) {
+      case DialogType::Chat: {
+        auto chat_id = dialog_id.get_chat_id();
+        // the user can manage invite links in the chat
+        is_good = td->contacts_manager_->get_chat_status(chat_id).can_manage_invite_links();
+        break;
+      }
+      case DialogType::Channel: {
+        auto channel_id = dialog_id.get_channel_id();
+        // the user can manage invite links in the chat
+        // or the chat is a public chat, which can be joined without administrator approval
+        is_good = td->contacts_manager_->get_channel_status(channel_id).can_manage_invite_links() ||
+                  (td->contacts_manager_->is_channel_public(channel_id) &&
+                   !td->contacts_manager_->get_channel_join_request(channel_id));
+        break;
+      }
+      default:
+        break;
+    }
+    if (is_good) {
+      result.push_back(dialog_id);
+    }
+  });
+  return result;
+}
+
 vector<FolderId> DialogFilter::get_folder_ids() const {
-  if (!can_have_archived_dialogs()) {
+  if (exclude_archived_ && pinned_dialog_ids_.empty() && included_dialog_ids_.empty()) {
     return {FolderId::main()};
   }
   return {FolderId::main(), FolderId::archive()};
 }
 
-bool DialogFilter::can_have_archived_dialogs() const {
-  return !(exclude_archived_ && pinned_dialog_ids_.empty() && included_dialog_ids_.empty());
-}
-
-bool DialogFilter::need_dialog(const Td *td, DialogId dialog_id, bool has_unread_mentions, bool is_muted,
-                               bool has_unread_messages, FolderId folder_id) const {
+bool DialogFilter::need_dialog(const Td *td, const DialogFilterDialogInfo &dialog_info) const {
+  auto dialog_id = dialog_info.dialog_id_;
   if (is_dialog_included(dialog_id)) {
     return true;
   }
@@ -616,15 +762,15 @@ bool DialogFilter::need_dialog(const Td *td, DialogId dialog_id, bool has_unread
       }
     }
   }
-  if (!has_unread_mentions) {
-    if (exclude_muted_ && is_muted) {
+  if (!dialog_info.has_unread_mentions_) {
+    if (exclude_muted_ && dialog_info.is_muted_) {
       return false;
     }
-    if (exclude_read_ && !has_unread_messages) {
+    if (exclude_read_ && !dialog_info.has_unread_messages_) {
       return false;
     }
   }
-  if (exclude_archived_ && folder_id == FolderId::archive()) {
+  if (exclude_archived_ && dialog_info.folder_id_ == FolderId::archive()) {
     return false;
   }
   switch (dialog_id.get_type()) {
@@ -674,7 +820,7 @@ bool DialogFilter::set_dialog_filters_order(vector<unique_ptr<DialogFilter>> &di
   if (old_dialog_filter_ids == dialog_filter_ids) {
     return false;
   }
-  LOG(INFO) << "Reorder chat filters from " << old_dialog_filter_ids << " to " << dialog_filter_ids;
+  LOG(INFO) << "Reorder chat folders from " << old_dialog_filter_ids << " to " << dialog_filter_ids;
 
   if (dialog_filter_ids.size() != old_dialog_filter_ids.size()) {
     for (auto dialog_filter_id : old_dialog_filter_ids) {
@@ -727,7 +873,8 @@ bool DialogFilter::are_similar(const DialogFilter &lhs, const DialogFilter &rhs)
 }
 
 bool DialogFilter::are_equivalent(const DialogFilter &lhs, const DialogFilter &rhs) {
-  return lhs.title_ == rhs.title_ && lhs.emoji_ == rhs.emoji_ &&
+  return lhs.title_ == rhs.title_ && lhs.emoji_ == rhs.emoji_ && lhs.is_shareable_ == rhs.is_shareable_ &&
+         lhs.has_my_invites_ == rhs.has_my_invites_ &&
          InputDialogId::are_equivalent(lhs.pinned_dialog_ids_, rhs.pinned_dialog_ids_) &&
          InputDialogId::are_equivalent(lhs.included_dialog_ids_, rhs.included_dialog_ids_) &&
          InputDialogId::are_equivalent(lhs.excluded_dialog_ids_, rhs.excluded_dialog_ids_) && are_flags_equal(lhs, rhs);

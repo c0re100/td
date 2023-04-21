@@ -218,6 +218,14 @@ static auto change_phone_number() {
   return td::td_api::make_object<td::td_api::internalLinkTypeChangePhoneNumber>();
 }
 
+static auto chat_folder_invite(const td::string &slug) {
+  return td::td_api::make_object<td::td_api::internalLinkTypeChatFolderInvite>("tg:addlist?slug=" + slug);
+}
+
+static auto chat_folder_settings() {
+  return td::td_api::make_object<td::td_api::internalLinkTypeChatFolderSettings>();
+}
+
 static auto chat_invite(const td::string &hash) {
   return td::td_api::make_object<td::td_api::internalLinkTypeChatInvite>("tg:join?invite=" + hash);
 }
@@ -228,10 +236,6 @@ static auto default_message_auto_delete_timer_settings() {
 
 static auto edit_profile_settings() {
   return td::td_api::make_object<td::td_api::internalLinkTypeEditProfileSettings>();
-}
-
-static auto filter_settings() {
-  return td::td_api::make_object<td::td_api::internalLinkTypeFilterSettings>();
 }
 
 static auto game(const td::string &bot_username, const td::string &game_short_name) {
@@ -703,6 +707,24 @@ TEST(Link, parse_internal_link_part2) {
   parse_internal_link("t.me/+123456?attach=bot&startattach=1",
                       attachment_menu_bot(nullptr, user_phone_number("123456"), "bot", "1"));
 
+  parse_internal_link("t.me/addlist?invite=abcdef", nullptr);
+  parse_internal_link("t.me/addlist", nullptr);
+  parse_internal_link("t.me/addlist/", nullptr);
+  parse_internal_link("t.me/addlist//abcdef", nullptr);
+  parse_internal_link("t.me/addlist?/abcdef", nullptr);
+  parse_internal_link("t.me/addlist/?abcdef", nullptr);
+  parse_internal_link("t.me/addlist/#abcdef", nullptr);
+  parse_internal_link("t.me/addlist/abacaba", chat_folder_invite("abacaba"));
+  parse_internal_link("t.me/addlist/aba%20aba", nullptr);
+  parse_internal_link("t.me/addlist/aba%30aba", chat_folder_invite("aba0aba"));
+  parse_internal_link("t.me/addlist/123456a", chat_folder_invite("123456a"));
+  parse_internal_link("t.me/addlist/12345678901", chat_folder_invite("12345678901"));
+  parse_internal_link("t.me/addlist/123456", chat_folder_invite("123456"));
+  parse_internal_link("t.me/addlist/123456/123123/12/31/a/s//21w/?asdas#test", chat_folder_invite("123456"));
+  parse_internal_link("t.me/addlist/12345678901a", chat_folder_invite("12345678901a"));
+  parse_internal_link("t.me/addlist/123456a", chat_folder_invite("123456a"));
+  parse_internal_link("t.me/addlist/123456a/123123/12/31/a/s//21w/?asdas#test", chat_folder_invite("123456a"));
+
   parse_internal_link("t.me/contact/startattach/adasd", user_token("startattach"));
   parse_internal_link("t.me/contact/startattach", user_token("startattach"));
   parse_internal_link("t.me/contact/startattach=1", user_token("startattach=1"));
@@ -713,6 +735,11 @@ TEST(Link, parse_internal_link_part2) {
   parse_internal_link("tg:join?invite=abc%20def", unknown_deep_link("tg://join?invite=abc%20def"));
   parse_internal_link("tg://join?invite=abc%30def", chat_invite("abc0def"));
   parse_internal_link("tg:join?invite=", unknown_deep_link("tg://join?invite="));
+
+  parse_internal_link("tg:addlist?slug=abcdef", chat_folder_invite("abcdef"));
+  parse_internal_link("tg:addlist?slug=abc%20def", unknown_deep_link("tg://addlist?slug=abc%20def"));
+  parse_internal_link("tg://addlist?slug=abc%30def", chat_folder_invite("abc0def"));
+  parse_internal_link("tg:addlist?slug=", unknown_deep_link("tg://addlist?slug="));
 
   parse_internal_link("t.me/addstickers?set=abcdef", nullptr);
   parse_internal_link("t.me/addstickers", nullptr);
@@ -1118,7 +1145,7 @@ TEST(Link, parse_internal_link_part4) {
   parse_internal_link("tg://settings/devices", active_sessions());
   parse_internal_link("tg://settings/change_number", change_phone_number());
   parse_internal_link("tg://settings/edit_profile", edit_profile_settings());
-  parse_internal_link("tg://settings/folders", filter_settings());
+  parse_internal_link("tg://settings/folders", chat_folder_settings());
   parse_internal_link("tg://settings/filters", settings());
   parse_internal_link("tg://settings/language", language_settings());
   parse_internal_link("tg://settings/privacy", privacy_and_security_settings());
@@ -1136,6 +1163,7 @@ TEST(Link, parse_internal_link_part4) {
   parse_internal_link("0aaa.t.me/12345?single", nullptr);
   parse_internal_link("_aaa.t.me/12345?single", nullptr);
   parse_internal_link("addemoji.t.me", nullptr);
+  parse_internal_link("addlist.t.me", nullptr);
   parse_internal_link("addstickers.t.me", nullptr);
   parse_internal_link("addtheme.t.me", nullptr);
   parse_internal_link("auth.t.me", nullptr);

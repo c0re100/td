@@ -43,12 +43,14 @@ class AudiosManager;
 class AuthManager;
 class AutosaveManager;
 class BackgroundManager;
+class BotInfoManager;
 class CallManager;
 class CallbackQueriesManager;
 class ConfigManager;
 class ContactsManager;
 class CountryInfoManager;
 class DeviceTokenManager;
+class DialogFilterManager;
 class DocumentsManager;
 class DownloadManager;
 class FileManager;
@@ -154,10 +156,14 @@ class Td final : public Actor {
   ActorOwn<AutosaveManager> autosave_manager_actor_;
   unique_ptr<BackgroundManager> background_manager_;
   ActorOwn<BackgroundManager> background_manager_actor_;
+  unique_ptr<BotInfoManager> bot_info_manager_;
+  ActorOwn<BotInfoManager> bot_info_manager_actor_;
   unique_ptr<ContactsManager> contacts_manager_;
   ActorOwn<ContactsManager> contacts_manager_actor_;
   unique_ptr<CountryInfoManager> country_info_manager_;
   ActorOwn<CountryInfoManager> country_info_manager_actor_;
+  unique_ptr<DialogFilterManager> dialog_filter_manager_;
+  ActorOwn<DialogFilterManager> dialog_filter_manager_actor_;
   unique_ptr<DownloadManager> download_manager_;
   ActorOwn<DownloadManager> download_manager_actor_;
   unique_ptr<FileManager> file_manager_;
@@ -910,17 +916,37 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::addChatToList &request);
 
-  void on_request(uint64 id, const td_api::getChatFilter &request);
+  void on_request(uint64 id, const td_api::getChatFolder &request);
 
-  void on_request(uint64 id, const td_api::getRecommendedChatFilters &request);
+  void on_request(uint64 id, const td_api::getRecommendedChatFolders &request);
 
-  void on_request(uint64 id, td_api::createChatFilter &request);
+  void on_request(uint64 id, td_api::createChatFolder &request);
 
-  void on_request(uint64 id, td_api::editChatFilter &request);
+  void on_request(uint64 id, td_api::editChatFolder &request);
 
-  void on_request(uint64 id, const td_api::deleteChatFilter &request);
+  void on_request(uint64 id, const td_api::deleteChatFolder &request);
 
-  void on_request(uint64 id, const td_api::reorderChatFilters &request);
+  void on_request(uint64 id, const td_api::getChatFolderChatsToLeave &request);
+
+  void on_request(uint64 id, const td_api::reorderChatFolders &request);
+
+  void on_request(uint64 id, const td_api::getChatsForChatFolderInviteLink &request);
+
+  void on_request(uint64 id, td_api::createChatFolderInviteLink &request);
+
+  void on_request(uint64 id, td_api::getChatFolderInviteLinks &request);
+
+  void on_request(uint64 id, td_api::editChatFolderInviteLink &request);
+
+  void on_request(uint64 id, td_api::deleteChatFolderInviteLink &request);
+
+  void on_request(uint64 id, td_api::checkChatFolderInviteLink &request);
+
+  void on_request(uint64 id, td_api::addChatFolderByInviteLink &request);
+
+  void on_request(uint64 id, const td_api::getChatFolderNewChats &request);
+
+  void on_request(uint64 id, const td_api::processChatFolderNewChats &request);
 
   void on_request(uint64 id, td_api::setChatTitle &request);
 
@@ -929,6 +955,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::setChatMessageAutoDeleteTime &request);
 
   void on_request(uint64 id, const td_api::setChatPermissions &request);
+
+  void on_request(uint64 id, td_api::setChatBackground &request);
 
   void on_request(uint64 id, td_api::setChatTheme &request);
 
@@ -947,6 +975,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::toggleChatDefaultDisableNotification &request);
 
   void on_request(uint64 id, const td_api::setPinnedChats &request);
+
+  void on_request(uint64 id, const td_api::readChatList &request);
 
   void on_request(uint64 id, const td_api::getAttachmentMenuBot &request);
 
@@ -1131,6 +1161,16 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::setDefaultGroupAdministratorRights &request);
 
   void on_request(uint64 id, const td_api::setDefaultChannelAdministratorRights &request);
+
+  void on_request(uint64 id, td_api::setBotName &request);
+
+  void on_request(uint64 id, const td_api::getBotName &request);
+
+  void on_request(uint64 id, td_api::setBotProfilePhoto &request);
+
+  void on_request(uint64 id, td_api::toggleBotUsernameIsActive &request);
+
+  void on_request(uint64 id, td_api::reorderActiveBotUsernames &request);
 
   void on_request(uint64 id, td_api::setBotInfoDescription &request);
 
@@ -1534,7 +1574,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getPushReceiverId &request);
 
-  void on_request(uint64 id, const td_api::getChatFilterDefaultIconName &request);
+  void on_request(uint64 id, const td_api::getChatFolderDefaultIconName &request);
 
   void on_request(uint64 id, const td_api::getJsonValue &request);
 
@@ -1588,7 +1628,7 @@ class Td final : public Actor {
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getLanguagePackString &request);
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::getPhoneNumberInfoSync &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getPushReceiverId &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getChatFilterDefaultIconName &request);
+  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getChatFolderDefaultIconName &request);
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::getJsonValue &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getJsonString &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getThemeParametersJsonString &request);

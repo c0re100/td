@@ -1551,6 +1551,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   vector<string> fragment_prefixes;
   bool premium_gift_attach_menu_icon = false;
   bool premium_gift_text_field_icon = false;
+  int32 dialog_filter_update_period = 300;
   if (config->get_id() == telegram_api::jsonObject::ID) {
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
@@ -1943,6 +1944,10 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         premium_gift_text_field_icon = get_json_value_bool(std::move(key_value->value_), key);
         continue;
       }
+      if (key == "chatlist_update_period") {
+        dialog_filter_update_period = get_json_value_int(std::move(key_value->value_), key);
+        continue;
+      }
 
       new_values.push_back(std::move(key_value));
     }
@@ -2034,11 +2039,14 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   if (telegram_antispam_group_size_min >= 0) {
     options.set_option_integer("aggressive_anti_spam_supergroup_member_count_min", telegram_antispam_group_size_min);
   }
+  if (dialog_filter_update_period > 0) {
+    options.set_option_integer("chat_folder_new_chats_update_period", dialog_filter_update_period);
+  }
 
   bool is_premium = options.get_option_boolean("is_premium");
   if (is_premium) {
-    options.set_option_integer("chat_filter_count_max", options.get_option_integer("dialog_filters_limit_premium", 20));
-    options.set_option_integer("chat_filter_chosen_chat_count_max",
+    options.set_option_integer("chat_folder_count_max", options.get_option_integer("dialog_filters_limit_premium", 20));
+    options.set_option_integer("chat_folder_chosen_chat_count_max",
                                options.get_option_integer("dialog_filters_chats_limit_premium", 200));
     options.set_option_integer("bio_length_max", options.get_option_integer("about_length_limit_premium", 140));
     options.set_option_integer("saved_animations_limit", options.get_option_integer("saved_gifs_limit_premium", 400));
@@ -2048,9 +2056,13 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
                                options.get_option_integer("dialogs_pinned_limit_premium", 200));
     options.set_option_integer("pinned_archived_chat_count_max",
                                options.get_option_integer("dialogs_folder_pinned_limit_premium", 200));
+    options.set_option_integer("chat_folder_invite_link_count_max",
+                               options.get_option_integer("chatlist_invites_limit_premium", 20));
+    options.set_option_integer("added_shareable_chat_folder_count_max",
+                               options.get_option_integer("chatlist_invites_limit_premium", 20));
   } else {
-    options.set_option_integer("chat_filter_count_max", options.get_option_integer("dialog_filters_limit_default", 10));
-    options.set_option_integer("chat_filter_chosen_chat_count_max",
+    options.set_option_integer("chat_folder_count_max", options.get_option_integer("dialog_filters_limit_default", 10));
+    options.set_option_integer("chat_folder_chosen_chat_count_max",
                                options.get_option_integer("dialog_filters_chats_limit_default", 100));
     options.set_option_integer("bio_length_max", options.get_option_integer("about_length_limit_default", 70));
     options.set_option_integer("saved_animations_limit", options.get_option_integer("saved_gifs_limit_default", 200));
@@ -2060,6 +2072,10 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
                                options.get_option_integer("dialogs_pinned_limit_default", 100));
     options.set_option_integer("pinned_archived_chat_count_max",
                                options.get_option_integer("dialogs_folder_pinned_limit_default", 100));
+    options.set_option_integer("chat_folder_invite_link_count_max",
+                               options.get_option_integer("chatlist_invites_limit_default", 3));
+    options.set_option_integer("added_shareable_chat_folder_count_max",
+                               options.get_option_integer("chatlist_invites_limit_default", 2));
   }
 
   if (!is_premium_available) {

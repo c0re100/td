@@ -191,7 +191,7 @@ class ContactsManager final : public Actor {
   void on_update_user_need_phone_number_privacy_exception(UserId user_id, bool need_phone_number_privacy_exception);
 
   void on_set_profile_photo(UserId user_id, tl_object_ptr<telegram_api::photos_photo> &&photo, bool is_fallback,
-                            int64 old_photo_id);
+                            int64 old_photo_id, Promise<Unit> &&promise);
 
   void on_delete_profile_photo(int64 profile_photo_id, Promise<Unit> promise);
 
@@ -227,6 +227,7 @@ class ContactsManager final : public Actor {
                                   tl_object_ptr<telegram_api::ChatParticipant> old_participant,
                                   tl_object_ptr<telegram_api::ChatParticipant> new_participant);
   void on_update_channel_participant(ChannelId channel_id, UserId user_id, int32 date, DialogInviteLink invite_link,
+                                     bool via_dialog_filter_invite_link,
                                      tl_object_ptr<telegram_api::ChannelParticipant> old_participant,
                                      tl_object_ptr<telegram_api::ChannelParticipant> new_participant);
   void on_update_chat_invite_requester(DialogId dialog_id, UserId user_id, string about, int32 date,
@@ -304,9 +305,9 @@ class ContactsManager final : public Actor {
 
   UserId add_channel_bot_user();
 
-  void on_update_username_is_active(string &&username, bool is_active, Promise<Unit> &&promise);
+  void on_update_username_is_active(UserId user_id, string &&username, bool is_active, Promise<Unit> &&promise);
 
-  void on_update_active_usernames_order(vector<string> &&usernames, Promise<Unit> &&promise);
+  void on_update_active_usernames_order(UserId user_id, vector<string> &&usernames, Promise<Unit> &&promise);
 
   void on_update_channel_username_is_active(ChannelId channel_id, string &&username, bool is_active,
                                             Promise<Unit> &&promise);
@@ -375,13 +376,17 @@ class ContactsManager final : public Actor {
 
   FileId get_profile_photo_file_id(int64 photo_id) const;
 
+  void set_bot_profile_photo(UserId bot_user_id, const td_api::object_ptr<td_api::InputChatPhoto> &input_photo,
+                             Promise<Unit> &&promise);
+
   void set_profile_photo(const td_api::object_ptr<td_api::InputChatPhoto> &input_photo, bool is_fallback,
                          Promise<Unit> &&promise);
 
   void set_user_profile_photo(UserId user_id, const td_api::object_ptr<td_api::InputChatPhoto> &input_photo,
                               bool only_suggest, Promise<Unit> &&promise);
 
-  void send_update_profile_photo_query(FileId file_id, int64 old_photo_id, bool is_fallback, Promise<Unit> &&promise);
+  void send_update_profile_photo_query(UserId user_id, FileId file_id, int64 old_photo_id, bool is_fallback,
+                                       Promise<Unit> &&promise);
 
   void delete_profile_photo(int64 profile_photo_id, bool is_recursive, Promise<Unit> &&promise);
 
@@ -394,6 +399,10 @@ class ContactsManager final : public Actor {
   void toggle_username_is_active(string &&username, bool is_active, Promise<Unit> &&promise);
 
   void reorder_usernames(vector<string> &&usernames, Promise<Unit> &&promise);
+
+  void toggle_bot_username_is_active(UserId bot_user_id, string &&username, bool is_active, Promise<Unit> &&promise);
+
+  void reorder_bot_usernames(UserId bot_user_id, vector<string> &&usernames, Promise<Unit> &&promise);
 
   void set_emoji_status(EmojiStatus emoji_status, Promise<Unit> &&promise);
 
@@ -539,6 +548,7 @@ class ContactsManager final : public Actor {
 
   struct BotData {
     string username;
+    bool can_be_edited;
     bool can_join_groups;
     bool can_read_all_group_messages;
     bool is_inline;
@@ -624,10 +634,11 @@ class ContactsManager final : public Actor {
   int32 get_channel_participant_count(ChannelId channel_id) const;
   bool get_channel_sign_messages(ChannelId channel_id) const;
   bool get_channel_has_linked_channel(ChannelId channel_id) const;
+  bool get_channel_join_request(ChannelId channel_id) const;
   bool get_channel_can_be_deleted(ChannelId channel_id) const;
-  ChannelId get_channel_linked_channel_id(ChannelId channel_id);
-  int32 get_channel_slow_mode_delay(ChannelId channel_id);
-  bool get_channel_effective_has_hidden_participants(ChannelId channel_id);
+  ChannelId get_channel_linked_channel_id(ChannelId channel_id, const char *source);
+  int32 get_channel_slow_mode_delay(ChannelId channel_id, const char *source);
+  bool get_channel_effective_has_hidden_participants(ChannelId channel_id, const char *source);
 
   void add_dialog_participant(DialogId dialog_id, UserId user_id, int32 forward_limit, Promise<Unit> &&promise);
 
@@ -636,6 +647,8 @@ class ContactsManager final : public Actor {
   void set_dialog_participant_status(DialogId dialog_id, DialogId participant_dialog_id,
                                      td_api::object_ptr<td_api::ChatMemberStatus> &&chat_member_status,
                                      Promise<Unit> &&promise);
+
+  void leave_dialog(DialogId dialog_id, Promise<Unit> &&promise);
 
   void ban_dialog_participant(DialogId dialog_id, DialogId participant_dialog_id, int32 banned_until_date,
                               bool revoke_messages, Promise<Unit> &&promise);
@@ -751,6 +764,7 @@ class ContactsManager final : public Actor {
     bool is_bot = true;
     bool can_join_groups = true;
     bool can_read_all_group_messages = true;
+    bool can_be_edited_bot = false;
     bool is_inline_bot = false;
     bool need_location_bot = false;
     bool is_scam = false;
@@ -771,6 +785,7 @@ class ContactsManager final : public Actor {
     bool is_phone_number_changed = true;
     bool is_is_contact_changed = true;
     bool is_is_deleted_changed = true;
+    bool is_full_info_changed = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
     bool is_status_changed = true;
@@ -1168,6 +1183,7 @@ class ContactsManager final : public Actor {
   static constexpr int32 USER_FLAG_ATTACH_MENU_ENABLED = 1 << 29;
   static constexpr int32 USER_FLAG_HAS_EMOJI_STATUS = 1 << 30;
   static constexpr int32 USER_FLAG_HAS_USERNAMES = 1 << 0;
+  static constexpr int32 USER_FLAG_CAN_BE_EDITED_BOT = 1 << 1;
 
   static constexpr int32 USER_FULL_FLAG_IS_BLOCKED = 1 << 0;
   static constexpr int32 USER_FULL_FLAG_HAS_ABOUT = 1 << 1;
@@ -1553,6 +1569,14 @@ class ContactsManager final : public Actor {
 
   bool is_user_contact(const User *u, UserId user_id, bool is_mutual) const;
 
+  static bool is_user_premium(const User *u);
+
+  static bool is_user_deleted(const User *u);
+
+  static bool is_user_support(const User *u);
+
+  static bool is_user_bot(const User *u);
+
   int32 get_user_was_online(const User *u, UserId user_id) const;
 
   int64 get_contacts_hash();
@@ -1584,11 +1608,12 @@ class ContactsManager final : public Actor {
                                   std::pair<vector<size_t>, vector<Contact>> &&to_add, Promise<Unit> &&promise);
 
   void send_update_chat_member(DialogId dialog_id, UserId agent_user_id, int32 date,
-                               const DialogInviteLink &invite_link, const DialogParticipant &old_dialog_participant,
+                               const DialogInviteLink &invite_link, bool via_dialog_filter_invite_link,
+                               const DialogParticipant &old_dialog_participant,
                                const DialogParticipant &new_dialog_participant);
 
-  static vector<td_api::object_ptr<td_api::chatNearby>> get_chats_nearby_object(
-      const vector<DialogNearby> &dialogs_nearby);
+  vector<td_api::object_ptr<td_api::chatNearby>> get_chats_nearby_object(
+      const vector<DialogNearby> &dialogs_nearby) const;
 
   void send_update_users_nearby() const;
 

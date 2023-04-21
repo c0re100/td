@@ -18,6 +18,7 @@
 #include "td/telegram/BackgroundManager.h"
 #include "td/telegram/BackgroundType.h"
 #include "td/telegram/BotCommand.h"
+#include "td/telegram/BotInfoManager.h"
 #include "td/telegram/BotMenuButton.h"
 #include "td/telegram/CallbackQueriesManager.h"
 #include "td/telegram/CallId.h"
@@ -34,6 +35,7 @@
 #include "td/telegram/DialogEventLog.h"
 #include "td/telegram/DialogFilter.h"
 #include "td/telegram/DialogFilterId.h"
+#include "td/telegram/DialogFilterManager.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/DialogListId.h"
 #include "td/telegram/DialogLocation.h"
@@ -726,24 +728,6 @@ class GetChatRequest final : public RequestActor<> {
   }
 };
 
-class GetChatFilterRequest final : public RequestActor<> {
-  DialogFilterId dialog_filter_id_;
-
-  void do_run(Promise<Unit> &&promise) final {
-    td_->messages_manager_->load_dialog_filter(dialog_filter_id_, get_tries() < 2, std::move(promise));
-  }
-
-  void do_send_result() final {
-    send_result(td_->messages_manager_->get_chat_filter_object(dialog_filter_id_));
-  }
-
- public:
-  GetChatFilterRequest(ActorShared<Td> td, uint64 request_id, int32 dialog_filter_id)
-      : RequestActor(std::move(td), request_id), dialog_filter_id_(dialog_filter_id) {
-    set_tries(3);
-  }
-};
-
 class SearchUserByPhoneNumberRequest final : public RequestActor<> {
   string phone_number_;
 
@@ -814,7 +798,7 @@ class SearchPublicChatsRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(-1, dialog_ids_));
+    send_result(td_->messages_manager_->get_chats_object(-1, dialog_ids_, "SearchPublicChatsRequest"));
   }
 
  public:
@@ -834,7 +818,7 @@ class SearchChatsRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(dialog_ids_));
+    send_result(td_->messages_manager_->get_chats_object(dialog_ids_, "SearchChatsRequest"));
   }
 
  public:
@@ -854,7 +838,7 @@ class SearchChatsOnServerRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(-1, dialog_ids_));
+    send_result(td_->messages_manager_->get_chats_object(-1, dialog_ids_, "SearchChatsOnServerRequest"));
   }
 
  public:
@@ -876,7 +860,7 @@ class GetGroupsInCommonRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(dialog_ids_));
+    send_result(td_->messages_manager_->get_chats_object(dialog_ids_, "GetGroupsInCommonRequest"));
   }
 
  public:
@@ -893,7 +877,7 @@ class GetSuitableDiscussionChatsRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(-1, dialog_ids_));
+    send_result(td_->messages_manager_->get_chats_object(-1, dialog_ids_, "GetSuitableDiscussionChatsRequest"));
   }
 
  public:
@@ -909,7 +893,7 @@ class GetInactiveSupergroupChatsRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(-1, dialog_ids_));
+    send_result(td_->messages_manager_->get_chats_object(-1, dialog_ids_, "GetInactiveSupergroupChatsRequest"));
   }
 
  public:
@@ -927,7 +911,7 @@ class GetRecentlyOpenedChatsRequest final : public RequestActor<> {
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(dialog_ids_));
+    send_result(td_->messages_manager_->get_chats_object(dialog_ids_, "GetRecentlyOpenedChatsRequest"));
   }
 
  public:
@@ -1913,7 +1897,8 @@ class GetChatNotificationSettingsExceptionsRequest final : public RequestActor<>
   }
 
   void do_send_result() final {
-    send_result(MessagesManager::get_chats_object(-1, dialog_ids_));
+    send_result(
+        td_->messages_manager_->get_chats_object(-1, dialog_ids_, "GetChatNotificationSettingsExceptionsRequest"));
   }
 
  public:
@@ -2772,7 +2757,7 @@ bool Td::is_synchronous_request(const td_api::Function *function) {
     case td_api::cleanFileName::ID:
     case td_api::getLanguagePackString::ID:
     case td_api::getPhoneNumberInfoSync::ID:
-    case td_api::getChatFilterDefaultIconName::ID:
+    case td_api::getChatFolderDefaultIconName::ID:
     case td_api::getJsonValue::ID:
     case td_api::getJsonString::ID:
     case td_api::getThemeParametersJsonString::ID:
@@ -3006,7 +2991,7 @@ td_api::object_ptr<td_api::Object> Td::static_request(td_api::object_ptr<td_api:
       case td_api::getFileMimeType::ID:
       case td_api::getFileExtension::ID:
       case td_api::cleanFileName::ID:
-      case td_api::getChatFilterDefaultIconName::ID:
+      case td_api::getChatFolderDefaultIconName::ID:
       case td_api::getJsonValue::ID:
       case td_api::getJsonString::ID:
       case td_api::getThemeParametersJsonString::ID:
@@ -3181,12 +3166,16 @@ void Td::dec_actor_refcnt() {
       LOG(DEBUG) << "AutosaveManager was cleared" << timer;
       background_manager_.reset();
       LOG(DEBUG) << "BackgroundManager was cleared" << timer;
+      bot_info_manager_.reset();
+      LOG(DEBUG) << "BotInfoManager was cleared" << timer;
       callback_queries_manager_.reset();
       LOG(DEBUG) << "CallbackQueriesManager was cleared" << timer;
       contacts_manager_.reset();
       LOG(DEBUG) << "ContactsManager was cleared" << timer;
       country_info_manager_.reset();
       LOG(DEBUG) << "CountryInfoManager was cleared" << timer;
+      dialog_filter_manager_.reset();
+      LOG(DEBUG) << "DialogFilterManager was cleared" << timer;
       documents_manager_.reset();
       LOG(DEBUG) << "DocumentsManager was cleared" << timer;
       download_manager_.reset();
@@ -3381,10 +3370,14 @@ void Td::clear() {
   LOG(DEBUG) << "AutosaveManager actor was cleared" << timer;
   background_manager_actor_.reset();
   LOG(DEBUG) << "BackgroundManager actor was cleared" << timer;
+  bot_info_manager_actor_.reset();
+  LOG(DEBUG) << "BotInfoManager actor was cleared" << timer;
   contacts_manager_actor_.reset();
   LOG(DEBUG) << "ContactsManager actor was cleared" << timer;
   country_info_manager_actor_.reset();
   LOG(DEBUG) << "CountryInfoManager actor was cleared" << timer;
+  dialog_filter_manager_actor_.reset();
+  LOG(DEBUG) << "DialogFilterManager actor was cleared" << timer;
   download_manager_actor_.reset();
   LOG(DEBUG) << "DownloadManager actor was cleared" << timer;
   file_manager_actor_.reset();
@@ -3858,11 +3851,16 @@ void Td::init_managers() {
   background_manager_ = make_unique<BackgroundManager>(this, create_reference());
   background_manager_actor_ = register_actor("BackgroundManager", background_manager_.get());
   G()->set_background_manager(background_manager_actor_.get());
+  bot_info_manager_ = make_unique<BotInfoManager>(this, create_reference());
+  bot_info_manager_actor_ = register_actor("BotInfoManager", bot_info_manager_.get());
   contacts_manager_ = make_unique<ContactsManager>(this, create_reference());
   contacts_manager_actor_ = register_actor("ContactsManager", contacts_manager_.get());
   G()->set_contacts_manager(contacts_manager_actor_.get());
   country_info_manager_ = make_unique<CountryInfoManager>(this, create_reference());
   country_info_manager_actor_ = register_actor("CountryInfoManager", country_info_manager_.get());
+  dialog_filter_manager_ = make_unique<DialogFilterManager>(this, create_reference());
+  dialog_filter_manager_actor_ = register_actor("DialogFilterManager", dialog_filter_manager_.get());
+  G()->set_download_manager(download_manager_actor_.get());
   download_manager_ = DownloadManager::create(td::make_unique<DownloadManagerCallback>(this, create_reference()));
   download_manager_actor_ = register_actor("DownloadManager", download_manager_.get());
   G()->set_download_manager(download_manager_actor_.get());
@@ -3968,7 +3966,7 @@ void Td::send_update(tl_object_ptr<td_api::Update> &&object) {
     case td_api::updateUnreadChatCount::ID / 2:
     case td_api::updateChatOnlineMemberCount::ID / 2:
     case td_api::updateChatAction::ID / 2:
-    case td_api::updateChatFilters::ID / 2:
+    case td_api::updateChatFolders::ID / 2:
     case td_api::updateChatPosition::ID / 2:
     case td_api::updateFileAddedToDownloads::ID / 2:
     case td_api::updateFileDownload::ID / 2:
@@ -4265,6 +4263,8 @@ void Td::on_request(uint64 id, const td_api::getCurrentState &request) {
     stickers_manager_->get_current_state(updates);
 
     notification_settings_manager_->get_current_state(updates);
+
+    dialog_filter_manager_->get_current_state(updates);
 
     messages_manager_->get_current_state(updates);
 
@@ -4935,15 +4935,8 @@ void Td::on_request(uint64 id, const td_api::clearAutosaveSettingsExceptions &re
 void Td::on_request(uint64 id, const td_api::getTopChats &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<vector<DialogId>> result) mutable {
-    if (result.is_error()) {
-      promise.set_error(result.move_as_error());
-    } else {
-      promise.set_value(MessagesManager::get_chats_object(-1, result.ok()));
-    }
-  });
   send_closure(top_dialog_manager_actor_, &TopDialogManager::get_top_dialogs,
-               get_top_dialog_category(request.category_), request.limit_, std::move(query_promise));
+               get_top_dialog_category(request.category_), request.limit_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::removeTopChat &request) {
@@ -6109,52 +6102,119 @@ void Td::on_request(uint64 id, const td_api::addChatToList &request) {
                                         std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::getChatFilter &request) {
-  CHECK_IS_USER();
-  CREATE_REQUEST(GetChatFilterRequest, request.chat_filter_id_);
-}
-
-void Td::on_request(uint64 id, const td_api::getRecommendedChatFilters &request) {
+void Td::on_request(uint64 id, const td_api::getChatFolder &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  messages_manager_->get_recommended_dialog_filters(std::move(promise));
+  dialog_filter_manager_->get_dialog_filter(DialogFilterId(request.chat_folder_id_), std::move(promise));
 }
 
-void Td::on_request(uint64 id, td_api::createChatFilter &request) {
+void Td::on_request(uint64 id, const td_api::getRecommendedChatFolders &request) {
   CHECK_IS_USER();
-  if (request.filter_ == nullptr) {
-    return send_error_raw(id, 400, "Chat filter must be non-empty");
-  }
-  CLEAN_INPUT_STRING(request.filter_->title_);
-  CLEAN_INPUT_STRING(request.filter_->icon_name_);
   CREATE_REQUEST_PROMISE();
-  messages_manager_->create_dialog_filter(std::move(request.filter_), std::move(promise));
+  dialog_filter_manager_->get_recommended_dialog_filters(std::move(promise));
 }
 
-void Td::on_request(uint64 id, td_api::editChatFilter &request) {
+void Td::on_request(uint64 id, td_api::createChatFolder &request) {
   CHECK_IS_USER();
-  if (request.filter_ == nullptr) {
-    return send_error_raw(id, 400, "Chat filter must be non-empty");
-  }
-  CLEAN_INPUT_STRING(request.filter_->title_);
-  CLEAN_INPUT_STRING(request.filter_->icon_name_);
   CREATE_REQUEST_PROMISE();
-  messages_manager_->edit_dialog_filter(DialogFilterId(request.chat_filter_id_), std::move(request.filter_),
-                                        std::move(promise));
+  dialog_filter_manager_->create_dialog_filter(std::move(request.folder_), std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::deleteChatFilter &request) {
+void Td::on_request(uint64 id, td_api::editChatFolder &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->edit_dialog_filter(DialogFilterId(request.chat_folder_id_), std::move(request.folder_),
+                                             std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::deleteChatFolder &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  messages_manager_->delete_dialog_filter(DialogFilterId(request.chat_filter_id_), std::move(promise));
+  dialog_filter_manager_->delete_dialog_filter(DialogFilterId(request.chat_folder_id_),
+                                               DialogId::get_dialog_ids(request.leave_chat_ids_), std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::reorderChatFilters &request) {
+void Td::on_request(uint64 id, const td_api::getChatFolderChatsToLeave &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->get_leave_dialog_filter_suggestions(DialogFilterId(request.chat_folder_id_),
+                                                              std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::reorderChatFolders &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  messages_manager_->reorder_dialog_filters(
-      transform(request.chat_filter_ids_, [](int32 id) { return DialogFilterId(id); }),
+  dialog_filter_manager_->reorder_dialog_filters(
+      transform(request.chat_folder_ids_, [](int32 id) { return DialogFilterId(id); }),
       request.main_chat_list_position_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getChatsForChatFolderInviteLink &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->get_dialogs_for_dialog_filter_invite_link(DialogFilterId(request.chat_folder_id_),
+                                                                    std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::createChatFolderInviteLink &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->create_dialog_filter_invite_link(
+      DialogFilterId(request.chat_folder_id_), std::move(request.name_), DialogId::get_dialog_ids(request.chat_ids_),
+      std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::getChatFolderInviteLinks &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->get_dialog_filter_invite_links(DialogFilterId(request.chat_folder_id_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::editChatFolderInviteLink &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.invite_link_);
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->edit_dialog_filter_invite_link(
+      DialogFilterId(request.chat_folder_id_), std::move(request.invite_link_), std::move(request.name_),
+      DialogId::get_dialog_ids(request.chat_ids_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::deleteChatFolderInviteLink &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.invite_link_);
+  CREATE_OK_REQUEST_PROMISE();
+  dialog_filter_manager_->delete_dialog_filter_invite_link(DialogFilterId(request.chat_folder_id_),
+                                                           std::move(request.invite_link_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::checkChatFolderInviteLink &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.invite_link_);
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->check_dialog_filter_invite_link(std::move(request.invite_link_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::addChatFolderByInviteLink &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.invite_link_);
+  CREATE_OK_REQUEST_PROMISE();
+  dialog_filter_manager_->add_dialog_filter_by_invite_link(
+      std::move(request.invite_link_), DialogId::get_dialog_ids(request.chat_ids_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getChatFolderNewChats &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  dialog_filter_manager_->get_dialog_filter_new_chats(DialogFilterId(request.chat_folder_id_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::processChatFolderNewChats &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  dialog_filter_manager_->add_dialog_filter_new_chats(
+      DialogFilterId(request.chat_folder_id_), DialogId::get_dialog_ids(request.added_chat_ids_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::setChatTitle &request) {
@@ -6177,6 +6237,13 @@ void Td::on_request(uint64 id, const td_api::setChatMessageAutoDeleteTime &reque
 void Td::on_request(uint64 id, const td_api::setChatPermissions &request) {
   CREATE_OK_REQUEST_PROMISE();
   messages_manager_->set_dialog_permissions(DialogId(request.chat_id_), request.permissions_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::setChatBackground &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  background_manager_->set_dialog_background(DialogId(request.chat_id_), request.background_.get(), request.type_.get(),
+                                             request.dark_theme_dimming_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::setChatTheme &request) {
@@ -6233,6 +6300,12 @@ void Td::on_request(uint64 id, const td_api::setPinnedChats &request) {
   CHECK_IS_USER();
   answer_ok_query(id, messages_manager_->set_pinned_dialogs(DialogListId(request.chat_list_),
                                                             DialogId::get_dialog_ids(request.chat_ids_)));
+}
+
+void Td::on_request(uint64 id, const td_api::readChatList &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  messages_manager_->read_all_dialogs_from_list(DialogListId(request.chat_list_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getAttachmentMenuBot &request) {
@@ -6987,28 +7060,67 @@ void Td::on_request(uint64 id, const td_api::getMenuButton &request) {
 void Td::on_request(uint64 id, const td_api::setDefaultGroupAdministratorRights &request) {
   CHECK_IS_BOT();
   CREATE_OK_REQUEST_PROMISE();
-  set_default_group_administrator_rights(
-      this, AdministratorRights(request.default_group_administrator_rights_, ChannelType::Megagroup),
-      std::move(promise));
+  bot_info_manager_->set_default_group_administrator_rights(
+      AdministratorRights(request.default_group_administrator_rights_, ChannelType::Megagroup), std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::setDefaultChannelAdministratorRights &request) {
   CHECK_IS_BOT();
   CREATE_OK_REQUEST_PROMISE();
-  set_default_channel_administrator_rights(
-      this, AdministratorRights(request.default_channel_administrator_rights_, ChannelType::Broadcast),
-      std::move(promise));
+  bot_info_manager_->set_default_channel_administrator_rights(
+      AdministratorRights(request.default_channel_administrator_rights_, ChannelType::Broadcast), std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::setBotName &request) {
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_OK_REQUEST_PROMISE();
+  bot_info_manager_->set_bot_name(UserId(request.bot_user_id_), request.language_code_, request.name_,
+                                  std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::getBotName &request) {
+  CREATE_REQUEST_PROMISE();
+  auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<string> result) mutable {
+    if (result.is_error()) {
+      promise.set_error(result.move_as_error());
+    } else {
+      promise.set_value(td_api::make_object<td_api::text>(result.move_as_ok()));
+    }
+  });
+  bot_info_manager_->get_bot_name(UserId(request.bot_user_id_), request.language_code_, std::move(query_promise));
+}
+
+void Td::on_request(uint64 id, td_api::setBotProfilePhoto &request) {
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->set_bot_profile_photo(UserId(request.bot_user_id_), request.photo_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::toggleBotUsernameIsActive &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.username_);
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->toggle_bot_username_is_active(UserId(request.bot_user_id_), std::move(request.username_),
+                                                   request.is_active_, std::move(promise));
+}
+
+void Td::on_request(uint64 id, td_api::reorderActiveBotUsernames &request) {
+  CHECK_IS_USER();
+  for (auto &username : request.usernames_) {
+    CLEAN_INPUT_STRING(username);
+  }
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->reorder_bot_usernames(UserId(request.bot_user_id_), std::move(request.usernames_),
+                                           std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::setBotInfoDescription &request) {
-  CHECK_IS_BOT();
   CLEAN_INPUT_STRING(request.description_);
   CREATE_OK_REQUEST_PROMISE();
-  set_bot_info_description(this, request.language_code_, request.description_, std::move(promise));
+  bot_info_manager_->set_bot_info_description(UserId(request.bot_user_id_), request.language_code_,
+                                              request.description_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getBotInfoDescription &request) {
-  CHECK_IS_BOT();
   CREATE_REQUEST_PROMISE();
   auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<string> result) mutable {
     if (result.is_error()) {
@@ -7017,18 +7129,18 @@ void Td::on_request(uint64 id, const td_api::getBotInfoDescription &request) {
       promise.set_value(td_api::make_object<td_api::text>(result.move_as_ok()));
     }
   });
-  get_bot_info_description(this, request.language_code_, std::move(query_promise));
+  bot_info_manager_->get_bot_info_description(UserId(request.bot_user_id_), request.language_code_,
+                                              std::move(query_promise));
 }
 
 void Td::on_request(uint64 id, td_api::setBotInfoShortDescription &request) {
-  CHECK_IS_BOT();
   CLEAN_INPUT_STRING(request.short_description_);
   CREATE_OK_REQUEST_PROMISE();
-  set_bot_info_about(this, request.language_code_, request.short_description_, std::move(promise));
+  bot_info_manager_->set_bot_info_about(UserId(request.bot_user_id_), request.language_code_,
+                                        request.short_description_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getBotInfoShortDescription &request) {
-  CHECK_IS_BOT();
   CREATE_REQUEST_PROMISE();
   auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<string> result) mutable {
     if (result.is_error()) {
@@ -7037,7 +7149,7 @@ void Td::on_request(uint64 id, const td_api::getBotInfoShortDescription &request
       promise.set_value(td_api::make_object<td_api::text>(result.move_as_ok()));
     }
   });
-  get_bot_info_about(this, request.language_code_, std::move(query_promise));
+  bot_info_manager_->get_bot_info_about(UserId(request.bot_user_id_), request.language_code_, std::move(query_promise));
 }
 
 void Td::on_request(uint64 id, const td_api::setLocation &request) {
@@ -8515,7 +8627,7 @@ void Td::on_request(uint64 id, const td_api::getPushReceiverId &request) {
   UNREACHABLE();
 }
 
-void Td::on_request(uint64 id, const td_api::getChatFilterDefaultIconName &request) {
+void Td::on_request(uint64 id, const td_api::getChatFolderDefaultIconName &request) {
   UNREACHABLE();
 }
 
@@ -8693,17 +8805,17 @@ td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getPushRe
   return td_api::make_object<td_api::pushReceiverId>(r_push_receiver_id.ok());
 }
 
-td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getChatFilterDefaultIconName &request) {
-  if (request.filter_ == nullptr) {
-    return make_error(400, "Chat filter must be non-empty");
+td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getChatFolderDefaultIconName &request) {
+  if (request.folder_ == nullptr) {
+    return make_error(400, "Chat folder must be non-empty");
   }
-  if (!check_utf8(request.filter_->title_)) {
-    return make_error(400, "Chat filter title must be encoded in UTF-8");
+  if (!check_utf8(request.folder_->title_)) {
+    return make_error(400, "Chat folder title must be encoded in UTF-8");
   }
-  if (!check_utf8(request.filter_->icon_name_)) {
-    return make_error(400, "Chat filter icon name must be encoded in UTF-8");
+  if (request.folder_->icon_ != nullptr && !check_utf8(request.folder_->icon_->name_)) {
+    return make_error(400, "Chat folder icon name must be encoded in UTF-8");
   }
-  return td_api::make_object<td_api::text>(DialogFilter::get_default_icon_name(request.filter_.get()));
+  return td_api::make_object<td_api::chatFolderIcon>(DialogFilter::get_default_icon_name(request.folder_.get()));
 }
 
 td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::getJsonValue &request) {

@@ -300,7 +300,9 @@ const vector<Slice> &get_premium_limit_keys() {
                                         "dialogs_folder_pinned",
                                         "channels_public",
                                         "caption_length",
-                                        "about_length"};
+                                        "about_length",
+                                        "chatlist_invites",
+                                        "chatlists_joined"};
   return limit_keys;
 }
 
@@ -313,9 +315,9 @@ static Slice get_limit_type_key(const td_api::PremiumLimitType *limit_type) {
       return Slice("saved_gifs");
     case td_api::premiumLimitTypeFavoriteStickerCount::ID:
       return Slice("stickers_faved");
-    case td_api::premiumLimitTypeChatFilterCount::ID:
+    case td_api::premiumLimitTypeChatFolderCount::ID:
       return Slice("dialog_filters");
-    case td_api::premiumLimitTypeChatFilterChosenChatCount::ID:
+    case td_api::premiumLimitTypeChatFolderChosenChatCount::ID:
       return Slice("dialog_filters_chats");
     case td_api::premiumLimitTypePinnedChatCount::ID:
       return Slice("dialogs_pinned");
@@ -327,6 +329,10 @@ static Slice get_limit_type_key(const td_api::PremiumLimitType *limit_type) {
       return Slice("caption_length");
     case td_api::premiumLimitTypeBioLength::ID:
       return Slice("about_length");
+    case td_api::premiumLimitTypeChatFolderInviteLinkCount::ID:
+      return Slice("chatlist_invites");
+    case td_api::premiumLimitTypeShareableChatFolderCount::ID:
+      return Slice("chatlists_joined");
     default:
       UNREACHABLE();
       return Slice();
@@ -428,10 +434,10 @@ static td_api::object_ptr<td_api::premiumLimit> get_premium_limit_object(Slice k
       return td_api::make_object<td_api::premiumLimitTypeFavoriteStickerCount>();
     }
     if (key == "dialog_filters") {
-      return td_api::make_object<td_api::premiumLimitTypeChatFilterCount>();
+      return td_api::make_object<td_api::premiumLimitTypeChatFolderCount>();
     }
     if (key == "dialog_filters_chats") {
-      return td_api::make_object<td_api::premiumLimitTypeChatFilterChosenChatCount>();
+      return td_api::make_object<td_api::premiumLimitTypeChatFolderChosenChatCount>();
     }
     if (key == "dialogs_pinned") {
       return td_api::make_object<td_api::premiumLimitTypePinnedChatCount>();
@@ -447,6 +453,12 @@ static td_api::object_ptr<td_api::premiumLimit> get_premium_limit_object(Slice k
     }
     if (key == "about_length") {
       return td_api::make_object<td_api::premiumLimitTypeBioLength>();
+    }
+    if (key == "chatlist_invites") {
+      return td_api::make_object<td_api::premiumLimitTypeChatFolderInviteLinkCount>();
+    }
+    if (key == "chatlists_joined") {
+      return td_api::make_object<td_api::premiumLimitTypeShareableChatFolderCount>();
     }
     UNREACHABLE();
     return nullptr;

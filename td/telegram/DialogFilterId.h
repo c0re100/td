@@ -6,6 +6,8 @@
 //
 #pragma once
 
+#include "td/telegram/telegram_api.h"
+
 #include "td/utils/common.h"
 #include "td/utils/HashTableUtils.h"
 #include "td/utils/StringBuilder.h"
@@ -41,6 +43,10 @@ class DialogFilterId {
     return id;
   }
 
+  telegram_api::object_ptr<telegram_api::inputChatlistDialogFilter> get_input_chatlist() const {
+    return telegram_api::make_object<telegram_api::inputChatlistDialogFilter>(id);
+  }
+
   bool operator==(const DialogFilterId &other) const {
     return id == other.id;
   }
@@ -67,7 +73,7 @@ struct DialogFilterIdHash {
 };
 
 inline StringBuilder &operator<<(StringBuilder &string_builder, DialogFilterId dialog_filter_id) {
-  return string_builder << "filter " << dialog_filter_id.get();
+  return string_builder << "folder " << dialog_filter_id.get();
 }
 
 }  // namespace td

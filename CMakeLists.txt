@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.13 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.14 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -293,12 +293,13 @@ set(TDLIB_SOURCE
   td/telegram/AuthManager.cpp
   td/telegram/AutoDownloadSettings.cpp
   td/telegram/AutosaveManager.cpp
+  td/telegram/BackgroundInfo.cpp
   td/telegram/BackgroundManager.cpp
   td/telegram/BackgroundType.cpp
   td/telegram/BotCommand.cpp
   td/telegram/BotCommandScope.cpp
+  td/telegram/BotInfoManager.cpp
   td/telegram/BotMenuButton.cpp
-  td/telegram/BotMenuButton.h
   td/telegram/CallActor.cpp
   td/telegram/CallDiscardReason.cpp
   td/telegram/CallManager.cpp
@@ -321,6 +322,8 @@ set(TDLIB_SOURCE
   td/telegram/DialogDb.cpp
   td/telegram/DialogEventLog.cpp
   td/telegram/DialogFilter.cpp
+  td/telegram/DialogFilterInviteLink.cpp
+  td/telegram/DialogFilterManager.cpp
   td/telegram/DialogId.cpp
   td/telegram/DialogInviteLink.cpp
   td/telegram/DialogLocation.cpp
@@ -524,10 +527,13 @@ set(TDLIB_SOURCE
   td/telegram/AutoDownloadSettings.h
   td/telegram/AutosaveManager.h
   td/telegram/BackgroundId.h
+  td/telegram/BackgroundInfo.h
   td/telegram/BackgroundManager.h
   td/telegram/BackgroundType.h
   td/telegram/BotCommand.h
   td/telegram/BotCommandScope.h
+  td/telegram/BotInfoManager.h
+  td/telegram/BotMenuButton.h
   td/telegram/CallActor.h
   td/telegram/CallDiscardReason.h
   td/telegram/CallId.h
@@ -558,7 +564,10 @@ set(TDLIB_SOURCE
   td/telegram/DialogDb.h
   td/telegram/DialogEventLog.h
   td/telegram/DialogFilter.h
+  td/telegram/DialogFilterDialogInfo.h
   td/telegram/DialogFilterId.h
+  td/telegram/DialogFilterInviteLink.h
+  td/telegram/DialogFilterManager.h
   td/telegram/DialogId.h
   td/telegram/DialogInviteLink.h
   td/telegram/DialogListId.h
@@ -771,6 +780,7 @@ set(TDLIB_SOURCE
   td/telegram/AnimationsManager.hpp
   td/telegram/AudiosManager.hpp
   td/telegram/AuthManager.hpp
+  td/telegram/BackgroundInfo.hpp
   td/telegram/BackgroundType.hpp
   td/telegram/DialogNotificationSettings.hpp
   td/telegram/DialogFilter.hpp
