@@ -25077,7 +25077,7 @@ Result<td_api::object_ptr<td_api::message>> MessagesManager::send_message(
   m->via_bot_user_id = message_content.via_bot_user_id;
   m->disable_web_page_preview = message_content.disable_web_page_preview;
   m->clear_draft = message_content.clear_draft;
-  m->reply_to_message_id = reply_to_message_id;
+  m->reply_to_message_id = input_reply_to.message_id_;
   if (message_content.ttl > 0) {
     m->ttl = message_content.ttl;
     m->is_content_secret = is_secret_message_content(m->ttl, m->content->get_type());
