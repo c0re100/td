@@ -1057,8 +1057,9 @@ class UploadStickerFileQuery final : public Td::ResultHandler {
   void on_error(Status status) final {
     if (was_uploaded_) {
       CHECK(file_id_.is_valid());
-      if (begins_with(status.message(), "FILE_PART_") && ends_with(status.message(), "_MISSING")) {
-        // TODO td_->stickers_manager_->on_upload_sticker_file_part_missing(file_id_, to_integer<int32>(status.message().substr(10)));
+      auto bad_parts = FileManager::get_missing_file_parts(status);
+      if (!bad_parts.empty()) {
+        // TODO td_->stickers_manager_->on_upload_sticker_file_parts_missing(file_id_, std::move(bad_parts));
         // return;
       } else {
         if (status.code() != 429 && status.code() < 500 && !G()->close_flag()) {
@@ -3771,8 +3772,8 @@ StickerSetId StickersManager::on_get_sticker_set(tl_object_ptr<telegram_api::sti
       }
     }
     if (s->short_name_ != set->short_name_) {
-      LOG(ERROR) << "Short name of " << set_id << " has changed from \"" << s->short_name_ << "\" to \""
-                 << set->short_name_ << "\" from " << source;
+      LOG(INFO) << "Short name of " << set_id << " has changed from \"" << s->short_name_ << "\" to \""
+                << set->short_name_ << "\" from " << source;
       short_name_to_sticker_set_id_.erase(clean_username(s->short_name_));
       s->short_name_ = std::move(set->short_name_);
       s->is_changed_ = true;
@@ -4448,15 +4449,16 @@ void StickersManager::on_get_installed_sticker_sets(StickerType sticker_type,
 
     auto sticker_set = get_sticker_set(set_id);
     CHECK(sticker_set != nullptr);
-    LOG_IF(ERROR, !sticker_set->is_installed_) << "Receive non-installed sticker set in getAllStickers";
-    LOG_IF(ERROR, sticker_set->is_archived_) << "Receive archived sticker set in getAllStickers";
-    LOG_IF(ERROR, sticker_set->sticker_type_ != sticker_type)
-        << "Receive sticker set of a wrong type in getAllStickers";
     CHECK(sticker_set->is_inited_);
 
     if (sticker_set->is_installed_ && !sticker_set->is_archived_ && sticker_set->sticker_type_ == sticker_type) {
       installed_sticker_set_ids.push_back(set_id);
       uninstalled_sticker_sets.erase(set_id);
+    } else {
+      LOG_IF(ERROR, !sticker_set->is_installed_) << "Receive non-installed sticker set in getAllStickers";
+      LOG_IF(ERROR, sticker_set->is_archived_) << "Receive archived sticker set in getAllStickers";
+      LOG_IF(ERROR, sticker_set->sticker_type_ != sticker_type)
+          << "Receive sticker set of a wrong type in getAllStickers";
     }
     update_sticker_set(sticker_set, "on_get_installed_sticker_sets");
 
@@ -5744,6 +5746,7 @@ void StickersManager::on_load_sticker_set_from_database(StickerSetId sticker_set
   LOG(INFO) << "Successfully loaded " << sticker_set_id << " with" << (with_stickers ? "" : "out")
             << " stickers of size " << value.size() << " from database";
 
+  auto was_inited = sticker_set->is_inited_;
   auto old_sticker_count = sticker_set->sticker_ids_.size();
 
   {
@@ -5751,9 +5754,10 @@ void StickersManager::on_load_sticker_set_from_database(StickerSetId sticker_set
                                             << " stickers was changed before it is loaded from database";
     LogEventParser parser(value);
     parse_sticker_set(sticker_set, parser);
-    LOG_IF(ERROR, sticker_set->is_changed_)
-        << sticker_set_id << " with" << (with_stickers ? "" : "out") << " stickers is changed";
     parser.fetch_end();
+    if (sticker_set->is_changed_) {
+      LOG(INFO) << sticker_set_id << " with" << (with_stickers ? "" : "out") << " stickers is changed";
+    }
     auto status = parser.get_status();
     if (status.is_error()) {
       G()->td_db()->get_sqlite_sync_pmc()->erase(with_stickers ? get_full_sticker_set_database_key(sticker_set_id)
@@ -5769,11 +5773,12 @@ void StickersManager::on_load_sticker_set_from_database(StickerSetId sticker_set
                           "on_load_sticker_set_from_database 2");
   }
 
-  if (with_stickers && old_sticker_count < get_max_featured_sticker_count(sticker_set->sticker_type_) &&
+  if (with_stickers && was_inited && old_sticker_count < get_max_featured_sticker_count(sticker_set->sticker_type_) &&
       old_sticker_count < sticker_set->sticker_ids_.size()) {
     sticker_set->need_save_to_database_ = true;
-    update_sticker_set(sticker_set, "on_load_sticker_set_from_database");
   }
+
+  update_sticker_set(sticker_set, "on_load_sticker_set_from_database");
 
   update_load_requests(sticker_set, with_stickers, Status::OK());
 }
@@ -6373,19 +6378,19 @@ void StickersManager::get_default_emoji_statuses(bool is_recursive,
     return;
   }
 
-  vector<td_api::object_ptr<td_api::emojiStatus>> statuses;
+  vector<int64> custom_emoji_ids;
   for (auto sticker_id : sticker_set->sticker_ids_) {
     auto custom_emoji_id = get_custom_emoji_id(sticker_id);
     if (!custom_emoji_id.is_valid()) {
       LOG(ERROR) << "Ignore wrong sticker " << sticker_id;
       continue;
     }
-    statuses.push_back(td_api::make_object<td_api::emojiStatus>(custom_emoji_id.get()));
-    if (statuses.size() >= 8) {
+    custom_emoji_ids.push_back(custom_emoji_id.get());
+    if (custom_emoji_ids.size() >= 8) {
       break;
     }
   }
-  promise.set_value(td_api::make_object<td_api::emojiStatuses>(std::move(statuses)));
+  promise.set_value(td_api::make_object<td_api::emojiStatuses>(std::move(custom_emoji_ids)));
 }
 
 bool StickersManager::is_default_emoji_status(CustomEmojiId custom_emoji_id) {
@@ -8336,8 +8341,6 @@ void StickersManager::on_upload_sticker_file_error(FileId file_id, Status status
 
   being_uploaded_files_.erase(it);
 
-  // TODO FILE_PART_X_MISSING support
-
   promise.set_error(Status::Error(status.code() > 0 ? status.code() : 500,
                                   status.message()));  // TODO CHECK that status has always a code
 }
@@ -8395,8 +8398,8 @@ void StickersManager::on_uploaded_sticker_file(FileId file_id, bool is_url,
   FileType file_type = file_view.get_type();
   auto expected_document_type = file_type == FileType::Sticker ? Document::Type::Sticker : Document::Type::General;
 
-  auto parsed_document = td_->documents_manager_->on_get_document(
-      move_tl_object_as<telegram_api::document>(document_ptr), DialogId(), nullptr);
+  auto parsed_document =
+      td_->documents_manager_->on_get_document(move_tl_object_as<telegram_api::document>(document_ptr), DialogId());
   if (parsed_document.type != expected_document_type) {
     if (is_url && expected_document_type == Document::Type::General &&
         parsed_document.type == Document::Type::Sticker) {

@@ -107,6 +107,11 @@ class LogEvent {
     AddMessagePushNotification = 0x200,
     EditMessagePushNotification = 0x201,
     SaveAppLog = 0x300,
+    DeleteStoryOnServer = 0x400,
+    ReadStoriesOnServer = 0x401,
+    LoadDialogExpiringStories = 0x402,
+    SendStory = 0x403,
+    EditStory = 0x404,
     ConfigPmcMagic = 0x1f18,
     BinlogPmcMagic = 0x4327
   };
@@ -198,6 +203,11 @@ Status log_event_parse(T &data, Slice slice) {
   parse(data, parser);
   parser.fetch_end();
   return parser.get_status();
+}
+
+inline int32 log_event_get_version(Slice slice) {
+  LogEventParser parser(slice);
+  return parser.version();
 }
 
 template <class T>

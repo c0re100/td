@@ -15,7 +15,7 @@
 #include "td/telegram/misc.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/OrderInfo.h"
-#include "td/telegram/telegram_api.hpp"
+#include "td/telegram/telegram_api.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/base64.h"
@@ -24,7 +24,6 @@
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
-#include "td/utils/overloaded.h"
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/utf8.h"
 
@@ -399,12 +398,10 @@ telegram_api::object_ptr<telegram_api::InputSecureFile> get_input_secure_file_ob
   if (res == nullptr) {
     return file_manager->get_file_view(file.file.file_id).remote_location().as_input_secure_file();
   }
-  telegram_api::downcast_call(*res, overloaded(
-                                        [&](telegram_api::inputSecureFileUploaded &uploaded) {
-                                          uploaded.secret_ = BufferSlice(file.encrypted_secret);
-                                          uploaded.file_hash_ = BufferSlice(file.file_hash);
-                                        },
-                                        [&](telegram_api::inputSecureFile &) { UNREACHABLE(); }));
+  CHECK(res->get_id() == telegram_api::inputSecureFileUploaded::ID);
+  auto uploaded = static_cast<telegram_api::inputSecureFileUploaded *>(res.get());
+  uploaded->secret_ = BufferSlice(file.encrypted_secret);
+  uploaded->file_hash_ = BufferSlice(file.file_hash);
   return res;
 }
 
@@ -872,7 +869,7 @@ static Result<SecureValue> get_identity_document(SecureValueType type, FileManag
     return Status::Error(400, "Identity document must be non-empty");
   }
   TRY_STATUS(check_document_number(identity_document->number_));
-  TRY_RESULT(date, get_date(std::move(identity_document->expiry_date_)));
+  TRY_RESULT(date, get_date(std::move(identity_document->expiration_date_)));
 
   SecureValue res;
   res.type = type;

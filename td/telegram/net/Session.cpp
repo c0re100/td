@@ -232,12 +232,14 @@ bool Session::PriorityQueue::empty() const {
 }
 
 Session::Session(unique_ptr<Callback> callback, std::shared_ptr<AuthDataShared> shared_auth_data, int32 raw_dc_id,
-                 int32 dc_id, bool is_primary, bool is_main, bool use_pfs, bool is_cdn, bool need_destroy,
-                 const mtproto::AuthKey &tmp_auth_key, const vector<mtproto::ServerSalt> &server_salts)
+                 int32 dc_id, bool is_primary, bool is_main, bool use_pfs, bool persist_tmp_auth_key, bool is_cdn,
+                 bool need_destroy, const mtproto::AuthKey &tmp_auth_key,
+                 const vector<mtproto::ServerSalt> &server_salts)
     : raw_dc_id_(raw_dc_id)
     , dc_id_(dc_id)
     , is_primary_(is_primary)
     , is_main_(is_main)
+    , persist_tmp_auth_key_(use_pfs && persist_tmp_auth_key)
     , is_cdn_(is_cdn)
     , need_destroy_(need_destroy) {
   VLOG(dc) << "Start connection " << tag("need_destroy", need_destroy_);
@@ -250,7 +252,7 @@ Session::Session(unique_ptr<Callback> callback, std::shared_ptr<AuthDataShared> 
   auth_data_.set_use_pfs(use_pfs);
   auth_data_.set_main_auth_key(shared_auth_data_->get_auth_key());
   // auth_data_.break_main_auth_key();
-  auth_data_.set_server_time_difference(shared_auth_data_->get_server_time_difference());
+  auth_data_.reset_server_time_difference(shared_auth_data_->get_server_time_difference());
   auto now = Time::now();
   auth_data_.set_future_salts(shared_auth_data_->get_future_salts(), now);
   if (use_pfs && !tmp_auth_key.empty()) {
@@ -612,8 +614,8 @@ void Session::on_server_salt_updated() {
   shared_auth_data_->set_future_salts(auth_data_.get_future_salts());
 }
 
-void Session::on_server_time_difference_updated() {
-  shared_auth_data_->update_server_time_difference(auth_data_.get_server_time_difference());
+void Session::on_server_time_difference_updated(bool force) {
+  shared_auth_data_->update_server_time_difference(auth_data_.get_server_time_difference(), force);
 }
 
 void Session::on_closed(Status status) {
@@ -623,14 +625,6 @@ void Session::on_closed(Status status) {
   auto raw_connection = current_info_->connection_->move_as_raw_connection();
   Scheduler::unsubscribe_before_close(raw_connection->get_poll_info().get_pollable_fd_ref());
   raw_connection->close();
-
-  if (status.is_error()) {
-    LOG(WARNING) << "Session connection with " << sent_queries_.size() << " pending requests was closed: " << status
-                 << ' ' << current_info_->connection_->get_name();
-  } else {
-    LOG(INFO) << "Session connection with " << sent_queries_.size() << " pending requests was closed: " << status << ' '
-              << current_info_->connection_->get_name();
-  }
 
   if (status.is_error() && status.code() == -404) {
     if (auth_data_.use_pfs()) {
@@ -644,6 +638,7 @@ void Session::on_closed(Status status) {
       on_auth_key_updated();
       on_session_failed(status.clone());
     } else if (need_destroy_) {
+      LOG(WARNING) << "Session connection was closed, because main auth_key has been successfully destroyed";
       auth_data_.drop_main_auth_key();
       on_auth_key_updated();
     } else {
@@ -656,8 +651,18 @@ void Session::on_closed(Status status) {
         auth_data_.drop_main_auth_key();
         on_auth_key_updated();
         G()->log_out("Main PFS authorization key is invalid");
+      } else {
+        LOG(WARNING) << "Session connection was closed: " << status << ' ' << current_info_->connection_->get_name();
       }
       yield();
+    }
+  } else {
+    if (status.is_error()) {
+      LOG(WARNING) << "Session connection with " << sent_queries_.size() << " pending requests was closed: " << status
+                   << ' ' << current_info_->connection_->get_name();
+    } else {
+      LOG(INFO) << "Session connection with " << sent_queries_.size() << " pending requests was closed: " << status
+                << ' ' << current_info_->connection_->get_name();
     }
   }
 
@@ -851,7 +856,7 @@ void Session::mark_as_unknown(uint64 message_id, Query *query) {
 
 Status Session::on_update(BufferSlice packet) {
   if (is_cdn_) {
-    return Status::Error("Receive at update from CDN connection");
+    return Status::Error("Receive an update from a CDN connection");
   }
 
   if (!use_pfs_ && !auth_data_.use_pfs()) {
@@ -955,9 +960,9 @@ void Session::on_message_result_error(uint64 message_id, int error_code, string 
         error_code = 500;
       } else {
         if (message == "USER_DEACTIVATED_BAN") {
-          LOG(PLAIN)
-              << "Your account was suspended for suspicious activity. If you think that this is a mistake, please "
-                 "write to recover@telegram.org your phone number and other details to recover the account.";
+          LOG(ERROR) << "Your phone number was banned for suspicious activity. If you think that this is a mistake, "
+                        "please try to log in from an official mobile app and send a email to recover the account by "
+                        "following instructions provided by the app.";
         }
         auth_data_.set_auth_flag(false);
         G()->log_out(message);
@@ -1204,7 +1209,7 @@ void Session::connection_open(ConnectionInfo *info, double now, bool ask_info) {
   // NB: rely on constant location of info
   auto promise = PromiseCreator::cancellable_lambda(
       info->cancellation_token_source_.get_cancellation_token(),
-      [actor_id = actor_id(this), info = info](Result<unique_ptr<mtproto::RawConnection>> res) {
+      [actor_id = actor_id(this), info](Result<unique_ptr<mtproto::RawConnection>> res) {
         send_closure(actor_id, &Session::connection_open_finish, info, std::move(res));
       });
 
@@ -1382,7 +1387,7 @@ bool Session::connection_send_bind_key(ConnectionInfo *info) {
   int64 perm_auth_key_id = auth_data_.get_main_auth_key().id();
   int64 nonce = Random::secure_int64();
   auto expires_at = static_cast<int32>(auth_data_.get_server_time(auth_data_.get_tmp_auth_key().expires_at()));
-  int64 message_id;
+  uint64 message_id;
   BufferSlice encrypted;
   std::tie(message_id, encrypted) = info->connection_->encrypted_bind(perm_auth_key_id, nonce, expires_at);
 
@@ -1434,7 +1439,7 @@ void Session::on_handshake_ready(Result<unique_ptr<mtproto::AuthKeyHandshake>> r
         on_server_salt_updated();
       }
       if (auth_data_.update_server_time_difference(handshake->get_server_time_diff())) {
-        on_server_time_difference_updated();
+        on_server_time_difference_updated(true);
       }
     }
   }
@@ -1451,7 +1456,8 @@ void Session::create_gen_auth_key_actor(HandshakeId handshake_id) {
   info.flag_ = true;
   bool is_main = handshake_id == MainAuthKeyHandshake;
   if (!info.handshake_) {
-    info.handshake_ = make_unique<mtproto::AuthKeyHandshake>(dc_id_, is_main && !is_cdn_ ? 0 : 24 * 60 * 60);
+    auto key_validity_time = is_main && !is_cdn_ ? 0 : Random::fast(23 * 60 * 60, 24 * 60 * 60);
+    info.handshake_ = make_unique<mtproto::AuthKeyHandshake>(dc_id_, key_validity_time);
   }
   class AuthKeyHandshakeContext final : public mtproto::AuthKeyHandshakeContext {
    public:
@@ -1500,9 +1506,13 @@ void Session::auth_loop(double now) {
   if (auth_data_.need_main_auth_key()) {
     create_gen_auth_key_actor(MainAuthKeyHandshake);
   }
-  if (auth_data_.need_tmp_auth_key(now)) {
+  if (auth_data_.need_tmp_auth_key(now, persist_tmp_auth_key_ ? 2 * 60 : 60 * 60)) {
     create_gen_auth_key_actor(TmpAuthKeyHandshake);
   }
+}
+
+void Session::timeout_expired() {
+  send_closure_later(actor_id(this), &Session::loop);
 }
 
 void Session::loop() {
@@ -1579,9 +1589,7 @@ void Session::loop() {
 
   relax_timeout_at(&wakeup_at, main_connection_.wakeup_at_);
 
-  double wakeup_in = 0;
   if (wakeup_at != 0) {
-    wakeup_in = wakeup_at - now;
     set_timeout_at(wakeup_at);
   }
 }

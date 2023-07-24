@@ -225,6 +225,12 @@ Status SessionConnection::on_packet_container(const MsgInfo &info, Slice packet)
   return Status::OK();
 }
 
+void SessionConnection::reset_server_time_difference(uint64 message_id) {
+  VLOG(mtproto) << "Reset server time difference";
+  auth_data_->reset_server_time_difference(static_cast<uint32>(message_id >> 32) - Time::now());
+  callback_->on_server_time_difference_updated(true);
+}
+
 Status SessionConnection::on_packet_rpc_result(const MsgInfo &info, Slice packet) {
   TlParser parser(packet);
   uint64 req_msg_id = parser.fetch_long();
@@ -234,6 +240,10 @@ Status SessionConnection::on_packet_rpc_result(const MsgInfo &info, Slice packet
   if (req_msg_id == 0) {
     LOG(ERROR) << "Receive an update in rpc_result: message_id = " << info.message_id << ", seq_no = " << info.seq_no;
     return Status::Error("Receive an update in rpc_result");
+  }
+
+  if (info.message_id < req_msg_id - (static_cast<uint64>(15) << 32)) {
+    reset_server_time_difference(info.message_id);
   }
 
   switch (parser.fetch_int()) {
@@ -302,7 +312,7 @@ Status SessionConnection::on_packet(const MsgInfo &info, const mtproto_api::new_
 
 Status SessionConnection::on_packet(const MsgInfo &info,
                                     const mtproto_api::bad_msg_notification &bad_msg_notification) {
-  MsgInfo bad_info{info.session_id, bad_msg_notification.bad_msg_id_, bad_msg_notification.bad_msg_seqno_, 0};
+  MsgInfo bad_info{static_cast<uint64>(bad_msg_notification.bad_msg_id_), bad_msg_notification.bad_msg_seqno_, 0};
   enum Code {
     MsgIdTooLow = 16,
     MsgIdTooHigh = 17,
@@ -330,6 +340,7 @@ Status SessionConnection::on_packet(const MsgInfo &info,
       LOG(WARNING) << bad_info << ": MessageId is too high. Session will be closed";
       // All this queries will be re-sent by parent
       to_send_.clear();
+      reset_server_time_difference(info.message_id);
       callback_->on_session_failed(Status::Error("MessageId is too high"));
       return Status::Error("MessageId is too high");
     }
@@ -361,13 +372,13 @@ Status SessionConnection::on_packet(const MsgInfo &info,
       return Status::Error("SeqNo is not even for an irrelevant message");
     }
     case SeqNoNotOdd: {
-      LOG(ERROR) << bad_info << ": SeqNo is not odd for an irrelevant message" << common;
-      return Status::Error("SeqNo is not odd for an irrelevant message");
+      LOG(ERROR) << bad_info << ": SeqNo is not odd for a relevant message" << common;
+      return Status::Error("SeqNo is not odd for a relevant message");
     }
 
     case InvalidContainer: {
-      LOG(ERROR) << bad_info << ": Invalid Contailer" << common;
-      return Status::Error("Invalid Contailer");
+      LOG(ERROR) << bad_info << ": Invalid Container" << common;
+      return Status::Error("Invalid Container");
     }
 
     default: {
@@ -379,7 +390,7 @@ Status SessionConnection::on_packet(const MsgInfo &info,
 }
 
 Status SessionConnection::on_packet(const MsgInfo &info, const mtproto_api::bad_server_salt &bad_server_salt) {
-  MsgInfo bad_info{info.session_id, bad_server_salt.bad_msg_id_, bad_server_salt.bad_msg_seqno_, 0};
+  MsgInfo bad_info{static_cast<uint64>(bad_server_salt.bad_msg_id_), bad_server_salt.bad_msg_seqno_, 0};
   VLOG(mtproto) << "BAD_SERVER_SALT: " << bad_info;
   auth_data_->set_server_salt(bad_server_salt.new_server_salt_, Time::now_cached());
   callback_->on_server_salt_updated();
@@ -403,6 +414,9 @@ Status SessionConnection::on_packet(const MsgInfo &info, const mtproto_api::gzip
 
 Status SessionConnection::on_packet(const MsgInfo &info, const mtproto_api::pong &pong) {
   VLOG(mtproto) << "PONG";
+  if (info.message_id < static_cast<uint64>(pong.msg_id_) - (static_cast<uint64>(15) << 32)) {
+    reset_server_time_difference(info.message_id);
+  }
   last_pong_at_ = Time::now_cached();
   real_last_pong_at_ = last_pong_at_;
   return callback_->on_pong();
@@ -432,7 +446,7 @@ Status SessionConnection::on_msgs_state_info(const vector<int64> &message_ids, S
   }
   size_t i = 0;
   for (auto message_id : message_ids) {
-    callback_->on_message_info(message_id, info[i], 0, 0);
+    callback_->on_message_info(static_cast<uint64>(message_id), info[i], 0, 0);
     i++;
   }
   return Status::OK();
@@ -692,7 +706,7 @@ Status SessionConnection::on_raw_packet(const PacketInfo &info, BufferSlice pack
   auto status =
       auth_data_->check_packet(info.session_id, info.message_id, Time::now_cached(), time_difference_was_updated);
   if (time_difference_was_updated) {
-    callback_->on_server_time_difference_updated();
+    callback_->on_server_time_difference_updated(false);
   }
   if (status.is_error()) {
     if (status.code() == 1) {
@@ -778,7 +792,7 @@ void SessionConnection::send_crypto(const Storer &storer, uint64 quick_ack_token
                                                    auth_data_->get_auth_key(), quick_ack_token);
 }
 
-Result<uint64> SessionConnection::send_query(BufferSlice buffer, bool gzip_flag, int64 message_id,
+Result<uint64> SessionConnection::send_query(BufferSlice buffer, bool gzip_flag, uint64 message_id,
                                              vector<uint64> invoke_after_ids, bool use_quick_ack) {
   CHECK(mode_ != Mode::HttpLongPoll);  // "LongPoll connection is only for http_wait"
   if (message_id == 0) {
@@ -796,24 +810,24 @@ Result<uint64> SessionConnection::send_query(BufferSlice buffer, bool gzip_flag,
   return message_id;
 }
 
-void SessionConnection::get_state_info(int64 message_id) {
+void SessionConnection::get_state_info(uint64 message_id) {
   if (to_get_state_info_.empty()) {
     send_before(Time::now_cached());
   }
-  to_get_state_info_.push_back(message_id);
+  to_get_state_info_.push_back(static_cast<int64>(message_id));
 }
 
-void SessionConnection::resend_answer(int64 message_id) {
+void SessionConnection::resend_answer(uint64 message_id) {
   if (to_resend_answer_.empty()) {
     send_before(Time::now_cached() + RESEND_ANSWER_DELAY);
   }
-  to_resend_answer_.push_back(message_id);
+  to_resend_answer_.push_back(static_cast<int64>(message_id));
 }
-void SessionConnection::cancel_answer(int64 message_id) {
+void SessionConnection::cancel_answer(uint64 message_id) {
   if (to_cancel_answer_.empty()) {
     send_before(Time::now_cached() + RESEND_ANSWER_DELAY);
   }
-  to_cancel_answer_.push_back(message_id);
+  to_cancel_answer_.push_back(static_cast<int64>(message_id));
 }
 
 void SessionConnection::destroy_key() {
@@ -1048,8 +1062,8 @@ Status SessionConnection::do_flush() {
   auto result = raw_connection_->flush(auth_data_->get_auth_key(), *this);
   auto elapsed_time = Time::now() - start_time;
   if (elapsed_time >= 0.1) {
-    LOG(ERROR) << "RawConnection::flush took " << elapsed_time << " seconds, written " << last_write_size_
-               << " bytes, read " << last_read_size_ << " bytes and returned " << result;
+    LOG(WARNING) << "RawConnection::flush took " << elapsed_time << " seconds, written " << last_write_size_
+                 << " bytes, read " << last_read_size_ << " bytes and returned " << result;
   }
   if (result.is_error()) {
     return result;

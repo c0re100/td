@@ -8,6 +8,7 @@
 
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/ConnectionState.h"
+#include "td/telegram/ContactsManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/JsonValue.h"
 #include "td/telegram/LinkManager.h"
@@ -64,6 +65,7 @@
 #include "td/utils/tl_parsers.h"
 #include "td/utils/UInt.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -453,16 +455,13 @@ static ActorOwn<> get_full_config(DcOption option, Promise<tl_object_ptr<telegra
       }
       return res;
     }
-    AuthKeyState get_auth_key_state() final {
-      return AuthDataShared::get_auth_key_state(get_auth_key());
-    }
     void set_auth_key(const mtproto::AuthKey &auth_key) final {
       G()->td_db()->get_binlog_pmc()->set(auth_key_key(), serialize(auth_key));
 
       //notify();
     }
-    void update_server_time_difference(double diff) final {
-      G()->update_server_time_difference(diff);
+    void update_server_time_difference(double diff, bool force) final {
+      G()->update_server_time_difference(diff, force);
     }
     double get_server_time_difference() final {
       return G()->get_server_time_difference();
@@ -524,10 +523,10 @@ static ActorOwn<> get_full_config(DcOption option, Promise<tl_object_ptr<telegra
       if (G()->is_test_dc()) {
         int_dc_id += 10000;
       }
-      session_ = create_actor<Session>("ConfigSession", std::move(session_callback), std::move(auth_data), raw_dc_id,
-                                       int_dc_id, false /*is_primary*/, false /*is_main*/, true /*use_pfs*/,
-                                       false /*is_cdn*/, false /*need_destroy_auth_key*/, mtproto::AuthKey(),
-                                       std::vector<mtproto::ServerSalt>());
+      session_ = create_actor<Session>(
+          "ConfigSession", std::move(session_callback), std::move(auth_data), raw_dc_id, int_dc_id,
+          false /*is_primary*/, false /*is_main*/, true /*use_pfs*/, false /*persist_tmp_auth_key*/, false /*is_cdn*/,
+          false /*need_destroy_auth_key*/, mtproto::AuthKey(), std::vector<mtproto::ServerSalt>());
       auto query = G()->net_query_creator().create_unauth(telegram_api::help_getConfig(), DcId::empty());
       query->total_timeout_limit_ = 60 * 60 * 24;
       query->set_callback(actor_shared(this));
@@ -940,7 +939,8 @@ void ConfigManager::start_up() {
   send_closure(config_recoverer_, &ConfigRecoverer::on_dc_options_update, load_dc_options_update());
 
   auto expire_time = load_config_expire_time();
-  if (expire_time.is_in_past() || true) {
+  bool reload_config_on_restart = true;
+  if (expire_time.is_in_past() || reload_config_on_restart) {
     request_config(false);
   } else {
     expire_time_ = expire_time;
@@ -1083,41 +1083,6 @@ void ConfigManager::set_content_settings(bool ignore_sensitive_content_restricti
   }
 }
 
-void ConfigManager::get_global_privacy_settings(Promise<Unit> &&promise) {
-  TRY_STATUS_PROMISE(promise, G()->close_status());
-
-  auto auth_manager = G()->td().get_actor_unsafe()->auth_manager_.get();
-  if (auth_manager == nullptr || !auth_manager->is_authorized() || auth_manager->is_bot()) {
-    return promise.set_value(Unit());
-  }
-
-  get_global_privacy_settings_queries_.push_back(std::move(promise));
-  if (get_global_privacy_settings_queries_.size() == 1) {
-    G()->net_query_dispatcher().dispatch_with_callback(
-        G()->net_query_creator().create(telegram_api::account_getGlobalPrivacySettings()), actor_shared(this, 5));
-  }
-}
-
-void ConfigManager::set_archive_and_mute(bool archive_and_mute, Promise<Unit> &&promise) {
-  TRY_STATUS_PROMISE(promise, G()->close_status());
-
-  if (archive_and_mute) {
-    remove_suggested_action(suggested_actions_, SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats});
-  }
-
-  last_set_archive_and_mute_ = archive_and_mute;
-  auto &queries = set_archive_and_mute_queries_[archive_and_mute];
-  queries.push_back(std::move(promise));
-  if (!is_set_archive_and_mute_request_sent_) {
-    is_set_archive_and_mute_request_sent_ = true;
-    int32 flags = telegram_api::globalPrivacySettings::ARCHIVE_AND_MUTE_NEW_NONCONTACT_PEERS_MASK;
-    auto settings = make_tl_object<telegram_api::globalPrivacySettings>(flags, archive_and_mute);
-    G()->net_query_dispatcher().dispatch_with_callback(
-        G()->net_query_creator().create(telegram_api::account_setGlobalPrivacySettings(std::move(settings))),
-        actor_shared(this, 6 + static_cast<uint64>(archive_and_mute)));
-  }
-}
-
 void ConfigManager::on_dc_options_update(DcOptions dc_options) {
   save_dc_options_update(dc_options);
   if (!dc_options.dc_options.empty()) {
@@ -1143,13 +1108,6 @@ void ConfigManager::do_set_ignore_sensitive_content_restrictions(bool ignore_sen
   if (have_ignored_restriction_reasons != ignore_sensitive_content_restrictions) {
     reget_app_config(Auto());
   }
-}
-
-void ConfigManager::do_set_archive_and_mute(bool archive_and_mute) {
-  if (archive_and_mute) {
-    remove_suggested_action(suggested_actions_, SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats});
-  }
-  G()->set_option_boolean("archive_and_mute_new_chats_from_unknown_users", archive_and_mute);
 }
 
 void ConfigManager::hide_suggested_action(SuggestedAction suggested_action) {
@@ -1198,46 +1156,6 @@ void ConfigManager::on_result(NetQueryPtr res) {
     reget_app_config(Auto());
 
     set_promises(promises);
-    return;
-  }
-  if (token == 6 || token == 7) {
-    is_set_archive_and_mute_request_sent_ = false;
-    bool archive_and_mute = (token == 7);
-    auto result_ptr = fetch_result<telegram_api::account_setGlobalPrivacySettings>(std::move(res));
-    if (result_ptr.is_error()) {
-      fail_promises(set_archive_and_mute_queries_[archive_and_mute], result_ptr.move_as_error());
-    } else {
-      if (last_set_archive_and_mute_ == archive_and_mute) {
-        do_set_archive_and_mute(archive_and_mute);
-      }
-
-      set_promises(set_archive_and_mute_queries_[archive_and_mute]);
-    }
-
-    if (!set_archive_and_mute_queries_[!archive_and_mute].empty()) {
-      if (archive_and_mute == last_set_archive_and_mute_) {
-        set_promises(set_archive_and_mute_queries_[!archive_and_mute]);
-      } else {
-        set_archive_and_mute(!archive_and_mute, Auto());
-      }
-    }
-    return;
-  }
-  if (token == 5) {
-    auto result_ptr = fetch_result<telegram_api::account_getGlobalPrivacySettings>(std::move(res));
-    if (result_ptr.is_error()) {
-      fail_promises(get_global_privacy_settings_queries_, result_ptr.move_as_error());
-      return;
-    }
-
-    auto result = result_ptr.move_as_ok();
-    if ((result->flags_ & telegram_api::globalPrivacySettings::ARCHIVE_AND_MUTE_NEW_NONCONTACT_PEERS_MASK) != 0) {
-      do_set_archive_and_mute(result->archive_and_mute_new_noncontact_peers_);
-    } else {
-      LOG(ERROR) << "Receive wrong response: " << to_string(result);
-    }
-
-    set_promises(get_global_privacy_settings_queries_);
     return;
   }
   if (token == 3 || token == 4) {
@@ -1333,6 +1251,7 @@ void ConfigManager::on_result(NetQueryPtr res) {
     process_config(r_config.move_as_ok());
     if (token == 9) {
       G()->net_query_dispatcher().update_mtproto_header();
+      reopen_sessions_after_get_config_ = false;
     }
     set_promises(reget_config_queries_);
   }
@@ -1386,7 +1305,15 @@ void ConfigManager::process_config(tl_object_ptr<telegram_api::config> config) {
   Global &options = *G();
 
   // Do not save dc_options in config, because it will be interpreted and saved by ConnectionCreator.
-  send_closure(G()->connection_creator(), &ConnectionCreator::on_dc_options, DcOptions(config->dc_options_));
+  DcOptions dc_options(config->dc_options_);
+  std::stable_sort(dc_options.dc_options.begin(), dc_options.dc_options.end(),
+                   [](const DcOption &lhs, const DcOption &rhs) {
+                     if (lhs.get_dc_id() != rhs.get_dc_id()) {
+                       return lhs.get_dc_id() < rhs.get_dc_id();
+                     }
+                     return !lhs.is_ipv6() && rhs.is_ipv6();
+                   });
+  send_closure(G()->connection_creator(), &ConnectionCreator::on_dc_options, std::move(dc_options));
 
   options.set_option_integer("recent_stickers_limit", config->stickers_recent_limit_);
   options.set_option_integer("channels_read_media_period", config->channels_read_media_period_);
@@ -1510,9 +1437,6 @@ void ConfigManager::process_config(tl_object_ptr<telegram_api::config> config) {
         !options.have_option("ignore_sensitive_content_restrictions")) {
       get_content_settings(Auto());
     }
-    if (!options.have_option("archive_and_mute_new_chats_from_unknown_users")) {
-      get_global_privacy_settings(Auto());
-    }
   }
 }
 
@@ -1552,15 +1476,19 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   bool premium_gift_attach_menu_icon = false;
   bool premium_gift_text_field_icon = false;
   int32 dialog_filter_update_period = 300;
+  bool archive_all_stories = false;
+  int32 story_viewers_expire_period = 86400;
+  int64 stories_changelog_user_id = ContactsManager::get_service_notifications_user_id().get();
   if (config->get_id() == telegram_api::jsonObject::ID) {
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
       telegram_api::JSONValue *value = key_value->value_.get();
       if (key == "default_emoji_statuses_stickerset_id" || key == "forum_upgrade_participants_min" ||
           key == "getfile_experimental_params" || key == "message_animated_emoji_max" ||
-          key == "reactions_in_chat_max" || key == "stickers_emoji_cache_time" || key == "test" ||
-          key == "upload_max_fileparts_default" || key == "upload_max_fileparts_premium" ||
-          key == "wallet_blockchain_name" || key == "wallet_config" || key == "wallet_enabled") {
+          key == "reactions_in_chat_max" || key == "stickers_emoji_cache_time" ||
+          key == "stories_export_nopublic_link" || key == "test" || key == "upload_max_fileparts_default" ||
+          key == "upload_max_fileparts_premium" || key == "wallet_blockchain_name" || key == "wallet_config" ||
+          key == "wallet_enabled") {
         continue;
       }
       if (key == "ignore_restriction_reasons") {
@@ -1721,17 +1649,13 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       if (key == "pending_suggestions") {
         if (value->get_id() == telegram_api::jsonArray::ID) {
           auto actions = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
-          const bool archive_and_mute = G()->get_option_boolean("archive_and_mute_new_chats_from_unknown_users");
           auto otherwise_relogin_days = G()->get_option_integer("otherwise_relogin_days");
           for (auto &action : actions) {
             auto action_str = get_json_value_string(std::move(action), key);
             SuggestedAction suggested_action(action_str);
             if (!suggested_action.is_empty()) {
-              if (archive_and_mute &&
-                  suggested_action == SuggestedAction{SuggestedAction::Type::EnableArchiveAndMuteNewChats}) {
-                LOG(INFO) << "Skip EnableArchiveAndMuteNewChats suggested action";
-              } else if (otherwise_relogin_days > 0 &&
-                         suggested_action == SuggestedAction{SuggestedAction::Type::SetPassword}) {
+              if (otherwise_relogin_days > 0 &&
+                  suggested_action == SuggestedAction{SuggestedAction::Type::SetPassword}) {
                 LOG(INFO) << "Skip SetPassword suggested action";
               } else {
                 suggested_actions.push_back(suggested_action);
@@ -1948,6 +1872,18 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         dialog_filter_update_period = get_json_value_int(std::move(key_value->value_), key);
         continue;
       }
+      if (key == "stories_all_hidden") {
+        archive_all_stories = get_json_value_bool(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "story_viewers_expire_period") {
+        story_viewers_expire_period = get_json_value_int(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "stories_changelog_user_id") {
+        stories_changelog_user_id = get_json_value_long(std::move(key_value->value_), key);
+        continue;
+      }
 
       new_values.push_back(std::move(key_value));
     }
@@ -2059,7 +1995,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     options.set_option_integer("chat_folder_invite_link_count_max",
                                options.get_option_integer("chatlist_invites_limit_premium", 20));
     options.set_option_integer("added_shareable_chat_folder_count_max",
-                               options.get_option_integer("chatlist_invites_limit_premium", 20));
+                               options.get_option_integer("chatlists_joined_limit_premium", 20));
   } else {
     options.set_option_integer("chat_folder_count_max", options.get_option_integer("dialog_filters_limit_default", 10));
     options.set_option_integer("chat_folder_chosen_chat_count_max",
@@ -2075,7 +2011,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     options.set_option_integer("chat_folder_invite_link_count_max",
                                options.get_option_integer("chatlist_invites_limit_default", 3));
     options.set_option_integer("added_shareable_chat_folder_count_max",
-                               options.get_option_integer("chatlist_invites_limit_default", 2));
+                               options.get_option_integer("chatlists_joined_limit_default", 2));
   }
 
   if (!is_premium_available) {
@@ -2113,12 +2049,26 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   } else {
     options.set_option_empty("gift_premium_from_input_field");
   }
+  if (stories_changelog_user_id != ContactsManager::get_service_notifications_user_id().get()) {
+    options.set_option_integer("stories_changelog_user_id", stories_changelog_user_id);
+  } else {
+    options.set_option_empty("stories_changelog_user_id");
+  }
+
+  if (story_viewers_expire_period >= 0) {
+    options.set_option_integer("story_viewers_expiration_delay", story_viewers_expire_period);
+  }
+
+  if (!options.get_option_boolean("need_synchronize_archive_all_stories")) {
+    options.set_option_boolean("archive_all_stories", archive_all_stories);
+  }
 
   options.set_option_integer("stickers_premium_by_emoji_num", stickers_premium_by_emoji_num);
   options.set_option_integer("stickers_normal_by_emoji_per_premium_num", stickers_normal_by_emoji_per_premium_num);
 
   options.set_option_empty("default_ton_blockchain_config");
   options.set_option_empty("default_ton_blockchain_name");
+  options.set_option_empty("story_viewers_expire_period");
 
   // do not update suggested actions while changing content settings or dismissing an action
   if (!is_set_content_settings_request_sent_ && dismiss_suggested_action_request_count_ == 0) {

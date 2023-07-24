@@ -39,7 +39,7 @@ class RawConnection {
   RawConnection() = default;
   RawConnection(const RawConnection &) = delete;
   RawConnection &operator=(const RawConnection &) = delete;
-  virtual ~RawConnection() = default;
+  virtual ~RawConnection();
 
   static unique_ptr<RawConnection> create(IPAddress ip_address, BufferedFd<SocketFd> buffered_socket_fd,
                                           TransportType transport_type, unique_ptr<StatsCallback> stats_callback);
@@ -48,7 +48,7 @@ class RawConnection {
 
   virtual bool can_send() const = 0;
   virtual TransportType get_transport_type() const = 0;
-  virtual size_t send_crypto(const Storer &storer, int64 session_id, int64 salt, const AuthKey &auth_key,
+  virtual size_t send_crypto(const Storer &storer, uint64 session_id, int64 salt, const AuthKey &auth_key,
                              uint64 quick_ack_token) = 0;
   virtual uint64 send_no_crypto(const Storer &storer) = 0;
 

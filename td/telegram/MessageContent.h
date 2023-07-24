@@ -22,6 +22,7 @@
 #include "td/telegram/secret_api.h"
 #include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/StickerType.h"
+#include "td/telegram/StoryFullId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/TopDialogCategory.h"
@@ -144,7 +145,7 @@ FullMessageId get_message_content_replied_message_id(DialogId dialog_id, const M
 
 std::pair<InputGroupCallId, bool> get_message_content_group_call_info(const MessageContent *content);
 
-UserId get_message_content_contact_user_id(const MessageContent *content);
+vector<UserId> get_message_content_min_user_ids(const Td *td, const MessageContent *message_content);
 
 vector<UserId> get_message_content_added_user_ids(const MessageContent *content);
 
@@ -167,7 +168,7 @@ void set_message_content_poll_answer(Td *td, const MessageContent *content, Full
 
 void get_message_content_poll_voters(Td *td, const MessageContent *content, FullMessageId full_message_id,
                                      int32 option_id, int32 offset, int32 limit,
-                                     Promise<std::pair<int32, vector<UserId>>> &&promise);
+                                     Promise<td_api::object_ptr<td_api::messageSenders>> &&promise);
 
 void stop_message_content_poll(Td *td, const MessageContent *content, FullMessageId full_message_id,
                                unique_ptr<ReplyMarkup> &&reply_markup, Promise<Unit> &&promise);
@@ -236,6 +237,8 @@ void update_message_content_file_id_remote(MessageContent *content, FileId file_
 FileId get_message_content_thumbnail_file_id(const MessageContent *content, const Td *td);
 
 vector<FileId> get_message_content_file_ids(const MessageContent *content, const Td *td);
+
+StoryFullId get_message_content_story_full_id(const Td *td, const MessageContent *content);
 
 string get_message_content_search_text(const Td *td, const MessageContent *content);
 

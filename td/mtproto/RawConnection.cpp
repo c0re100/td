@@ -32,6 +32,10 @@
 namespace td {
 namespace mtproto {
 
+RawConnection::~RawConnection() {
+  LOG(DEBUG) << "Destroy raw connection " << this;
+}
+
 class RawConnectionDefault final : public RawConnection {
  public:
   RawConnectionDefault(BufferedFd<SocketFd> buffered_socket_fd, TransportType transport_type,
@@ -39,6 +43,7 @@ class RawConnectionDefault final : public RawConnection {
       : socket_fd_(std::move(buffered_socket_fd))
       , transport_(create_transport(std::move(transport_type)))
       , stats_callback_(std::move(stats_callback)) {
+    LOG(DEBUG) << "Create raw connection " << this;
     transport_->init(&socket_fd_.input_buffer(), &socket_fd_.output_buffer());
   }
 
@@ -54,7 +59,7 @@ class RawConnectionDefault final : public RawConnection {
     return transport_->get_type();
   }
 
-  size_t send_crypto(const Storer &storer, int64 session_id, int64 salt, const AuthKey &auth_key,
+  size_t send_crypto(const Storer &storer, uint64 session_id, int64 salt, const AuthKey &auth_key,
                      uint64 quick_ack_token) final {
     PacketInfo info;
     info.version = 2;
@@ -120,6 +125,7 @@ class RawConnectionDefault final : public RawConnection {
   }
 
   void close() final {
+    LOG(DEBUG) << "Close raw connection " << this;
     transport_.reset();
     socket_fd_.close();
   }
@@ -162,6 +168,18 @@ class RawConnectionDefault final : public RawConnection {
       BufferSlice packet;
       uint32 quick_ack = 0;
       TRY_RESULT(wait_size, transport_->read_next(&packet, &quick_ack));
+      if (wait_size != 0) {
+        constexpr size_t MAX_PACKET_SIZE = (1 << 22) + 1024;
+        if (wait_size > MAX_PACKET_SIZE) {
+          return Status::Error(PSLICE() << "Expected packet size is too big: " << wait_size);
+        }
+        break;
+      }
+      if (quick_ack != 0) {
+        TRY_STATUS(on_quick_ack(quick_ack, callback));
+        continue;
+      }
+
       auto old_pointer = packet.as_slice().ubegin();
       if (!is_aligned_pointer<4>(old_pointer)) {
         BufferSlice new_packet(packet.size());
@@ -171,33 +189,19 @@ class RawConnectionDefault final : public RawConnection {
       LOG_CHECK(is_aligned_pointer<4>(packet.as_slice().ubegin()))
           << old_pointer << ' ' << packet.as_slice().ubegin() << ' ' << BufferSlice(0).as_slice().ubegin() << ' '
           << packet.size() << ' ' << wait_size << ' ' << quick_ack;
-      if (wait_size != 0) {
-        constexpr size_t MAX_PACKET_SIZE = (1 << 22) + 1024;
-        if (wait_size > MAX_PACKET_SIZE) {
-          return Status::Error(PSLICE() << "Expected packet size is too big: " << wait_size);
-        }
-        break;
-      }
-
-      if (quick_ack != 0) {
-        TRY_STATUS(on_quick_ack(quick_ack, callback));
-        continue;
-      }
 
       PacketInfo info;
       info.version = 2;
 
       TRY_RESULT(read_result, Transport::read(packet.as_mutable_slice(), auth_key, &info));
       switch (read_result.type()) {
-        case Transport::ReadResult::Quickack: {
+        case Transport::ReadResult::Quickack:
           TRY_STATUS(on_quick_ack(read_result.quick_ack(), callback));
           break;
-        }
-        case Transport::ReadResult::Error: {
+        case Transport::ReadResult::Error:
           TRY_STATUS(on_read_mtproto_error(read_result.error()));
           break;
-        }
-        case Transport::ReadResult::Packet: {
+        case Transport::ReadResult::Packet:
           // If a packet was successfully decrypted, then it is ok to assume that the connection is alive
           if (!auth_key.empty()) {
             if (stats_callback_) {
@@ -207,7 +211,6 @@ class RawConnectionDefault final : public RawConnection {
 
           TRY_STATUS(callback.on_raw_packet(info, packet.from_slice(read_result.packet())));
           break;
-        }
         case Transport::ReadResult::Nop:
           break;
         default:
@@ -283,6 +286,7 @@ class RawConnectionHttp final : public RawConnection {
  public:
   RawConnectionHttp(IPAddress ip_address, unique_ptr<StatsCallback> stats_callback)
       : ip_address_(std::move(ip_address)), stats_callback_(std::move(stats_callback)) {
+    LOG(DEBUG) << "Create raw connection " << this;
     answers_ = std::make_shared<MpscPollableQueue<Result<BufferSlice>>>();
     answers_->init();
   }
@@ -299,7 +303,7 @@ class RawConnectionHttp final : public RawConnection {
     return mtproto::TransportType{mtproto::TransportType::Http, 0, mtproto::ProxySecret()};
   }
 
-  size_t send_crypto(const Storer &storer, int64 session_id, int64 salt, const AuthKey &auth_key,
+  size_t send_crypto(const Storer &storer, uint64 session_id, int64 salt, const AuthKey &auth_key,
                      uint64 quick_ack_token) final {
     PacketInfo info;
     info.version = 2;
@@ -352,6 +356,7 @@ class RawConnectionHttp final : public RawConnection {
   }
 
   void close() final {
+    LOG(DEBUG) << "Close raw connection " << this;
   }
 
   PublicFields &extra() final {
@@ -463,8 +468,8 @@ class RawConnectionHttp final : public RawConnection {
   }
 
   Status do_send(Slice data) {
-    DarwinHttp::post(PSLICE() << "http://" << ip_address_.get_ip_str() << ":" << ip_address_.get_port() << "/api", data,
-                     [answers = answers_](auto res) { answers->writer_put(std::move(res)); });
+    DarwinHttp::post(PSLICE() << "http://" << ip_address_.get_ip_host() << ":" << ip_address_.get_port() << "/api",
+                     data, [answers = answers_](auto res) { answers->writer_put(std::move(res)); });
     return Status::OK();
   }
 

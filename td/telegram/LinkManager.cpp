@@ -21,6 +21,7 @@
 #include "td/telegram/misc.h"
 #include "td/telegram/net/Proxy.h"
 #include "td/telegram/ServerMessageId.h"
+#include "td/telegram/StoryId.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
@@ -65,6 +66,11 @@ static bool is_valid_game_name(Slice name) {
 
 static bool is_valid_web_app_name(Slice name) {
   return name.size() >= 3 && is_valid_username(name);
+}
+
+static bool is_valid_story_id(Slice story_id) {
+  auto r_story_id = to_integer_safe<int32>(story_id);
+  return r_story_id.is_ok() && StoryId(r_story_id.ok()).is_server();
 }
 
 static string get_url_query_hash(bool is_tg, const HttpUrlQuery &url_query) {
@@ -306,7 +312,8 @@ class LinkManager::InternalLinkBotStart final : public InternalLink {
         const Td *td = G()->td().get_actor_unsafe();
         auto dialog_id = td->messages_manager_->resolve_dialog_username(bot_username_);
         if (dialog_id.is_valid() && dialog_id.get_type() == DialogType::User &&
-            td->messages_manager_->get_dialog_has_last_message(dialog_id)) {
+            td->messages_manager_->get_dialog_has_last_message(dialog_id) &&
+            !td->messages_manager_->is_dialog_blocked(dialog_id)) {
           autostart = true;
         }
       }
@@ -601,6 +608,20 @@ class LinkManager::InternalLinkStickerSet final : public InternalLink {
  public:
   InternalLinkStickerSet(string sticker_set_name, bool expect_custom_emoji)
       : sticker_set_name_(std::move(sticker_set_name)), expect_custom_emoji_(expect_custom_emoji) {
+  }
+};
+
+class LinkManager::InternalLinkStory final : public InternalLink {
+  string story_sender_username_;
+  StoryId story_id_;
+
+  td_api::object_ptr<td_api::InternalLinkType> get_internal_link_type_object() const final {
+    return td_api::make_object<td_api::internalLinkTypeStory>(story_sender_username_, story_id_.get());
+  }
+
+ public:
+  InternalLinkStory(string story_sender_username, StoryId story_id)
+      : story_sender_username_(std::move(story_sender_username)), story_id_(story_id) {
   }
 };
 
@@ -1198,6 +1219,10 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
           return td::make_unique<InternalLinkWebApp>(std::move(username), arg.second,
                                                      url_query.get_arg("startapp").str());
         }
+        if (arg.first == "story" && is_valid_story_id(arg.second)) {
+          // resolve?domain=<username>&story=<story_id>
+          return td::make_unique<InternalLinkStory>(std::move(username), StoryId(to_integer<int32>(arg.second)));
+        }
       }
       if (!url_query.get_arg("attach").empty()) {
         // resolve?domain=<username>&attach=<bot_username>
@@ -1553,12 +1578,16 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_t_me_link_query(Slice q
                                                             << "&post=" << post << copy_arg("single") << thread
                                                             << copy_arg("comment") << copy_arg("t"));
     }
+    auto username = path[0];
+    if (path.size() == 3 && path[1] == "s" && is_valid_story_id(path[2])) {
+      // /<username>/s/<story_id>
+      return td::make_unique<InternalLinkStory>(std::move(username), StoryId(to_integer<int32>(path[2])));
+    }
     if (path.size() == 2 && is_valid_web_app_name(path[1])) {
       // /<username>/<web_app_name>
       // /<username>/<web_app_name>?startapp=<start_parameter>
-      return td::make_unique<InternalLinkWebApp>(path[0], path[1], url_query.get_arg("startapp").str());
+      return td::make_unique<InternalLinkWebApp>(std::move(username), path[1], url_query.get_arg("startapp").str());
     }
-    auto username = path[0];
     for (auto &arg : url_query.args_) {
       if (arg.first == "voicechat" || arg.first == "videochat" || arg.first == "livestream") {
         // /<username>?videochat
@@ -2064,6 +2093,20 @@ Result<string> LinkManager::get_internal_link_impl(const td_api::InternalLinkTyp
       } else {
         return PSTRING() << get_t_me_url() << "add" << (link->expect_custom_emoji_ ? "emoji" : "stickers") << '/'
                          << url_encode(link->sticker_set_name_);
+      }
+    }
+    case td_api::internalLinkTypeStory::ID: {
+      auto link = static_cast<const td_api::internalLinkTypeStory *>(type_ptr);
+      if (!is_valid_username(link->story_sender_username_)) {
+        return Status::Error(400, "Invalid story sender username specified");
+      }
+      if (!StoryId(link->story_id_).is_server()) {
+        return Status::Error(400, "Invalid story identifier specified");
+      }
+      if (is_internal) {
+        return PSTRING() << "tg://resolve?domain=" << link->story_sender_username_ << "&story=" << link->story_id_;
+      } else {
+        return PSTRING() << get_t_me_url() << link->story_sender_username_ << "/s/" << link->story_id_;
       }
     }
     case td_api::internalLinkTypeTheme::ID: {

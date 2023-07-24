@@ -7,11 +7,13 @@
 #include "td/telegram/net/SessionProxy.h"
 
 #include "td/telegram/Global.h"
+#include "td/telegram/net/AuthKeyState.h"
 #include "td/telegram/net/ConnectionCreator.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/net/NetQueryDispatcher.h"
 #include "td/telegram/net/Session.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/TdDb.h"
 #include "td/telegram/UniqueId.h"
 
 #include "td/utils/buffer.h"
@@ -21,6 +23,8 @@
 #include "td/utils/Promise.h"
 #include "td/utils/Slice.h"
 #include "td/utils/SliceBuilder.h"
+#include "td/utils/Time.h"
+#include "td/utils/tl_helpers.h"
 
 namespace td {
 
@@ -79,7 +83,7 @@ class SessionCallback final : public Session::Callback {
 
 SessionProxy::SessionProxy(unique_ptr<Callback> callback, std::shared_ptr<AuthDataShared> shared_auth_data,
                            bool is_primary, bool is_main, bool allow_media_only, bool is_media, bool use_pfs,
-                           bool is_cdn, bool need_destroy)
+                           bool persist_tmp_auth_key, bool is_cdn, bool need_destroy)
     : callback_(std::move(callback))
     , auth_data_(std::move(shared_auth_data))
     , is_primary_(is_primary)
@@ -87,6 +91,7 @@ SessionProxy::SessionProxy(unique_ptr<Callback> callback, std::shared_ptr<AuthDa
     , allow_media_only_(allow_media_only)
     , is_media_(is_media)
     , use_pfs_(use_pfs)
+    , persist_tmp_auth_key_(use_pfs && persist_tmp_auth_key)
     , is_cdn_(is_cdn)
     , need_destroy_(need_destroy) {
 }
@@ -107,8 +112,23 @@ void SessionProxy::start_up() {
    private:
     ActorShared<SessionProxy> session_proxy_;
   };
-  auth_key_state_ = auth_data_->get_auth_key_state();
+  auth_key_state_ = get_auth_key_state(auth_data_->get_auth_key());
   auth_data_->add_auth_key_listener(make_unique<Listener>(actor_shared(this)));
+
+  string saved_auth_key = G()->td_db()->get_binlog_pmc()->get(tmp_auth_key_key());
+  if (!saved_auth_key.empty()) {
+    if (persist_tmp_auth_key_) {
+      unserialize(tmp_auth_key_, saved_auth_key).ensure();
+      if (tmp_auth_key_.expires_at() < Time::now()) {
+        tmp_auth_key_ = {};
+      } else {
+        LOG(WARNING) << "Loaded tmp_auth_key " << tmp_auth_key_.id() << ": " << get_auth_key_state(tmp_auth_key_);
+      }
+    } else {
+      LOG(WARNING) << "Drop saved tmp_auth_key";
+      G()->td_db()->get_binlog_pmc()->erase(tmp_auth_key_key());
+    }
+  }
   open_session();
 }
 
@@ -216,13 +236,13 @@ void SessionProxy::open_session(bool force) {
   session_ = create_actor<Session>(
       name,
       make_unique<SessionCallback>(actor_shared(this, session_generation_), dc_id, allow_media_only_, is_media_, hash),
-      auth_data_, raw_dc_id, int_dc_id, is_primary_, is_main_, use_pfs_, is_cdn_, need_destroy_, tmp_auth_key_,
-      server_salts_);
+      auth_data_, raw_dc_id, int_dc_id, is_primary_, is_main_, use_pfs_, persist_tmp_auth_key_, is_cdn_, need_destroy_,
+      tmp_auth_key_, server_salts_);
 }
 
 void SessionProxy::update_auth_key_state() {
   auto old_auth_key_state = auth_key_state_;
-  auth_key_state_ = auth_data_->get_auth_key_state();
+  auth_key_state_ = get_auth_key_state(auth_data_->get_auth_key());
   if (auth_key_state_ != old_auth_key_state && old_auth_key_state == AuthKeyState::OK) {
     close_session();
   }
@@ -238,16 +258,15 @@ void SessionProxy::update_auth_key_state() {
 }
 
 void SessionProxy::on_tmp_auth_key_updated(mtproto::AuthKey auth_key) {
-  Slice state;
-  if (auth_key.empty()) {
-    state = Slice("Empty");
-  } else if (auth_key.auth_flag()) {
-    state = Slice("OK");
-  } else {
-    state = Slice("NoAuth");
-  }
-  LOG(WARNING) << "Have tmp_auth_key " << auth_key.id() << ": " << state;
+  LOG(WARNING) << "Have tmp_auth_key " << auth_key.id() << ": " << get_auth_key_state(auth_key);
   tmp_auth_key_ = std::move(auth_key);
+  if (persist_tmp_auth_key_) {
+    G()->td_db()->get_binlog_pmc()->set(tmp_auth_key_key(), serialize(tmp_auth_key_));
+  }
+}
+
+string SessionProxy::tmp_auth_key_key() const {
+  return PSTRING() << "tmp_auth" << get_name();
 }
 
 void SessionProxy::on_server_salt_updated(std::vector<mtproto::ServerSalt> server_salts) {

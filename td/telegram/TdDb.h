@@ -38,6 +38,9 @@ class SqliteConnectionSafe;
 class SqliteKeyValueSafe;
 class SqliteKeyValueAsyncInterface;
 class SqliteKeyValue;
+class StoryDbSyncInterface;
+class StoryDbSyncSafeInterface;
+class StoryDbAsyncInterface;
 
 class TdDb {
  public:
@@ -72,6 +75,7 @@ class TdDb {
     vector<BinlogEvent> to_messages_manager;
     vector<BinlogEvent> to_notification_manager;
     vector<BinlogEvent> to_notification_settings_manager;
+    vector<BinlogEvent> to_story_manager;
 
     int64 since_last_open = 0;
   };
@@ -107,6 +111,10 @@ class TdDb {
     return parameters_.use_message_database_;
   }
 
+  bool was_dialog_db_created() const {
+    return was_dialog_db_created_;
+  }
+
   std::shared_ptr<FileDbInterface> get_file_db_shared();
   std::shared_ptr<SqliteConnectionSafe> &get_sqlite_connection_safe();
 #define get_binlog() get_binlog_impl(__FILE__, __LINE__)
@@ -136,6 +144,9 @@ class TdDb {
   DialogDbSyncInterface *get_dialog_db_sync();
   DialogDbAsyncInterface *get_dialog_db_async();
 
+  StoryDbSyncInterface *get_story_db_sync();
+  StoryDbAsyncInterface *get_story_db_async();
+
   void change_key(DbKey key, Promise<> promise);
 
   void with_db_path(const std::function<void(CSlice)> &callback);
@@ -150,6 +161,8 @@ class TdDb {
 
  private:
   Parameters parameters_;
+
+  bool was_dialog_db_created_ = false;
 
   std::shared_ptr<SqliteConnectionSafe> sql_connection_;
 
@@ -166,6 +179,9 @@ class TdDb {
 
   std::shared_ptr<DialogDbSyncSafeInterface> dialog_db_sync_safe_;
   std::shared_ptr<DialogDbAsyncInterface> dialog_db_async_;
+
+  std::shared_ptr<StoryDbSyncSafeInterface> story_db_sync_safe_;
+  std::shared_ptr<StoryDbAsyncInterface> story_db_async_;
 
   std::shared_ptr<BinlogKeyValue<ConcurrentBinlog>> binlog_pmc_;
   std::shared_ptr<BinlogKeyValue<ConcurrentBinlog>> config_pmc_;

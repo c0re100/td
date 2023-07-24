@@ -124,9 +124,10 @@ StringBuilder &operator<<(StringBuilder &string_builder, MessageContentType cont
       return string_builder << "WebAppWriteAccessAllowed";
     case MessageContentType::SetBackground:
       return string_builder << "SetBackground";
+    case MessageContentType::Story:
+      return string_builder << "Story";
     default:
-      UNREACHABLE();
-      return string_builder;
+      return string_builder << "Invalid type " << static_cast<int32>(content_type);
   }
 }
 
@@ -189,6 +190,7 @@ bool is_allowed_media_group_content(MessageContentType content_type) {
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
     case MessageContentType::SetBackground:
+    case MessageContentType::Story:
       return false;
     default:
       UNREACHABLE();
@@ -262,6 +264,7 @@ bool is_secret_message_content(int32 ttl, MessageContentType content_type) {
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
     case MessageContentType::SetBackground:
+    case MessageContentType::Story:
       return false;
     default:
       UNREACHABLE();
@@ -291,6 +294,7 @@ bool is_service_message_content(MessageContentType content_type) {
     case MessageContentType::ExpiredVideo:
     case MessageContentType::Poll:
     case MessageContentType::Dice:
+    case MessageContentType::Story:
       return false;
     case MessageContentType::ChatCreate:
     case MessageContentType::ChatChangeTitle:
@@ -394,6 +398,7 @@ bool can_have_message_content_caption(MessageContentType content_type) {
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
     case MessageContentType::SetBackground:
+    case MessageContentType::Story:
       return false;
     default:
       UNREACHABLE();

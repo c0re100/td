@@ -11,8 +11,10 @@
 #include "td/telegram/files/FileSourceId.h"
 #include "td/telegram/FullMessageId.h"
 #include "td/telegram/SecretInputMedia.h"
+#include "td/telegram/StoryFullId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
+#include "td/telegram/UserId.h"
 #include "td/telegram/WebPageId.h"
 
 #include "td/actor/actor.h"
@@ -86,6 +88,12 @@ class WebPagesManager final : public Actor {
 
   int32 get_web_page_media_duration(WebPageId web_page_id) const;
 
+  StoryFullId get_web_page_story_full_id(WebPageId web_page_id) const;
+
+  vector<UserId> get_web_page_user_ids(WebPageId web_page_id) const;
+
+  void on_story_changed(StoryFullId story_full_id);
+
  private:
   class WebPage;
 
@@ -156,7 +164,7 @@ class WebPagesManager final : public Actor {
 
   void tear_down() final;
 
-  static int32 get_web_page_media_duration(const WebPage *web_page);
+  int32 get_web_page_media_duration(const WebPage *web_page) const;
 
   FileSourceId get_web_page_file_source_id(WebPage *web_page);
 
@@ -179,6 +187,8 @@ class WebPagesManager final : public Actor {
 
   FlatHashMap<WebPageId, vector<std::pair<string, Promise<td_api::object_ptr<td_api::webPage>>>>, WebPageIdHash>
       pending_get_web_pages_;
+
+  FlatHashMap<StoryFullId, FlatHashSet<WebPageId, WebPageIdHash>, StoryFullIdHash> story_web_pages_;
 
   FlatHashMap<string, WebPageId> url_to_web_page_id_;
 

@@ -59,6 +59,7 @@ class SponsoredMessageManager;
 class StateManager;
 class StickersManager;
 class StorageManager;
+class StoryManager;
 class Td;
 class TdDb;
 class TempAuthKeyWatchdog;
@@ -73,8 +74,8 @@ class Global final : public ActorContext {
   ~Global() final;
   Global(const Global &) = delete;
   Global &operator=(const Global &) = delete;
-  Global(Global &&other) = delete;
-  Global &operator=(Global &&other) = delete;
+  Global(Global &&) = delete;
+  Global &operator=(Global &&) = delete;
 
   static constexpr int32 ID = -572104940;
   int32 get_id() const final {
@@ -159,7 +160,7 @@ class Global final : public ActorContext {
     return to_unix_time(server_time_cached());
   }
 
-  void update_server_time_difference(double diff);
+  void update_server_time_difference(double diff, bool force);
 
   void save_server_time();
 
@@ -358,6 +359,13 @@ class Global final : public ActorContext {
     storage_manager_ = storage_manager;
   }
 
+  ActorId<StoryManager> story_manager() const {
+    return story_manager_;
+  }
+  void set_story_manager(ActorId<StoryManager> story_manager) {
+    story_manager_ = story_manager;
+  }
+
   ActorId<ThemeManager> theme_manager() const {
     return theme_manager_;
   }
@@ -522,6 +530,7 @@ class Global final : public ActorContext {
   ActorId<SponsoredMessageManager> sponsored_message_manager_;
   ActorId<StickersManager> stickers_manager_;
   ActorId<StorageManager> storage_manager_;
+  ActorId<StoryManager> story_manager_;
   ActorId<ThemeManager> theme_manager_;
   ActorId<TopDialogManager> top_dialog_manager_;
   ActorId<UpdatesManager> updates_manager_;
