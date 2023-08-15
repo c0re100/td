@@ -21,6 +21,8 @@ class Td;
 class StoryInteractionInfo {
   vector<UserId> recent_viewer_user_ids_;
   int32 view_count_ = -1;
+  int32 reaction_count_ = 0;
+  bool has_viewers_ = false;
 
   static constexpr size_t MAX_RECENT_VIEWERS = 3;
 
@@ -37,11 +39,16 @@ class StoryInteractionInfo {
     return view_count_ < 0;
   }
 
+  bool has_hidden_viewers() const {
+    return view_count_ < 0 || !has_viewers_;
+  }
+
   void add_dependencies(Dependencies &dependencies) const;
 
-  bool set_view_count(int32 view_count) {
-    if (view_count > view_count_) {
+  bool set_counts(int32 view_count, int32 reaction_count) {
+    if (view_count != view_count_ || reaction_count != reaction_count_) {
       view_count = view_count_;
+      reaction_count = reaction_count_;
       return true;
     }
     return false;
@@ -51,9 +58,13 @@ class StoryInteractionInfo {
     return view_count_;
   }
 
+  int32 get_reaction_count() const {
+    return reaction_count_;
+  }
+
   bool definitely_has_no_user(UserId user_id) const;
 
-  void set_recent_viewer_user_ids(vector<UserId> &&user_ids);
+  bool set_recent_viewer_user_ids(vector<UserId> &&user_ids);
 
   td_api::object_ptr<td_api::storyInteractionInfo> get_story_interaction_info_object(Td *td) const;
 

@@ -186,13 +186,12 @@ class ContactsManager final : public Actor {
   void on_update_user_name(UserId user_id, string &&first_name, string &&last_name, Usernames &&usernames);
   void on_update_user_phone_number(UserId user_id, string &&phone_number);
   void on_update_user_emoji_status(UserId user_id, tl_object_ptr<telegram_api::EmojiStatus> &&emoji_status);
-  void on_update_user_has_stories(UserId user_id, bool has_stories, StoryId max_active_story_id,
-                                  StoryId max_read_story_id);
+  void on_update_user_story_ids(UserId user_id, StoryId max_active_story_id, StoryId max_read_story_id);
   void on_update_user_max_read_story_id(UserId user_id, StoryId max_read_story_id);
   void on_update_user_stories_hidden(UserId user_id, bool stories_hidden);
   void on_update_user_online(UserId user_id, tl_object_ptr<telegram_api::UserStatus> &&status);
   void on_update_user_local_was_online(UserId user_id, int32 local_was_online);
-  void on_update_user_is_blocked(UserId user_id, bool is_blocked);
+  void on_update_user_is_blocked(UserId user_id, bool is_blocked, bool is_blocked_for_stories);
   void on_update_user_has_pinned_stories(UserId user_id, bool has_pinned_stories);
   void on_update_user_common_chat_count(UserId user_id, int32 common_chat_count);
   void on_update_user_need_phone_number_privacy_exception(UserId user_id, bool need_phone_number_privacy_exception);
@@ -796,7 +795,6 @@ class ContactsManager final : public Actor {
     bool need_apply_min_photo = false;
     bool can_be_added_to_attach_menu = false;
     bool attach_menu_enabled = false;
-    bool has_stories = false;
     bool stories_hidden = false;
 
     bool is_photo_inited = false;
@@ -811,10 +809,12 @@ class ContactsManager final : public Actor {
     bool is_phone_number_changed = true;
     bool is_emoji_status_changed = true;
     bool is_is_contact_changed = true;
+    bool is_is_mutual_contact_changed = true;
     bool is_is_deleted_changed = true;
     bool is_is_premium_changed = true;
     bool is_stories_hidden_changed = true;
     bool is_full_info_changed = false;
+    bool is_being_updated = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
     bool is_status_changed = true;
@@ -860,6 +860,7 @@ class ContactsManager final : public Actor {
     int32 common_chat_count = 0;
 
     bool is_blocked = false;
+    bool is_blocked_for_stories = false;
     bool can_be_called = false;
     bool supports_video_calls = false;
     bool has_private_calls = false;
@@ -869,6 +870,7 @@ class ContactsManager final : public Actor {
     bool has_pinned_stories = false;
 
     bool is_common_chat_count_changed = true;
+    bool is_being_updated = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_send_update = true;       // have new changes that need only to be sent to the client
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
@@ -913,6 +915,7 @@ class ContactsManager final : public Actor {
     bool is_status_changed = true;
     bool is_is_active_changed = true;
     bool is_noforwards_changed = true;
+    bool is_being_updated = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
     bool is_update_basic_group_sent = false;
@@ -951,6 +954,7 @@ class ContactsManager final : public Actor {
 
     bool can_set_username = false;
 
+    bool is_being_updated = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_send_update = true;       // have new changes that need only to be sent to the client
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
@@ -1004,6 +1008,7 @@ class ContactsManager final : public Actor {
     bool is_creator_changed = true;
     bool had_read_access = true;
     bool was_member = false;
+    bool is_being_updated = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
     bool is_update_supergroup_sent = false;
@@ -1071,6 +1076,7 @@ class ContactsManager final : public Actor {
     bool can_be_deleted = false;
 
     bool is_slow_mode_next_send_date_changed = true;
+    bool is_being_updated = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_send_update = true;       // have new changes that need only to be sent to the client
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
@@ -1103,6 +1109,7 @@ class ContactsManager final : public Actor {
 
     bool is_ttl_changed = true;
     bool is_state_changed = true;
+    bool is_being_updated = false;
     bool is_changed = true;             // have new changes that need to be sent to the client and database
     bool need_save_to_database = true;  // have new changes that need only to be saved to the database
 
@@ -1332,7 +1339,7 @@ class ContactsManager final : public Actor {
   User *get_user_force(UserId user_id, const char *source);
   User *get_user_force_impl(UserId user_id, const char *source);
 
-  User *add_user(UserId user_id, const char *source);
+  User *add_user(UserId user_id);
 
   const UserFull *get_user_full(UserId user_id) const;
   UserFull *get_user_full(UserId user_id);
@@ -1411,8 +1418,7 @@ class ContactsManager final : public Actor {
   void on_update_user_photo(User *u, UserId user_id, tl_object_ptr<telegram_api::UserProfilePhoto> &&photo,
                             const char *source);
   void on_update_user_emoji_status(User *u, UserId user_id, EmojiStatus emoji_status);
-  void on_update_user_has_stories(User *u, UserId user_id, bool has_stories, StoryId max_active_story_id,
-                                  StoryId max_read_story_id);
+  void on_update_user_story_ids_impl(User *u, UserId user_id, StoryId max_active_story_id, StoryId max_read_story_id);
   void on_update_user_max_read_story_id(User *u, UserId user_id, StoryId max_read_story_id);
   void on_update_user_stories_hidden(User *u, UserId user_id, bool stories_hidden);
   void on_update_user_is_contact(User *u, UserId user_id, bool is_contact, bool is_mutual_contact,
@@ -1438,7 +1444,8 @@ class ContactsManager final : public Actor {
 
   void register_user_photo(User *u, UserId user_id, const Photo &photo);
 
-  static void on_update_user_full_is_blocked(UserFull *user_full, UserId user_id, bool is_blocked);
+  static void on_update_user_full_is_blocked(UserFull *user_full, UserId user_id, bool is_blocked,
+                                             bool is_blocked_for_stories);
   static void on_update_user_full_common_chat_count(UserFull *user_full, UserId user_id, int32 common_chat_count);
   static void on_update_user_full_commands(UserFull *user_full, UserId user_id,
                                            vector<tl_object_ptr<telegram_api::botCommand>> &&bot_commands);
@@ -1922,7 +1929,7 @@ class ContactsManager final : public Actor {
   WaitFreeHashMap<UserId, tl_object_ptr<telegram_api::UserProfilePhoto>, UserIdHash> pending_user_photos_;
   struct UserIdPhotoIdHash {
     uint32 operator()(const std::pair<UserId, int64> &pair) const {
-      return UserIdHash()(pair.first) * 2023654985u + Hash<int64>()(pair.second);
+      return combine_hashes(UserIdHash()(pair.first), Hash<int64>()(pair.second));
     }
   };
   WaitFreeHashMap<std::pair<UserId, int64>, FileSourceId, UserIdPhotoIdHash> user_profile_photo_file_source_ids_;

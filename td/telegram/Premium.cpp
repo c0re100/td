@@ -78,6 +78,9 @@ static td_api::object_ptr<td_api::PremiumFeature> get_premium_feature_object(Sli
   if (premium_feature == "translations") {
     return td_api::make_object<td_api::premiumFeatureRealTimeChatTranslation>();
   }
+  if (premium_feature == "stories") {
+    return td_api::make_object<td_api::premiumFeatureUpgradedStories>();
+  }
   return nullptr;
 }
 
@@ -303,7 +306,10 @@ const vector<Slice> &get_premium_limit_keys() {
                                         "about_length",
                                         "chatlist_invites",
                                         "chatlists_joined",
-                                        "story_expiring"};
+                                        "story_expiring",
+                                        "story_caption_length",
+                                        "stories_sent_weekly",
+                                        "stories_sent_monthly"};
   return limit_keys;
 }
 
@@ -336,6 +342,12 @@ static Slice get_limit_type_key(const td_api::PremiumLimitType *limit_type) {
       return Slice("chatlists_joined");
     case td_api::premiumLimitTypeActiveStoryCount::ID:
       return Slice("story_expiring");
+    case td_api::premiumLimitTypeStoryCaptionLength::ID:
+      return Slice("story_caption_length");
+    case td_api::premiumLimitTypeWeeklySentStoryCount::ID:
+      return Slice("stories_sent_weekly");
+    case td_api::premiumLimitTypeMonthlySentStoryCount::ID:
+      return Slice("stories_sent_monthly");
     default:
       UNREACHABLE();
       return Slice();
@@ -386,10 +398,36 @@ static string get_premium_source(const td_api::PremiumFeature *feature) {
       return "app_icons";
     case td_api::premiumFeatureRealTimeChatTranslation::ID:
       return "translations";
+    case td_api::premiumFeatureUpgradedStories::ID:
+      return "stories";
     default:
       UNREACHABLE();
   }
   return string();
+}
+
+static string get_premium_source(const td_api::PremiumStoryFeature *feature) {
+  if (feature == nullptr) {
+    return string();
+  }
+
+  switch (feature->get_id()) {
+    case td_api::premiumStoryFeaturePriorityOrder::ID:
+      return "stories__priority_order";
+    case td_api::premiumStoryFeatureStealthMode::ID:
+      return "stories__stealth_mode";
+    case td_api::premiumStoryFeaturePermanentViewsHistory::ID:
+      return "stories__permanent_views_history";
+    case td_api::premiumStoryFeatureCustomExpirationDuration::ID:
+      return "stories__expiration_durations";
+    case td_api::premiumStoryFeatureSaveStories::ID:
+      return "stories__save_stories_to_gallery";
+    case td_api::premiumStoryFeatureLinksAndFormatting::ID:
+      return "stories__links_and_formatting";
+    default:
+      UNREACHABLE();
+      return string();
+  }
 }
 
 static string get_premium_source(const td_api::object_ptr<td_api::PremiumSource> &source) {
@@ -403,6 +441,10 @@ static string get_premium_source(const td_api::object_ptr<td_api::PremiumSource>
     }
     case td_api::premiumSourceFeature::ID: {
       auto *feature = static_cast<const td_api::premiumSourceFeature *>(source.get())->feature_.get();
+      return get_premium_source(feature);
+    }
+    case td_api::premiumSourceStoryFeature::ID: {
+      auto *feature = static_cast<const td_api::premiumSourceStoryFeature *>(source.get())->feature_.get();
       return get_premium_source(feature);
     }
     case td_api::premiumSourceLink::ID: {
@@ -466,6 +508,15 @@ static td_api::object_ptr<td_api::premiumLimit> get_premium_limit_object(Slice k
     if (key == "story_expiring") {
       return td_api::make_object<td_api::premiumLimitTypeActiveStoryCount>();
     }
+    if (key == "story_caption_length") {
+      return td_api::make_object<td_api::premiumLimitTypeStoryCaptionLength>();
+    }
+    if (key == "stories_sent_weekly") {
+      return td_api::make_object<td_api::premiumLimitTypeWeeklySentStoryCount>();
+    }
+    if (key == "stories_sent_monthly") {
+      return td_api::make_object<td_api::premiumLimitTypeMonthlySentStoryCount>();
+    }
     UNREACHABLE();
     return nullptr;
   }();
@@ -483,13 +534,12 @@ void get_premium_limit(const td_api::object_ptr<td_api::PremiumLimitType> &limit
 
 void get_premium_features(Td *td, const td_api::object_ptr<td_api::PremiumSource> &source,
                           Promise<td_api::object_ptr<td_api::premiumFeatures>> &&promise) {
-  auto premium_features = full_split(
-      G()->get_option_string(
-          "premium_features",
-          "double_limits,more_upload,faster_download,voice_to_text,no_ads,infinite_reactions,premium_stickers,"
-          "animated_emoji,advanced_chat_management,profile_badge,emoji_status,animated_userpics,app_icons,"
-          "translations"),
-      ',');
+  auto premium_features =
+      full_split(G()->get_option_string("premium_features",
+                                        "double_limits,stories,more_upload,faster_download,voice_to_text,no_ads,"
+                                        "infinite_reactions,premium_stickers,animated_emoji,advanced_chat_management,"
+                                        "profile_badge,emoji_status,animated_userpics,app_icons,translations"),
+                 ',');
   vector<td_api::object_ptr<td_api::PremiumFeature>> features;
   for (const auto &premium_feature : premium_features) {
     auto feature = get_premium_feature_object(premium_feature);

@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.15 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.16 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -386,6 +386,8 @@ set(TDLIB_SOURCE
   td/telegram/Location.cpp
   td/telegram/logevent/LogEventHelper.cpp
   td/telegram/Logging.cpp
+  td/telegram/MediaArea.cpp
+  td/telegram/MediaAreaCoordinates.cpp
   td/telegram/MessageContent.cpp
   td/telegram/MessageContentType.cpp
   td/telegram/MessageDb.cpp
@@ -444,6 +446,8 @@ set(TDLIB_SOURCE
   td/telegram/PremiumGiftOption.cpp
   td/telegram/QueryCombiner.cpp
   td/telegram/QueryMerger.cpp
+  td/telegram/ReactionManager.cpp
+  td/telegram/ReactionType.cpp
   td/telegram/RecentDialogList.cpp
   td/telegram/ReplyMarkup.cpp
   td/telegram/ReportReason.cpp
@@ -475,6 +479,8 @@ set(TDLIB_SOURCE
   td/telegram/StoryDb.cpp
   td/telegram/StoryInteractionInfo.cpp
   td/telegram/StoryManager.cpp
+  td/telegram/StoryStealthMode.cpp
+  td/telegram/StoryViewer.cpp
   td/telegram/SuggestedAction.cpp
   td/telegram/Support.cpp
   td/telegram/Td.cpp
@@ -540,6 +546,7 @@ set(TDLIB_SOURCE
   td/telegram/BackgroundInfo.h
   td/telegram/BackgroundManager.h
   td/telegram/BackgroundType.h
+  td/telegram/BlockListId.h
   td/telegram/BotCommand.h
   td/telegram/BotCommandScope.h
   td/telegram/BotInfoManager.h
@@ -656,6 +663,8 @@ set(TDLIB_SOURCE
   td/telegram/logevent/LogEventHelper.h
   td/telegram/logevent/SecretChatEvent.h
   td/telegram/Logging.h
+  td/telegram/MediaArea.h
+  td/telegram/MediaAreaCoordinates.h
   td/telegram/MessageContent.h
   td/telegram/MessageContentType.h
   td/telegram/MessageCopyOptions.h
@@ -734,6 +743,8 @@ set(TDLIB_SOURCE
   td/telegram/PublicDialogType.h
   td/telegram/QueryCombiner.h
   td/telegram/QueryMerger.h
+  td/telegram/ReactionManager.h
+  td/telegram/ReactionType.h
   td/telegram/RecentDialogList.h
   td/telegram/ReplyMarkup.h
   td/telegram/ReportReason.h
@@ -774,6 +785,8 @@ set(TDLIB_SOURCE
   td/telegram/StoryInteractionInfo.h
   td/telegram/StoryListId.h
   td/telegram/StoryManager.h
+  td/telegram/StoryStealthMode.h
+  td/telegram/StoryViewer.h
   td/telegram/SuggestedAction.h
   td/telegram/Support.h
   td/telegram/Td.h
@@ -806,6 +819,7 @@ set(TDLIB_SOURCE
   td/telegram/AuthManager.hpp
   td/telegram/BackgroundInfo.hpp
   td/telegram/BackgroundType.hpp
+  td/telegram/ChatReactions.hpp
   td/telegram/DialogNotificationSettings.hpp
   td/telegram/DialogFilter.hpp
   td/telegram/Dimensions.hpp
@@ -826,6 +840,8 @@ set(TDLIB_SOURCE
   td/telegram/Game.hpp
   td/telegram/InputInvoice.hpp
   td/telegram/InputMessageText.hpp
+  td/telegram/MediaArea.hpp
+  td/telegram/MediaAreaCoordinates.hpp
   td/telegram/MessageEntity.hpp
   td/telegram/MessageExtendedMedia.hpp
   td/telegram/MessageReaction.hpp
@@ -838,6 +854,8 @@ set(TDLIB_SOURCE
   td/telegram/PollId.hpp
   td/telegram/PollManager.hpp
   td/telegram/PremiumGiftOption.hpp
+  td/telegram/ReactionManager.hpp
+  td/telegram/ReactionType.hpp
   td/telegram/ReplyMarkup.hpp
   td/telegram/RequestedDialogType.hpp
   td/telegram/ScopeNotificationSettings.hpp
@@ -847,6 +865,7 @@ set(TDLIB_SOURCE
   td/telegram/StickerPhotoSize.hpp
   td/telegram/StickersManager.hpp
   td/telegram/StoryInteractionInfo.hpp
+  td/telegram/StoryStealthMode.hpp
   td/telegram/TranscriptionInfo.hpp
   td/telegram/VideoNotesManager.hpp
   td/telegram/VideosManager.hpp

@@ -17,10 +17,10 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/JsonValue.h"
 #include "td/telegram/LanguagePackManager.h"
-#include "td/telegram/MessageReaction.h"
 #include "td/telegram/net/MtprotoHeader.h"
 #include "td/telegram/net/NetQueryDispatcher.h"
 #include "td/telegram/NotificationManager.h"
+#include "td/telegram/ReactionType.h"
 #include "td/telegram/StateManager.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StorageManager.h"
@@ -60,6 +60,7 @@ OptionManager::OptionManager(Td *td)
   all_options["utc_time_offset"] = PSTRING() << 'I' << Clocks::tz_offset();
   for (const auto &name_value : all_options) {
     const string &name = name_value.first;
+    CHECK(!name.empty());
     options_->set(name, name_value.second);
     if (!is_internal_option(name)) {
       send_closure(G()->td(), &Td::send_update,
@@ -79,7 +80,7 @@ OptionManager::OptionManager(Td *td)
     set_option_integer("message_caption_length_max", 1024);
   }
   if (!have_option("story_caption_length_max")) {
-    set_option_integer("story_caption_length_max", 2048);
+    set_option_integer("story_caption_length_max", 200);
   }
   if (!have_option("bio_length_max")) {
     set_option_integer("bio_length_max", 70);
@@ -115,7 +116,16 @@ OptionManager::OptionManager(Td *td)
     set_option_integer("pinned_forum_topic_count_max", G()->is_test_dc() ? 3 : 5);
   }
   if (!have_option("archive_all_stories")) {
-    set_option_boolean("archive_all_stories", false);
+    // set_option_boolean("archive_all_stories", false);
+  }
+  if (!have_option("story_stealth_mode_past_period")) {
+    set_option_integer("story_stealth_mode_past_period", 300);
+  }
+  if (!have_option("story_stealth_mode_future_period")) {
+    set_option_integer("story_stealth_mode_future_period", 1500);
+  }
+  if (!have_option("story_stealth_mode_cooldown_period")) {
+    set_option_integer("story_stealth_mode_cooldown_period", 3600);
   }
 
   set_option_empty("archive_and_mute_new_chats_from_unknown_users");
@@ -285,22 +295,26 @@ bool OptionManager::is_internal_option(Slice name) {
     case 'm':
       return name == "my_phone_number";
     case 'n':
-      return name == "need_synchronize_archive_all_stories" || name == "notification_cloud_delay_ms" ||
-             name == "notification_default_delay_ms";
+      return name == "need_premium_for_story_caption_entities" || name == "need_synchronize_archive_all_stories" ||
+             name == "notification_cloud_delay_ms" || name == "notification_default_delay_ms";
     case 'o':
       return name == "online_cloud_timeout_ms" || name == "online_update_period_ms" || name == "otherwise_relogin_days";
     case 'p':
       return name == "premium_bot_username" || name == "premium_features" || name == "premium_invoice_slug";
     case 'r':
       return name == "rating_e_decay" || name == "reactions_uniq_max" || name == "reactions_user_max_default" ||
-             name == "reactions_user_max_premium" || name == "recent_stickers_limit" || name == "revoke_pm_inbox" ||
-             name == "revoke_time_limit" || name == "revoke_pm_time_limit";
+             name == "reactions_user_max_premium" || name == "recent_stickers_limit" ||
+             name == "restriction_add_platforms" || name == "revoke_pm_inbox" || name == "revoke_time_limit" ||
+             name == "revoke_pm_time_limit";
     case 's':
       return name == "saved_animations_limit" || name == "saved_gifs_limit_default" ||
              name == "saved_gifs_limit_premium" || name == "session_count" || name == "since_last_open" ||
              name == "stickers_faved_limit_default" || name == "stickers_faved_limit_premium" ||
              name == "stickers_normal_by_emoji_per_premium_num" || name == "stickers_premium_by_emoji_num" ||
-             name == "stories_changelog_user_id" || name == "story_expiring_limit_default" ||
+             name == "stories_changelog_user_id" || name == "stories_sent_monthly_limit_default" ||
+             name == "stories_sent_monthly_limit_premium" || name == "stories_sent_weekly_limit_default" ||
+             name == "stories_sent_weekly_limit_premium" || name == "story_caption_length_limit_default" ||
+             name == "story_caption_length_limit_premium" || name == "story_expiring_limit_default" ||
              name == "story_expiring_limit_premium";
     case 'v':
       return name == "video_note_size_max";
@@ -313,7 +327,7 @@ bool OptionManager::is_internal_option(Slice name) {
 
 td_api::object_ptr<td_api::Update> OptionManager::get_internal_option_update(Slice name) const {
   if (name == "default_reaction") {
-    return get_update_default_reaction_type(get_option_string(name));
+    return ReactionType(get_option_string(name)).get_update_default_reaction_type();
   }
   if (name == "otherwise_relogin_days") {
     auto days = narrow_cast<int32>(get_option_integer(name));
@@ -399,6 +413,11 @@ void OptionManager::on_option_updated(Slice name) {
           G()->net_query_dispatcher().update_mtproto_header();
         }
       }
+      if (name == "is_premium") {
+        set_option_boolean(
+            "can_use_text_entities_in_story_caption",
+            !get_option_boolean("need_premium_for_story_caption_entities") || get_option_boolean("is_premium"));
+      }
       break;
     case 'l':
       if (name == "language_pack_id") {
@@ -419,6 +438,11 @@ void OptionManager::on_option_updated(Slice name) {
       }
       break;
     case 'n':
+      if (name == "need_premium_for_story_caption_entities") {
+        set_option_boolean(
+            "can_use_text_entities_in_story_caption",
+            !get_option_boolean("need_premium_for_story_caption_entities") || get_option_boolean("is_premium"));
+      }
       if (name == "need_synchronize_archive_all_stories") {
         send_closure(td_->story_manager_actor_, &StoryManager::try_synchronize_archive_all_stories);
       }
@@ -539,7 +563,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.15");
+        return td_api::make_object<td_api::optionValueString>("1.8.16");
       }
       break;
   }
@@ -629,10 +653,12 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
       if (set_boolean_option("always_parse_markdown")) {
         return;
       }
+      /*
       if (!is_bot && set_boolean_option("archive_all_stories")) {
         set_option_boolean("need_synchronize_archive_all_stories", true);
         return;
       }
+      */
       break;
     case 'c':
       if (!is_bot && set_string_option("connection_parameters", [](Slice value) {

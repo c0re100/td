@@ -45,6 +45,8 @@
 #include "td/telegram/PollManager.h"
 #include "td/telegram/PrivacyManager.h"
 #include "td/telegram/PublicDialogType.h"
+#include "td/telegram/ReactionManager.h"
+#include "td/telegram/ReactionType.h"
 #include "td/telegram/ScheduledServerMessageId.h"
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/SecretChatsManager.h"
@@ -321,7 +323,11 @@ void UpdatesManager::repair_pts_gap() {
     return;
   }
   auto pts = get_pts() + 1;
-  if (pending_pts_updates_.empty() || pending_pts_updates_.begin()->first != pts + 1) {
+  if (pending_pts_updates_.empty()) {
+    return;
+  }
+  auto it = pending_pts_updates_.begin();
+  if (it->second.pts != pts + it->second.pts_count) {
     return;
   }
   VLOG(get_difference) << "Fetch update with PTS = " << pts;
@@ -343,16 +349,30 @@ void UpdatesManager::fill_pts_gap(void *td) {
   CHECK(td != nullptr);
   auto updates_manager = static_cast<Td *>(td)->updates_manager_.get();
   auto min_pts = std::numeric_limits<int32>::max();
+  auto min_pts_count = 0;
+  const telegram_api::Update *first_update = nullptr;
   auto max_pts = 0;
   if (!updates_manager->pending_pts_updates_.empty()) {
-    min_pts = min(min_pts, updates_manager->pending_pts_updates_.begin()->first);
+    auto &min_update = updates_manager->pending_pts_updates_.begin()->second;
+    if (min_update.pts < min_pts) {
+      min_pts = min_update.pts;
+      min_pts_count = min_update.pts_count;
+      first_update = min_update.update.get();
+    }
     max_pts = max(max_pts, updates_manager->pending_pts_updates_.rbegin()->first);
   }
   if (!updates_manager->postponed_pts_updates_.empty()) {
-    min_pts = min(min_pts, updates_manager->postponed_pts_updates_.begin()->first);
+    auto &min_update = updates_manager->postponed_pts_updates_.begin()->second;
+    if (min_update.pts < min_pts) {
+      min_pts = min_update.pts;
+      min_pts_count = min_update.pts_count;
+      first_update = min_update.update.get();
+    }
     max_pts = max(max_pts, updates_manager->postponed_pts_updates_.rbegin()->first);
   }
-  string source = PSTRING() << "PTS from " << updates_manager->get_pts() << " to " << min_pts << '-' << max_pts;
+  string source = PSTRING() << "PTS from " << updates_manager->get_pts() << " to " << min_pts << "(-" << min_pts_count
+                            << ")-" << max_pts << ' '
+                            << (first_update == nullptr ? string() : oneline(to_string(*first_update)));
   updates_manager->pts_gap_++;
   fill_gap(td, source.c_str());
 }
@@ -1788,6 +1808,14 @@ void UpdatesManager::process_get_difference_updates(
       CHECK(!running_get_difference_);
     }
 
+    if (constructor_id == telegram_api::updateStoryID::ID) {
+      LOG(INFO) << "Receive update about sent story " << to_string(update);
+      auto update_story_id = move_tl_object_as<telegram_api::updateStoryID>(update);
+      td_->story_manager_->on_update_story_id(update_story_id->random_id_, StoryId(update_story_id->id_),
+                                              "getDifference");
+      CHECK(!running_get_difference_);
+    }
+
     if (constructor_id == telegram_api::updateEncryption::ID) {
       on_update(move_tl_object_as<telegram_api::updateEncryption>(update), Promise<Unit>());
       CHECK(!running_get_difference_);
@@ -1888,6 +1916,17 @@ void UpdatesManager::on_get_difference(tl_object_ptr<telegram_api::updates_Diffe
       td_->contacts_manager_->on_get_users(std::move(difference->users_), "updates.difference");
       td_->contacts_manager_->on_get_chats(std::move(difference->chats_), "updates.difference");
 
+      if (get_difference_retry_count_ <= 5) {
+        for (const auto &message : difference->new_messages_) {
+          if (MessagesManager::is_invalid_poll_message(message.get())) {
+            get_difference_retry_count_++;
+            LOG(ERROR) << "Receive invalid poll message in updates.difference after " << get_difference_retry_count_
+                       << " tries";
+            return run_get_difference(true, "reget difference");
+          }
+        }
+      }
+
       process_get_difference_updates(std::move(difference->new_messages_),
                                      std::move(difference->new_encrypted_messages_),
                                      std::move(difference->other_updates_));
@@ -1912,6 +1951,17 @@ void UpdatesManager::on_get_difference(tl_object_ptr<telegram_api::updates_Diffe
                            << difference->chats_.size() << " chats";
       td_->contacts_manager_->on_get_users(std::move(difference->users_), "updates.differenceSlice");
       td_->contacts_manager_->on_get_chats(std::move(difference->chats_), "updates.differenceSlice");
+
+      if (get_difference_retry_count_ <= 5) {
+        for (const auto &message : difference->new_messages_) {
+          if (MessagesManager::is_invalid_poll_message(message.get())) {
+            get_difference_retry_count_++;
+            LOG(ERROR) << "Receive invalid poll message in updates.differenceSlice after "
+                       << get_difference_retry_count_ << " tries";
+            return run_get_difference(true, "reget difference");
+          }
+        }
+      }
 
       process_get_difference_updates(std::move(difference->new_messages_),
                                      std::move(difference->new_encrypted_messages_),
@@ -1960,6 +2010,8 @@ void UpdatesManager::on_get_difference(tl_object_ptr<telegram_api::updates_Diffe
     default:
       UNREACHABLE();
   }
+
+  get_difference_retry_count_ = 0;
 
   if (!running_get_difference_) {
     after_get_difference();
@@ -2191,9 +2243,9 @@ void UpdatesManager::try_reload_data() {
                                                                                   Auto());
   td_->notification_settings_manager_->send_get_scope_notification_settings_query(NotificationSettingsScope::Channel,
                                                                                   Auto());
-  td_->stickers_manager_->reload_reactions();
-  td_->stickers_manager_->reload_recent_reactions();
-  td_->stickers_manager_->reload_top_reactions();
+  td_->reaction_manager_->reload_reactions();
+  td_->reaction_manager_->reload_recent_reactions();
+  td_->reaction_manager_->reload_top_reactions();
   for (int32 type = 0; type < MAX_STICKER_TYPE; type++) {
     auto sticker_type = static_cast<StickerType>(type);
     td_->stickers_manager_->get_installed_sticker_sets(sticker_type, Auto());
@@ -2425,7 +2477,6 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
       LOG(INFO) << "Receive from " << source << " pending " << to_string(update);
       int32 id = update->get_id();
       if (id == telegram_api::updateMessageID::ID) {
-        LOG(INFO) << "Receive from " << source << " " << to_string(update);
         auto sent_message_update = move_tl_object_as<telegram_api::updateMessageID>(update);
         MessageId message_id;
         if (ordinary_new_message_count != 0) {
@@ -2438,6 +2489,11 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
             LOG(ERROR) << "Update: " << oneline(to_string(debug_update));
           }
         }
+        update = nullptr;
+      }
+      if (id == telegram_api::updateStoryID::ID) {
+        auto update_story_id = move_tl_object_as<telegram_api::updateStoryID>(update);
+        td_->story_manager_->on_update_story_id(update_story_id->random_id_, StoryId(update_story_id->id_), source);
         update = nullptr;
       }
       if (id == telegram_api::updateFolderPeers::ID) {
@@ -2779,7 +2835,7 @@ void UpdatesManager::add_pending_pts_update(tl_object_ptr<telegram_api::Update> 
       old_pts = get_pts();
       set_pts_gap_timeout(0.001);
       return promise.set_value(Unit());
-    } else if (now > last_pts_jump_warning_time_ + 1 && (need_restore_pts || now < last_pts_jump_warning_time_ + 5) &&
+    } else if (now > last_pts_jump_warning_time_ + 1 && need_restore_pts &&
                !(old_pts == std::numeric_limits<int32>::max() && running_get_difference_)) {
       LOG(ERROR) << "Restore PTS after delete_first_messages from " << old_pts << " to " << new_pts
                  << " is disabled, pts_count = " << pts_count << ", update is from " << source << ": "
@@ -3304,6 +3360,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateNewChannelMessa
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateMessageID> update, Promise<Unit> &&promise) {
   LOG(ERROR) << "Receive not in getDifference and not in on_pending_updates " << to_string(update);
+  promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateReadMessagesContents> update,
@@ -3581,7 +3638,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateMessageReaction
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateRecentReactions> update, Promise<Unit> &&promise) {
-  td_->stickers_manager_->reload_recent_reactions();
+  td_->reaction_manager_->reload_recent_reactions();
   promise.set_value(Unit());
 }
 
@@ -3822,7 +3879,8 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateRecentEmojiStat
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updatePeerBlocked> update, Promise<Unit> &&promise) {
-  td_->messages_manager_->on_update_dialog_is_blocked(DialogId(update->peer_id_), update->blocked_);
+  td_->messages_manager_->on_update_dialog_is_blocked(DialogId(update->peer_id_), update->blocked_,
+                                                      update->blocked_my_stories_from_);
   promise.set_value(Unit());
 }
 
@@ -4267,10 +4325,22 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateReadStories> up
   promise.set_value(Unit());
 }
 
-// unsupported updates
-
-void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateStoryID> update, Promise<Unit> &&promise) {
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateStoriesStealthMode> update, Promise<Unit> &&promise) {
+  td_->story_manager_->on_update_story_stealth_mode(std::move(update->stealth_mode_));
   promise.set_value(Unit());
 }
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateSentStoryReaction> update, Promise<Unit> &&promise) {
+  td_->story_manager_->on_update_story_chosen_reaction_type(
+      DialogId(UserId(update->user_id_)), StoryId(update->story_id_), ReactionType(update->reaction_));
+  promise.set_value(Unit());
+}
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateStoryID> update, Promise<Unit> &&promise) {
+  LOG(ERROR) << "Receive not in getDifference and not in on_pending_updates " << to_string(update);
+  promise.set_value(Unit());
+}
+
+// unsupported updates
 
 }  // namespace td

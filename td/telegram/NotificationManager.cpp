@@ -3014,73 +3014,59 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
 
   auto data = std::move(json_value.get_object());
   int32 sent_date = G()->unix_time();
-  if (has_json_object_field(data, "data")) {
-    TRY_RESULT(date, get_json_object_int_field(data, "date", true, sent_date));
+  if (data.has_field("data")) {
+    TRY_RESULT(date, data.get_optional_int_field("date", sent_date));
     if (sent_date - 28 * 86400 <= date && date <= sent_date + 5) {
       sent_date = date;
     }
-    TRY_RESULT(data_data, get_json_object_field(data, "data", JsonValue::Type::Object, false));
+    TRY_RESULT(data_data, data.extract_required_field("data", JsonValue::Type::Object));
     data = std::move(data_data.get_object());
   }
 
-  string loc_key;
-  JsonObject custom;
-  string announcement_message_text;
-  vector<string> loc_args;
-  string sender_name;
-  for (auto &field_value : data) {
-    if (field_value.first == "loc_key") {
-      if (field_value.second.type() != JsonValue::Type::String) {
-        return Status::Error("Expected loc_key as a String");
-      }
-      loc_key = field_value.second.get_string().str();
-    } else if (field_value.first == "loc_args") {
-      if (field_value.second.type() != JsonValue::Type::Array) {
-        return Status::Error("Expected loc_args as an Array");
-      }
-      loc_args.reserve(field_value.second.get_array().size());
-      for (auto &arg : field_value.second.get_array()) {
-        if (arg.type() != JsonValue::Type::String) {
-          return Status::Error("Expected loc_arg as a String");
-        }
-        loc_args.push_back(arg.get_string().str());
-      }
-    } else if (field_value.first == "custom") {
-      if (field_value.second.type() != JsonValue::Type::Object) {
-        return Status::Error("Expected custom as an Object");
-      }
-      custom = std::move(field_value.second.get_object());
-    } else if (field_value.first == "message") {
-      if (field_value.second.type() != JsonValue::Type::String) {
-        return Status::Error("Expected announcement message text as a String");
-      }
-      announcement_message_text = field_value.second.get_string().str();
-    } else if (field_value.first == "google.sent_time") {
-      TRY_RESULT(google_sent_time, get_json_object_long_field(data, "google.sent_time"));
-      google_sent_time /= 1000;
-      if (sent_date - 28 * 86400 <= google_sent_time && google_sent_time <= sent_date + 5) {
-        sent_date = narrow_cast<int32>(google_sent_time);
-      }
-    }
-  }
-
+  TRY_RESULT(loc_key, data.get_required_string_field("loc_key"));
   if (!clean_input_string(loc_key)) {
     return Status::Error(PSLICE() << "Receive invalid loc_key " << format::escaped(loc_key));
   }
   if (loc_key.empty()) {
     return Status::Error("Receive empty loc_key");
   }
-  for (auto &loc_arg : loc_args) {
-    if (!clean_input_string(loc_arg)) {
-      return Status::Error(PSLICE() << "Receive invalid loc_arg " << format::escaped(loc_arg));
+
+  vector<string> loc_args;
+  TRY_RESULT(loc_args_array, data.extract_optional_field("loc_args", JsonValue::Type::Array));
+  if (loc_args_array.type() == JsonValue::Type::Array) {
+    loc_args.reserve(loc_args_array.get_array().size());
+    for (auto &arg : loc_args_array.get_array()) {
+      if (arg.type() != JsonValue::Type::String) {
+        return Status::Error("Expected loc_arg as a String");
+      }
+      auto loc_arg = arg.get_string().str();
+      if (!clean_input_string(loc_arg)) {
+        return Status::Error(PSLICE() << "Receive invalid loc_arg " << format::escaped(loc_arg));
+      }
+      loc_args.push_back(std::move(loc_arg));
     }
   }
 
+  JsonObject custom;
+  TRY_RESULT(custom_value, data.extract_optional_field("custom", JsonValue::Type::Object));
+  if (custom_value.type() == JsonValue::Type::Object) {
+    custom = std::move(custom_value.get_object());
+  }
+
+  TRY_RESULT(google_sent_time, data.get_optional_long_field("google.sent_time"));
+  if (google_sent_time > 0) {
+    google_sent_time /= 1000;
+    if (sent_date - 28 * 86400 <= google_sent_time && google_sent_time <= sent_date + 5) {
+      sent_date = narrow_cast<int32>(google_sent_time);
+    }
+  }
+
+  TRY_RESULT(announcement_message_text, data.get_optional_string_field("message"));
   if (loc_key == "MESSAGE_ANNOUNCEMENT") {
     if (announcement_message_text.empty()) {
       return Status::Error("Receive empty announcement message text");
     }
-    TRY_RESULT(announcement_id, get_json_object_int_field(custom, "announcement"));
+    TRY_RESULT(announcement_id, custom.get_optional_int_field("announcement"));
     if (announcement_id == 0) {
       return Status::Error(200, "Receive unsupported announcement ID");
     }
@@ -3105,8 +3091,8 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
   }
 
   if (loc_key == "DC_UPDATE") {
-    TRY_RESULT(dc_id, get_json_object_int_field(custom, "dc", false));
-    TRY_RESULT(addr, get_json_object_string_field(custom, "addr", false));
+    TRY_RESULT(dc_id, custom.get_required_int_field("dc"));
+    TRY_RESULT(addr, custom.get_required_string_field("addr"));
     if (!DcId::is_valid(dc_id)) {
       return Status::Error("Invalid datacenter identifier");
     }
@@ -3143,32 +3129,32 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
   }
 
   DialogId dialog_id;
-  if (has_json_object_field(custom, "from_id")) {
-    TRY_RESULT(user_id_int, get_json_object_long_field(custom, "from_id"));
+  if (custom.has_field("from_id")) {
+    TRY_RESULT(user_id_int, custom.get_optional_long_field("from_id"));
     UserId user_id(user_id_int);
     if (!user_id.is_valid()) {
       return Status::Error("Receive invalid user identifier");
     }
     dialog_id = DialogId(user_id);
   }
-  if (has_json_object_field(custom, "chat_id")) {
-    TRY_RESULT(chat_id_int, get_json_object_long_field(custom, "chat_id"));
+  if (custom.has_field("chat_id")) {
+    TRY_RESULT(chat_id_int, custom.get_optional_long_field("chat_id"));
     ChatId chat_id(chat_id_int);
     if (!chat_id.is_valid()) {
       return Status::Error("Receive invalid basic group identifier");
     }
     dialog_id = DialogId(chat_id);
   }
-  if (has_json_object_field(custom, "channel_id")) {
-    TRY_RESULT(channel_id_int, get_json_object_long_field(custom, "channel_id"));
+  if (custom.has_field("channel_id")) {
+    TRY_RESULT(channel_id_int, custom.get_optional_long_field("channel_id"));
     ChannelId channel_id(channel_id_int);
     if (!channel_id.is_valid()) {
       return Status::Error("Receive invalid supergroup identifier");
     }
     dialog_id = DialogId(channel_id);
   }
-  if (has_json_object_field(custom, "encryption_id")) {
-    TRY_RESULT(secret_chat_id_int, get_json_object_int_field(custom, "encryption_id"));
+  if (custom.has_field("encryption_id")) {
+    TRY_RESULT(secret_chat_id_int, custom.get_optional_int_field("encryption_id"));
     SecretChatId secret_chat_id(secret_chat_id_int);
     if (!secret_chat_id.is_valid()) {
       return Status::Error("Receive invalid secret chat identifier");
@@ -3187,7 +3173,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
       return Status::Error("Receive read history in a secret chat");
     }
 
-    TRY_RESULT(max_id, get_json_object_int_field(custom, "max_id"));
+    TRY_RESULT(max_id, custom.get_optional_int_field("max_id"));
     ServerMessageId max_server_message_id(max_id);
     if (!max_server_message_id.is_valid()) {
       return Status::Error("Receive invalid max_id");
@@ -3203,7 +3189,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     if (dialog_id.get_type() == DialogType::SecretChat) {
       return Status::Error("Receive MESSAGE_DELETED in a secret chat");
     }
-    TRY_RESULT(server_message_ids_str, get_json_object_string_field(custom, "messages", false));
+    TRY_RESULT(server_message_ids_str, custom.get_required_string_field("messages"));
     auto server_message_ids = full_split(server_message_ids_str, ',');
     vector<MessageId> message_ids;
     for (const auto &server_message_id_str : server_message_ids) {
@@ -3228,7 +3214,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
       return Status::Error("Receive READ_STORIES in a secret chat");
     }
 
-    TRY_RESULT(max_id, get_json_object_int_field(custom, "max_id"));
+    TRY_RESULT(max_id, custom.get_optional_int_field("max_id"));
     StoryId max_story_id(max_id);
     if (!max_story_id.is_server()) {
       return Status::Error("Receive invalid max_id");
@@ -3243,7 +3229,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     if (dialog_id.get_type() != DialogType::SecretChat) {
       return Status::Error("Receive STORY_DELETED in a secret chat");
     }
-    TRY_RESULT(server_story_ids_str, get_json_object_string_field(custom, "story_id", false));
+    TRY_RESULT(server_story_ids_str, custom.get_required_string_field("story_id"));
     auto server_story_ids = full_split(server_story_ids_str, ',');
     vector<StoryId> story_ids;
     for (const auto &server_story_id_str : server_story_ids) {
@@ -3259,30 +3245,30 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     return Status::OK();
   }
 
-  TRY_RESULT(msg_id, get_json_object_int_field(custom, "msg_id"));
+  TRY_RESULT(msg_id, custom.get_optional_int_field("msg_id"));
   ServerMessageId server_message_id(msg_id);
   if (server_message_id != ServerMessageId() && !server_message_id.is_valid()) {
     return Status::Error("Receive invalid msg_id");
   }
 
-  TRY_RESULT(random_id, get_json_object_long_field(custom, "random_id"));
+  TRY_RESULT(random_id, custom.get_optional_long_field("random_id"));
 
   UserId sender_user_id;
   DialogId sender_dialog_id;
-  if (has_json_object_field(custom, "chat_from_broadcast_id")) {
-    TRY_RESULT(sender_channel_id_int, get_json_object_long_field(custom, "chat_from_broadcast_id"));
+  if (custom.has_field("chat_from_broadcast_id")) {
+    TRY_RESULT(sender_channel_id_int, custom.get_optional_long_field("chat_from_broadcast_id"));
     sender_dialog_id = DialogId(ChannelId(sender_channel_id_int));
     if (!sender_dialog_id.is_valid()) {
       return Status::Error("Receive invalid chat_from_broadcast_id");
     }
-  } else if (has_json_object_field(custom, "chat_from_group_id")) {
-    TRY_RESULT(sender_channel_id_int, get_json_object_long_field(custom, "chat_from_group_id"));
+  } else if (custom.has_field("chat_from_group_id")) {
+    TRY_RESULT(sender_channel_id_int, custom.get_optional_long_field("chat_from_group_id"));
     sender_dialog_id = DialogId(ChannelId(sender_channel_id_int));
     if (!sender_dialog_id.is_valid()) {
       return Status::Error("Receive invalid chat_from_group_id");
     }
-  } else if (has_json_object_field(custom, "chat_from_id")) {
-    TRY_RESULT(sender_user_id_int, get_json_object_long_field(custom, "chat_from_id"));
+  } else if (custom.has_field("chat_from_id")) {
+    TRY_RESULT(sender_user_id_int, custom.get_optional_long_field("chat_from_id"));
     sender_user_id = UserId(sender_user_id_int);
     if (!sender_user_id.is_valid()) {
       return Status::Error("Receive invalid chat_from_id");
@@ -3293,7 +3279,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     sender_dialog_id = dialog_id;
   }
 
-  TRY_RESULT(contains_mention_int, get_json_object_int_field(custom, "mention"));
+  TRY_RESULT(contains_mention_int, custom.get_optional_int_field("mention"));
   bool contains_mention = contains_mention_int != 0;
 
   if (begins_with(loc_key, "CHANNEL_MESSAGE") || loc_key == "CHANNEL_ALBUM") {
@@ -3302,6 +3288,7 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     }
     loc_key = loc_key.substr(8);
   }
+  string sender_name;
   if (begins_with(loc_key, "CHAT_")) {
     auto dialog_type = dialog_id.get_type();
     if (dialog_type != DialogType::Chat && dialog_type != DialogType::Channel) {
@@ -3388,13 +3375,14 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
       !td_->contacts_manager_->have_user_force(sender_user_id, "process_push_notification_payload")) {
     int64 sender_access_hash = -1;
     telegram_api::object_ptr<telegram_api::UserProfilePhoto> sender_photo;
-    TRY_RESULT(mtpeer, get_json_object_field(custom, "mtpeer", JsonValue::Type::Object));
+    TRY_RESULT(mtpeer, custom.extract_optional_field("mtpeer", JsonValue::Type::Object));
     if (mtpeer.type() != JsonValue::Type::Null) {
-      TRY_RESULT(ah, get_json_object_string_field(mtpeer.get_object(), "ah"));
+      auto &mtpeer_object = mtpeer.get_object();
+      TRY_RESULT(ah, mtpeer_object.get_optional_string_field("ah"));
       if (!ah.empty()) {
         TRY_RESULT_ASSIGN(sender_access_hash, to_integer_safe<int64>(ah));
       }
-      TRY_RESULT(ph, get_json_object_field(mtpeer.get_object(), "ph", JsonValue::Type::Object));
+      TRY_RESULT(ph, mtpeer_object.extract_optional_field("ph", JsonValue::Type::Object));
       if (ph.type() != JsonValue::Type::Null) {
         // TODO parse sender photo
       }
@@ -3419,8 +3407,8 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
 
   Photo attached_photo;
   Document attached_document;
-  if (has_json_object_field(custom, "attachb64")) {
-    TRY_RESULT(attachb64, get_json_object_string_field(custom, "attachb64", false));
+  if (custom.has_field("attachb64")) {
+    TRY_RESULT(attachb64, custom.get_required_string_field("attachb64"));
     TRY_RESULT(attach, base64url_decode(attachb64));
 
     TlParser gzip_parser(attach);
@@ -3538,11 +3526,11 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     }
   }
 
-  if (has_json_object_field(custom, "edit_date")) {
+  if (custom.has_field("edit_date")) {
     if (random_id != 0) {
       return Status::Error("Receive edit of secret message");
     }
-    TRY_RESULT(edit_date, get_json_object_int_field(custom, "edit_date"));
+    TRY_RESULT(edit_date, custom.get_optional_int_field("edit_date"));
     if (edit_date <= 0) {
       return Status::Error("Receive wrong edit date");
     }
@@ -3550,14 +3538,14 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
                                    std::move(arg), std::move(attached_photo), std::move(attached_document), 0,
                                    std::move(promise));
   } else {
-    bool is_from_scheduled = has_json_object_field(custom, "schedule");
+    bool is_from_scheduled = custom.has_field("schedule");
     bool disable_notification = false;
     int64 ringtone_id = -1;
-    if (has_json_object_field(custom, "silent")) {
+    if (custom.has_field("silent")) {
       disable_notification = true;
       ringtone_id = 0;
-    } else if (has_json_object_field(custom, "ringtone")) {
-      TRY_RESULT_ASSIGN(ringtone_id, get_json_object_long_field(custom, "ringtone"));
+    } else if (custom.has_field("ringtone")) {
+      TRY_RESULT_ASSIGN(ringtone_id, custom.get_optional_long_field("ringtone"));
     }
     add_message_push_notification(dialog_id, MessageId(server_message_id), random_id, sender_user_id, sender_dialog_id,
                                   std::move(sender_name), sent_date, is_from_scheduled, contains_mention,
@@ -3962,8 +3950,8 @@ Result<int64> NotificationManager::get_push_receiver_id(string payload) {
   }
 
   auto data = std::move(json_value.get_object());
-  if (has_json_object_field(data, "data")) {
-    auto r_data_data = get_json_object_field(data, "data", JsonValue::Type::Object, false);
+  if (data.has_field("data")) {
+    auto r_data_data = data.extract_required_field("data", JsonValue::Type::Object);
     if (r_data_data.is_error()) {
       return Status::Error(400, r_data_data.error().message());
     }
@@ -3971,38 +3959,24 @@ Result<int64> NotificationManager::get_push_receiver_id(string payload) {
     data = std::move(data_data.get_object());
   }
 
-  for (auto &field_value : data) {
-    if (field_value.first == "p") {
-      auto encrypted_payload = std::move(field_value.second);
-      if (encrypted_payload.type() != JsonValue::Type::String) {
-        return Status::Error(400, "Expected encrypted payload as a String");
-      }
-      Slice encrypted_data = encrypted_payload.get_string();
-      if (encrypted_data.size() < 12) {
-        return Status::Error(400, "Encrypted payload is too small");
-      }
-      auto r_decoded = base64url_decode(encrypted_data.substr(0, 12));
-      if (r_decoded.is_error()) {
-        return Status::Error(400, "Failed to base64url-decode payload");
-      }
-      CHECK(r_decoded.ok().size() == 9);
-      return as<int64>(r_decoded.ok().c_str());
+  if (data.has_field("p")) {
+    TRY_RESULT(encrypted_data, data.get_required_string_field("p"));
+    if (encrypted_data.size() < 12) {
+      return Status::Error(400, "Encrypted payload is too small");
     }
-    if (field_value.first == "user_id") {
-      auto user_id = std::move(field_value.second);
-      if (user_id.type() != JsonValue::Type::String && user_id.type() != JsonValue::Type::Number) {
-        return Status::Error(400, "Expected user_id as a String or a Number");
-      }
-      Slice user_id_str = user_id.type() == JsonValue::Type::String ? user_id.get_string() : user_id.get_number();
-      auto r_user_id = to_integer_safe<int64>(user_id_str);
-      if (r_user_id.is_error()) {
-        return Status::Error(400, PSLICE() << "Failed to get user_id from " << user_id_str);
-      }
-      if (r_user_id.ok() <= 0) {
-        return Status::Error(400, PSLICE() << "Receive wrong user_id " << user_id_str);
-      }
-      return r_user_id.ok();
+    auto r_decoded = base64url_decode(encrypted_data.substr(0, 12));
+    if (r_decoded.is_error()) {
+      return Status::Error(400, "Failed to base64url-decode payload");
     }
+    CHECK(r_decoded.ok().size() == 9);
+    return as<int64>(r_decoded.ok().c_str());
+  }
+  if (data.has_field("user_id")) {
+    TRY_RESULT(user_id, data.get_required_long_field("user_id"));
+    if (user_id <= 0) {
+      return Status::Error(400, PSLICE() << "Receive wrong user_id " << user_id);
+    }
+    return user_id;
   }
 
   return static_cast<int64>(0);
@@ -4019,24 +3993,16 @@ Result<string> NotificationManager::decrypt_push(int64 encryption_key_id, string
     return Status::Error(400, "Expected JSON object");
   }
 
-  for (auto &field_value : json_value.get_object()) {
-    if (field_value.first == "p") {
-      auto encrypted_payload = std::move(field_value.second);
-      if (encrypted_payload.type() != JsonValue::Type::String) {
-        return Status::Error(400, "Expected encrypted payload as a String");
-      }
-      Slice encrypted_data = encrypted_payload.get_string();
-      if (encrypted_data.size() < 12) {
-        return Status::Error(400, "Encrypted payload is too small");
-      }
-      auto r_decoded = base64url_decode(encrypted_data);
-      if (r_decoded.is_error()) {
-        return Status::Error(400, "Failed to base64url-decode payload");
-      }
-      return decrypt_push_payload(encryption_key_id, std::move(encryption_key), r_decoded.move_as_ok());
-    }
+  const auto &object = json_value.get_object();
+  TRY_RESULT(encrypted_data, object.get_required_string_field("p"));
+  if (encrypted_data.size() < 12) {
+    return Status::Error(400, "Encrypted payload is too small");
   }
-  return Status::Error(400, "No 'p'(payload) field found in the push notification");
+  auto r_decoded = base64url_decode(encrypted_data);
+  if (r_decoded.is_error()) {
+    return Status::Error(400, "Failed to base64url-decode payload");
+  }
+  return decrypt_push_payload(encryption_key_id, std::move(encryption_key), r_decoded.move_as_ok());
 }
 
 Result<string> NotificationManager::decrypt_push_payload(int64 encryption_key_id, string encryption_key,

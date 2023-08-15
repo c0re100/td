@@ -54,6 +54,7 @@ class NotificationManager;
 class NotificationSettingsManager;
 class OptionManager;
 class PasswordManager;
+class ReactionManager;
 class SecretChatsManager;
 class SponsoredMessageManager;
 class StateManager;
@@ -142,7 +143,7 @@ class Global final : public ActorContext {
   string get_option_string(Slice name, string default_value = "") const;
 
   bool is_server_time_reliable() const {
-    return server_time_difference_was_updated_;
+    return server_time_difference_was_updated_.load(std::memory_order_relaxed);
   }
   double to_server_time(double now) const {
     return now + get_server_time_difference();
@@ -331,6 +332,13 @@ class Global final : public ActorContext {
     password_manager_ = password_manager;
   }
 
+  ActorId<ReactionManager> reaction_manager() const {
+    return reaction_manager_;
+  }
+  void set_reaction_manager(ActorId<ReactionManager> reaction_manager) {
+    reaction_manager_ = reaction_manager;
+  }
+
   ActorId<SecretChatsManager> secret_chats_manager() const {
     return secret_chats_manager_;
   }
@@ -416,6 +424,10 @@ class Global final : public ActorContext {
 
   bool keep_media_order() const {
     return use_file_database();
+  }
+
+  int32 get_database_scheduler_id() {
+    return database_scheduler_id_;
   }
 
   int32 get_gc_scheduler_id() const {
@@ -526,6 +538,7 @@ class Global final : public ActorContext {
   ActorId<NotificationManager> notification_manager_;
   ActorId<NotificationSettingsManager> notification_settings_manager_;
   ActorId<PasswordManager> password_manager_;
+  ActorId<ReactionManager> reaction_manager_;
   ActorId<SecretChatsManager> secret_chats_manager_;
   ActorId<SponsoredMessageManager> sponsored_message_manager_;
   ActorId<StickersManager> stickers_manager_;
@@ -542,6 +555,7 @@ class Global final : public ActorContext {
 
   OptionManager *option_manager_ = nullptr;
 
+  int32 database_scheduler_id_ = 0;
   int32 gc_scheduler_id_ = 0;
   int32 slow_net_scheduler_id_ = 0;
 

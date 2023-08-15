@@ -23,8 +23,6 @@ class MessageViewer {
 
   friend StringBuilder &operator<<(StringBuilder &string_builder, const MessageViewer &viewer);
 
-  friend bool operator==(const MessageViewer &lhs, const MessageViewer &rhs);
-
  public:
   explicit MessageViewer(telegram_api::object_ptr<telegram_api::readParticipantDate> &&read_date);
 
@@ -42,10 +40,6 @@ class MessageViewer {
   td_api::object_ptr<td_api::messageViewer> get_message_viewer_object(ContactsManager *contacts_manager) const;
 };
 
-bool operator==(const MessageViewer &lhs, const MessageViewer &rhs);
-
-bool operator!=(const MessageViewer &lhs, const MessageViewer &rhs);
-
 StringBuilder &operator<<(StringBuilder &string_builder, const MessageViewer &viewer);
 
 class MessageViewers {
@@ -56,17 +50,7 @@ class MessageViewers {
  public:
   MessageViewers() = default;
 
-  explicit MessageViewers(vector<telegram_api::object_ptr<telegram_api::storyView>> &&story_views);
-
   explicit MessageViewers(vector<telegram_api::object_ptr<telegram_api::readParticipantDate>> &&read_dates);
-
-  bool is_empty() const {
-    return message_viewers_.empty();
-  }
-
-  MessageViewers get_sublist(const MessageViewer &offset, int32 limit) const;
-
-  void add_sublist(const MessageViewer &offset, const MessageViewers &sublist);
 
   vector<UserId> get_user_ids() const;
 

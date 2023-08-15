@@ -71,6 +71,7 @@ class PasswordManager;
 class PhoneNumberManager;
 class PollManager;
 class PrivacyManager;
+class ReactionManager;
 class SecureManager;
 class SecretChatsManager;
 class SponsoredMessageManager;
@@ -121,7 +122,7 @@ class Td final : public Actor {
 
   void reload_promo_data();
 
-  void on_update(BufferSlice &&update, uint64 auth_key_id);
+  void on_update(telegram_api::object_ptr<telegram_api::Updates> updates, uint64 auth_key_id);
 
   void on_result(NetQueryPtr query);
 
@@ -191,6 +192,8 @@ class Td final : public Actor {
   ActorOwn<PollManager> poll_manager_actor_;
   unique_ptr<PrivacyManager> privacy_manager_;
   ActorOwn<PrivacyManager> privacy_manager_actor_;
+  unique_ptr<ReactionManager> reaction_manager_;
+  ActorOwn<ReactionManager> reaction_manager_actor_;
   unique_ptr<SponsoredMessageManager> sponsored_message_manager_;
   ActorOwn<SponsoredMessageManager> sponsored_message_manager_actor_;
   unique_ptr<StickersManager> stickers_manager_;
@@ -788,6 +791,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getStory &request);
 
+  void on_request(uint64 id, const td_api::canSendStory &request);
+
   void on_request(uint64 id, td_api::sendStory &request);
 
   void on_request(uint64 id, td_api::editStory &request);
@@ -998,7 +1003,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::toggleChatIsMarkedAsUnread &request);
 
-  void on_request(uint64 id, const td_api::toggleMessageSenderIsBlocked &request);
+  void on_request(uint64 id, const td_api::setMessageSenderBlockList &request);
 
   void on_request(uint64 id, const td_api::toggleChatDefaultDisableNotification &request);
 
@@ -1018,9 +1023,15 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::closeStory &request);
 
-  void on_request(uint64 id, const td_api::getStoryViewers &request);
+  void on_request(uint64 id, const td_api::getStoryAvailableReactions &request);
+
+  void on_request(uint64 id, const td_api::setStoryReaction &request);
+
+  void on_request(uint64 id, td_api::getStoryViewers &request);
 
   void on_request(uint64 id, td_api::reportStory &request);
+
+  void on_request(uint64 id, const td_api::activateStoryStealthMode &request);
 
   void on_request(uint64 id, const td_api::getAttachmentMenuBot &request);
 
@@ -1691,8 +1702,6 @@ class Td final : public Actor {
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::testReturnError &request);
 
   static DbKey as_db_key(string key);
-
-  static int32 get_database_scheduler_id();
 
   struct Parameters {
     int32 api_id_ = 0;

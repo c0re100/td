@@ -150,7 +150,7 @@ class UpdatesManager final : public Actor {
  private:
   static constexpr int32 FORCED_GET_DIFFERENCE_PTS_DIFF = 100000;
   static constexpr int32 GAP_TIMEOUT_UPDATE_COUNT = 20;
-  static constexpr double MIN_UNFILLED_GAP_TIME = 0.1;
+  static constexpr double MIN_UNFILLED_GAP_TIME = 0.05;
   static constexpr double MAX_UNFILLED_GAP_TIME = 0.7;
   static constexpr double MAX_PTS_SAVE_DELAY = 0.05;
   static constexpr double UPDATE_APPLY_WARNING_TIME = 0.25;
@@ -269,6 +269,7 @@ class UpdatesManager final : public Actor {
   int32 min_postponed_update_pts_ = 0;
   int32 min_postponed_update_qts_ = 0;
   double get_difference_start_time_ = 0;  // time from which we started to get difference without success
+  int32 get_difference_retry_count_ = 0;
 
   FlatHashMap<int64, TranscribedAudioHandler> pending_audio_transcriptions_;
   MultiTimeout pending_audio_transcription_timeout_{"PendingAudioTranscriptionTimeout"};
@@ -623,9 +624,13 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateReadStories> update, Promise<Unit> &&promise);
 
-  // unsupported updates
+  void on_update(tl_object_ptr<telegram_api::updateStoriesStealthMode> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateSentStoryReaction> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateStoryID> update, Promise<Unit> &&promise);
+
+  // unsupported updates
 };
 
 }  // namespace td
