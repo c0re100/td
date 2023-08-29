@@ -487,6 +487,8 @@ class MessagesManager final : public Actor {
 
   void set_dialog_message_ttl(DialogId dialog_id, int32 ttl, Promise<Unit> &&promise);
 
+  Status send_screenshot_taken_notification_message(DialogId dialog_id);
+
   void share_dialog_with_bot(FullMessageId full_message_id, int32 button_id, DialogId shared_dialog_id,
                              bool expect_user, bool only_check, Promise<Unit> &&promise);
 

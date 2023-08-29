@@ -28461,6 +28461,41 @@ Result<vector<MessageId>> MessagesManager::resend_messages(DialogId dialog_id, v
   return result;
 }
 
+Status MessagesManager::send_screenshot_taken_notification_message(DialogId dialog_id) {
+  auto dialog_type = dialog_id.get_type();
+  if (dialog_type != DialogType::User && dialog_type != DialogType::SecretChat) {
+    return Status::Error(400, "Notification about taken screenshot can be sent only in private and secret chats");
+  }
+
+  LOG(INFO) << "Begin to send notification about taken screenshot in " << dialog_id;
+
+  Dialog *d = get_dialog_force(dialog_id, "send_screenshot_taken_notification_message");
+  if (d == nullptr) {
+    return Status::Error(400, "Chat not found");
+  }
+
+  TRY_STATUS(can_send_message(dialog_id));
+
+  if (dialog_type == DialogType::User) {
+    bool need_update_dialog_pos = false;
+    const Message *m = get_message_to_send(d, MessageId(), MessageInputReplyTo(), MessageSendOptions(),
+                                           create_screenshot_taken_message_content(), &need_update_dialog_pos);
+
+    do_send_screenshot_taken_notification_message(dialog_id, m, 0);
+
+    send_update_new_message(d, m);
+    if (need_update_dialog_pos) {
+      send_update_chat_last_message(d, "send_screenshot_taken_notification_message");
+    }
+  } else {
+    send_closure(td_->secret_chats_manager_, &SecretChatsManager::notify_screenshot_taken,
+                 dialog_id.get_secret_chat_id(),
+                 Promise<Unit>());  // TODO Promise
+  }
+
+  return Status::OK();
+}
+
 void MessagesManager::send_screenshot_taken_notification_message(Dialog *d) {
   LOG(INFO) << "Begin to send notification about taken screenshot in " << d->dialog_id;
   auto dialog_type = d->dialog_id.get_type();
