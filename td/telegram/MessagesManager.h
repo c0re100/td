@@ -47,7 +47,9 @@
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/Notification.h"
+#include "td/telegram/NotificationGroupFromDatabase.h"
 #include "td/telegram/NotificationGroupId.h"
+#include "td/telegram/NotificationGroupInfo.h"
 #include "td/telegram/NotificationGroupKey.h"
 #include "td/telegram/NotificationGroupType.h"
 #include "td/telegram/NotificationId.h"
@@ -64,6 +66,7 @@
 #include "td/telegram/SecretInputMedia.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/StoryFullId.h"
+#include "td/telegram/StoryNotificationSettings.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
@@ -752,6 +755,8 @@ class MessagesManager final : public Actor {
   void click_animated_emoji_message(FullMessageId full_message_id,
                                     Promise<td_api::object_ptr<td_api::sticker>> &&promise);
 
+  StoryNotificationSettings get_story_notification_settings(DialogId dialog_id);
+
   vector<DialogId> get_dialog_notification_settings_exceptions(NotificationSettingsScope scope, bool filter_scope,
                                                                bool compare_sound, bool force, Promise<Unit> &&promise);
 
@@ -1001,13 +1006,7 @@ class MessagesManager final : public Actor {
                                                                          bool is_from_scheduled, bool contains_mention,
                                                                          bool is_pinned, bool is_from_binlog);
 
-  struct MessageNotificationGroup {
-    DialogId dialog_id;
-    NotificationGroupType type = NotificationGroupType::Calls;
-    int32 total_count = 0;
-    vector<Notification> notifications;
-  };
-  MessageNotificationGroup get_message_notification_group_force(NotificationGroupId group_id);
+  NotificationGroupFromDatabase get_message_notification_group_force(NotificationGroupId group_id);
 
   vector<NotificationGroupKey> get_message_notification_group_keys_from_database(NotificationGroupKey from_group_key,
                                                                                  int32 limit);
@@ -1284,22 +1283,6 @@ class MessagesManager final : public Actor {
     Message(Message &&) = delete;
     Message &operator=(Message &&) = delete;
     ~Message() = default;
-  };
-
-  struct NotificationGroupInfo {
-    NotificationGroupId group_id;
-    int32 last_notification_date = 0;            // date of last notification in the group
-    NotificationId last_notification_id;         // identifier of last notification in the group
-    NotificationId max_removed_notification_id;  // notification identifier, up to which all notifications are removed
-    MessageId max_removed_message_id;            // message identifier, up to which all notifications are removed
-    bool is_changed = false;                     // true, if the group needs to be saved to database
-    bool try_reuse = false;  // true, if the group needs to be deleted from database and tried to be reused
-
-    template <class StorerT>
-    void store(StorerT &storer) const;
-
-    template <class ParserT>
-    void parse(ParserT &parser);
   };
 
   struct DialogScheduledMessages {
@@ -2354,6 +2337,10 @@ class MessagesManager final : public Actor {
   static void delete_notification_id_to_message_id_correspondence(NotificationInfo *notification_info,
                                                                   NotificationId notification_id, MessageId message_id);
 
+  static bool is_notification_info_group_id(const NotificationInfo *notification_info, NotificationGroupId group_id);
+
+  static bool is_dialog_notification_group_id(const Dialog *d, NotificationGroupId group_id);
+
   void remove_message_notification_id(Dialog *d, Message *m, bool is_permanent, bool force_update,
                                       bool ignore_pinned_message_notification_removal = false);
 
@@ -2652,8 +2639,12 @@ class MessagesManager final : public Actor {
 
   void remove_dialog_mention_notifications(Dialog *d);
 
-  bool set_dialog_last_notification(DialogId dialog_id, NotificationGroupInfo &group_info, int32 last_notification_date,
+  void set_dialog_last_notification(DialogId dialog_id, NotificationGroupInfo &group_info, int32 last_notification_date,
                                     NotificationId last_notification_id, const char *source);
+
+  void set_dialog_last_notification_checked(DialogId dialog_id, NotificationGroupInfo &group_info,
+                                            int32 last_notification_date, NotificationId last_notification_id,
+                                            const char *source);
 
   bool update_dialog_notification_settings(DialogId dialog_id, DialogNotificationSettings *current_settings,
                                            DialogNotificationSettings &&new_settings);
