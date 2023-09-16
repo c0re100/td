@@ -122,7 +122,7 @@ class PingConnectionPingPong final
   void on_server_time_difference_updated(bool force) final {
   }
 
-  void on_session_created(uint64 unique_id, uint64 first_id) final {
+  void on_new_session_created(uint64 unique_id, uint64 first_message_id) final {
   }
   void on_session_failed(Status status) final {
   }
@@ -153,7 +153,7 @@ class PingConnectionPingPong final
   }
   void on_message_failed(uint64 id, Status status) final {
   }
-  void on_message_info(uint64 id, int32 state, uint64 answer_id, int32 answer_size) final {
+  void on_message_info(uint64 id, int32 state, uint64 answer_id, int32 answer_size, int32 source) final {
   }
 
   Status on_destroy_auth_key() final {

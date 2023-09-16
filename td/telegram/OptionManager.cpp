@@ -6,6 +6,7 @@
 //
 #include "td/telegram/OptionManager.h"
 
+#include "td/telegram/AccountManager.h"
 #include "td/telegram/AnimationsManager.h"
 #include "td/telegram/AttachMenuManager.h"
 #include "td/telegram/AuthManager.h"
@@ -263,7 +264,8 @@ bool OptionManager::is_internal_option(Slice name) {
     case 'a':
       return name == "about_length_limit_default" || name == "about_length_limit_premium" ||
              name == "aggressive_anti_spam_supergroup_member_count_min" || name == "animated_emoji_zoom" ||
-             name == "animation_search_emojis" || name == "animation_search_provider";
+             name == "animation_search_emojis" || name == "animation_search_provider" ||
+             name == "authorization_autoconfirm_period";
     case 'b':
       return name == "base_language_pack_version";
     case 'c':
@@ -359,6 +361,9 @@ void OptionManager::on_option_updated(Slice name) {
       }
       if (name == "animation_search_provider") {
         td_->animations_manager_->on_update_animation_search_provider();
+      }
+      if (name == "authorization_autoconfirm_period") {
+        td_->account_manager_->update_unconfirmed_authorization_timeout(true);
       }
       break;
     case 'b':
@@ -563,7 +568,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.16");
+        return td_api::make_object<td_api::optionValueString>("1.8.18");
       }
       break;
   }

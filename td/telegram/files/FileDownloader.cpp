@@ -149,7 +149,7 @@ void FileDownloader::on_error(Status status) {
   callback_->on_error(std::move(status));
 }
 
-Result<bool> FileDownloader::should_restart_part(Part part, NetQueryPtr &net_query) {
+Result<bool> FileDownloader::should_restart_part(Part part, const NetQueryPtr &net_query) {
   // Check if we should use CDN or reupload file to CDN
 
   if (net_query->is_error()) {
@@ -306,10 +306,10 @@ Result<size_t> FileDownloader::process_part(Part part, NetQueryPtr net_query) {
   switch (query_type) {
     case QueryType::Default: {
       if (remote_.is_web()) {
-        TRY_RESULT(file, fetch_result<telegram_api::upload_getWebFile>(net_query->ok()));
+        TRY_RESULT(file, fetch_result<telegram_api::upload_getWebFile>(std::move(net_query)));
         bytes = std::move(file->bytes_);
       } else {
-        TRY_RESULT(file_base, fetch_result<telegram_api::upload_getFile>(net_query->ok()));
+        TRY_RESULT(file_base, fetch_result<telegram_api::upload_getFile>(std::move(net_query)));
         CHECK(file_base->get_id() == telegram_api::upload_file::ID);
         auto file = move_tl_object_as<telegram_api::upload_file>(file_base);
         LOG(DEBUG) << "Receive part " << part.id << ": " << to_string(file);
@@ -318,7 +318,7 @@ Result<size_t> FileDownloader::process_part(Part part, NetQueryPtr net_query) {
       break;
     }
     case QueryType::CDN: {
-      TRY_RESULT(file_base, fetch_result<telegram_api::upload_getCdnFile>(net_query->ok()));
+      TRY_RESULT(file_base, fetch_result<telegram_api::upload_getCdnFile>(std::move(net_query)));
       CHECK(file_base->get_id() == telegram_api::upload_cdnFile::ID);
       auto file = move_tl_object_as<telegram_api::upload_cdnFile>(file_base);
       LOG(DEBUG) << "Receive part " << part.id << " from CDN: " << to_string(file);

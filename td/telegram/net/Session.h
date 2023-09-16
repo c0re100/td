@@ -78,16 +78,20 @@ class Session final
 
  private:
   struct Query final : private ListNode {
-    uint64 container_message_id;
-    NetQueryPtr query;
+    uint64 container_message_id_;
+    NetQueryPtr net_query_;
 
-    bool ack = false;
-    bool unknown = false;
+    bool is_acknowledged_ = false;
+    bool is_unknown_ = false;
 
-    int8 connection_id;
-    double sent_at_;
-    Query(uint64 message_id, NetQueryPtr &&q, int8 connection_id, double sent_at)
-        : container_message_id(message_id), query(std::move(q)), connection_id(connection_id), sent_at_(sent_at) {
+    const int8 connection_id_;
+    const double sent_at_;
+
+    Query(uint64 message_id, NetQueryPtr &&net_query, int8 connection_id, double sent_at)
+        : container_message_id_(message_id)
+        , net_query_(std::move(net_query))
+        , connection_id_(connection_id)
+        , sent_at_(sent_at) {
     }
 
     ListNode *get_list_node() {
@@ -210,7 +214,7 @@ class Session final
   void on_server_salt_updated() final;
   void on_server_time_difference_updated(bool force) final;
 
-  void on_session_created(uint64 unique_id, uint64 first_message_id) final;
+  void on_new_session_created(uint64 unique_id, uint64 first_message_id) final;
   void on_session_failed(Status status) final;
 
   void on_container_sent(uint64 container_message_id, vector<uint64> message_ids) final;
@@ -222,7 +226,7 @@ class Session final
   void on_message_result_error(uint64 message_id, int error_code, string message) final;
   void on_message_failed(uint64 message_id, Status status) final;
 
-  void on_message_info(uint64 message_id, int32 state, uint64 answer_message_id, int32 answer_size) final;
+  void on_message_info(uint64 message_id, int32 state, uint64 answer_message_id, int32 answer_size, int32 source) final;
 
   Status on_destroy_auth_key() final;
 

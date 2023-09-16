@@ -267,8 +267,7 @@ td_api::object_ptr<td_api::messageSponsor> SponsoredMessageManager::get_message_
         LOG(ERROR) << "Failed to get invite link info for " << invite_link;
         return nullptr;
       }
-      if (chat_invite_link_info->type_->get_id() != td_api::chatTypeSupergroup::ID ||
-          !static_cast<const td_api::chatTypeSupergroup *>(chat_invite_link_info->type_.get())->is_channel_) {
+      if (chat_invite_link_info->type_->get_id() != td_api::inviteLinkChatTypeChannel::ID) {
         LOG(ERROR) << "Receive sponsor chat of a wrong type " << to_string(chat_invite_link_info->type_);
         return nullptr;
       }
@@ -376,7 +375,8 @@ void SponsoredMessageManager::on_get_dialog_sponsored_messages(
         DialogPhoto site_photo;
         if (sponsored_message->from_id_ != nullptr) {
           sponsor_dialog_id = DialogId(sponsored_message->from_id_);
-          if (!sponsor_dialog_id.is_valid() || !td_->messages_manager_->have_dialog_info_force(sponsor_dialog_id)) {
+          if (!sponsor_dialog_id.is_valid() ||
+              !td_->messages_manager_->have_dialog_info_force(sponsor_dialog_id, "on_get_dialog_sponsored_messages")) {
             LOG(ERROR) << "Receive unknown sponsor " << sponsor_dialog_id;
             continue;
           }

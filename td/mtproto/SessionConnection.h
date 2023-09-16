@@ -13,7 +13,6 @@
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/FlatHashMap.h"
-#include "td/utils/format.h"
 #include "td/utils/logging.h"
 #include "td/utils/Named.h"
 #include "td/utils/port/detail/PollableFd.h"
@@ -31,7 +30,6 @@ namespace td {
 extern int VERBOSITY_NAME(mtproto);
 
 namespace mtproto_api {
-class rpc_error;
 class new_session_created;
 class bad_msg_notification;
 class bad_server_salt;
@@ -52,17 +50,6 @@ class destroy_auth_key_none;
 namespace mtproto {
 
 class AuthData;
-
-struct MsgInfo {
-  uint64 message_id;
-  int32 seq_no;
-  size_t size;
-};
-
-inline StringBuilder &operator<<(StringBuilder &string_builder, const MsgInfo &info) {
-  return string_builder << "[msg_id:" << format::as_hex(info.message_id) << "] [seq_no:" << format::as_hex(info.seq_no)
-                        << "]";
-}
 
 class SessionConnection final
     : public Named
@@ -107,7 +94,7 @@ class SessionConnection final
     virtual void on_server_salt_updated() = 0;
     virtual void on_server_time_difference_updated(bool force) = 0;
 
-    virtual void on_session_created(uint64 unique_id, uint64 first_id) = 0;
+    virtual void on_new_session_created(uint64 unique_id, uint64 first_message_id) = 0;
     virtual void on_session_failed(Status status) = 0;
 
     virtual void on_container_sent(uint64 container_id, vector<uint64> msgs_id) = 0;
@@ -119,7 +106,7 @@ class SessionConnection final
     virtual Status on_message_result_ok(uint64 id, BufferSlice packet, size_t original_size) = 0;
     virtual void on_message_result_error(uint64 id, int code, string message) = 0;
     virtual void on_message_failed(uint64 id, Status status) = 0;
-    virtual void on_message_info(uint64 id, int32 state, uint64 answer_id, int32 answer_size) = 0;
+    virtual void on_message_info(uint64 id, int32 state, uint64 answer_id, int32 answer_size, int32 source) = 0;
 
     virtual Status on_destroy_auth_key() = 0;
   };
@@ -133,6 +120,14 @@ class SessionConnection final
   static constexpr int ACK_DELAY = 30;                  // 30s
   static constexpr double QUERY_DELAY = 0.001;          // 0.001s
   static constexpr double RESEND_ANSWER_DELAY = 0.001;  // 0.001s
+
+  struct MsgInfo {
+    uint64 message_id;
+    int32 seq_no;
+    size_t size;
+  };
+
+  friend StringBuilder &operator<<(StringBuilder &string_builder, const MsgInfo &info);
 
   bool online_flag_ = false;
   bool is_main_ = false;
@@ -170,6 +165,7 @@ class SessionConnection final
 
   struct ServiceQuery {
     enum Type { GetStateInfo, ResendAnswer } type;
+    uint64 container_message_id;
     vector<int64> message_ids;
   };
   vector<int64> to_resend_answer_;
@@ -232,7 +228,6 @@ class SessionConnection final
   template <class T>
   Status on_packet(const MsgInfo &info, const T &packet) TD_WARN_UNUSED_RESULT;
 
-  Status on_packet(const MsgInfo &info, const mtproto_api::rpc_error &rpc_error) TD_WARN_UNUSED_RESULT;
   Status on_packet(const MsgInfo &info,
                    const mtproto_api::new_session_created &new_session_created) TD_WARN_UNUSED_RESULT;
   Status on_packet(const MsgInfo &info,
@@ -257,7 +252,7 @@ class SessionConnection final
   Status on_destroy_auth_key(const mtproto_api::DestroyAuthKeyRes &destroy_auth_key);
 
   Status on_slice_packet(const MsgInfo &info, Slice packet) TD_WARN_UNUSED_RESULT;
-  Status on_main_packet(const PacketInfo &info, Slice packet) TD_WARN_UNUSED_RESULT;
+  Status on_main_packet(const PacketInfo &packet_info, Slice packet) TD_WARN_UNUSED_RESULT;
   void on_message_failed(uint64 id, Status status);
   void on_message_failed_inner(uint64 id);
 
@@ -275,7 +270,7 @@ class SessionConnection final
   Status do_flush() TD_WARN_UNUSED_RESULT;
 
   Status before_write() final TD_WARN_UNUSED_RESULT;
-  Status on_raw_packet(const PacketInfo &info, BufferSlice packet) final;
+  Status on_raw_packet(const PacketInfo &packet_info, BufferSlice packet) final;
   Status on_quick_ack(uint64 quick_ack_token) final;
   void on_read(size_t size) final;
 };

@@ -583,10 +583,6 @@ class ContactsManager final : public Actor {
 
   void reload_dialog_info(DialogId dialog_id, Promise<Unit> &&promise);
 
-  void get_user_link(Promise<td_api::object_ptr<td_api::userLink>> &&promise);
-
-  void search_user_by_token(string token, Promise<td_api::object_ptr<td_api::user>> &&promise);
-
   static void send_get_me_query(Td *td, Promise<Unit> &&promise);
   UserId get_me(Promise<Unit> &&promise);
   bool get_user(UserId user_id, int left_tries, Promise<Unit> &&promise);
@@ -1140,6 +1136,9 @@ class ContactsManager final : public Actor {
     bool is_channel = false;
     bool is_public = false;
     bool is_megagroup = false;
+    bool is_verified = false;
+    bool is_scam = false;
+    bool is_fake = false;
   };
 
   struct PendingGetPhotoRequest {
@@ -1403,8 +1402,6 @@ class ContactsManager final : public Actor {
 
   string get_channel_search_text(ChannelId channel_id) const;
   static string get_channel_search_text(const Channel *c);
-
-  void get_user_link_impl(Promise<td_api::object_ptr<td_api::userLink>> &&promise);
 
   void set_my_id(UserId my_id);
 
@@ -1758,7 +1755,7 @@ class ContactsManager final : public Actor {
 
   bool need_poll_active_stories(const User *u, UserId user_id) const;
 
-  bool get_has_unread_stories(const User *u, UserId user_id) const;
+  static bool get_user_has_unread_stories(const User *u);
 
   td_api::object_ptr<td_api::updateUser> get_update_user_object(UserId user_id, const User *u) const;
 

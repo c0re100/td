@@ -159,7 +159,7 @@ class ToggleStoriesHiddenQuery final : public Td::ResultHandler {
     auto result = result_ptr.move_as_ok();
     LOG(DEBUG) << "Receive result for ToggleStoriesHiddenQuery: " << result;
     if (result) {
-      td_->contacts_manager_->on_update_user_stories_hidden(user_id_, are_hidden_);
+      td_->story_manager_->on_update_dialog_stories_hidden(DialogId(user_id_), are_hidden_);
     }
     promise_.set_value(Unit());
   }
@@ -1984,9 +1984,7 @@ void StoryManager::on_get_dialog_pinned_stories(DialogId owner_dialog_id,
                                                 Promise<td_api::object_ptr<td_api::stories>> &&promise) {
   TRY_STATUS_PROMISE(promise, G()->close_status());
   auto result = on_get_stories(owner_dialog_id, {}, std::move(stories));
-  if (owner_dialog_id.get_type() == DialogType::User) {
-    td_->contacts_manager_->on_update_user_has_pinned_stories(owner_dialog_id.get_user_id(), result.first > 0);
-  }
+  on_update_dialog_has_pinned_stories(owner_dialog_id, result.first > 0);
   promise.set_value(get_stories_object(result.first, transform(result.second, [owner_dialog_id](StoryId story_id) {
                                          return StoryFullId(owner_dialog_id, story_id);
                                        })));
@@ -2373,16 +2371,18 @@ void StoryManager::update_interaction_info() {
   if (opened_owned_stories_.empty()) {
     return;
   }
-  vector<StoryId> story_ids;
+  FlatHashMap<DialogId, vector<StoryId>, DialogIdHash> split_story_ids;
   for (auto &it : opened_owned_stories_) {
     auto story_full_id = it.first;
-    CHECK(story_full_id.get_dialog_id() == DialogId(td_->contacts_manager_->get_my_id()));
-    story_ids.push_back(story_full_id.get_story_id());
-    if (story_ids.size() >= 100) {
-      break;
+    auto &story_ids = split_story_ids[story_full_id.get_dialog_id()];
+    if (story_ids.size() < 100) {
+      story_ids.push_back(story_full_id.get_story_id());
     }
   }
-  td_->create_handler<GetStoriesViewsQuery>()->send(std::move(story_ids));
+  for (auto &story_ids : split_story_ids) {
+    CHECK(story_ids.first == DialogId(td_->contacts_manager_->get_my_id()));
+    td_->create_handler<GetStoriesViewsQuery>()->send(std::move(story_ids.second));
+  }
 }
 
 void StoryManager::increment_story_views(DialogId owner_dialog_id, PendingStoryViews &story_views) {
@@ -2533,7 +2533,8 @@ void StoryManager::on_get_story_viewers(
                                                       view->blocked_my_stories_from_);
   }
 
-  StoryViewers story_viewers(total_count, std::move(view_list->views_), std::move(view_list->next_offset_));
+  StoryViewers story_viewers(total_count, total_reaction_count, std::move(view_list->views_),
+                             std::move(view_list->next_offset_));
   if (story->content_ != nullptr) {
     bool is_changed = false;
     if (is_full && story->interaction_info_.set_counts(total_count, total_reaction_count)) {
@@ -2664,7 +2665,7 @@ td_api::object_ptr<td_api::story> StoryManager::get_story_object(StoryFullId sto
     } else if (story->is_for_close_friends_) {
       privacy_settings = td_api::make_object<td_api::storyPrivacySettingsCloseFriends>();
     } else {
-      privacy_settings = td_api::make_object<td_api::storyPrivacySettingsSelectedContacts>();
+      privacy_settings = td_api::make_object<td_api::storyPrivacySettingsSelectedUsers>();
     }
   }
 
@@ -3315,6 +3316,65 @@ DialogId StoryManager::on_get_user_stories(DialogId owner_dialog_id,
   return story_dialog_id;
 }
 
+void StoryManager::on_update_dialog_max_story_ids(DialogId owner_dialog_id, StoryId max_story_id,
+                                                  StoryId max_read_story_id) {
+  switch (owner_dialog_id.get_type()) {
+    case DialogType::User:
+      // use send_closure_later because story order can be updated from update_user
+      send_closure_later(td_->contacts_manager_actor_, &ContactsManager::on_update_user_story_ids,
+                         owner_dialog_id.get_user_id(), max_story_id, max_read_story_id);
+      break;
+    case DialogType::Chat:
+    case DialogType::Channel:
+    case DialogType::SecretChat:
+    case DialogType::None:
+    default:
+      break;
+  }
+}
+
+void StoryManager::on_update_dialog_max_read_story_id(DialogId owner_dialog_id, StoryId max_read_story_id) {
+  switch (owner_dialog_id.get_type()) {
+    case DialogType::User:
+      td_->contacts_manager_->on_update_user_max_read_story_id(owner_dialog_id.get_user_id(), max_read_story_id);
+      break;
+    case DialogType::Chat:
+    case DialogType::Channel:
+    case DialogType::SecretChat:
+    case DialogType::None:
+    default:
+      break;
+  }
+}
+
+void StoryManager::on_update_dialog_has_pinned_stories(DialogId owner_dialog_id, bool has_pinned_stories) {
+  switch (owner_dialog_id.get_type()) {
+    case DialogType::User:
+      td_->contacts_manager_->on_update_user_has_pinned_stories(owner_dialog_id.get_user_id(), has_pinned_stories);
+      break;
+    case DialogType::Chat:
+    case DialogType::Channel:
+    case DialogType::SecretChat:
+    case DialogType::None:
+    default:
+      break;
+  }
+}
+
+void StoryManager::on_update_dialog_stories_hidden(DialogId owner_dialog_id, bool stories_hidden) {
+  switch (owner_dialog_id.get_type()) {
+    case DialogType::User:
+      td_->contacts_manager_->on_update_user_stories_hidden(owner_dialog_id.get_user_id(), stories_hidden);
+      break;
+    case DialogType::Chat:
+    case DialogType::Channel:
+    case DialogType::SecretChat:
+    case DialogType::None:
+    default:
+      break;
+  }
+}
+
 void StoryManager::on_update_active_stories(DialogId owner_dialog_id, StoryId max_read_story_id,
                                             vector<StoryId> &&story_ids, Promise<Unit> &&promise, const char *source,
                                             bool from_database) {
@@ -3341,11 +3401,7 @@ void StoryManager::on_update_active_stories(DialogId owner_dialog_id, StoryId ma
             << max_read_story_id << " from " << source;
 
   if (story_ids.empty()) {
-    if (owner_dialog_id.get_type() == DialogType::User) {
-      // use send_closure_later because story order can be updated from update_user
-      send_closure_later(td_->contacts_manager_actor_, &ContactsManager::on_update_user_story_ids,
-                         owner_dialog_id.get_user_id(), StoryId(), StoryId());
-    }
+    on_update_dialog_max_story_ids(owner_dialog_id, StoryId(), StoryId());
     auto *active_stories = get_active_stories(owner_dialog_id);
     if (active_stories != nullptr) {
       LOG(INFO) << "Delete active stories for " << owner_dialog_id;
@@ -3385,11 +3441,7 @@ void StoryManager::on_update_active_stories(DialogId owner_dialog_id, StoryId ma
       }
     }
   }
-  if (owner_dialog_id.get_type() == DialogType::User) {
-    // use send_closure_later because story order can be updated from update_user
-    send_closure_later(td_->contacts_manager_actor_, &ContactsManager::on_update_user_story_ids,
-                       owner_dialog_id.get_user_id(), story_ids.back(), max_read_story_id);
-  }
+  on_update_dialog_max_story_ids(owner_dialog_id, story_ids.back(), max_read_story_id);
   bool need_save_to_database = false;
   if (active_stories->max_read_story_id_ != max_read_story_id || active_stories->story_ids_ != story_ids) {
     need_save_to_database = true;
@@ -3500,7 +3552,12 @@ void StoryManager::delete_active_stories_from_story_list(DialogId owner_dialog_i
 
 void StoryManager::send_update_story(StoryFullId story_full_id, const Story *story) {
   auto story_object = get_story_object(story_full_id, story);
-  CHECK(story_object != nullptr);
+  if (story_object == nullptr) {
+    CHECK(story != nullptr);
+    CHECK(story->content_ != nullptr);
+    // the story can be just expired
+    return;
+  }
   send_closure(G()->td(), &Td::send_update, td_api::make_object<td_api::updateStory>(std::move(story_object)));
 }
 
@@ -3579,7 +3636,7 @@ void StoryManager::on_update_story_id(int64 random_id, StoryId new_story_id, con
 }
 
 bool StoryManager::on_update_read_stories(DialogId owner_dialog_id, StoryId max_read_story_id) {
-  if (!td_->messages_manager_->have_dialog_info_force(owner_dialog_id)) {
+  if (!td_->messages_manager_->have_dialog_info_force(owner_dialog_id, "on_update_read_stories")) {
     LOG(INFO) << "Can't read stories in unknown " << owner_dialog_id;
     return false;
   }
@@ -3594,12 +3651,7 @@ bool StoryManager::on_update_read_stories(DialogId owner_dialog_id, StoryId max_
     if (max_read_story_id.get() > old_max_read_story_id.get()) {
       LOG(INFO) << "Set max read story identifier in " << owner_dialog_id << " to " << max_read_story_id;
       max_read_story_ids_.set(owner_dialog_id, max_read_story_id);
-      if (owner_dialog_id.get_type() == DialogType::User) {
-        auto user_id = owner_dialog_id.get_user_id();
-        if (td_->contacts_manager_->have_user(user_id)) {
-          td_->contacts_manager_->on_update_user_max_read_story_id(user_id, max_read_story_id);
-        }
-      }
+      on_update_dialog_max_read_story_id(owner_dialog_id, max_read_story_id);
       return true;
     }
   } else if (max_read_story_id.get() > active_stories->max_read_story_id_.get()) {
@@ -3636,7 +3688,7 @@ void StoryManager::on_update_story_chosen_reaction_type(DialogId owner_dialog_id
     LOG(ERROR) << "Receive chosen reaction in " << story_id << " in " << owner_dialog_id;
     return;
   }
-  if (!td_->messages_manager_->have_dialog_info_force(owner_dialog_id)) {
+  if (!td_->messages_manager_->have_dialog_info_force(owner_dialog_id, "on_update_story_chosen_reaction_type")) {
     return;
   }
   StoryFullId story_full_id{owner_dialog_id, story_id};
@@ -4627,13 +4679,13 @@ void StoryManager::on_binlog_events(vector<BinlogEvent> &&events) {
         DeleteStoryOnServerLogEvent log_event;
         log_event_parse(log_event, event.get_data()).ensure();
 
-        auto dialog_id = log_event.story_full_id_.get_dialog_id();
-        if (dialog_id != DialogId(td_->contacts_manager_->get_my_id())) {
+        auto owner_dialog_id = log_event.story_full_id_.get_dialog_id();
+        if (owner_dialog_id != DialogId(td_->contacts_manager_->get_my_id())) {
           binlog_erase(G()->td_db()->get_binlog(), event.id_);
           break;
         }
 
-        td_->messages_manager_->have_dialog_force(dialog_id, "DeleteStoryOnServerLogEvent");
+        td_->messages_manager_->have_dialog_force(owner_dialog_id, "DeleteStoryOnServerLogEvent");
         delete_story_on_server(log_event.story_full_id_, event.id_, Auto());
         break;
       }
@@ -4641,36 +4693,34 @@ void StoryManager::on_binlog_events(vector<BinlogEvent> &&events) {
         ReadStoriesOnServerLogEvent log_event;
         log_event_parse(log_event, event.get_data()).ensure();
 
-        auto dialog_id = log_event.dialog_id_;
-        if (!td_->messages_manager_->have_dialog_force(dialog_id, "ReadStoriesOnServerLogEvent")) {
+        auto owner_dialog_id = log_event.dialog_id_;
+        if (!td_->messages_manager_->have_dialog_force(owner_dialog_id, "ReadStoriesOnServerLogEvent")) {
           binlog_erase(G()->td_db()->get_binlog(), event.id_);
           break;
         }
         auto max_read_story_id = log_event.max_story_id_;
-        auto active_stories = get_active_stories_force(dialog_id, "ReadStoriesOnServerLogEvent");
+        auto active_stories = get_active_stories_force(owner_dialog_id, "ReadStoriesOnServerLogEvent");
         if (active_stories == nullptr) {
-          max_read_story_ids_[dialog_id] = max_read_story_id;
-          if (dialog_id.get_type() == DialogType::User) {
-            td_->contacts_manager_->on_update_user_max_read_story_id(dialog_id.get_user_id(), max_read_story_id);
-          }
+          max_read_story_ids_[owner_dialog_id] = max_read_story_id;
+          on_update_dialog_max_read_story_id(owner_dialog_id, max_read_story_id);
         } else {
           auto story_ids = active_stories->story_ids_;
-          on_update_active_stories(dialog_id, max_read_story_id, std::move(story_ids), Promise<Unit>(),
+          on_update_active_stories(owner_dialog_id, max_read_story_id, std::move(story_ids), Promise<Unit>(),
                                    "ReadStoriesOnServerLogEvent");
         }
-        read_stories_on_server(dialog_id, max_read_story_id, event.id_);
+        read_stories_on_server(owner_dialog_id, max_read_story_id, event.id_);
         break;
       }
       case LogEvent::HandlerType::LoadDialogExpiringStories: {
         LoadDialogExpiringStoriesLogEvent log_event;
         log_event_parse(log_event, event.get_data()).ensure();
 
-        auto dialog_id = log_event.dialog_id_;
-        if (!td_->messages_manager_->have_dialog_force(dialog_id, "LoadDialogExpiringStoriesLogEvent")) {
+        auto owner_dialog_id = log_event.dialog_id_;
+        if (!td_->messages_manager_->have_dialog_force(owner_dialog_id, "LoadDialogExpiringStoriesLogEvent")) {
           binlog_erase(G()->td_db()->get_binlog(), event.id_);
           break;
         }
-        load_dialog_expiring_stories(dialog_id, event.id_, "LoadDialogExpiringStoriesLogEvent");
+        load_dialog_expiring_stories(owner_dialog_id, event.id_, "LoadDialogExpiringStoriesLogEvent");
         break;
       }
       case LogEvent::HandlerType::SendStory: {

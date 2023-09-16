@@ -6,6 +6,9 @@
 //
 #include "td/telegram/files/FileType.h"
 
+#include "td/utils/misc.h"
+#include "td/utils/PathView.h"
+
 namespace td {
 
 FileType get_file_type(const td_api::FileType &file_type) {
@@ -168,6 +171,13 @@ CSlice get_file_type_name(FileType file_type) {
   }
 }
 
+CSlice get_file_type_unique_name(FileType file_type) {
+  if (file_type == FileType::VideoStory) {
+    return CSlice("video_stories");
+  }
+  return get_file_type_name(file_type);
+}
+
 FileTypeClass get_file_type_class(FileType file_type) {
   switch (file_type) {
     case FileType::Photo:
@@ -313,6 +323,41 @@ bool can_reuse_remote_file(FileType file_type) {
     default:
       return true;
   }
+}
+
+FileType guess_file_type_by_path(Slice file_path, FileType default_file_type) {
+  if (default_file_type != FileType::None) {
+    if (default_file_type == FileType::PhotoStory && ends_with(file_path, ".mp4")) {
+      return FileType::VideoStory;
+    }
+    return default_file_type;
+  }
+
+  PathView path_view(file_path);
+  auto file_name = path_view.file_name();
+  auto extension = path_view.extension();
+  if (extension == "jpg" || extension == "jpeg") {
+    return FileType::Photo;
+  }
+  if (extension == "ogg" || extension == "oga" || extension == "opus") {
+    return FileType::VoiceNote;
+  }
+  if (extension == "3gp" || extension == "mov") {
+    return FileType::Video;
+  }
+  if (extension == "mp3" || extension == "mpeg3" || extension == "m4a") {
+    return FileType::Audio;
+  }
+  if (extension == "webp" || extension == "tgs" || extension == "webm") {
+    return FileType::Sticker;
+  }
+  if (extension == "gif") {
+    return FileType::Animation;
+  }
+  if (extension == "mp4" || extension == "mpeg4") {
+    return to_lower(file_name).find("-gif-") != string::npos ? FileType::Animation : FileType::Video;
+  }
+  return FileType::Document;
 }
 
 }  // namespace td

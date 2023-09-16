@@ -434,6 +434,8 @@ class MessagesManager final : public Actor {
 
   std::pair<int32, vector<DialogId>> get_recently_opened_dialogs(int32 limit, Promise<Unit> &&promise);
 
+  void resolve_dialog(const string &username, ChannelId channel_id, Promise<DialogId> promise);
+
   DialogId resolve_dialog_username(const string &username) const;
 
   DialogId search_public_dialog(const string &username_to_search, bool force, Promise<Unit> &&promise);
@@ -599,9 +601,11 @@ class MessagesManager final : public Actor {
   bool have_dialog_force(DialogId dialog_id, const char *source);
 
   bool have_dialog_info(DialogId dialog_id) const;
-  bool have_dialog_info_force(DialogId dialog_id) const;
+  bool have_dialog_info_force(DialogId dialog_id, const char *source) const;
 
   void reload_dialog_info_full(DialogId dialog_id, const char *source);
+
+  void reload_dialog_notification_settings(DialogId dialog_id, Promise<Unit> &&promise, const char *source);
 
   void on_dialog_info_full_invalidated(DialogId dialog_id);
 
@@ -1302,7 +1306,7 @@ class MessagesManager final : public Actor {
     NotificationGroupInfo mention_notification_group_;
     NotificationId new_secret_chat_notification_id_;  // secret chats only
     MessageId pinned_message_notification_message_id_;
-    MessageId max_notification_message_id_;
+    MessageId max_push_notification_message_id_;
 
     vector<std::pair<DialogId, MessageId>> pending_new_message_notifications_;
     vector<std::pair<DialogId, MessageId>> pending_new_mention_notifications_;
@@ -1708,7 +1712,6 @@ class MessagesManager final : public Actor {
   static constexpr int32 MAX_RECENT_DIALOGS = 50;              // some reasonable value
   static constexpr size_t MAX_TITLE_LENGTH = 128;              // server side limit for chat title
   static constexpr size_t MAX_DESCRIPTION_LENGTH = 255;        // server side limit for chat description
-  static constexpr int32 MAX_PRIVATE_MESSAGE_TTL = 60;         // server side limit
   static constexpr size_t MIN_DELETED_ASYNCHRONOUSLY_MESSAGES = 10;
   static constexpr size_t MAX_UNLOADED_MESSAGES = 5000;
 
@@ -2010,6 +2013,10 @@ class MessagesManager final : public Actor {
 
   bool is_message_unload_enabled() const;
 
+  void send_resolve_dialog_username_query(const string &username, Promise<Unit> &&promise);
+
+  void on_resolve_dialog(const string &username, ChannelId channel_id, Promise<DialogId> &&promise);
+
   int64 generate_new_media_album_id();
 
   static bool can_forward_message(DialogId from_dialog_id, const Message *m);
@@ -2148,11 +2155,11 @@ class MessagesManager final : public Actor {
 
   bool remove_message_unread_reactions(Dialog *d, Message *m, const char *source);
 
-  void read_message_content_from_updates(MessageId message_id);
+  void read_message_content_from_updates(MessageId message_id, int32 read_date);
 
   void read_channel_message_content_from_updates(Dialog *d, MessageId message_id);
 
-  bool read_message_content(Dialog *d, Message *m, bool is_local_read, const char *source);
+  bool read_message_content(Dialog *d, Message *m, bool is_local_read, int32 read_date, const char *source);
 
   void read_message_contents_on_server(DialogId dialog_id, vector<MessageId> message_ids, uint64 log_event_id,
                                        Promise<Unit> &&promise, bool skip_log_event = false);
@@ -2318,6 +2325,8 @@ class MessagesManager final : public Actor {
   bool need_delete_message_files(DialogId dialog_id, const Message *m) const;
 
   void add_message_to_database(const Dialog *d, const Message *m, const char *source);
+
+  void delete_all_dialog_notifications(Dialog *d, MessageId max_message_id, const char *source);
 
   void delete_all_dialog_messages_from_database(Dialog *d, MessageId max_message_id, const char *source);
 
@@ -2870,7 +2879,7 @@ class MessagesManager final : public Actor {
   void ttl_read_history_impl(DialogId dialog_id, bool is_outgoing, MessageId from_message_id, MessageId till_message_id,
                              double view_date);
   void ttl_on_view(const Dialog *d, Message *m, double view_date, double now);
-  bool ttl_on_open(Dialog *d, Message *m, double now, bool is_local_read);
+  bool ttl_on_open(Dialog *d, Message *m, double now, bool is_local_read, int32 read_date);
   void ttl_register_message(DialogId dialog_id, const Message *m, double now);
   void ttl_unregister_message(DialogId dialog_id, const Message *m, const char *source);
   void ttl_period_register_message(DialogId dialog_id, const Message *m, double server_time);
@@ -2901,7 +2910,7 @@ class MessagesManager final : public Actor {
   void on_restore_missing_message_after_get_difference(FullMessageId full_message_id, MessageId old_message_id,
                                                        Result<Unit> result);
 
-  void on_get_message_link_dialog(MessageLinkInfo &&info, Promise<MessageLinkInfo> &&promise);
+  void on_get_message_link_dialog(MessageLinkInfo &&info, DialogId dialog_id, Promise<MessageLinkInfo> &&promise);
 
   void on_get_message_link_message(MessageLinkInfo &&info, DialogId dialog_id, Promise<MessageLinkInfo> &&promise);
 

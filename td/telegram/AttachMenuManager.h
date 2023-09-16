@@ -52,6 +52,9 @@ class AttachMenuManager final : public Actor {
 
   void close_web_view(int64 query_id, Promise<Unit> &&promise);
 
+  void invoke_web_view_custom_method(UserId bot_user_id, const string &method, const string &parameters,
+                                     Promise<td_api::object_ptr<td_api::customRequestResult>> &&promise);
+
   void reload_attach_menu_bots(Promise<Unit> &&promise);
 
   void get_attach_menu_bot(UserId user_id, Promise<td_api::object_ptr<td_api::attachmentMenuBot>> &&promise);
@@ -103,6 +106,9 @@ class AttachMenuManager final : public Actor {
     bool supports_broadcast_dialogs_ = false;
     bool supports_settings_ = false;
     bool request_write_access_ = false;
+    bool show_in_attach_menu_ = false;
+    bool show_in_side_menu_ = false;
+    bool side_menu_disclaimer_needed_ = false;
     string name_;
     AttachMenuBotColor name_color_;
     FileId default_icon_file_id_;
@@ -110,10 +116,13 @@ class AttachMenuManager final : public Actor {
     FileId ios_animated_icon_file_id_;
     FileId android_icon_file_id_;
     FileId macos_icon_file_id_;
+    FileId android_side_menu_icon_file_id_;
+    FileId ios_side_menu_icon_file_id_;
+    FileId macos_side_menu_icon_file_id_;
     AttachMenuBotColor icon_color_;
     FileId placeholder_file_id_;
 
-    static constexpr uint32 CACHE_VERSION = 2;
+    static constexpr uint32 CACHE_VERSION = 3;
     uint32 cache_version_ = 0;
 
     template <class StorerT>

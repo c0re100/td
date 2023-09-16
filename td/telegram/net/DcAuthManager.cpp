@@ -102,21 +102,16 @@ void DcAuthManager::update_auth_key_state() {
   loop();
 }
 
-void DcAuthManager::on_result(NetQueryPtr result) {
+void DcAuthManager::on_result(NetQueryPtr net_query) {
   auto dc_id = narrow_cast<int32>(get_link_token());
   auto &dc = get_dc(dc_id);
-  CHECK(dc.wait_id == result->id());
+  CHECK(dc.wait_id == net_query->id());
   dc.wait_id = std::numeric_limits<decltype(dc.wait_id)>::max();
   switch (dc.state) {
     case DcInfo::State::Import: {
-      if (result->is_error()) {
-        LOG(WARNING) << "DC auth_exportAuthorization error: " << result->error();
-        dc.state = DcInfo::State::Export;
-        break;
-      }
-      auto r_result_auth_exported = fetch_result<telegram_api::auth_exportAuthorization>(result->ok());
+      auto r_result_auth_exported = fetch_result<telegram_api::auth_exportAuthorization>(std::move(net_query));
       if (r_result_auth_exported.is_error()) {
-        LOG(WARNING) << "Failed to parse result to auth_exportAuthorization: " << r_result_auth_exported.error();
+        LOG(WARNING) << "Receive error for auth.exportAuthorization: " << r_result_auth_exported.error();
         dc.state = DcInfo::State::Export;
         break;
       }
@@ -126,14 +121,9 @@ void DcAuthManager::on_result(NetQueryPtr result) {
       break;
     }
     case DcInfo::State::BeforeOk: {
-      if (result->is_error()) {
-        LOG(WARNING) << "DC authImport error: " << result->error();
-        dc.state = DcInfo::State::Export;
-        break;
-      }
-      auto result_auth = fetch_result<telegram_api::auth_importAuthorization>(result->ok());
+      auto result_auth = fetch_result<telegram_api::auth_importAuthorization>(std::move(net_query));
       if (result_auth.is_error()) {
-        LOG(WARNING) << "Failed to parse result to auth_importAuthorization: " << result_auth.error();
+        LOG(WARNING) << "Receive error for auth.importAuthorization: " << result_auth.error();
         dc.state = DcInfo::State::Export;
         break;
       }
@@ -143,7 +133,6 @@ void DcAuthManager::on_result(NetQueryPtr result) {
     default:
       UNREACHABLE();
   }
-  result->clear();
   loop();
 }
 

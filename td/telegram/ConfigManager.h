@@ -102,7 +102,7 @@ class ConfigManager final : public NetQueryCallback {
 
  private:
   struct AppConfig {
-    static constexpr int32 CURRENT_VERSION = 12;
+    static constexpr int32 CURRENT_VERSION = 13;
     int32 version_ = 0;
     int32 hash_ = 0;
     telegram_api::object_ptr<telegram_api::JSONValue> config_;
@@ -147,7 +147,7 @@ class ConfigManager final : public NetQueryCallback {
   void loop() final;
   void try_stop();
 
-  void on_result(NetQueryPtr res) final;
+  void on_result(NetQueryPtr net_query) final;
 
   void request_config_from_dc_impl(DcId dc_id, bool reopen_sessions);
   void process_config(tl_object_ptr<telegram_api::config> config);

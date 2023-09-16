@@ -630,6 +630,8 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateStoryID> update, Promise<Unit> &&promise);
 
+  void on_update(tl_object_ptr<telegram_api::updateNewAuthorization> update, Promise<Unit> &&promise);
+
   // unsupported updates
 };
 

@@ -4,17 +4,19 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
-#include "td/telegram/Account.h"
+#include "td/telegram/AccountManager.h"
 
+#include "td/telegram/AuthManager.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DeviceTokenManager.h"
 #include "td/telegram/Global.h"
+#include "td/telegram/LinkManager.h"
+#include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/net/NetQueryCreator.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
-
-#include "td/actor/actor.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/base64.h"
@@ -23,6 +25,7 @@
 #include "td/utils/misc.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
+#include "td/utils/tl_helpers.h"
 
 #include <algorithm>
 
@@ -101,12 +104,12 @@ static td_api::object_ptr<td_api::session> convert_authorization_object(
     tl_object_ptr<telegram_api::authorization> &&authorization) {
   CHECK(authorization != nullptr);
   return td_api::make_object<td_api::session>(
-      authorization->hash_, authorization->current_, authorization->password_pending_,
+      authorization->hash_, authorization->current_, authorization->password_pending_, authorization->unconfirmed_,
       !authorization->encrypted_requests_disabled_, !authorization->call_requests_disabled_,
       get_session_type_object(authorization), authorization->api_id_, authorization->app_name_,
       authorization->app_version_, authorization->official_app_, authorization->device_model_, authorization->platform_,
       authorization->system_version_, authorization->date_created_, authorization->date_active_, authorization->ip_,
-      authorization->country_, authorization->region_);
+      authorization->country_);
 }
 
 class SetDefaultHistoryTtlQuery final : public Td::ResultHandler {
@@ -290,8 +293,16 @@ class GetAuthorizationsQuery final : public Td::ResultHandler {
                 if (lhs->is_password_pending_ != rhs->is_password_pending_) {
                   return lhs->is_password_pending_;
                 }
+                if (lhs->is_unconfirmed_ != rhs->is_unconfirmed_) {
+                  return lhs->is_unconfirmed_;
+                }
                 return lhs->last_active_date_ > rhs->last_active_date_;
               });
+    for (auto &session : results->sessions_) {
+      if (!session->is_current_ && !session->is_unconfirmed_) {
+        td_->account_manager_->on_confirm_authorization(session->id_);
+      }
+    }
 
     promise_.set_value(std::move(results));
   }
@@ -364,7 +375,7 @@ class ChangeAuthorizationSettingsQuery final : public Td::ResultHandler {
   }
 
   void send(int64 hash, bool set_encrypted_requests_disabled, bool encrypted_requests_disabled,
-            bool set_call_requests_disabled, bool call_requests_disabled) {
+            bool set_call_requests_disabled, bool call_requests_disabled, bool confirm) {
     int32 flags = 0;
     if (set_encrypted_requests_disabled) {
       flags |= telegram_api::account_changeAuthorizationSettings::ENCRYPTED_REQUESTS_DISABLED_MASK;
@@ -372,9 +383,13 @@ class ChangeAuthorizationSettingsQuery final : public Td::ResultHandler {
     if (set_call_requests_disabled) {
       flags |= telegram_api::account_changeAuthorizationSettings::CALL_REQUESTS_DISABLED_MASK;
     }
-    send_query(G()->net_query_creator().create(telegram_api::account_changeAuthorizationSettings(
-                                                   flags, hash, encrypted_requests_disabled, call_requests_disabled),
-                                               {{"me"}}));
+    if (confirm) {
+      flags |= telegram_api::account_changeAuthorizationSettings::CONFIRMED_MASK;
+    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::account_changeAuthorizationSettings(flags, false /*ignored*/, hash, encrypted_requests_disabled,
+                                                          call_requests_disabled),
+        {{"me"}}));
   }
 
   void on_result(BufferSlice packet) final {
@@ -602,24 +617,181 @@ class InvalidateSignInCodesQuery final : public Td::ResultHandler {
   }
 };
 
-void set_default_message_ttl(Td *td, int32 message_ttl, Promise<Unit> &&promise) {
-  td->create_handler<SetDefaultHistoryTtlQuery>(std::move(promise))->send(message_ttl);
+class AccountManager::UnconfirmedAuthorization {
+  int64 hash_ = 0;
+  int32 date_ = 0;
+  string device_;
+  string location_;
+
+ public:
+  UnconfirmedAuthorization() = default;
+  UnconfirmedAuthorization(int64 hash, int32 date, string &&device, string &&location)
+      : hash_(hash), date_(date), device_(std::move(device)), location_(std::move(location)) {
+  }
+
+  int64 get_hash() const {
+    return hash_;
+  }
+
+  int32 get_date() const {
+    return date_;
+  }
+
+  td_api::object_ptr<td_api::unconfirmedSession> get_unconfirmed_session_object() const {
+    return td_api::make_object<td_api::unconfirmedSession>(hash_, date_, device_, location_);
+  }
+
+  template <class StorerT>
+  void store(StorerT &storer) const {
+    BEGIN_STORE_FLAGS();
+    END_STORE_FLAGS();
+    td::store(hash_, storer);
+    td::store(date_, storer);
+    td::store(device_, storer);
+    td::store(location_, storer);
+  }
+
+  template <class ParserT>
+  void parse(ParserT &parser) {
+    BEGIN_PARSE_FLAGS();
+    END_PARSE_FLAGS();
+    td::parse(hash_, parser);
+    td::parse(date_, parser);
+    td::parse(device_, parser);
+    td::parse(location_, parser);
+  }
+};
+
+class AccountManager::UnconfirmedAuthorizations {
+  vector<UnconfirmedAuthorization> authorizations_;
+
+  static int32 get_authorization_autoconfirm_period() {
+    return narrow_cast<int32>(G()->get_option_integer("authorization_autoconfirm_period", 604800));
+  }
+
+ public:
+  bool is_empty() const {
+    return authorizations_.empty();
+  }
+
+  bool add_authorization(UnconfirmedAuthorization &&unconfirmed_authorization, bool &is_first_changed) {
+    if (unconfirmed_authorization.get_hash() == 0) {
+      LOG(ERROR) << "Receive empty unconfirmed authorization";
+      return false;
+    }
+    for (const auto &authorization : authorizations_) {
+      if (authorization.get_hash() == unconfirmed_authorization.get_hash()) {
+        return false;
+      }
+    }
+    auto it = authorizations_.begin();
+    while (it != authorizations_.end() && it->get_date() <= unconfirmed_authorization.get_date()) {
+      ++it;
+    }
+    is_first_changed = it == authorizations_.begin();
+    authorizations_.insert(it, std::move(unconfirmed_authorization));
+    return true;
+  }
+
+  bool delete_authorization(int64 hash, bool &is_first_changed) {
+    auto it = authorizations_.begin();
+    while (it != authorizations_.end() && it->get_hash() != hash) {
+      ++it;
+    }
+    if (it == authorizations_.end()) {
+      return false;
+    }
+    is_first_changed = it == authorizations_.begin();
+    authorizations_.erase(it);
+    return true;
+  }
+
+  bool delete_expired_authorizations() {
+    auto up_to_date = G()->unix_time() - get_authorization_autoconfirm_period();
+    auto it = authorizations_.begin();
+    while (it != authorizations_.end() && it->get_date() <= up_to_date) {
+      ++it;
+    }
+    if (it == authorizations_.begin()) {
+      return false;
+    }
+    authorizations_.erase(authorizations_.begin(), it);
+    return true;
+  }
+
+  int32 get_next_authorization_expire_date() const {
+    CHECK(!authorizations_.empty());
+    return authorizations_[0].get_date() + get_authorization_autoconfirm_period();
+  }
+
+  td_api::object_ptr<td_api::unconfirmedSession> get_first_unconfirmed_session_object() const {
+    CHECK(!authorizations_.empty());
+    return authorizations_[0].get_unconfirmed_session_object();
+  }
+
+  template <class StorerT>
+  void store(StorerT &storer) const {
+    CHECK(!authorizations_.empty());
+    td::store(authorizations_, storer);
+  }
+
+  template <class ParserT>
+  void parse(ParserT &parser) {
+    td::parse(authorizations_, parser);
+  }
+};
+
+AccountManager::AccountManager(Td *td, ActorShared<> parent) : td_(td), parent_(std::move(parent)) {
 }
 
-void get_default_message_ttl(Td *td, Promise<int32> &&promise) {
-  td->create_handler<GetDefaultHistoryTtlQuery>(std::move(promise))->send();
+AccountManager::~AccountManager() = default;
+
+void AccountManager::start_up() {
+  auto unconfirmed_authorizations_log_event_string =
+      G()->td_db()->get_binlog_pmc()->get(get_unconfirmed_authorizations_key());
+  if (!unconfirmed_authorizations_log_event_string.empty()) {
+    log_event_parse(unconfirmed_authorizations_, unconfirmed_authorizations_log_event_string).ensure();
+    CHECK(unconfirmed_authorizations_ != nullptr);
+    if (delete_expired_unconfirmed_authorizations()) {
+      save_unconfirmed_authorizations();
+    }
+    if (unconfirmed_authorizations_ != nullptr) {
+      update_unconfirmed_authorization_timeout(false);
+      send_update_unconfirmed_session();
+      get_active_sessions(Auto());
+    }
+  }
 }
 
-void set_account_ttl(Td *td, int32 account_ttl, Promise<Unit> &&promise) {
-  td->create_handler<SetAccountTtlQuery>(std::move(promise))->send(account_ttl);
+void AccountManager::timeout_expired() {
+  update_unconfirmed_authorization_timeout(true);
+  if (unconfirmed_authorizations_ != nullptr) {
+    get_active_sessions(Auto());
+  }
 }
 
-void get_account_ttl(Td *td, Promise<int32> &&promise) {
-  td->create_handler<GetAccountTtlQuery>(std::move(promise))->send();
+void AccountManager::tear_down() {
+  parent_.reset();
 }
 
-void confirm_qr_code_authentication(Td *td, const string &link,
-                                    Promise<td_api::object_ptr<td_api::session>> &&promise) {
+void AccountManager::set_default_message_ttl(int32 message_ttl, Promise<Unit> &&promise) {
+  td_->create_handler<SetDefaultHistoryTtlQuery>(std::move(promise))->send(message_ttl);
+}
+
+void AccountManager::get_default_message_ttl(Promise<int32> &&promise) {
+  td_->create_handler<GetDefaultHistoryTtlQuery>(std::move(promise))->send();
+}
+
+void AccountManager::set_account_ttl(int32 account_ttl, Promise<Unit> &&promise) {
+  td_->create_handler<SetAccountTtlQuery>(std::move(promise))->send(account_ttl);
+}
+
+void AccountManager::get_account_ttl(Promise<int32> &&promise) {
+  td_->create_handler<GetAccountTtlQuery>(std::move(promise))->send();
+}
+
+void AccountManager::confirm_qr_code_authentication(const string &link,
+                                                    Promise<td_api::object_ptr<td_api::session>> &&promise) {
   Slice prefix("tg://login?token=");
   if (!begins_with(to_lower(link), prefix)) {
     return promise.set_error(Status::Error(400, "AUTH_TOKEN_INVALID"));
@@ -628,58 +800,186 @@ void confirm_qr_code_authentication(Td *td, const string &link,
   if (r_token.is_error()) {
     return promise.set_error(Status::Error(400, "AUTH_TOKEN_INVALID"));
   }
-  td->create_handler<AcceptLoginTokenQuery>(std::move(promise))->send(r_token.ok());
+  td_->create_handler<AcceptLoginTokenQuery>(std::move(promise))->send(r_token.ok());
 }
 
-void get_active_sessions(Td *td, Promise<td_api::object_ptr<td_api::sessions>> &&promise) {
-  td->create_handler<GetAuthorizationsQuery>(std::move(promise))->send();
+void AccountManager::get_active_sessions(Promise<td_api::object_ptr<td_api::sessions>> &&promise) {
+  td_->create_handler<GetAuthorizationsQuery>(std::move(promise))->send();
 }
 
-void terminate_session(Td *td, int64 session_id, Promise<Unit> &&promise) {
-  td->create_handler<ResetAuthorizationQuery>(std::move(promise))->send(session_id);
+void AccountManager::terminate_session(int64 session_id, Promise<Unit> &&promise) {
+  on_confirm_authorization(session_id);
+  td_->create_handler<ResetAuthorizationQuery>(std::move(promise))->send(session_id);
 }
 
-void terminate_all_other_sessions(Td *td, Promise<Unit> &&promise) {
-  td->create_handler<ResetAuthorizationsQuery>(std::move(promise))->send();
+void AccountManager::terminate_all_other_sessions(Promise<Unit> &&promise) {
+  if (unconfirmed_authorizations_ != nullptr) {
+    unconfirmed_authorizations_ = nullptr;
+    update_unconfirmed_authorization_timeout(false);
+    send_update_unconfirmed_session();
+    save_unconfirmed_authorizations();
+  }
+  td_->create_handler<ResetAuthorizationsQuery>(std::move(promise))->send();
 }
 
-void toggle_session_can_accept_calls(Td *td, int64 session_id, bool can_accept_calls, Promise<Unit> &&promise) {
-  td->create_handler<ChangeAuthorizationSettingsQuery>(std::move(promise))
-      ->send(session_id, false, false, true, !can_accept_calls);
+void AccountManager::confirm_session(int64 session_id, Promise<Unit> &&promise) {
+  if (!on_confirm_authorization(session_id)) {
+    // the authorization can be from the list of active authorizations, but the update could have been lost
+    // return promise.set_value(Unit());
+  }
+  td_->create_handler<ChangeAuthorizationSettingsQuery>(std::move(promise))
+      ->send(session_id, false, false, false, false, true);
 }
 
-void toggle_session_can_accept_secret_chats(Td *td, int64 session_id, bool can_accept_secret_chats,
-                                            Promise<Unit> &&promise) {
-  td->create_handler<ChangeAuthorizationSettingsQuery>(std::move(promise))
-      ->send(session_id, true, !can_accept_secret_chats, false, false);
+void AccountManager::toggle_session_can_accept_calls(int64 session_id, bool can_accept_calls, Promise<Unit> &&promise) {
+  td_->create_handler<ChangeAuthorizationSettingsQuery>(std::move(promise))
+      ->send(session_id, false, false, true, !can_accept_calls, false);
 }
 
-void set_inactive_session_ttl_days(Td *td, int32 authorization_ttl_days, Promise<Unit> &&promise) {
-  td->create_handler<SetAuthorizationTtlQuery>(std::move(promise))->send(authorization_ttl_days);
+void AccountManager::toggle_session_can_accept_secret_chats(int64 session_id, bool can_accept_secret_chats,
+                                                            Promise<Unit> &&promise) {
+  td_->create_handler<ChangeAuthorizationSettingsQuery>(std::move(promise))
+      ->send(session_id, true, !can_accept_secret_chats, false, false, false);
 }
 
-void get_connected_websites(Td *td, Promise<td_api::object_ptr<td_api::connectedWebsites>> &&promise) {
-  td->create_handler<GetWebAuthorizationsQuery>(std::move(promise))->send();
+void AccountManager::set_inactive_session_ttl_days(int32 authorization_ttl_days, Promise<Unit> &&promise) {
+  td_->create_handler<SetAuthorizationTtlQuery>(std::move(promise))->send(authorization_ttl_days);
 }
 
-void disconnect_website(Td *td, int64 website_id, Promise<Unit> &&promise) {
-  td->create_handler<ResetWebAuthorizationQuery>(std::move(promise))->send(website_id);
+void AccountManager::get_connected_websites(Promise<td_api::object_ptr<td_api::connectedWebsites>> &&promise) {
+  td_->create_handler<GetWebAuthorizationsQuery>(std::move(promise))->send();
 }
 
-void disconnect_all_websites(Td *td, Promise<Unit> &&promise) {
-  td->create_handler<ResetWebAuthorizationsQuery>(std::move(promise))->send();
+void AccountManager::disconnect_website(int64 website_id, Promise<Unit> &&promise) {
+  td_->create_handler<ResetWebAuthorizationQuery>(std::move(promise))->send(website_id);
 }
 
-void export_contact_token(Td *td, Promise<td_api::object_ptr<td_api::userLink>> &&promise) {
-  td->create_handler<ExportContactTokenQuery>(std::move(promise))->send();
+void AccountManager::disconnect_all_websites(Promise<Unit> &&promise) {
+  td_->create_handler<ResetWebAuthorizationsQuery>(std::move(promise))->send();
 }
 
-void import_contact_token(Td *td, const string &token, Promise<td_api::object_ptr<td_api::user>> &&promise) {
-  td->create_handler<ImportContactTokenQuery>(std::move(promise))->send(token);
+void AccountManager::get_user_link(Promise<td_api::object_ptr<td_api::userLink>> &&promise) {
+  td_->contacts_manager_->get_me(
+      PromiseCreator::lambda([actor_id = actor_id(this), promise = std::move(promise)](Result<Unit> &&result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+        } else {
+          send_closure(actor_id, &AccountManager::get_user_link_impl, std::move(promise));
+        }
+      }));
 }
 
-void invalidate_authentication_codes(Td *td, vector<string> &&authentication_codes) {
-  td->create_handler<InvalidateSignInCodesQuery>()->send(std::move(authentication_codes));
+void AccountManager::get_user_link_impl(Promise<td_api::object_ptr<td_api::userLink>> &&promise) {
+  TRY_STATUS_PROMISE(promise, G()->close_status());
+  auto username = td_->contacts_manager_->get_user_first_username(td_->contacts_manager_->get_my_id());
+  if (!username.empty()) {
+    return promise.set_value(
+        td_api::make_object<td_api::userLink>(LinkManager::get_public_dialog_link(username, true), 0));
+  }
+  td_->create_handler<ExportContactTokenQuery>(std::move(promise))->send();
+}
+
+void AccountManager::import_contact_token(const string &token, Promise<td_api::object_ptr<td_api::user>> &&promise) {
+  td_->create_handler<ImportContactTokenQuery>(std::move(promise))->send(token);
+}
+
+void AccountManager::invalidate_authentication_codes(vector<string> &&authentication_codes) {
+  td_->create_handler<InvalidateSignInCodesQuery>()->send(std::move(authentication_codes));
+}
+
+void AccountManager::on_new_unconfirmed_authorization(int64 hash, int32 date, string &&device, string &&location) {
+  if (td_->auth_manager_->is_bot()) {
+    LOG(ERROR) << "Receive unconfirmed session by a bot";
+    return;
+  }
+  auto unix_time = G()->unix_time();
+  if (date > unix_time + 1) {
+    LOG(ERROR) << "Receive new session at " << date << ", but the current time is " << unix_time;
+    date = unix_time + 1;
+  }
+  if (unconfirmed_authorizations_ == nullptr) {
+    unconfirmed_authorizations_ = make_unique<UnconfirmedAuthorizations>();
+  }
+  bool is_first_changed = false;
+  if (unconfirmed_authorizations_->add_authorization({hash, date, std::move(device), std::move(location)},
+                                                     is_first_changed)) {
+    CHECK(!unconfirmed_authorizations_->is_empty());
+    if (is_first_changed) {
+      update_unconfirmed_authorization_timeout(false);
+      send_update_unconfirmed_session();
+    }
+    save_unconfirmed_authorizations();
+  }
+}
+
+bool AccountManager::on_confirm_authorization(int64 hash) {
+  bool is_first_changed = false;
+  if (unconfirmed_authorizations_ != nullptr &&
+      unconfirmed_authorizations_->delete_authorization(hash, is_first_changed)) {
+    if (unconfirmed_authorizations_->is_empty()) {
+      unconfirmed_authorizations_ = nullptr;
+    }
+    if (is_first_changed) {
+      update_unconfirmed_authorization_timeout(false);
+      send_update_unconfirmed_session();
+    }
+    save_unconfirmed_authorizations();
+    return true;
+  }
+  return false;
+}
+
+string AccountManager::get_unconfirmed_authorizations_key() {
+  return "new_authorizations";
+}
+
+void AccountManager::save_unconfirmed_authorizations() const {
+  if (unconfirmed_authorizations_ == nullptr) {
+    G()->td_db()->get_binlog_pmc()->erase(get_unconfirmed_authorizations_key());
+  } else {
+    G()->td_db()->get_binlog_pmc()->set(get_unconfirmed_authorizations_key(),
+                                        log_event_store(unconfirmed_authorizations_).as_slice().str());
+  }
+}
+
+bool AccountManager::delete_expired_unconfirmed_authorizations() {
+  if (unconfirmed_authorizations_ != nullptr && unconfirmed_authorizations_->delete_expired_authorizations()) {
+    if (unconfirmed_authorizations_->is_empty()) {
+      unconfirmed_authorizations_ = nullptr;
+    }
+    return true;
+  }
+  return false;
+}
+
+void AccountManager::update_unconfirmed_authorization_timeout(bool is_external) {
+  if (delete_expired_unconfirmed_authorizations() && is_external) {
+    send_update_unconfirmed_session();
+    save_unconfirmed_authorizations();
+  }
+  if (unconfirmed_authorizations_ == nullptr) {
+    cancel_timeout();
+  } else {
+    set_timeout_in(min(unconfirmed_authorizations_->get_next_authorization_expire_date() - G()->unix_time() + 1, 3600));
+  }
+}
+
+td_api::object_ptr<td_api::updateUnconfirmedSession> AccountManager::get_update_unconfirmed_session() const {
+  if (unconfirmed_authorizations_ == nullptr) {
+    return td_api::make_object<td_api::updateUnconfirmedSession>(nullptr);
+  }
+  return td_api::make_object<td_api::updateUnconfirmedSession>(
+      unconfirmed_authorizations_->get_first_unconfirmed_session_object());
+}
+
+void AccountManager::send_update_unconfirmed_session() const {
+  send_closure(G()->td(), &Td::send_update, get_update_unconfirmed_session());
+}
+
+void AccountManager::get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const {
+  if (unconfirmed_authorizations_ != nullptr) {
+    updates.push_back(get_update_unconfirmed_session());
+  }
 }
 
 }  // namespace td

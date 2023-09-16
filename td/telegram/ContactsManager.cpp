@@ -6,7 +6,6 @@
 //
 #include "td/telegram/ContactsManager.h"
 
-#include "td/telegram/Account.h"
 #include "td/telegram/AnimationsManager.h"
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/BlockListId.h"
@@ -13653,7 +13652,7 @@ void ContactsManager::on_update_user_story_ids_impl(User *u, UserId user_id, Sto
     return;
   }
 
-  auto has_unread_stories = get_has_unread_stories(u, user_id);
+  auto has_unread_stories = get_user_has_unread_stories(u);
   if (u->max_active_story_id != max_active_story_id) {
     LOG(DEBUG) << "Change last active story of " << user_id << " from " << u->max_active_story_id << " to "
                << max_active_story_id;
@@ -13682,7 +13681,7 @@ void ContactsManager::on_update_user_story_ids_impl(User *u, UserId user_id, Sto
     u->max_read_story_id = max_read_story_id;
     u->need_save_to_database = true;
   }
-  if (has_unread_stories != get_has_unread_stories(u, user_id)) {
+  if (has_unread_stories != get_user_has_unread_stories(u)) {
     LOG(DEBUG) << "Change has_unread_stories of " << user_id;
     u->is_changed = true;
   }
@@ -13695,24 +13694,22 @@ void ContactsManager::on_update_user_max_read_story_id(UserId user_id, StoryId m
   if (u != nullptr) {
     on_update_user_max_read_story_id(u, user_id, max_read_story_id);
     update_user(u, user_id);
-  } else {
-    LOG(ERROR) << "Ignore update user max_read_story_id about unknown " << user_id;
   }
 }
 
 void ContactsManager::on_update_user_max_read_story_id(User *u, UserId user_id, StoryId max_read_story_id) {
-  if (td_->auth_manager_->is_bot()) {
+  if (td_->auth_manager_->is_bot() || !u->is_received) {
     return;
   }
 
-  auto has_unread_stories = get_has_unread_stories(u, user_id);
+  auto has_unread_stories = get_user_has_unread_stories(u);
   if (max_read_story_id.get() > u->max_read_story_id.get()) {
     LOG(DEBUG) << "Change last read story of " << user_id << " from " << u->max_read_story_id << " to "
                << max_read_story_id;
     u->max_read_story_id = max_read_story_id;
     u->need_save_to_database = true;
   }
-  if (has_unread_stories != get_has_unread_stories(u, user_id)) {
+  if (has_unread_stories != get_user_has_unread_stories(u)) {
     LOG(DEBUG) << "Change has_unread_stories of " << user_id;
     u->is_changed = true;
   }
@@ -15537,6 +15534,9 @@ void ContactsManager::on_get_dialog_invite_link_info(const string &invite_link,
 
       invite_link_info->is_public = is_public;
       invite_link_info->is_megagroup = is_megagroup;
+      invite_link_info->is_verified = chat_invite->verified_;
+      invite_link_info->is_scam = chat_invite->scam_;
+      invite_link_info->is_fake = chat_invite->fake_;
       break;
     }
     default:
@@ -16664,7 +16664,7 @@ void ContactsManager::on_update_channel_participant(ChannelId channel_id, UserId
 void ContactsManager::on_update_chat_invite_requester(DialogId dialog_id, UserId user_id, string about, int32 date,
                                                       DialogInviteLink invite_link) {
   if (!td_->auth_manager_->is_bot() || date <= 0 || !have_user_force(user_id, "on_update_chat_invite_requester") ||
-      !td_->messages_manager_->have_dialog_info_force(dialog_id)) {
+      !td_->messages_manager_->have_dialog_info_force(dialog_id, "on_update_chat_invite_requester")) {
     LOG(ERROR) << "Receive invalid updateBotChatInviteRequester by " << user_id << " in " << dialog_id << " at "
                << date;
     return;
@@ -16835,31 +16835,6 @@ void ContactsManager::reload_dialog_info(DialogId dialog_id, Promise<Unit> &&pro
     default:
       return promise.set_error(Status::Error("Invalid dialog ID to reload"));
   }
-}
-
-void ContactsManager::get_user_link(Promise<td_api::object_ptr<td_api::userLink>> &&promise) {
-  get_me(
-      PromiseCreator::lambda([actor_id = actor_id(this), promise = std::move(promise)](Result<Unit> &&result) mutable {
-        if (result.is_error()) {
-          promise.set_error(result.move_as_error());
-        } else {
-          send_closure(actor_id, &ContactsManager::get_user_link_impl, std::move(promise));
-        }
-      }));
-}
-
-void ContactsManager::get_user_link_impl(Promise<td_api::object_ptr<td_api::userLink>> &&promise) {
-  TRY_STATUS_PROMISE(promise, G()->close_status());
-  const auto *u = get_user(get_my_id());
-  if (u != nullptr && u->usernames.has_first_username()) {
-    return promise.set_value(td_api::make_object<td_api::userLink>(
-        LinkManager::get_public_dialog_link(u->usernames.get_first_username(), true), 0));
-  }
-  export_contact_token(td_, std::move(promise));
-}
-
-void ContactsManager::search_user_by_token(string token, Promise<td_api::object_ptr<td_api::user>> &&promise) {
-  import_contact_token(td_, token, std::move(promise));
 }
 
 void ContactsManager::send_get_me_query(Td *td, Promise<Unit> &&promise) {
@@ -19180,7 +19155,7 @@ td_api::object_ptr<td_api::UserStatus> ContactsManager::get_user_status_object(U
   }
 }
 
-bool ContactsManager::get_has_unread_stories(const User *u, UserId user_id) const {
+bool ContactsManager::get_user_has_unread_stories(const User *u) {
   return u->max_active_story_id.get() > u->max_read_story_id.get();
 }
 
@@ -19235,8 +19210,8 @@ tl_object_ptr<td_api::user> ContactsManager::get_user_object(UserId user_id, con
       get_user_status_object(user_id, u), get_profile_photo_object(td_->file_manager_.get(), u->photo),
       std::move(emoji_status), u->is_contact, u->is_mutual_contact, u->is_close_friend, u->is_verified, u->is_premium,
       u->is_support, get_restriction_reason_description(u->restriction_reasons), u->is_scam, u->is_fake,
-      u->max_active_story_id.is_valid(), get_has_unread_stories(u, user_id), have_access, std::move(type),
-      u->language_code, u->attach_menu_enabled);
+      u->max_active_story_id.is_valid(), get_user_has_unread_stories(u), have_access, std::move(type), u->language_code,
+      u->attach_menu_enabled);
 }
 
 vector<int64> ContactsManager::get_user_ids_object(const vector<UserId> &user_ids, const char *source) const {
@@ -19529,6 +19504,8 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
   CHECK(invite_link_info != nullptr);
 
   DialogId dialog_id = invite_link_info->dialog_id;
+  bool is_chat = false;
+  bool is_megagroup = false;
   string title;
   const DialogPhoto *photo = nullptr;
   DialogPhoto invite_link_photo;
@@ -19538,13 +19515,16 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
   bool creates_join_request = false;
   bool is_public = false;
   bool is_member = false;
-  td_api::object_ptr<td_api::ChatType> chat_type;
+  bool is_verified = false;
+  bool is_scam = false;
+  bool is_fake = false;
 
   if (dialog_id.is_valid()) {
     switch (dialog_id.get_type()) {
       case DialogType::Chat: {
         auto chat_id = dialog_id.get_chat_id();
-        const Chat *c = get_chat(chat_id);
+        const Chat *c = get_chat_force(chat_id);
+        is_chat = true;
 
         if (c != nullptr) {
           title = c->title;
@@ -19554,15 +19534,12 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
         } else {
           LOG(ERROR) << "Have no information about " << chat_id;
         }
-        chat_type = td_api::make_object<td_api::chatTypeBasicGroup>(
-            get_basic_group_id_object(chat_id, "get_chat_invite_link_info_object"));
         break;
       }
       case DialogType::Channel: {
         auto channel_id = dialog_id.get_channel_id();
-        const Channel *c = get_channel(channel_id);
+        const Channel *c = get_channel_force(channel_id);
 
-        bool is_megagroup = false;
         if (c != nullptr) {
           title = c->title;
           photo = &c->photo;
@@ -19570,11 +19547,12 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
           is_megagroup = c->is_megagroup;
           participant_count = c->participant_count;
           is_member = c->status.is_member();
+          is_verified = c->is_verified;
+          is_scam = c->is_scam;
+          is_fake = c->is_fake;
         } else {
           LOG(ERROR) << "Have no information about " << channel_id;
         }
-        chat_type = td_api::make_object<td_api::chatTypeSupergroup>(
-            get_supergroup_id_object(channel_id, "get_chat_invite_link_info_object"), !is_megagroup);
         break;
       }
       default:
@@ -19582,6 +19560,8 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
     }
     description = get_dialog_about(dialog_id);
   } else {
+    is_chat = invite_link_info->is_chat;
+    is_megagroup = invite_link_info->is_megagroup;
     title = invite_link_info->title;
     invite_link_photo = as_fake_dialog_photo(invite_link_info->photo, dialog_id, false);
     photo = &invite_link_photo;
@@ -19590,12 +19570,18 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
     member_user_ids = get_user_ids_object(invite_link_info->participant_user_ids, "get_chat_invite_link_info_object");
     creates_join_request = invite_link_info->creates_join_request;
     is_public = invite_link_info->is_public;
+    is_verified = invite_link_info->is_verified;
+    is_scam = invite_link_info->is_scam;
+    is_fake = invite_link_info->is_fake;
+  }
 
-    if (invite_link_info->is_chat) {
-      chat_type = td_api::make_object<td_api::chatTypeBasicGroup>(0);
-    } else {
-      chat_type = td_api::make_object<td_api::chatTypeSupergroup>(0, !invite_link_info->is_megagroup);
-    }
+  td_api::object_ptr<td_api::InviteLinkChatType> chat_type;
+  if (is_chat) {
+    chat_type = td_api::make_object<td_api::inviteLinkChatTypeBasicGroup>();
+  } else if (is_megagroup) {
+    chat_type = td_api::make_object<td_api::inviteLinkChatTypeSupergroup>();
+  } else {
+    chat_type = td_api::make_object<td_api::inviteLinkChatTypeChannel>();
   }
 
   if (dialog_id.is_valid()) {
@@ -19609,10 +19595,10 @@ tl_object_ptr<td_api::chatInviteLinkInfo> ContactsManager::get_chat_invite_link_
     }
   }
 
-  return make_tl_object<td_api::chatInviteLinkInfo>(
+  return td_api::make_object<td_api::chatInviteLinkInfo>(
       td_->messages_manager_->get_chat_id_object(dialog_id, "chatInviteLinkInfo"), accessible_for, std::move(chat_type),
       title, get_chat_photo_info_object(td_->file_manager_.get(), photo), description, participant_count,
-      std::move(member_user_ids), creates_join_request, is_public);
+      std::move(member_user_ids), creates_join_request, is_public, is_verified, is_scam, is_fake);
 }
 
 void ContactsManager::get_support_user(Promise<td_api::object_ptr<td_api::user>> &&promise) {
