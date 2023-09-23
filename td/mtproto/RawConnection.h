@@ -50,7 +50,7 @@ class RawConnection {
   virtual TransportType get_transport_type() const = 0;
   virtual size_t send_crypto(const Storer &storer, uint64 session_id, int64 salt, const AuthKey &auth_key,
                              uint64 quick_ack_token) = 0;
-  virtual uint64 send_no_crypto(const Storer &storer) = 0;
+  virtual void send_no_crypto(const Storer &storer) = 0;
 
   virtual PollableFdInfo &get_poll_info() = 0;
   virtual StatsCallback *stats_callback() = 0;
@@ -63,7 +63,7 @@ class RawConnection {
     virtual ~Callback() = default;
     virtual Status on_raw_packet(const PacketInfo &packet_info, BufferSlice packet) = 0;
     virtual Status on_quick_ack(uint64 quick_ack_token) {
-      return Status::Error("Quick acknowledgements are unsupported by the callback");
+      return Status::Error("Quick acknowledgements aren't supported by the callback");
     }
     virtual Status before_write() {
       return Status::OK();

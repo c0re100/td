@@ -6,6 +6,7 @@
 //
 #include "td/telegram/MessageContent.h"
 
+#include "td/telegram/AccessRights.h"
 #include "td/telegram/AnimationsManager.h"
 #include "td/telegram/AnimationsManager.hpp"
 #include "td/telegram/AudiosManager.h"
@@ -2302,15 +2303,14 @@ static Result<InputMessageContent> create_input_message_content(
       DialogId story_sender_dialog_id(input_story->story_sender_chat_id_);
       StoryId story_id(input_story->story_id_);
       StoryFullId story_full_id(story_sender_dialog_id, story_id);
-      if (!td->story_manager_->have_story_force(story_full_id) ||
-          story_sender_dialog_id.get_type() != DialogType::User) {
+      if (!td->story_manager_->have_story_force(story_full_id)) {
         return Status::Error(400, "Story not found");
       }
       if (!story_id.is_server()) {
         return Status::Error(400, "Story can't be forwarded");
       }
-      if (td->contacts_manager_->get_input_user(story_sender_dialog_id.get_user_id()).is_error()) {
-        return Status::Error(400, "Can't access the user");
+      if (td->messages_manager_->get_input_peer(dialog_id, AccessRights::Read) == nullptr) {
+        return Status::Error(400, "Can't access the story");
       }
       content = make_unique<MessageStory>(story_full_id, false);
       break;
@@ -3316,7 +3316,7 @@ string get_message_content_theme_name(const MessageContent *content) {
   }
 }
 
-FullMessageId get_message_content_replied_message_id(DialogId dialog_id, const MessageContent *content) {
+MessageFullId get_message_content_replied_message_id(DialogId dialog_id, const MessageContent *content) {
   switch (content->get_type()) {
     case MessageContentType::PinMessage:
       return {dialog_id, static_cast<const MessagePinMessage *>(content)->message_id};
@@ -3325,7 +3325,7 @@ FullMessageId get_message_content_replied_message_id(DialogId dialog_id, const M
     case MessageContentType::PaymentSuccessful: {
       auto *m = static_cast<const MessagePaymentSuccessful *>(content);
       if (!m->invoice_message_id.is_valid()) {
-        return FullMessageId();
+        return MessageFullId();
       }
 
       auto reply_in_dialog_id = m->invoice_dialog_id.is_valid() ? m->invoice_dialog_id : dialog_id;
@@ -3334,13 +3334,13 @@ FullMessageId get_message_content_replied_message_id(DialogId dialog_id, const M
     case MessageContentType::SetBackground: {
       auto *m = static_cast<const MessageSetBackground *>(content);
       if (!m->old_message_id.is_valid()) {
-        return FullMessageId();
+        return MessageFullId();
       }
 
       return {dialog_id, m->old_message_id};
     }
     default:
-      return FullMessageId();
+      return MessageFullId();
   }
 }
 
@@ -3585,25 +3585,25 @@ bool can_message_content_have_media_timestamp(const MessageContent *content) {
   }
 }
 
-void set_message_content_poll_answer(Td *td, const MessageContent *content, FullMessageId full_message_id,
+void set_message_content_poll_answer(Td *td, const MessageContent *content, MessageFullId message_full_id,
                                      vector<int32> &&option_ids, Promise<Unit> &&promise) {
   CHECK(content->get_type() == MessageContentType::Poll);
-  td->poll_manager_->set_poll_answer(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
+  td->poll_manager_->set_poll_answer(static_cast<const MessagePoll *>(content)->poll_id, message_full_id,
                                      std::move(option_ids), std::move(promise));
 }
 
-void get_message_content_poll_voters(Td *td, const MessageContent *content, FullMessageId full_message_id,
+void get_message_content_poll_voters(Td *td, const MessageContent *content, MessageFullId message_full_id,
                                      int32 option_id, int32 offset, int32 limit,
                                      Promise<td_api::object_ptr<td_api::messageSenders>> &&promise) {
   CHECK(content->get_type() == MessageContentType::Poll);
-  td->poll_manager_->get_poll_voters(static_cast<const MessagePoll *>(content)->poll_id, full_message_id, option_id,
+  td->poll_manager_->get_poll_voters(static_cast<const MessagePoll *>(content)->poll_id, message_full_id, option_id,
                                      offset, limit, std::move(promise));
 }
 
-void stop_message_content_poll(Td *td, const MessageContent *content, FullMessageId full_message_id,
+void stop_message_content_poll(Td *td, const MessageContent *content, MessageFullId message_full_id,
                                unique_ptr<ReplyMarkup> &&reply_markup, Promise<Unit> &&promise) {
   CHECK(content->get_type() == MessageContentType::Poll);
-  td->poll_manager_->stop_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
+  td->poll_manager_->stop_poll(static_cast<const MessagePoll *>(content)->poll_id, message_full_id,
                                std::move(reply_markup), std::move(promise));
 }
 
@@ -4372,48 +4372,48 @@ static CustomEmojiId get_custom_emoji_id(const FormattedText &text) {
   return text.entities.empty() ? CustomEmojiId() : text.entities[0].custom_emoji_id;
 }
 
-void register_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id,
+void register_message_content(Td *td, const MessageContent *content, MessageFullId message_full_id,
                               const char *source) {
   switch (content->get_type()) {
     case MessageContentType::Text: {
       auto text = static_cast<const MessageText *>(content);
       if (text->web_page_id.is_valid()) {
-        td->web_pages_manager_->register_web_page(text->web_page_id, full_message_id, source);
+        td->web_pages_manager_->register_web_page(text->web_page_id, message_full_id, source);
       } else if (can_be_animated_emoji(text->text)) {
-        td->stickers_manager_->register_emoji(text->text.text, get_custom_emoji_id(text->text), full_message_id,
+        td->stickers_manager_->register_emoji(text->text.text, get_custom_emoji_id(text->text), message_full_id,
                                               source);
       }
       return;
     }
     case MessageContentType::VideoNote:
       return td->video_notes_manager_->register_video_note(static_cast<const MessageVideoNote *>(content)->file_id,
-                                                           full_message_id, source);
+                                                           message_full_id, source);
     case MessageContentType::VoiceNote:
       return td->voice_notes_manager_->register_voice_note(static_cast<const MessageVoiceNote *>(content)->file_id,
-                                                           full_message_id, source);
+                                                           message_full_id, source);
     case MessageContentType::Poll:
-      return td->poll_manager_->register_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
+      return td->poll_manager_->register_poll(static_cast<const MessagePoll *>(content)->poll_id, message_full_id,
                                               source);
     case MessageContentType::Dice: {
       auto dice = static_cast<const MessageDice *>(content);
-      return td->stickers_manager_->register_dice(dice->emoji, dice->dice_value, full_message_id, source);
+      return td->stickers_manager_->register_dice(dice->emoji, dice->dice_value, message_full_id, source);
     }
     case MessageContentType::GiftPremium:
       return td->stickers_manager_->register_premium_gift(static_cast<const MessageGiftPremium *>(content)->months,
-                                                          full_message_id, source);
+                                                          message_full_id, source);
     case MessageContentType::SuggestProfilePhoto:
       return td->contacts_manager_->register_suggested_profile_photo(
           static_cast<const MessageSuggestProfilePhoto *>(content)->photo);
     case MessageContentType::Story:
       return td->story_manager_->register_story(static_cast<const MessageStory *>(content)->story_full_id,
-                                                full_message_id, source);
+                                                message_full_id, source);
     default:
       return;
   }
 }
 
 void reregister_message_content(Td *td, const MessageContent *old_content, const MessageContent *new_content,
-                                FullMessageId full_message_id, const char *source) {
+                                MessageFullId message_full_id, const char *source) {
   auto old_content_type = old_content->get_type();
   auto new_content_type = new_content->get_type();
   if (old_content_type == new_content_type) {
@@ -4470,42 +4470,42 @@ void reregister_message_content(Td *td, const MessageContent *old_content, const
         return;
     }
   }
-  unregister_message_content(td, old_content, full_message_id, source);
-  register_message_content(td, new_content, full_message_id, source);
+  unregister_message_content(td, old_content, message_full_id, source);
+  register_message_content(td, new_content, message_full_id, source);
 }
 
-void unregister_message_content(Td *td, const MessageContent *content, FullMessageId full_message_id,
+void unregister_message_content(Td *td, const MessageContent *content, MessageFullId message_full_id,
                                 const char *source) {
   switch (content->get_type()) {
     case MessageContentType::Text: {
       auto text = static_cast<const MessageText *>(content);
       if (text->web_page_id.is_valid()) {
-        td->web_pages_manager_->unregister_web_page(text->web_page_id, full_message_id, source);
+        td->web_pages_manager_->unregister_web_page(text->web_page_id, message_full_id, source);
       } else if (can_be_animated_emoji(text->text)) {
-        td->stickers_manager_->unregister_emoji(text->text.text, get_custom_emoji_id(text->text), full_message_id,
+        td->stickers_manager_->unregister_emoji(text->text.text, get_custom_emoji_id(text->text), message_full_id,
                                                 source);
       }
       return;
     }
     case MessageContentType::VideoNote:
       return td->video_notes_manager_->unregister_video_note(static_cast<const MessageVideoNote *>(content)->file_id,
-                                                             full_message_id, source);
+                                                             message_full_id, source);
     case MessageContentType::VoiceNote:
       return td->voice_notes_manager_->unregister_voice_note(static_cast<const MessageVoiceNote *>(content)->file_id,
-                                                             full_message_id, source);
+                                                             message_full_id, source);
     case MessageContentType::Poll:
-      return td->poll_manager_->unregister_poll(static_cast<const MessagePoll *>(content)->poll_id, full_message_id,
+      return td->poll_manager_->unregister_poll(static_cast<const MessagePoll *>(content)->poll_id, message_full_id,
                                                 source);
     case MessageContentType::Dice: {
       auto dice = static_cast<const MessageDice *>(content);
-      return td->stickers_manager_->unregister_dice(dice->emoji, dice->dice_value, full_message_id, source);
+      return td->stickers_manager_->unregister_dice(dice->emoji, dice->dice_value, message_full_id, source);
     }
     case MessageContentType::GiftPremium:
       return td->stickers_manager_->unregister_premium_gift(static_cast<const MessageGiftPremium *>(content)->months,
-                                                            full_message_id, source);
+                                                            message_full_id, source);
     case MessageContentType::Story:
       return td->story_manager_->unregister_story(static_cast<const MessageStory *>(content)->story_full_id,
-                                                  full_message_id, source);
+                                                  message_full_id, source);
     default:
       return;
   }
@@ -5077,7 +5077,7 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
     }
     case telegram_api::messageMediaStory::ID: {
       auto media = move_tl_object_as<telegram_api::messageMediaStory>(media_ptr);
-      auto dialog_id = DialogId(UserId(media->user_id_));
+      auto dialog_id = DialogId(media->peer_);
       auto story_id = StoryId(media->id_);
       auto story_full_id = StoryFullId(dialog_id, story_id);
       if (!story_full_id.is_server()) {
@@ -6539,7 +6539,7 @@ bool need_poll_message_content_extended_media(const MessageContent *content) {
   return static_cast<const MessageInvoice *>(content)->input_invoice.need_poll_extended_media();
 }
 
-void get_message_content_animated_emoji_click_sticker(const MessageContent *content, FullMessageId full_message_id,
+void get_message_content_animated_emoji_click_sticker(const MessageContent *content, MessageFullId message_full_id,
                                                       Td *td, Promise<td_api::object_ptr<td_api::sticker>> &&promise) {
   if (content->get_type() != MessageContentType::Text) {
     return promise.set_error(Status::Error(400, "Message is not an animated emoji message"));
@@ -6549,10 +6549,10 @@ void get_message_content_animated_emoji_click_sticker(const MessageContent *cont
   if (!can_be_animated_emoji(text)) {
     return promise.set_error(Status::Error(400, "Message is not an animated emoji message"));
   }
-  td->stickers_manager_->get_animated_emoji_click_sticker(text.text, full_message_id, std::move(promise));
+  td->stickers_manager_->get_animated_emoji_click_sticker(text.text, message_full_id, std::move(promise));
 }
 
-void on_message_content_animated_emoji_clicked(const MessageContent *content, FullMessageId full_message_id, Td *td,
+void on_message_content_animated_emoji_clicked(const MessageContent *content, MessageFullId message_full_id, Td *td,
                                                string &&emoji, string &&data) {
   if (content->get_type() != MessageContentType::Text) {
     return;
@@ -6563,7 +6563,7 @@ void on_message_content_animated_emoji_clicked(const MessageContent *content, Fu
   if (!text.entities.empty() || remove_emoji_modifiers(text.text) != emoji) {
     return;
   }
-  auto error = td->stickers_manager_->on_animated_emoji_message_clicked(std::move(emoji), full_message_id, data);
+  auto error = td->stickers_manager_->on_animated_emoji_message_clicked(std::move(emoji), message_full_id, data);
   if (error.is_error()) {
     LOG(WARNING) << "Failed to process animated emoji click with data \"" << data << "\": " << error;
   }
@@ -6927,25 +6927,25 @@ void update_used_hashtags(Td *td, const MessageContent *content) {
   }
 }
 
-void recognize_message_content_speech(Td *td, const MessageContent *content, FullMessageId full_message_id,
+void recognize_message_content_speech(Td *td, const MessageContent *content, MessageFullId message_full_id,
                                       Promise<Unit> &&promise) {
   switch (content->get_type()) {
     case MessageContentType::VideoNote:
-      return td->video_notes_manager_->recognize_speech(full_message_id, std::move(promise));
+      return td->video_notes_manager_->recognize_speech(message_full_id, std::move(promise));
     case MessageContentType::VoiceNote:
-      return td->voice_notes_manager_->recognize_speech(full_message_id, std::move(promise));
+      return td->voice_notes_manager_->recognize_speech(message_full_id, std::move(promise));
     default:
       return promise.set_error(Status::Error(400, "Invalid message specified"));
   }
 }
 
-void rate_message_content_speech_recognition(Td *td, const MessageContent *content, FullMessageId full_message_id,
+void rate_message_content_speech_recognition(Td *td, const MessageContent *content, MessageFullId message_full_id,
                                              bool is_good, Promise<Unit> &&promise) {
   switch (content->get_type()) {
     case MessageContentType::VideoNote:
-      return td->video_notes_manager_->rate_speech_recognition(full_message_id, is_good, std::move(promise));
+      return td->video_notes_manager_->rate_speech_recognition(message_full_id, is_good, std::move(promise));
     case MessageContentType::VoiceNote:
-      return td->voice_notes_manager_->rate_speech_recognition(full_message_id, is_good, std::move(promise));
+      return td->voice_notes_manager_->rate_speech_recognition(message_full_id, is_good, std::move(promise));
     default:
       return promise.set_error(Status::Error(400, "Invalid message specified"));
   }

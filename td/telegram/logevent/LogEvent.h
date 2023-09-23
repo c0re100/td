@@ -112,6 +112,15 @@ class LogEvent {
     LoadDialogExpiringStories = 0x402,
     SendStory = 0x403,
     EditStory = 0x404,
+    ChangeAuthorizationSettingsOnServer = 0x500,
+    ResetAuthorizationOnServer = 0x501,
+    ResetAuthorizationsOnServer = 0x502,
+    SetDefaultHistoryTtlOnServer = 0x503,
+    SetAccountTtlOnServer = 0x504,
+    SetAuthorizationTtlOnServer = 0x505,
+    ResetWebAuthorizationOnServer = 0x506,
+    ResetWebAuthorizationsOnServer = 0x507,
+    InvalidateSignInCodesOnServer = 0x508,
     ConfigPmcMagic = 0x1f18,
     BinlogPmcMagic = 0x4327
   };

@@ -11,7 +11,10 @@
 #include "td/telegram/Td.h"
 
 #include "td/utils/algorithm.h"
+#include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
+
+#include <algorithm>
 
 namespace td {
 
@@ -36,18 +39,70 @@ StoryInteractionInfo::StoryInteractionInfo(Td *td, telegram_api::object_ptr<tele
     LOG(ERROR) << "Receive " << view_count_ << " story views";
     view_count_ = 0;
   }
+  forward_count_ = story_views->forwards_count_;
+  if (forward_count_ < 0) {
+    LOG(ERROR) << "Receive " << forward_count_ << " story forwards";
+    forward_count_ = 0;
+  }
   reaction_count_ = story_views->reactions_count_;
   if (reaction_count_ < 0) {
     LOG(ERROR) << "Receive " << reaction_count_ << " story reactions";
     reaction_count_ = 0;
   }
   has_viewers_ = story_views->has_viewers_;
+
+  FlatHashSet<ReactionType, ReactionTypeHash> added_reaction_types;
+  for (auto &reaction : story_views->reactions_) {
+    ReactionType reaction_type(reaction->reaction_);
+    if (reaction_type.is_empty()) {
+      LOG(ERROR) << "Receive empty " << to_string(reaction);
+      continue;
+    }
+    if (!added_reaction_types.insert(reaction_type).second) {
+      LOG(ERROR) << "Receive again " << to_string(reaction);
+      continue;
+    }
+    if (reaction->count_ == 0) {
+      LOG(ERROR) << "Receive " << to_string(reaction);
+      continue;
+    }
+    reaction_counts_.emplace_back(std::move(reaction_type), reaction->count_);
+  }
+  std::sort(reaction_counts_.begin(), reaction_counts_.end());
 }
 
 void StoryInteractionInfo::add_dependencies(Dependencies &dependencies) const {
   for (auto user_id : recent_viewer_user_ids_) {
     dependencies.add(user_id);
   }
+}
+
+void StoryInteractionInfo::set_chosen_reaction_type(const ReactionType &new_reaction_type,
+                                                    const ReactionType &old_reaction_type) {
+  if (!old_reaction_type.is_empty()) {
+    for (auto it = reaction_counts_.begin(); it != reaction_counts_.end(); ++it) {
+      if (it->first == old_reaction_type) {
+        it->second--;
+        if (it->second == 0) {
+          reaction_counts_.erase(it);
+        }
+        break;
+      }
+    }
+  }
+  if (!new_reaction_type.is_empty()) {
+    bool is_found = false;
+    for (auto it = reaction_counts_.begin(); it != reaction_counts_.end(); ++it) {
+      if (it->first == old_reaction_type) {
+        it->second++;
+        is_found = true;
+      }
+    }
+    if (!is_found) {
+      reaction_counts_.emplace_back(new_reaction_type, 1);
+    }
+  }
+  std::sort(reaction_counts_.begin(), reaction_counts_.end());
 }
 
 bool StoryInteractionInfo::set_recent_viewer_user_ids(vector<UserId> &&user_ids) {
@@ -75,18 +130,19 @@ td_api::object_ptr<td_api::storyInteractionInfo> StoryInteractionInfo::get_story
     return nullptr;
   }
   return td_api::make_object<td_api::storyInteractionInfo>(
-      view_count_, reaction_count_,
+      view_count_, forward_count_, reaction_count_,
       td->contacts_manager_->get_user_ids_object(recent_viewer_user_ids_, "get_story_interaction_info_object"));
 }
 
 bool operator==(const StoryInteractionInfo &lhs, const StoryInteractionInfo &rhs) {
-  return lhs.recent_viewer_user_ids_ == rhs.recent_viewer_user_ids_ && lhs.view_count_ == rhs.view_count_ &&
+  return lhs.recent_viewer_user_ids_ == rhs.recent_viewer_user_ids_ && lhs.reaction_counts_ == rhs.reaction_counts_ &&
+         lhs.view_count_ == rhs.view_count_ && lhs.forward_count_ == rhs.forward_count_ &&
          lhs.reaction_count_ == rhs.reaction_count_ && lhs.has_viewers_ == rhs.has_viewers_;
 }
 
 StringBuilder &operator<<(StringBuilder &string_builder, const StoryInteractionInfo &info) {
-  return string_builder << info.view_count_ << " views with " << info.reaction_count_ << " reactions by "
-                        << info.recent_viewer_user_ids_;
+  return string_builder << info.view_count_ << " views and " << info.forward_count_ << " forwards with "
+                        << info.reaction_count_ << " reactions by " << info.recent_viewer_user_ids_;
 }
 
 }  // namespace td

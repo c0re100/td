@@ -81,6 +81,9 @@ static td_api::object_ptr<td_api::PremiumFeature> get_premium_feature_object(Sli
   if (premium_feature == "stories") {
     return td_api::make_object<td_api::premiumFeatureUpgradedStories>();
   }
+  if (premium_feature == "channel_boost") {
+    return td_api::make_object<td_api::premiumFeatureChatBoost>();
+  }
   return nullptr;
 }
 
@@ -309,7 +312,8 @@ const vector<Slice> &get_premium_limit_keys() {
                                         "story_expiring",
                                         "story_caption_length",
                                         "stories_sent_weekly",
-                                        "stories_sent_monthly"};
+                                        "stories_sent_monthly",
+                                        "stories_suggested_reactions"};
   return limit_keys;
 }
 
@@ -348,6 +352,8 @@ static Slice get_limit_type_key(const td_api::PremiumLimitType *limit_type) {
       return Slice("stories_sent_weekly");
     case td_api::premiumLimitTypeMonthlySentStoryCount::ID:
       return Slice("stories_sent_monthly");
+    case td_api::premiumLimitTypeStorySuggestedReactionAreaCount::ID:
+      return Slice("stories_suggested_reactions");
     default:
       UNREACHABLE();
       return Slice();
@@ -400,6 +406,8 @@ static string get_premium_source(const td_api::PremiumFeature *feature) {
       return "translations";
     case td_api::premiumFeatureUpgradedStories::ID:
       return "stories";
+    case td_api::premiumFeatureChatBoost::ID:
+      return "channel_boost";
     default:
       UNREACHABLE();
   }
@@ -517,6 +525,9 @@ static td_api::object_ptr<td_api::premiumLimit> get_premium_limit_object(Slice k
     if (key == "stories_sent_monthly") {
       return td_api::make_object<td_api::premiumLimitTypeMonthlySentStoryCount>();
     }
+    if (key == "stories_suggested_reactions") {
+      return td_api::make_object<td_api::premiumLimitTypeStorySuggestedReactionAreaCount>();
+    }
     UNREACHABLE();
     return nullptr;
   }();
@@ -534,12 +545,12 @@ void get_premium_limit(const td_api::object_ptr<td_api::PremiumLimitType> &limit
 
 void get_premium_features(Td *td, const td_api::object_ptr<td_api::PremiumSource> &source,
                           Promise<td_api::object_ptr<td_api::premiumFeatures>> &&promise) {
-  auto premium_features =
-      full_split(G()->get_option_string("premium_features",
-                                        "double_limits,stories,more_upload,faster_download,voice_to_text,no_ads,"
-                                        "infinite_reactions,premium_stickers,animated_emoji,advanced_chat_management,"
-                                        "profile_badge,emoji_status,animated_userpics,app_icons,translations"),
-                 ',');
+  auto premium_features = full_split(
+      G()->get_option_string(
+          "premium_features",
+          "stories,double_limits,animated_emoji,translations,more_upload,faster_download,voice_to_text,no_ads,infinite_"
+          "reactions,premium_stickers,advanced_chat_management,profile_badge,animated_userpics,app_icons,emoji_status"),
+      ',');
   vector<td_api::object_ptr<td_api::PremiumFeature>> features;
   for (const auto &premium_feature : premium_features) {
     auto feature = get_premium_feature_object(premium_feature);

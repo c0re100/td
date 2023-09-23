@@ -6,12 +6,15 @@
 //
 #pragma once
 
+#include "td/telegram/ReactionType.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
 
 #include "td/utils/common.h"
 #include "td/utils/StringBuilder.h"
+
+#include <utility>
 
 namespace td {
 
@@ -20,7 +23,9 @@ class Td;
 
 class StoryInteractionInfo {
   vector<UserId> recent_viewer_user_ids_;
+  vector<std::pair<ReactionType, int32>> reaction_counts_;
   int32 view_count_ = -1;
+  int32 forward_count_ = 0;
   int32 reaction_count_ = 0;
   bool has_viewers_ = false;
 
@@ -54,12 +59,18 @@ class StoryInteractionInfo {
     return false;
   }
 
+  void set_chosen_reaction_type(const ReactionType &new_reaction_type, const ReactionType &old_reaction_type);
+
   int32 get_view_count() const {
     return view_count_;
   }
 
   int32 get_reaction_count() const {
     return reaction_count_;
+  }
+
+  const vector<std::pair<ReactionType, int32>> &get_reaction_counts() const {
+    return reaction_counts_;
   }
 
   bool definitely_has_no_user(UserId user_id) const;

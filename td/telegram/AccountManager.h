@@ -15,6 +15,8 @@
 
 namespace td {
 
+struct BinlogEvent;
+
 class Td;
 
 class AccountManager final : public Actor {
@@ -68,11 +70,23 @@ class AccountManager final : public Actor {
 
   bool on_confirm_authorization(int64 hash);
 
+  void on_binlog_events(vector<BinlogEvent> &&events);
+
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
 
  private:
   class UnconfirmedAuthorization;
   class UnconfirmedAuthorizations;
+
+  class ChangeAuthorizationSettingsOnServerLogEvent;
+  class InvalidateSignInCodesOnServerLogEvent;
+  class ResetAuthorizationOnServerLogEvent;
+  class ResetAuthorizationsOnServerLogEvent;
+  class ResetWebAuthorizationOnServerLogEvent;
+  class ResetWebAuthorizationsOnServerLogEvent;
+  class SetAccountTtlOnServerLogEvent;
+  class SetAuthorizationTtlOnServerLogEvent;
+  class SetDefaultHistoryTtlOnServerLogEvent;
 
   void start_up() final;
 
@@ -91,6 +105,27 @@ class AccountManager final : public Actor {
   td_api::object_ptr<td_api::updateUnconfirmedSession> get_update_unconfirmed_session() const;
 
   void send_update_unconfirmed_session() const;
+
+  void change_authorization_settings_on_server(int64 hash, bool set_encrypted_requests_disabled,
+                                               bool encrypted_requests_disabled, bool set_call_requests_disabled,
+                                               bool call_requests_disabled, bool confirm, uint64 log_event_id,
+                                               Promise<Unit> &&promise);
+
+  void invalidate_sign_in_codes_on_server(vector<string> authentication_codes, uint64 log_event_id);
+
+  void reset_authorization_on_server(int64 hash, uint64 log_event_id, Promise<Unit> &&promise);
+
+  void reset_authorizations_on_server(uint64 log_event_id, Promise<Unit> &&promise);
+
+  void reset_web_authorization_on_server(int64 hash, uint64 log_event_id, Promise<Unit> &&promise);
+
+  void reset_web_authorizations_on_server(uint64 log_event_id, Promise<Unit> &&promise);
+
+  void set_account_ttl_on_server(int32 account_ttl, uint64 log_event_id, Promise<Unit> &&promise);
+
+  void set_authorization_ttl_on_server(int32 authorization_ttl_days, uint64 log_event_id, Promise<Unit> &&promise);
+
+  void set_default_history_ttl_on_server(int32 message_ttl, uint64 log_event_id, Promise<Unit> &&promise);
 
   Td *td_;
   ActorShared<> parent_;

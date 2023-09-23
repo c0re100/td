@@ -6,22 +6,16 @@
 //
 #pragma once
 
-#include "td/mtproto/MessageId.h"
+#include "td/telegram/ChannelId.h"
 
-#include "td/utils/buffer.h"
 #include "td/utils/common.h"
 
 namespace td {
-namespace mtproto {
 
-struct MtprotoQuery {
-  MessageId message_id;
-  int32 seq_no;
-  BufferSlice packet;
-  bool gzip_flag;
-  vector<MessageId> invoke_after_message_ids;
-  bool use_quick_ack;
+struct DialogBoostLinkInfo {
+  string username;
+  // or
+  ChannelId channel_id;
 };
 
-}  // namespace mtproto
 }  // namespace td

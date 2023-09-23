@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.18 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.19 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -469,6 +469,7 @@ set(TDLIB_SOURCE
   td/telegram/SpecialStickerSetType.cpp
   td/telegram/SponsoredMessageManager.cpp
   td/telegram/StateManager.cpp
+  td/telegram/StatisticsManager.cpp
   td/telegram/StickerFormat.cpp
   td/telegram/StickerMaskPosition.cpp
   td/telegram/StickerPhotoSize.cpp
@@ -517,6 +518,7 @@ set(TDLIB_SOURCE
   td/mtproto/HttpTransport.h
   td/mtproto/IStreamTransport.h
   td/mtproto/KDF.h
+  td/mtproto/MessageId.h
   td/mtproto/MtprotoQuery.h
   td/mtproto/NoCryptoStorer.h
   td/mtproto/PacketInfo.h
@@ -579,6 +581,7 @@ set(TDLIB_SOURCE
   td/telegram/DialogAction.h
   td/telegram/DialogActionBar.h
   td/telegram/DialogAdministrator.h
+  td/telegram/DialogBoostLinkInfo.h
   td/telegram/DialogDate.h
   td/telegram/DialogDb.h
   td/telegram/DialogEventLog.h
@@ -639,7 +642,6 @@ set(TDLIB_SOURCE
   td/telegram/ForumTopicIcon.h
   td/telegram/ForumTopicInfo.h
   td/telegram/ForumTopicManager.h
-  td/telegram/FullMessageId.h
   td/telegram/Game.h
   td/telegram/GameManager.h
   td/telegram/GitCommitHash.h
@@ -673,6 +675,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageDb.h
   td/telegram/MessageEntity.h
   td/telegram/MessageExtendedMedia.h
+  td/telegram/MessageFullId.h
   td/telegram/MessageId.h
   td/telegram/MessageInputReplyTo.h
   td/telegram/MessageLinkInfo.h
@@ -776,6 +779,7 @@ set(TDLIB_SOURCE
   td/telegram/SpecialStickerSetType.h
   td/telegram/SponsoredMessageManager.h
   td/telegram/StateManager.h
+  td/telegram/StatisticsManager.h
   td/telegram/StickerFormat.h
   td/telegram/StickerMaskPosition.h
   td/telegram/StickerPhotoSize.h

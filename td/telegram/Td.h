@@ -77,6 +77,7 @@ class SecureManager;
 class SecretChatsManager;
 class SponsoredMessageManager;
 class StateManager;
+class StatisticsManager;
 class StickersManager;
 class StorageManager;
 class StoryManager;
@@ -199,6 +200,8 @@ class Td final : public Actor {
   ActorOwn<ReactionManager> reaction_manager_actor_;
   unique_ptr<SponsoredMessageManager> sponsored_message_manager_;
   ActorOwn<SponsoredMessageManager> sponsored_message_manager_actor_;
+  unique_ptr<StatisticsManager> statistics_manager_;
+  ActorOwn<StatisticsManager> statistics_manager_actor_;
   unique_ptr<StickersManager> stickers_manager_;
   ActorOwn<StickersManager> stickers_manager_actor_;
   unique_ptr<StoryManager> story_manager_;
@@ -796,6 +799,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getStory &request);
 
+  void on_request(uint64 id, const td_api::getChatsToSendStories &request);
+
   void on_request(uint64 id, const td_api::canSendStory &request);
 
   void on_request(uint64 id, td_api::sendStory &request);
@@ -1024,7 +1029,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getChatPinnedStories &request);
 
-  void on_request(uint64 id, const td_api::getArchivedStories &request);
+  void on_request(uint64 id, const td_api::getChatArchivedStories &request);
 
   void on_request(uint64 id, const td_api::openStory &request);
 
@@ -1039,6 +1044,18 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::reportStory &request);
 
   void on_request(uint64 id, const td_api::activateStoryStealthMode &request);
+
+  void on_request(uint64 id, const td_api::getChatBoostStatus &request);
+
+  void on_request(uint64 id, const td_api::canBoostChat &request);
+
+  void on_request(uint64 id, const td_api::boostChat &request);
+
+  void on_request(uint64 id, const td_api::getChatBoostLink &request);
+
+  void on_request(uint64 id, td_api::getChatBoostLinkInfo &request);
+
+  void on_request(uint64 id, td_api::getChatBoosts &request);
 
   void on_request(uint64 id, const td_api::getAttachmentMenuBot &request);
 
