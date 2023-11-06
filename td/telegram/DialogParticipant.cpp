@@ -242,10 +242,9 @@ RestrictedRights::RestrictedRights(const td_api::object_ptr<td_api::chatPermissi
 
   *this = RestrictedRights(rights->can_send_basic_messages_, rights->can_send_audios_, rights->can_send_documents_,
                            rights->can_send_photos_, rights->can_send_videos_, rights->can_send_video_notes_,
-                           rights->can_send_voice_notes_, rights->can_send_other_messages_,
-                           rights->can_send_stickers_, rights->can_send_animations_, rights->can_send_games_,
-                           rights->can_use_inline_bots_, rights->can_add_web_page_previews_, rights->can_send_polls_,
-                           rights->can_send_polls_, rights->can_change_info_, rights->can_invite_users_,
+                           rights->can_send_voice_notes_, rights->can_send_stickers_, rights->can_send_animations_, 
+                           rights->can_send_games_, rights->can_use_inline_bots_, rights->can_add_web_page_previews_, 
+                           rights->can_send_polls_, rights->can_change_info_, rights->can_invite_users_, 
                            rights->can_pin_messages_, rights->can_manage_topics_, channel_type);
 }
 
