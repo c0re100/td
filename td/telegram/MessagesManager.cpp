@@ -28461,7 +28461,7 @@ Status MessagesManager::send_screenshot_taken_notification_message(DialogId dial
   if (dialog_type == DialogType::User) {
     bool need_update_dialog_pos = false;
     const Message *m = get_message_to_send(d, MessageId(), MessageInputReplyTo(), MessageSendOptions(),
-                                           create_screenshot_taken_message_content(), &need_update_dialog_pos);
+                                           create_screenshot_taken_message_content(), false, &need_update_dialog_pos);
 
     do_send_screenshot_taken_notification_message(dialog_id, m, 0);
 
