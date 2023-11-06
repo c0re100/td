@@ -24587,7 +24587,7 @@ MessageInputReplyTo MessagesManager::get_message_input_reply_to(
 
         // TODO local replies to local messages can be allowed
         // TODO replies to yet unsent messages can be allowed with special handling of them on application restart
-        return {};
+        return MessageInputReplyTo{message_id, reply_dialog_id, FormattedText()};
       }
       if (reply_dialog_id != DialogId() && (!can_forward_message(reply_dialog_id, m) || !m->message_id.is_server())) {
         LOG(INFO) << "Can't reply in another chat " << m->message_id << " in " << reply_d->dialog_id;
@@ -24672,49 +24672,49 @@ void MessagesManager::cancel_send_message_query(DialogId dialog_id, Message *m) 
     m->send_message_log_event_id = 0;
   }
 
-  {
-    const auto *input_reply_to = get_message_input_reply_to(m);
-    if (input_reply_to != nullptr && !input_reply_to->is_empty()) {
-      auto replied_message_full_id = input_reply_to->get_reply_message_full_id(dialog_id);
-      auto replied_message_id = replied_message_full_id.get_message_id();
-      if (replied_message_id.is_valid() || replied_message_id.is_valid_scheduled()) {
-        if (!replied_message_id.is_yet_unsent()) {
-          auto it = replied_by_yet_unsent_messages_.find(replied_message_full_id);
-          CHECK(it != replied_by_yet_unsent_messages_.end());
-          it->second--;
-          CHECK(it->second >= 0);
-          if (it->second == 0) {
-            replied_by_yet_unsent_messages_.erase(it);
-          }
-        } else {
-          auto it = replied_yet_unsent_messages_.find(replied_message_full_id);
-          CHECK(it != replied_yet_unsent_messages_.end());
-          size_t erased_count = it->second.erase({dialog_id, m->message_id});
-          CHECK(erased_count > 0);
-          if (it->second.empty()) {
-            replied_yet_unsent_messages_.erase(it);
-          }
-        }
-      }
-    }
-  }
-  {
-    auto it = replied_yet_unsent_messages_.find({dialog_id, m->message_id});
-    if (it != replied_yet_unsent_messages_.end()) {
-      for (auto message_full_id : it->second) {
-        auto reply_d = get_dialog(message_full_id.get_dialog_id());
-        CHECK(reply_d != nullptr);
-        auto replied_m = get_message(reply_d, message_full_id.get_message_id());
-        CHECK(replied_m != nullptr);
-        const auto *input_reply_to = get_message_input_reply_to(replied_m);
-        CHECK(input_reply_to != nullptr);
-        CHECK(input_reply_to->get_reply_message_full_id(reply_d->dialog_id) == MessageFullId(dialog_id, m->message_id));
-        set_message_reply(reply_d, replied_m,
-                          MessageInputReplyTo{replied_m->top_thread_message_id, DialogId(), FormattedText()}, true);
-      }
-      replied_yet_unsent_messages_.erase(it);
-    }
-  }
+  //{
+  //  const auto *input_reply_to = get_message_input_reply_to(m);
+  //  if (input_reply_to != nullptr && !input_reply_to->is_empty()) {
+  //    auto replied_message_full_id = input_reply_to->get_reply_message_full_id(dialog_id);
+  //    auto replied_message_id = replied_message_full_id.get_message_id();
+  //    if (replied_message_id.is_valid() || replied_message_id.is_valid_scheduled()) {
+  //      if (!replied_message_id.is_yet_unsent()) {
+  //        auto it = replied_by_yet_unsent_messages_.find(replied_message_full_id);
+  //        CHECK(it != replied_by_yet_unsent_messages_.end());
+  //        it->second--;
+  //        CHECK(it->second >= 0);
+  //        if (it->second == 0) {
+  //          replied_by_yet_unsent_messages_.erase(it);
+  //        }
+  //      } else {
+  //        auto it = replied_yet_unsent_messages_.find(replied_message_full_id);
+  //        CHECK(it != replied_yet_unsent_messages_.end());
+  //        size_t erased_count = it->second.erase({dialog_id, m->message_id});
+  //        CHECK(erased_count > 0);
+  //        if (it->second.empty()) {
+  //          replied_yet_unsent_messages_.erase(it);
+  //        }
+  //      }
+  //    }
+  //  }
+  //}
+  //{
+  //  auto it = replied_yet_unsent_messages_.find({dialog_id, m->message_id});
+  //  if (it != replied_yet_unsent_messages_.end()) {
+  //    for (auto message_full_id : it->second) {
+  //      auto reply_d = get_dialog(message_full_id.get_dialog_id());
+  //      CHECK(reply_d != nullptr);
+  //      auto replied_m = get_message(reply_d, message_full_id.get_message_id());
+  //      CHECK(replied_m != nullptr);
+  //      const auto *input_reply_to = get_message_input_reply_to(replied_m);
+  //      CHECK(input_reply_to != nullptr);
+  //      CHECK(input_reply_to->get_reply_message_full_id(reply_d->dialog_id) == MessageFullId(dialog_id, m->message_id));
+  //      set_message_reply(reply_d, replied_m,
+  //                        MessageInputReplyTo{replied_m->top_thread_message_id, DialogId(), FormattedText()}, true);
+  //    }
+  //    replied_yet_unsent_messages_.erase(it);
+  //  }
+  //}
 
   if (m->media_album_id != 0) {
     send_closure_later(actor_id(this), &MessagesManager::on_upload_message_media_finished, m->media_album_id, dialog_id,
@@ -25018,7 +25018,7 @@ Result<td_api::object_ptr<td_api::message>> MessagesManager::send_message(
   m->via_bot_user_id = message_content.via_bot_user_id;
   m->disable_web_page_preview = message_content.disable_web_page_preview;
   m->clear_draft = message_content.clear_draft;
-  m->reply_to_message_id = input_reply_to.message_id_;
+  m->input_reply_to = get_message_input_reply_to(d, top_thread_message_id, std::move(reply_to), false);
   if (message_content.ttl > 0) {
     m->ttl = message_content.ttl;
     m->is_content_secret = is_secret_message_content(m->ttl, m->content->get_type());
