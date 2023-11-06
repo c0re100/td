@@ -67,7 +67,7 @@ BENCH(TlCall, "TL Call") {
 
 static td::td_api::object_ptr<td::td_api::file> get_file_object() {
   return td::td_api::make_object<td::td_api::file>(
-      12345, 123456, 123456,
+      12345, -1, 123456, 123456,
       td::td_api::make_object<td::td_api::localFile>(
           "/android/data/0/data/org.telegram.data/files/photos/12345678901234567890_123.jpg", true, true, false, true,
           0, 123456, 123456),
