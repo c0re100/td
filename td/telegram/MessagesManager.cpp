@@ -24517,7 +24517,7 @@ MessageInputReplyTo MessagesManager::get_message_input_reply_to(
   }
   if (reply_to == nullptr) {
     if (!for_draft && top_thread_message_id.is_valid() && top_thread_message_id.is_server()) {
-      return MessageInputReplyTo{top_thread_message_id, DialogId(), FormattedText()};
+      return {};
     }
     return {};
   }
@@ -24587,7 +24587,7 @@ MessageInputReplyTo MessagesManager::get_message_input_reply_to(
 
         // TODO local replies to local messages can be allowed
         // TODO replies to yet unsent messages can be allowed with special handling of them on application restart
-        return MessageInputReplyTo{message_id, reply_dialog_id, FormattedText()};
+        return MessageInputReplyTo{message_id, reply_dialog_id, std::move(quote)};
       }
       if (reply_dialog_id != DialogId() && (!can_forward_message(reply_dialog_id, m) || !m->message_id.is_server())) {
         LOG(INFO) << "Can't reply in another chat " << m->message_id << " in " << reply_d->dialog_id;
@@ -25018,7 +25018,6 @@ Result<td_api::object_ptr<td_api::message>> MessagesManager::send_message(
   m->via_bot_user_id = message_content.via_bot_user_id;
   m->disable_web_page_preview = message_content.disable_web_page_preview;
   m->clear_draft = message_content.clear_draft;
-  m->input_reply_to = get_message_input_reply_to(d, top_thread_message_id, std::move(reply_to), false);
   if (message_content.ttl > 0) {
     m->ttl = message_content.ttl;
     m->is_content_secret = is_secret_message_content(m->ttl, m->content->get_type());
