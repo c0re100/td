@@ -24732,7 +24732,7 @@ MessageInputReplyTo MessagesManager::get_message_input_reply_to(
 
         // TODO local replies to local messages can be allowed
         // TODO replies to yet unsent messages can be allowed with special handling of them on application restart
-        return MessageInputReplyTo{message_id, reply_dialog_id, std::move(quote)};
+        return MessageInputReplyTo{message_id, reply_dialog_id, std::move(quote), 0};
       }
       if (reply_dialog_id != DialogId() && (!can_forward_message(reply_dialog_id, m) || !m->message_id.is_server())) {
         LOG(INFO) << "Can't reply in another chat " << m->message_id << " in " << reply_d->dialog_id;
