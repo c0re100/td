@@ -91,8 +91,11 @@ static td_api::object_ptr<td_api::PremiumFeature> get_premium_feature_object(Sli
   if (premium_feature == "channel_boost") {
     return td_api::make_object<td_api::premiumFeatureChatBoost>();
   }
-  if (premium_feature == "name_color") {
+  if (premium_feature == "peer_colors") {
     return td_api::make_object<td_api::premiumFeatureAccentColor>();
+  }
+  if (premium_feature == "wallpapers") {
+    return td_api::make_object<td_api::premiumFeatureBackgroundForBoth>();
   }
   return nullptr;
 }
@@ -338,6 +341,10 @@ class CheckGiftCodeQuery final : public Td::ResultHandler {
     }
     MessageId message_id(ServerMessageId(result->giveaway_msg_id_));
     if (!message_id.is_valid() && message_id != MessageId()) {
+      LOG(ERROR) << "Receive " << to_string(result);
+      message_id = MessageId();
+    }
+    if (message_id != MessageId() && creator_dialog_id.get_type() != DialogType::Channel) {
       LOG(ERROR) << "Receive " << to_string(result);
       message_id = MessageId();
     }
@@ -627,7 +634,8 @@ const vector<Slice> &get_premium_limit_keys() {
                                         "story_caption_length",
                                         "stories_sent_weekly",
                                         "stories_sent_monthly",
-                                        "stories_suggested_reactions"};
+                                        "stories_suggested_reactions",
+                                        "recommended_channels"};
   return limit_keys;
 }
 
@@ -668,6 +676,8 @@ static Slice get_limit_type_key(const td_api::PremiumLimitType *limit_type) {
       return Slice("stories_sent_monthly");
     case td_api::premiumLimitTypeStorySuggestedReactionAreaCount::ID:
       return Slice("stories_suggested_reactions");
+    case td_api::premiumLimitTypeSimilarChatCount::ID:
+      return Slice("recommended_channels");
     default:
       UNREACHABLE();
       return Slice();
@@ -723,7 +733,9 @@ static string get_premium_source(const td_api::PremiumFeature *feature) {
     case td_api::premiumFeatureChatBoost::ID:
       return "channel_boost";
     case td_api::premiumFeatureAccentColor::ID:
-      return "name_color";
+      return "peer_colors";
+    case td_api::premiumFeatureBackgroundForBoth::ID:
+      return "wallpapers";
     default:
       UNREACHABLE();
   }
@@ -843,6 +855,9 @@ static td_api::object_ptr<td_api::premiumLimit> get_premium_limit_object(Slice k
     }
     if (key == "stories_suggested_reactions") {
       return td_api::make_object<td_api::premiumLimitTypeStorySuggestedReactionAreaCount>();
+    }
+    if (key == "recommended_channels") {
+      return td_api::make_object<td_api::premiumLimitTypeSimilarChatCount>();
     }
     UNREACHABLE();
     return nullptr;
