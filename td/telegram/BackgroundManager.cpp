@@ -480,7 +480,7 @@ void BackgroundManager::start_up() {
       }
     }
 
-    send_update_selected_background(for_dark_theme);
+    send_update_default_background(for_dark_theme);
   }
 }
 
@@ -503,8 +503,8 @@ void BackgroundManager::store_background(BackgroundId background_id, LogEventSto
 void BackgroundManager::parse_background(BackgroundId &background_id, LogEventParser &parser) {
   Background background;
   parse(background, parser);
-  CHECK(background.has_new_local_id);
-  if (background.file_id.is_valid() != background.type.has_file() || !background.id.is_valid()) {
+  if (!background.has_new_local_id || background.file_id.is_valid() != background.type.has_file() ||
+      !background.id.is_valid()) {
     parser.set_error(PSTRING() << "Failed to load " << background.id);
     background_id = BackgroundId();
     return;
@@ -628,15 +628,15 @@ void BackgroundManager::on_load_background_from_database(string name, string val
   set_promises(promises);
 }
 
-td_api::object_ptr<td_api::updateSelectedBackground> BackgroundManager::get_update_selected_background_object(
+td_api::object_ptr<td_api::updateDefaultBackground> BackgroundManager::get_update_default_background_object(
     bool for_dark_theme) const {
-  return td_api::make_object<td_api::updateSelectedBackground>(
+  return td_api::make_object<td_api::updateDefaultBackground>(
       for_dark_theme,
       get_background_object(set_background_id_[for_dark_theme], for_dark_theme, &set_background_type_[for_dark_theme]));
 }
 
-void BackgroundManager::send_update_selected_background(bool for_dark_theme) const {
-  send_closure(G()->td(), &Td::send_update, get_update_selected_background_object(for_dark_theme));
+void BackgroundManager::send_update_default_background(bool for_dark_theme) const {
+  send_closure(G()->td(), &Td::send_update, get_update_default_background_object(for_dark_theme));
 }
 
 Result<FileId> BackgroundManager::prepare_input_file(const tl_object_ptr<td_api::InputFile> &input_file) {
@@ -683,12 +683,11 @@ void BackgroundManager::set_background(const td_api::InputBackground *input_back
   TRY_RESULT_PROMISE(promise, type, BackgroundType::get_background_type(background_type, 0));
 
   if (input_background == nullptr) {
-    if (background_type == nullptr) {
-      set_background_id(BackgroundId(), BackgroundType(), for_dark_theme);
-      return promise.set_value(nullptr);
-    }
-    if (type.has_file()) {
+    if (type.has_file() || background_type == nullptr) {
       return promise.set_error(Status::Error(400, "Input background must be non-empty for the background type"));
+    }
+    if (background_type->get_id() == td_api::backgroundTypeChatTheme::ID) {
+      return promise.set_error(Status::Error(400, "Background type isn't supported"));
     }
 
     auto background_id = add_local_background(type);
@@ -732,6 +731,11 @@ void BackgroundManager::set_background(const td_api::InputBackground *input_back
   }
 }
 
+void BackgroundManager::delete_background(bool for_dark_theme, Promise<Unit> &&promise) {
+  set_background_id(BackgroundId(), BackgroundType(), for_dark_theme);
+  promise.set_value(Unit());
+}
+
 Result<DialogId> BackgroundManager::get_background_dialog(DialogId dialog_id) {
   if (!td_->messages_manager_->have_dialog_force(dialog_id, "set_dialog_background")) {
     return Status::Error(400, "Chat not found");
@@ -744,8 +748,9 @@ Result<DialogId> BackgroundManager::get_background_dialog(DialogId dialog_id) {
     case DialogType::User:
       return dialog_id;
     case DialogType::Chat:
-    case DialogType::Channel:
       return Status::Error(400, "Can't change background in the chat");
+    case DialogType::Channel:
+      return dialog_id;
     case DialogType::SecretChat: {
       auto user_id = td_->contacts_manager_->get_secret_chat_user_id(dialog_id.get_secret_chat_id());
       if (!user_id.is_valid()) {
@@ -941,7 +946,7 @@ void BackgroundManager::set_background_id(BackgroundId background_id, const Back
   set_background_type_[for_dark_theme] = type;
 
   save_background_id(for_dark_theme);
-  send_update_selected_background(for_dark_theme);
+  send_update_default_background(for_dark_theme);
 }
 
 void BackgroundManager::save_local_backgrounds(bool for_dark_theme) {
@@ -1464,8 +1469,8 @@ void BackgroundManager::get_current_state(vector<td_api::object_ptr<td_api::Upda
     return;
   }
 
-  updates.push_back(get_update_selected_background_object(false));
-  updates.push_back(get_update_selected_background_object(true));
+  updates.push_back(get_update_default_background_object(false));
+  updates.push_back(get_update_default_background_object(true));
 }
 
 }  // namespace td

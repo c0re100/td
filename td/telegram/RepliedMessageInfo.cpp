@@ -108,33 +108,9 @@ RepliedMessageInfo::RepliedMessageInfo(Td *td, tl_object_ptr<telegram_api::messa
       content_ = get_message_content(td, FormattedText(), std::move(reply_header->reply_media_), dialog_id,
                                      origin_date_, true, UserId(), nullptr, nullptr, "messageReplyHeader");
       CHECK(content_ != nullptr);
-      switch (content_->get_type()) {
-        case MessageContentType::Animation:
-        case MessageContentType::Audio:
-        case MessageContentType::Contact:
-        case MessageContentType::Dice:
-        case MessageContentType::Document:
-        // case MessageContentType::ExpiredPhoto:
-        // case MessageContentType::ExpiredVideo:
-        case MessageContentType::Game:
-        case MessageContentType::Giveaway:
-        case MessageContentType::Invoice:
-        // case MessageContentType::LiveLocation:
-        case MessageContentType::Location:
-        case MessageContentType::Photo:
-        case MessageContentType::Poll:
-        case MessageContentType::Sticker:
-        case MessageContentType::Story:
-        case MessageContentType::Text:
-        case MessageContentType::Unsupported:
-        case MessageContentType::Venue:
-        case MessageContentType::Video:
-        case MessageContentType::VideoNote:
-        case MessageContentType::VoiceNote:
-          break;
-        default:
-          LOG(ERROR) << "Receive reply with media of the type " << content_->get_type();
-          content_ = nullptr;
+      if (!is_supported_reply_message_content(content_->get_type())) {
+        LOG(ERROR) << "Receive reply with media of the type " << content_->get_type();
+        content_ = nullptr;
       }
     }
   }
@@ -359,10 +335,20 @@ td_api::object_ptr<td_api::messageReplyToMessage> RepliedMessageInfo::get_messag
   td_api::object_ptr<td_api::MessageContent> content;
   if (content_ != nullptr) {
     content = get_message_content_object(content_.get(), td, dialog_id, 0, false, true, -1, false, false);
-    if (content->get_id() == td_api::messageUnsupported::ID ||
-        (content->get_id() == td_api::messageText::ID &&
-         static_cast<const td_api::messageText *>(content.get())->web_page_ == nullptr)) {
-      content = nullptr;
+    switch (content->get_id()) {
+      case td_api::messageUnsupported::ID:
+        content = nullptr;
+        break;
+      case td_api::messageText::ID: {
+        const auto *message_text = static_cast<const td_api::messageText *>(content.get());
+        if (message_text->web_page_ == nullptr && message_text->link_preview_options_ == nullptr) {
+          content = nullptr;
+        }
+        break;
+      }
+      default:
+        // nothing to do
+        break;
     }
   }
 

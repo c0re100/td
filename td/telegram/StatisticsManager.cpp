@@ -10,7 +10,6 @@
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/MessageId.h"
-#include "td/telegram/MessagesInfo.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/StoryId.h"
@@ -23,10 +22,7 @@
 #include "td/utils/buffer.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
-#include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
-
-#include <limits>
 
 namespace td {
 
@@ -394,28 +390,23 @@ class LoadAsyncGraphQuery final : public Td::ResultHandler {
 };
 
 class GetMessagePublicForwardsQuery final : public Td::ResultHandler {
-  Promise<td_api::object_ptr<td_api::foundMessages>> promise_;
+  Promise<td_api::object_ptr<td_api::publicForwards>> promise_;
   DialogId dialog_id_;
 
  public:
-  explicit GetMessagePublicForwardsQuery(Promise<td_api::object_ptr<td_api::foundMessages>> &&promise)
+  explicit GetMessagePublicForwardsQuery(Promise<td_api::object_ptr<td_api::publicForwards>> &&promise)
       : promise_(std::move(promise)) {
   }
 
-  void send(DcId dc_id, MessageFullId message_full_id, int32 offset_date, DialogId offset_dialog_id,
-            ServerMessageId offset_message_id, int32 limit) {
+  void send(DcId dc_id, MessageFullId message_full_id, const string &offset, int32 limit) {
     dialog_id_ = message_full_id.get_dialog_id();
-
-    auto input_peer = MessagesManager::get_input_peer_force(offset_dialog_id);
-    CHECK(input_peer != nullptr);
 
     auto input_channel = td_->contacts_manager_->get_input_channel(dialog_id_.get_channel_id());
     CHECK(input_channel != nullptr);
 
     send_query(G()->net_query_creator().create(
         telegram_api::stats_getMessagePublicForwards(
-            std::move(input_channel), message_full_id.get_message_id().get_server_message_id().get(), offset_date,
-            std::move(input_peer), offset_message_id.get(), limit),
+            std::move(input_channel), message_full_id.get_message_id().get_server_message_id().get(), offset, limit),
         {}, dc_id));
   }
 
@@ -425,18 +416,8 @@ class GetMessagePublicForwardsQuery final : public Td::ResultHandler {
       return on_error(result_ptr.move_as_error());
     }
 
-    auto info = get_messages_info(td_, DialogId(), result_ptr.move_as_ok(), "GetMessagePublicForwardsQuery");
-    td_->messages_manager_->get_channel_differences_if_needed(
-        std::move(info), PromiseCreator::lambda([actor_id = td_->statistics_manager_actor_.get(),
-                                                 promise = std::move(promise_)](Result<MessagesInfo> &&result) mutable {
-          if (result.is_error()) {
-            promise.set_error(result.move_as_error());
-          } else {
-            auto info = result.move_as_ok();
-            send_closure(actor_id, &StatisticsManager::on_get_message_public_forwards, info.total_count,
-                         std::move(info.messages), info.next_rate, std::move(promise));
-          }
-        }));
+    td_->statistics_manager_->get_channel_differences_if_needed(result_ptr.move_as_ok(), std::move(promise_),
+                                                                "GetMessagePublicForwardsQuery");
   }
 
   void on_error(Status status) final {
@@ -446,11 +427,11 @@ class GetMessagePublicForwardsQuery final : public Td::ResultHandler {
 };
 
 class GetStoryPublicForwardsQuery final : public Td::ResultHandler {
-  Promise<td_api::object_ptr<td_api::storyPublicForwards>> promise_;
+  Promise<td_api::object_ptr<td_api::publicForwards>> promise_;
   DialogId dialog_id_;
 
  public:
-  explicit GetStoryPublicForwardsQuery(Promise<td_api::object_ptr<td_api::storyPublicForwards>> &&promise)
+  explicit GetStoryPublicForwardsQuery(Promise<td_api::object_ptr<td_api::publicForwards>> &&promise)
       : promise_(std::move(promise)) {
   }
 
@@ -474,18 +455,8 @@ class GetStoryPublicForwardsQuery final : public Td::ResultHandler {
       return on_error(result_ptr.move_as_error());
     }
 
-    td_->messages_manager_->get_channel_differences_if_needed(
-        result_ptr.move_as_ok(),
-        PromiseCreator::lambda(
-            [actor_id = td_->statistics_manager_actor_.get(), promise = std::move(promise_)](
-                Result<telegram_api::object_ptr<telegram_api::stats_publicForwards>> &&result) mutable {
-              if (result.is_error()) {
-                promise.set_error(result.move_as_error());
-              } else {
-                send_closure(actor_id, &StatisticsManager::on_get_story_public_forwards, result.move_as_ok(),
-                             std::move(promise));
-              }
-            }));
+    td_->statistics_manager_->get_channel_differences_if_needed(result_ptr.move_as_ok(), std::move(promise_),
+                                                                "GetStoryPublicForwardsQuery");
   }
 
   void on_error(Status status) final {
@@ -607,7 +578,7 @@ void StatisticsManager::send_load_async_graph_query(DcId dc_id, string token, in
 }
 
 void StatisticsManager::get_message_public_forwards(MessageFullId message_full_id, string offset, int32 limit,
-                                                    Promise<td_api::object_ptr<td_api::foundMessages>> &&promise) {
+                                                    Promise<td_api::object_ptr<td_api::publicForwards>> &&promise) {
   if (limit <= 0) {
     return promise.set_error(Status::Error(400, "Parameter limit must be positive"));
   }
@@ -626,7 +597,7 @@ void StatisticsManager::get_message_public_forwards(MessageFullId message_full_i
 
 void StatisticsManager::send_get_message_public_forwards_query(
     DcId dc_id, MessageFullId message_full_id, string offset, int32 limit,
-    Promise<td_api::object_ptr<td_api::foundMessages>> &&promise) {
+    Promise<td_api::object_ptr<td_api::publicForwards>> &&promise) {
   if (!td_->messages_manager_->have_message_force(message_full_id, "send_get_message_public_forwards_query")) {
     return promise.set_error(Status::Error(400, "Message not found"));
   }
@@ -639,82 +610,11 @@ void StatisticsManager::send_get_message_public_forwards_query(
     limit = MAX_MESSAGE_FORWARDS;
   }
 
-  int32 offset_date = std::numeric_limits<int32>::max();
-  DialogId offset_dialog_id;
-  ServerMessageId offset_server_message_id;
-
-  if (!offset.empty()) {
-    auto parts = full_split(offset, ',');
-    if (parts.size() != 3) {
-      return promise.set_error(Status::Error(400, "Invalid offset specified"));
-    }
-    auto r_offset_date = to_integer_safe<int32>(parts[0]);
-    auto r_offset_dialog_id = to_integer_safe<int64>(parts[1]);
-    auto r_offset_server_message_id = to_integer_safe<int32>(parts[2]);
-    if (r_offset_date.is_error() || r_offset_dialog_id.is_error() || r_offset_server_message_id.is_error()) {
-      return promise.set_error(Status::Error(400, "Invalid offset specified"));
-    }
-
-    offset_date = r_offset_date.ok();
-    offset_dialog_id = DialogId(r_offset_dialog_id.ok());
-    offset_server_message_id = ServerMessageId(r_offset_server_message_id.ok());
-  }
-
-  td_->create_handler<GetMessagePublicForwardsQuery>(std::move(promise))
-      ->send(dc_id, message_full_id, offset_date, offset_dialog_id, offset_server_message_id, limit);
-}
-
-void StatisticsManager::on_get_message_public_forwards(
-    int32 total_count, vector<telegram_api::object_ptr<telegram_api::Message>> &&messages, int32 next_rate,
-    Promise<td_api::object_ptr<td_api::foundMessages>> &&promise) {
-  TRY_STATUS_PROMISE(promise, G()->close_status());
-
-  LOG(INFO) << "Receive " << messages.size() << " forwarded messages";
-  vector<td_api::object_ptr<td_api::message>> result;
-  int32 last_message_date = 0;
-  MessageId last_message_id;
-  DialogId last_dialog_id;
-  for (auto &message : messages) {
-    auto message_date = MessagesManager::get_message_date(message);
-    auto message_id = MessageId::get_message_id(message, false);
-    auto dialog_id = DialogId::get_message_dialog_id(message);
-    if (message_date > 0 && message_id.is_valid() && dialog_id.is_valid()) {
-      last_message_date = message_date;
-      last_message_id = message_id;
-      last_dialog_id = dialog_id;
-    }
-
-    auto new_message_full_id =
-        td_->messages_manager_->on_get_message(std::move(message), false, dialog_id.get_type() == DialogType::Channel,
-                                               false, "on_get_message_public_forwards");
-    if (new_message_full_id != MessageFullId()) {
-      CHECK(dialog_id == new_message_full_id.get_dialog_id());
-      result.push_back(
-          td_->messages_manager_->get_message_object(new_message_full_id, "on_get_message_public_forwards"));
-      CHECK(result.back() != nullptr);
-    } else {
-      total_count--;
-    }
-  }
-  if (total_count < static_cast<int32>(result.size())) {
-    LOG(ERROR) << "Receive " << result.size() << " valid messages out of " << total_count << " in " << messages.size()
-               << " messages";
-    total_count = static_cast<int32>(result.size());
-  }
-  string next_offset;
-  if (!result.empty()) {
-    if (next_rate > 0) {
-      last_message_date = next_rate;
-    }
-    next_offset = PSTRING() << last_message_date << ',' << last_dialog_id.get() << ','
-                            << last_message_id.get_server_message_id().get();
-  }
-
-  promise.set_value(td_api::make_object<td_api::foundMessages>(total_count, std::move(result), next_offset));
+  td_->create_handler<GetMessagePublicForwardsQuery>(std::move(promise))->send(dc_id, message_full_id, offset, limit);
 }
 
 void StatisticsManager::get_story_public_forwards(StoryFullId story_full_id, string offset, int32 limit,
-                                                  Promise<td_api::object_ptr<td_api::storyPublicForwards>> &&promise) {
+                                                  Promise<td_api::object_ptr<td_api::publicForwards>> &&promise) {
   if (limit <= 0) {
     return promise.set_error(Status::Error(400, "Parameter limit must be positive"));
   }
@@ -740,7 +640,7 @@ void StatisticsManager::get_story_public_forwards(StoryFullId story_full_id, str
 
 void StatisticsManager::send_get_story_public_forwards_query(
     DcId dc_id, StoryFullId story_full_id, string offset, int32 limit,
-    Promise<td_api::object_ptr<td_api::storyPublicForwards>> &&promise) {
+    Promise<td_api::object_ptr<td_api::publicForwards>> &&promise) {
   if (!td_->story_manager_->have_story_force(story_full_id)) {
     return promise.set_error(Status::Error(400, "Story not found"));
   }
@@ -757,18 +657,15 @@ void StatisticsManager::send_get_story_public_forwards_query(
   td_->create_handler<GetStoryPublicForwardsQuery>(std::move(promise))->send(dc_id, story_full_id, offset, limit);
 }
 
-void StatisticsManager::on_get_story_public_forwards(
+void StatisticsManager::on_get_public_forwards(
     telegram_api::object_ptr<telegram_api::stats_publicForwards> &&public_forwards,
-    Promise<td_api::object_ptr<td_api::storyPublicForwards>> &&promise) {
+    Promise<td_api::object_ptr<td_api::publicForwards>> &&promise) {
   TRY_STATUS_PROMISE(promise, G()->close_status());
-
-  td_->contacts_manager_->on_get_users(std::move(public_forwards->users_), "on_get_story_public_forwards");
-  td_->contacts_manager_->on_get_chats(std::move(public_forwards->chats_), "on_get_story_public_forwards");
 
   auto total_count = public_forwards->count_;
   LOG(INFO) << "Receive " << public_forwards->forwards_.size() << " forwarded stories out of "
             << public_forwards->count_;
-  vector<td_api::object_ptr<td_api::StoryPublicForward>> result;
+  vector<td_api::object_ptr<td_api::PublicForward>> result;
   for (auto &forward_ptr : public_forwards->forwards_) {
     switch (forward_ptr->get_id()) {
       case telegram_api::publicForwardMessage::ID: {
@@ -776,11 +673,11 @@ void StatisticsManager::on_get_story_public_forwards(
         auto dialog_id = DialogId::get_message_dialog_id(forward->message_);
         auto message_full_id = td_->messages_manager_->on_get_message(std::move(forward->message_), false,
                                                                       dialog_id.get_type() == DialogType::Channel,
-                                                                      false, "on_get_story_public_forwards");
+                                                                      false, "on_get_public_forwards");
         if (message_full_id != MessageFullId()) {
           CHECK(dialog_id == message_full_id.get_dialog_id());
-          result.push_back(td_api::make_object<td_api::storyPublicForwardMessage>(
-              td_->messages_manager_->get_message_object(message_full_id, "on_get_story_public_forwards")));
+          result.push_back(td_api::make_object<td_api::publicForwardMessage>(
+              td_->messages_manager_->get_message_object(message_full_id, "on_get_public_forwards")));
           CHECK(result.back() != nullptr);
         } else {
           total_count--;
@@ -792,7 +689,7 @@ void StatisticsManager::on_get_story_public_forwards(
         auto dialog_id = DialogId(forward->peer_);
         auto story_id = td_->story_manager_->on_get_story(dialog_id, std::move(forward->story_));
         if (story_id.is_valid() && td_->story_manager_->have_story({dialog_id, story_id})) {
-          result.push_back(td_api::make_object<td_api::storyPublicForwardStory>(
+          result.push_back(td_api::make_object<td_api::publicForwardStory>(
               td_->story_manager_->get_story_object({dialog_id, story_id})));
           CHECK(result.back() != nullptr);
         } else {
@@ -809,7 +706,35 @@ void StatisticsManager::on_get_story_public_forwards(
     total_count = static_cast<int32>(result.size());
   }
   promise.set_value(
-      td_api::make_object<td_api::storyPublicForwards>(total_count, std::move(result), public_forwards->next_offset_));
+      td_api::make_object<td_api::publicForwards>(total_count, std::move(result), public_forwards->next_offset_));
+}
+
+void StatisticsManager::get_channel_differences_if_needed(
+    telegram_api::object_ptr<telegram_api::stats_publicForwards> &&public_forwards,
+    Promise<td_api::object_ptr<td_api::publicForwards>> promise, const char *source) {
+  td_->contacts_manager_->on_get_users(std::move(public_forwards->users_), "stats_publicForwards");
+  td_->contacts_manager_->on_get_chats(std::move(public_forwards->chats_), "stats_publicForwards");
+
+  vector<const telegram_api::object_ptr<telegram_api::Message> *> messages;
+  for (const auto &forward : public_forwards->forwards_) {
+    CHECK(forward != nullptr);
+    if (forward->get_id() != telegram_api::publicForwardMessage::ID) {
+      continue;
+    }
+    messages.push_back(&static_cast<const telegram_api::publicForwardMessage *>(forward.get())->message_);
+  }
+  td_->messages_manager_->get_channel_differences_if_needed(
+      messages,
+      PromiseCreator::lambda([actor_id = actor_id(this), public_forwards = std::move(public_forwards),
+                              promise = std::move(promise)](Result<Unit> &&result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+        } else {
+          send_closure(actor_id, &StatisticsManager::on_get_public_forwards, std::move(public_forwards),
+                       std::move(promise));
+        }
+      }),
+      source);
 }
 
 }  // namespace td

@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.22 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.23 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -441,14 +441,15 @@ set(TDLIB_SOURCE
   td/telegram/OrderInfo.cpp
   td/telegram/Payments.cpp
   td/telegram/PasswordManager.cpp
+  td/telegram/PeerColor.cpp
   td/telegram/PhoneNumberManager.cpp
-  td/telegram/PrivacyManager.cpp
   td/telegram/Photo.cpp
   td/telegram/PhotoSize.cpp
   td/telegram/PhotoSizeSource.cpp
   td/telegram/PollManager.cpp
   td/telegram/Premium.cpp
   td/telegram/PremiumGiftOption.cpp
+  td/telegram/PrivacyManager.cpp
   td/telegram/QueryCombiner.cpp
   td/telegram/QueryMerger.cpp
   td/telegram/ReactionManager.cpp
@@ -749,6 +750,7 @@ set(TDLIB_SOURCE
   td/telegram/OrderInfo.h
   td/telegram/PasswordManager.h
   td/telegram/Payments.h
+  td/telegram/PeerColor.h
   td/telegram/PhoneNumberManager.h
   td/telegram/Photo.h
   td/telegram/PhotoFormat.h

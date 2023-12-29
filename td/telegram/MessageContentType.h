@@ -75,7 +75,8 @@ enum class MessageContentType : int32 {
   GiftCode,
   Giveaway,
   GiveawayLaunch,
-  GiveawayResults
+  GiveawayResults,
+  GiveawayWinners
 };
 // increase MessageUnsupported::CURRENT_VERSION each time a new message content type is added
 
@@ -88,6 +89,8 @@ bool is_homogenous_media_group_content(MessageContentType content_type);
 bool is_secret_message_content(int32 ttl, MessageContentType content_type);
 
 bool is_service_message_content(MessageContentType content_type);
+
+bool is_supported_reply_message_content(MessageContentType content_type);
 
 bool can_have_message_content_caption(MessageContentType content_type);
 

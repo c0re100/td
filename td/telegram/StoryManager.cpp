@@ -348,8 +348,8 @@ class GetStoryViewsListQuery final : public Td::ResultHandler {
       : promise_(std::move(promise)) {
   }
 
-  void send(DialogId dialog_id, StoryId story_id, const string &query, bool only_contacts, bool prefer_with_reaction,
-            const string &offset, int32 limit) {
+  void send(DialogId dialog_id, StoryId story_id, const string &query, bool only_contacts, bool prefer_forwards,
+            bool prefer_with_reaction, const string &offset, int32 limit) {
     dialog_id_ = dialog_id;
     auto input_peer = td_->messages_manager_->get_input_peer(dialog_id_, AccessRights::Write);
     if (input_peer == nullptr) {
@@ -363,11 +363,15 @@ class GetStoryViewsListQuery final : public Td::ResultHandler {
     if (only_contacts) {
       flags |= telegram_api::stories_getStoryViewsList::JUST_CONTACTS_MASK;
     }
+    if (prefer_forwards) {
+      flags |= telegram_api::stories_getStoryViewsList::FORWARDS_FIRST_MASK;
+    }
     if (prefer_with_reaction) {
       flags |= telegram_api::stories_getStoryViewsList::REACTIONS_FIRST_MASK;
     }
-    send_query(G()->net_query_creator().create(telegram_api::stories_getStoryViewsList(
-        flags, false /*ignored*/, false /*ignored*/, std::move(input_peer), query, story_id.get(), offset, limit)));
+    send_query(G()->net_query_creator().create(
+        telegram_api::stories_getStoryViewsList(flags, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+                                                std::move(input_peer), query, story_id.get(), offset, limit)));
   }
 
   void on_result(BufferSlice packet) final {
@@ -376,11 +380,63 @@ class GetStoryViewsListQuery final : public Td::ResultHandler {
       return on_error(result_ptr.move_as_error());
     }
 
-    promise_.set_value(result_ptr.move_as_ok());
+    auto result = result_ptr.move_as_ok();
+    LOG(DEBUG) << "Receive result for GetStoryViewsListQuery: " << to_string(result);
+    td_->story_manager_->get_channel_differences_if_needed(std::move(result), std::move(promise_));
   }
 
   void on_error(Status status) final {
     td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetStoryViewsListQuery");
+    promise_.set_error(std::move(status));
+  }
+};
+
+class GetStoryReactionsListQuery final : public Td::ResultHandler {
+  Promise<telegram_api::object_ptr<telegram_api::stories_storyReactionsList>> promise_;
+  DialogId dialog_id_;
+
+ public:
+  explicit GetStoryReactionsListQuery(
+      Promise<telegram_api::object_ptr<telegram_api::stories_storyReactionsList>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send(StoryFullId story_full_id, const ReactionType &reaction_type, bool prefer_forwards, const string &offset,
+            int32 limit) {
+    dialog_id_ = story_full_id.get_dialog_id();
+    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id_, AccessRights::Write);
+    if (input_peer == nullptr) {
+      return on_error(Status::Error(400, "Can't access the chat"));
+    }
+
+    int32 flags = 0;
+    if (!reaction_type.is_empty()) {
+      flags |= telegram_api::stories_getStoryReactionsList::REACTION_MASK;
+    }
+    if (!offset.empty()) {
+      flags |= telegram_api::stories_getStoryReactionsList::OFFSET_MASK;
+    }
+    if (prefer_forwards) {
+      flags |= telegram_api::stories_getStoryReactionsList::FORWARDS_FIRST_MASK;
+    }
+    send_query(G()->net_query_creator().create(telegram_api::stories_getStoryReactionsList(
+        flags, false /*ignored*/, std::move(input_peer), story_full_id.get_story_id().get(),
+        reaction_type.get_input_reaction(), offset, limit)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::stories_getStoryReactionsList>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto result = result_ptr.move_as_ok();
+    LOG(DEBUG) << "Receive result for GetStoryReactionsListQuery: " << to_string(result);
+    td_->story_manager_->get_channel_differences_if_needed(std::move(result), std::move(promise_));
+  }
+
+  void on_error(Status status) final {
+    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetStoryReactionsListQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -764,8 +820,7 @@ class GetChatsToSendStoriesQuery final : public Td::ResultHandler {
 
     auto chats_ptr = result_ptr.move_as_ok();
     LOG(INFO) << "Receive result for GetChatsToSendStoriesQuery: " << to_string(chats_ptr);
-    int32 constructor_id = chats_ptr->get_id();
-    switch (constructor_id) {
+    switch (chats_ptr->get_id()) {
       case telegram_api::messages_chats::ID: {
         auto chats = move_tl_object_as<telegram_api::messages_chats>(chats_ptr);
         td_->story_manager_->on_get_dialogs_to_send_stories(std::move(chats->chats_));
@@ -888,17 +943,14 @@ class StoryManager::SendStoryQuery final : public Td::ResultHandler {
     if (story->noforwards_) {
       flags |= telegram_api::stories_sendStory::NOFORWARDS_MASK;
     }
-    vector<telegram_api::object_ptr<telegram_api::MediaArea>> media_areas;
-    for (const auto &media_area : story->areas_) {
-      media_areas.push_back(media_area.get_input_media_area());
-    }
-    if (!media_areas.empty()) {
+    auto input_media_areas = MediaArea::get_input_media_areas(td_, story->areas_);
+    if (!input_media_areas.empty()) {
       flags |= telegram_api::stories_sendStory::MEDIA_AREAS_MASK;
     }
 
     send_query(G()->net_query_creator().create(
         telegram_api::stories_sendStory(flags, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                        std::move(input_peer), std::move(input_media), std::move(media_areas),
+                                        std::move(input_peer), std::move(input_media), std::move(input_media_areas),
                                         caption.text, std::move(entities), std::move(privacy_rules),
                                         pending_story_->random_id_, period, std::move(fwd_input_peer), fwd_story_id),
         {{pending_story_->dialog_id_}}));
@@ -966,17 +1018,13 @@ class StoryManager::EditStoryQuery final : public Td::ResultHandler {
       CHECK(input_media != nullptr);
       flags |= telegram_api::stories_editStory::MEDIA_MASK;
     }
-    vector<telegram_api::object_ptr<telegram_api::MediaArea>> media_areas;
+    vector<telegram_api::object_ptr<telegram_api::MediaArea>> input_media_areas;
     if (edited_story->edit_media_areas_) {
-      for (const auto &media_area : edited_story->areas_) {
-        media_areas.push_back(media_area.get_input_media_area());
-      }
+      input_media_areas = MediaArea::get_input_media_areas(td_, edited_story->areas_);
     } else if (content != nullptr) {
-      for (const auto &media_area : story->areas_) {
-        media_areas.push_back(media_area.get_input_media_area());
-      }
+      input_media_areas = MediaArea::get_input_media_areas(td_, story->areas_);
     }
-    if (!media_areas.empty()) {
+    if (!input_media_areas.empty()) {
       flags |= telegram_api::stories_editStory::MEDIA_AREAS_MASK;
     }
     vector<telegram_api::object_ptr<telegram_api::MessageEntity>> entities;
@@ -990,8 +1038,8 @@ class StoryManager::EditStoryQuery final : public Td::ResultHandler {
 
     send_query(G()->net_query_creator().create(
         telegram_api::stories_editStory(flags, std::move(input_peer), pending_story_->story_id_.get(),
-                                        std::move(input_media), std::move(media_areas), edited_story->caption_.text,
-                                        std::move(entities), Auto()),
+                                        std::move(input_media), std::move(input_media_areas),
+                                        edited_story->caption_.text, std::move(entities), Auto()),
         {{StoryFullId{pending_story_->dialog_id_, pending_story_->story_id_}}}));
   }
 
@@ -1851,6 +1899,9 @@ void StoryManager::add_story_dependencies(Dependencies &dependencies, const Stor
     add_story_content_dependencies(dependencies, story->content_.get());
   }
   add_formatted_text_dependencies(dependencies, &story->caption_);
+  for (const auto &media_area : story->areas_) {
+    media_area.add_dependencies(dependencies);
+  }
 }
 
 void StoryManager::add_pending_story_dependencies(Dependencies &dependencies, const PendingStory *pending_story) {
@@ -2797,9 +2848,37 @@ bool StoryManager::has_unexpired_viewers(StoryFullId story_full_id, const Story 
          G()->unix_time() < get_story_viewers_expire_date(story);
 }
 
-void StoryManager::get_story_viewers(StoryId story_id, const string &query, bool only_contacts,
-                                     bool prefer_with_reaction, const string &offset, int32 limit,
-                                     Promise<td_api::object_ptr<td_api::storyViewers>> &&promise) {
+void StoryManager::get_channel_differences_if_needed(
+    telegram_api::object_ptr<telegram_api::stories_storyViewsList> &&story_views,
+    Promise<telegram_api::object_ptr<telegram_api::stories_storyViewsList>> promise) {
+  td_->contacts_manager_->on_get_users(std::move(story_views->users_), "stories_storyViewsList");
+  td_->contacts_manager_->on_get_chats(std::move(story_views->chats_), "stories_storyViewsList");
+
+  vector<const telegram_api::object_ptr<telegram_api::Message> *> messages;
+  for (const auto &view : story_views->views_) {
+    CHECK(view != nullptr);
+    if (view->get_id() != telegram_api::storyViewPublicForward::ID) {
+      continue;
+    }
+    messages.push_back(&static_cast<const telegram_api::storyViewPublicForward *>(view.get())->message_);
+  }
+  td_->messages_manager_->get_channel_differences_if_needed(
+      messages,
+      PromiseCreator::lambda([actor_id = actor_id(this), story_views = std::move(story_views),
+                              promise = std::move(promise)](Result<Unit> &&result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+        } else {
+          promise.set_value(std::move(story_views));
+        }
+      }),
+      "stories_storyViewsList");
+}
+
+void StoryManager::get_story_interactions(StoryId story_id, const string &query, bool only_contacts,
+                                          bool prefer_forwards, bool prefer_with_reaction, const string &offset,
+                                          int32 limit,
+                                          Promise<td_api::object_ptr<td_api::storyInteractions>> &&promise) {
   DialogId owner_dialog_id(td_->contacts_manager_->get_my_id());
   StoryFullId story_full_id{owner_dialog_id, story_id};
   const Story *story = get_story(story_full_id);
@@ -2809,28 +2888,24 @@ void StoryManager::get_story_viewers(StoryId story_id, const string &query, bool
   if (limit <= 0) {
     return promise.set_error(Status::Error(400, "Parameter limit must be positive"));
   }
-  if (can_get_story_viewers(story_full_id, story, G()->unix_time()).is_error() ||
-      story->interaction_info_.get_view_count() == 0) {
-    return promise.set_value(td_api::make_object<td_api::storyViewers>());
-  }
 
   bool is_full = query.empty() && !only_contacts;
   bool is_first = is_full && offset.empty();
   auto query_promise = PromiseCreator::lambda(
       [actor_id = actor_id(this), story_id, is_full, is_first, promise = std::move(promise)](
           Result<telegram_api::object_ptr<telegram_api::stories_storyViewsList>> result) mutable {
-        send_closure(actor_id, &StoryManager::on_get_story_viewers, story_id, is_full, is_first, std::move(result),
+        send_closure(actor_id, &StoryManager::on_get_story_interactions, story_id, is_full, is_first, std::move(result),
                      std::move(promise));
       });
 
   td_->create_handler<GetStoryViewsListQuery>(std::move(query_promise))
-      ->send(owner_dialog_id, story_id, query, only_contacts, prefer_with_reaction, offset, limit);
+      ->send(owner_dialog_id, story_id, query, only_contacts, prefer_forwards, prefer_with_reaction, offset, limit);
 }
 
-void StoryManager::on_get_story_viewers(
+void StoryManager::on_get_story_interactions(
     StoryId story_id, bool is_full, bool is_first,
     Result<telegram_api::object_ptr<telegram_api::stories_storyViewsList>> r_view_list,
-    Promise<td_api::object_ptr<td_api::storyViewers>> &&promise) {
+    Promise<td_api::object_ptr<td_api::storyInteractions>> &&promise) {
   G()->ignore_result_if_closing(r_view_list);
   if (r_view_list.is_error()) {
     return promise.set_error(r_view_list.move_as_error());
@@ -2842,10 +2917,8 @@ void StoryManager::on_get_story_viewers(
   StoryFullId story_full_id{owner_dialog_id, story_id};
   Story *story = get_story_editable(story_full_id);
   if (story == nullptr) {
-    return promise.set_value(td_api::make_object<td_api::storyViewers>());
+    return promise.set_value(td_api::make_object<td_api::storyInteractions>());
   }
-
-  td_->contacts_manager_->on_get_users(std::move(view_list->users_), "on_get_story_viewers");
 
   auto total_count = view_list->count_;
   if (total_count < 0 || static_cast<size_t>(total_count) < view_list->views_.size()) {
@@ -2858,19 +2931,16 @@ void StoryManager::on_get_story_viewers(
                << " story viewers";
     total_reaction_count = total_count;
   }
-  for (auto &view : view_list->views_) {
-    td_->contacts_manager_->on_update_user_is_blocked(UserId(view->user_id_), view->blocked_,
-                                                      view->blocked_my_stories_from_);
-  }
+  auto total_forward_count = max(view_list->forwards_count_, 0);
 
-  StoryViewers story_viewers(total_count, total_reaction_count, std::move(view_list->views_),
+  StoryViewers story_viewers(td_, total_count, total_forward_count, total_reaction_count, std::move(view_list->views_),
                              std::move(view_list->next_offset_));
   if (story->content_ != nullptr) {
     bool is_changed = false;
     if (is_full && story->interaction_info_.set_counts(total_count, total_reaction_count)) {
       is_changed = true;
     }
-    if (is_first && story->interaction_info_.set_recent_viewer_user_ids(story_viewers.get_user_ids())) {
+    if (is_first && story->interaction_info_.set_recent_viewer_user_ids(story_viewers.get_viewer_user_ids())) {
       is_changed = true;
     }
     if (is_changed) {
@@ -2878,9 +2948,85 @@ void StoryManager::on_get_story_viewers(
     }
   }
 
-  td_->contacts_manager_->on_view_dialog_active_stories(
-      transform(story_viewers.get_user_ids(), [](UserId user_id) { return DialogId(user_id); }));
-  promise.set_value(story_viewers.get_story_viewers_object(td_->contacts_manager_.get()));
+  td_->contacts_manager_->on_view_dialog_active_stories(story_viewers.get_actor_dialog_ids());
+  promise.set_value(story_viewers.get_story_interactions_object(td_));
+}
+
+void StoryManager::get_channel_differences_if_needed(
+    telegram_api::object_ptr<telegram_api::stories_storyReactionsList> &&story_reactions,
+    Promise<telegram_api::object_ptr<telegram_api::stories_storyReactionsList>> promise) {
+  td_->contacts_manager_->on_get_users(std::move(story_reactions->users_), "stories_storyReactionsList");
+  td_->contacts_manager_->on_get_chats(std::move(story_reactions->chats_), "stories_storyReactionsList");
+
+  vector<const telegram_api::object_ptr<telegram_api::Message> *> messages;
+  for (const auto &reaction : story_reactions->reactions_) {
+    CHECK(reaction != nullptr);
+    if (reaction->get_id() != telegram_api::storyReactionPublicForward::ID) {
+      continue;
+    }
+    messages.push_back(&static_cast<const telegram_api::storyReactionPublicForward *>(reaction.get())->message_);
+  }
+  td_->messages_manager_->get_channel_differences_if_needed(
+      messages,
+      PromiseCreator::lambda([actor_id = actor_id(this), story_reactions = std::move(story_reactions),
+                              promise = std::move(promise)](Result<Unit> &&result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+        } else {
+          promise.set_value(std::move(story_reactions));
+        }
+      }),
+      "stories_storyReactionsList");
+}
+
+void StoryManager::get_dialog_story_interactions(StoryFullId story_full_id, ReactionType reaction_type,
+                                                 bool prefer_forwards, const string &offset, int32 limit,
+                                                 Promise<td_api::object_ptr<td_api::storyInteractions>> &&promise) {
+  const Story *story = get_story(story_full_id);
+  if (story == nullptr) {
+    return promise.set_error(Status::Error(400, "Story not found"));
+  }
+  if (limit <= 0) {
+    return promise.set_error(Status::Error(400, "Parameter limit must be positive"));
+  }
+
+  auto query_promise = PromiseCreator::lambda(
+      [actor_id = actor_id(this), story_full_id, promise = std::move(promise)](
+          Result<telegram_api::object_ptr<telegram_api::stories_storyReactionsList>> result) mutable {
+        send_closure(actor_id, &StoryManager::on_get_dialog_story_interactions, story_full_id, std::move(result),
+                     std::move(promise));
+      });
+
+  td_->create_handler<GetStoryReactionsListQuery>(std::move(query_promise))
+      ->send(story_full_id, reaction_type, prefer_forwards, offset, limit);
+}
+
+void StoryManager::on_get_dialog_story_interactions(
+    StoryFullId story_full_id,
+    Result<telegram_api::object_ptr<telegram_api::stories_storyReactionsList>> r_reaction_list,
+    Promise<td_api::object_ptr<td_api::storyInteractions>> &&promise) {
+  G()->ignore_result_if_closing(r_reaction_list);
+  if (r_reaction_list.is_error()) {
+    return promise.set_error(r_reaction_list.move_as_error());
+  }
+  auto reaction_list = r_reaction_list.move_as_ok();
+
+  Story *story = get_story_editable(story_full_id);
+  if (story == nullptr) {
+    return promise.set_value(td_api::make_object<td_api::storyInteractions>());
+  }
+
+  auto total_count = reaction_list->count_;
+  if (total_count < 0 || static_cast<size_t>(total_count) < reaction_list->reactions_.size()) {
+    LOG(ERROR) << "Receive total_count = " << total_count << " and " << reaction_list->reactions_.size()
+               << " story reactioners";
+    total_count = static_cast<int32>(reaction_list->reactions_.size());
+  }
+
+  StoryViewers story_viewers(td_, total_count, std::move(reaction_list->reactions_),
+                             std::move(reaction_list->next_offset_));
+  td_->contacts_manager_->on_view_dialog_active_stories(story_viewers.get_actor_dialog_ids());
+  promise.set_value(story_viewers.get_story_interactions_object(td_));
 }
 
 void StoryManager::report_story(StoryFullId story_full_id, ReportReason &&reason, Promise<Unit> &&promise) {
@@ -2904,6 +3050,11 @@ bool StoryManager::have_story(StoryFullId story_full_id) const {
 
 bool StoryManager::have_story_force(StoryFullId story_full_id) {
   return get_story_force(story_full_id, "have_story_force") != nullptr;
+}
+
+int32 StoryManager::get_story_date(StoryFullId story_full_id) {
+  const auto *story = get_story_force(story_full_id, "get_story_date");
+  return story != nullptr ? story->date_ : 0;
 }
 
 bool StoryManager::is_inaccessible_story(StoryFullId story_full_id) const {
@@ -3041,7 +3192,7 @@ td_api::object_ptr<td_api::story> StoryManager::get_story_object(StoryFullId sto
   auto can_toggle_is_pinned = can_toggle_story_is_pinned(story_full_id, story);
   auto unix_time = G()->unix_time();
   auto can_get_statistics = can_get_story_statistics(story_full_id, story);
-  auto can_get_viewers = can_get_story_viewers(story_full_id, story, unix_time).is_ok();
+  auto can_get_interactions = can_get_story_viewers(story_full_id, story, unix_time).is_ok();
   auto repost_info =
       story->forward_info_ != nullptr ? story->forward_info_->get_story_repost_info_object(td_) : nullptr;
   auto interaction_info = story->interaction_info_.get_story_interaction_info_object(td_);
@@ -3049,8 +3200,8 @@ td_api::object_ptr<td_api::story> StoryManager::get_story_object(StoryFullId sto
                              unix_time >= get_story_viewers_expire_date(story) && interaction_info != nullptr &&
                              interaction_info->view_count_ > interaction_info->reaction_count_;
   const auto &reaction_counts = story->interaction_info_.get_reaction_counts();
-  auto story_areas = transform(*areas, [&reaction_counts](const MediaArea &media_area) {
-    return media_area.get_story_area_object(reaction_counts);
+  auto story_areas = transform(*areas, [td = td_, &reaction_counts](const MediaArea &media_area) {
+    return media_area.get_story_area_object(td, reaction_counts);
   });
 
   story->is_update_sent_ = true;
@@ -3058,7 +3209,7 @@ td_api::object_ptr<td_api::story> StoryManager::get_story_object(StoryFullId sto
   return td_api::make_object<td_api::story>(
       story_id.get(), td_->messages_manager_->get_chat_id_object(owner_dialog_id, "get_story_object"), story->date_,
       is_being_sent, is_being_edited, is_edited, story->is_pinned_, is_visible_only_for_self, can_be_deleted,
-      can_be_edited, can_be_forwarded, can_be_replied, can_toggle_is_pinned, can_get_statistics, can_get_viewers,
+      can_be_edited, can_be_forwarded, can_be_replied, can_toggle_is_pinned, can_get_statistics, can_get_interactions,
       has_expired_viewers, std::move(repost_info), std::move(interaction_info),
       story->chosen_reaction_type_.get_reaction_type_object(), std::move(privacy_settings),
       get_story_content_object(td_, content), std::move(story_areas),

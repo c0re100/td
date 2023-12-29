@@ -113,6 +113,7 @@ class Dependencies;
 class DialogActionBar;
 class DialogFilter;
 class DraftMessage;
+class EmojiStatus;
 struct InputMessageContent;
 class MessageContent;
 struct MessageReactions;
@@ -174,13 +175,14 @@ class MessagesManager final : public Actor {
   void on_get_empty_messages(DialogId dialog_id, const vector<MessageId> &empty_message_ids);
 
   void get_channel_difference_if_needed(DialogId dialog_id, MessagesInfo &&messages_info,
-                                        Promise<MessagesInfo> &&promise);
+                                        Promise<MessagesInfo> &&promise, const char *source);
 
-  void get_channel_differences_if_needed(MessagesInfo &&messages_info, Promise<MessagesInfo> &&promise);
+  void get_channel_differences_if_needed(MessagesInfo &&messages_info, Promise<MessagesInfo> &&promise,
+                                         const char *source);
 
   void get_channel_differences_if_needed(
-      telegram_api::object_ptr<telegram_api::stats_publicForwards> &&public_forwards,
-      Promise<telegram_api::object_ptr<telegram_api::stats_publicForwards>> &&promise);
+      const vector<const telegram_api::object_ptr<telegram_api::Message> *> &messages, Promise<Unit> &&promise,
+      const char *source);
 
   void on_get_messages(vector<tl_object_ptr<telegram_api::Message>> &&messages, bool is_channel_message,
                        bool is_scheduled, Promise<Unit> &&promise, const char *source);
@@ -228,7 +230,6 @@ class MessagesManager final : public Actor {
                                vector<tl_object_ptr<telegram_api::Message>> &&messages,
                                Promise<td_api::object_ptr<td_api::messages>> &&promise);
 
-  // if message is from_update, flags have_previous and have_next are ignored and must be both true
   MessageFullId on_get_message(tl_object_ptr<telegram_api::Message> message_ptr, bool from_update,
                                bool is_channel_message, bool is_scheduled, const char *source);
 
@@ -479,9 +480,9 @@ class MessagesManager final : public Actor {
   void set_dialog_message_ttl(DialogId dialog_id, int32 ttl, Promise<Unit> &&promise);
 
   Status send_screenshot_taken_notification_message(DialogId dialog_id);
-
-  void share_dialog_with_bot(MessageFullId full_message_id, int32 button_id, DialogId shared_dialog_id,
-                             bool expect_user, bool only_check, Promise<Unit> &&promise);
+  
+  void share_dialogs_with_bot(MessageFullId message_full_id, int32 button_id, vector<DialogId> shared_dialog_ids,
+                              bool expect_user, bool only_check, Promise<Unit> &&promise);
 
   Result<MessageId> add_local_message(
       DialogId dialog_id, td_api::object_ptr<td_api::MessageSender> &&sender,
@@ -565,6 +566,9 @@ class MessagesManager final : public Actor {
   void set_dialog_accent_color(DialogId dialog_id, AccentColorId accent_color_id,
                                CustomEmojiId background_custom_emoji_id, Promise<Unit> &&promise);
 
+  void set_dialog_profile_accent_color(DialogId dialog_id, AccentColorId profile_accent_color_id,
+                                       CustomEmojiId profile_background_custom_emoji_id, Promise<Unit> &&promise);
+
   void set_dialog_description(DialogId dialog_id, const string &description, Promise<Unit> &&promise);
 
   void set_active_reactions(vector<ReactionType> active_reaction_types);
@@ -572,6 +576,8 @@ class MessagesManager final : public Actor {
   void set_dialog_available_reactions(DialogId dialog_id,
                                       td_api::object_ptr<td_api::ChatAvailableReactions> &&available_reactions_ptr,
                                       Promise<Unit> &&promise);
+
+  void set_dialog_emoji_status(DialogId dialog_id, const EmojiStatus &emoji_status, Promise<Unit> &&promise);
 
   void set_dialog_permissions(DialogId dialog_id, const td_api::object_ptr<td_api::chatPermissions> &permissions,
                               Promise<Unit> &&promise);
@@ -893,9 +899,9 @@ class MessagesManager final : public Actor {
   void on_dialog_bots_updated(DialogId dialog_id, vector<UserId> bot_user_ids, bool from_database);
 
   void on_dialog_photo_updated(DialogId dialog_id);
-  void on_dialog_accent_color_id_updated(DialogId dialog_id);
-  void on_dialog_background_custom_emoji_id_updated(DialogId dialog_id);
+  void on_dialog_accent_colors_updated(DialogId dialog_id);
   void on_dialog_title_updated(DialogId dialog_id);
+  void on_dialog_emoji_status_updated(DialogId dialog_id);
   void on_dialog_usernames_updated(DialogId dialog_id, const Usernames &old_usernames, const Usernames &new_usernames);
   void on_dialog_usernames_received(DialogId dialog_id, const Usernames &usernames, bool from_database);
   void on_dialog_default_permissions_updated(DialogId dialog_id);
@@ -2296,6 +2302,8 @@ class MessagesManager final : public Actor {
 
   void remove_message_remove_keyboard_reply_markup(Message *m) const;
 
+  void update_replied_by_message_count(DialogId dialog_id, const Message *m, bool is_add);
+
   void add_message_to_dialog_message_list(const Message *m, Dialog *d, const bool from_database, const bool from_update,
                                           const bool need_update, bool *need_update_dialog_pos, const char *source);
 
@@ -2356,6 +2364,8 @@ class MessagesManager final : public Actor {
                                           Result<vector<Notification>> result);
 
   void do_delete_message_log_event(const DeleteMessageLogEvent &log_event) const;
+
+  int64 get_message_reply_to_random_id(const Dialog *d, const Message *m) const;
 
   bool update_message(Dialog *d, Message *old_message, unique_ptr<Message> new_message, bool is_message_in_dialog);
 
@@ -2991,7 +3001,13 @@ class MessagesManager final : public Actor {
 
   CustomEmojiId get_dialog_background_custom_emoji_id(DialogId dialog_id) const;
 
+  int32 get_dialog_profile_accent_color_id_object(DialogId dialog_id) const;
+
+  CustomEmojiId get_dialog_profile_background_custom_emoji_id(DialogId dialog_id) const;
+
   RestrictedRights get_dialog_default_permissions(DialogId dialog_id) const;
+
+  td_api::object_ptr<td_api::emojiStatus> get_dialog_emoji_status_object(DialogId dialog_id) const;
 
   bool get_dialog_has_protected_content(DialogId dialog_id) const;
 

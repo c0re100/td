@@ -130,6 +130,16 @@ class ContactsManager final : public Actor {
   CustomEmojiId get_channel_background_custom_emoji_id(ChannelId channel_id) const;
   CustomEmojiId get_secret_chat_background_custom_emoji_id(SecretChatId secret_chat_id) const;
 
+  int32 get_user_profile_accent_color_id_object(UserId user_id) const;
+  int32 get_chat_profile_accent_color_id_object(ChatId chat_id) const;
+  int32 get_channel_profile_accent_color_id_object(ChannelId channel_id) const;
+  int32 get_secret_chat_profile_accent_color_id_object(SecretChatId secret_chat_id) const;
+
+  CustomEmojiId get_user_profile_background_custom_emoji_id(UserId user_id) const;
+  CustomEmojiId get_chat_profile_background_custom_emoji_id(ChatId chat_id) const;
+  CustomEmojiId get_channel_profile_background_custom_emoji_id(ChannelId channel_id) const;
+  CustomEmojiId get_secret_chat_profile_background_custom_emoji_id(SecretChatId secret_chat_id) const;
+
   string get_user_title(UserId user_id) const;
   string get_chat_title(ChatId chat_id) const;
   string get_channel_title(ChannelId channel_id) const;
@@ -139,6 +149,11 @@ class ContactsManager final : public Actor {
   RestrictedRights get_chat_default_permissions(ChatId chat_id) const;
   RestrictedRights get_channel_default_permissions(ChannelId channel_id) const;
   RestrictedRights get_secret_chat_default_permissions(SecretChatId secret_chat_id) const;
+
+  td_api::object_ptr<td_api::emojiStatus> get_user_emoji_status_object(UserId user_id) const;
+  td_api::object_ptr<td_api::emojiStatus> get_chat_emoji_status_object(ChatId chat_id) const;
+  td_api::object_ptr<td_api::emojiStatus> get_channel_emoji_status_object(ChannelId channel_id) const;
+  td_api::object_ptr<td_api::emojiStatus> get_secret_chat_emoji_status_object(SecretChatId secret_chat_id) const;
 
   bool get_chat_has_protected_content(ChatId chat_id) const;
   bool get_channel_has_protected_content(ChannelId channel_id) const;
@@ -199,8 +214,8 @@ class ContactsManager final : public Actor {
   void on_get_channel_full_failed(ChannelId channel_id);
 
   void on_update_profile_success(int32 flags, const string &first_name, const string &last_name, const string &about);
-  void on_update_accent_color_success(AccentColorId accent_color_id, CustomEmojiId background_custom_emoji_id);
-  void on_update_profile_accent_color_success(AccentColorId accent_color_id, CustomEmojiId background_custom_emoji_id);
+  void on_update_accent_color_success(bool for_profile, AccentColorId accent_color_id,
+                                      CustomEmojiId background_custom_emoji_id);
 
   void on_update_user_name(UserId user_id, string &&first_name, string &&last_name, Usernames &&usernames);
   void on_update_user_phone_number(UserId user_id, string &&phone_number);
@@ -210,6 +225,7 @@ class ContactsManager final : public Actor {
   void on_update_user_stories_hidden(UserId user_id, bool stories_hidden);
   void on_update_user_online(UserId user_id, tl_object_ptr<telegram_api::UserStatus> &&status);
   void on_update_user_local_was_online(UserId user_id, int32 local_was_online);
+  // use on_update_dialog_is_blocked instead
   void on_update_user_is_blocked(UserId user_id, bool is_blocked, bool is_blocked_for_stories);
   void on_update_user_has_pinned_stories(UserId user_id, bool has_pinned_stories);
   void on_update_user_common_chat_count(UserId user_id, int32 common_chat_count);
@@ -451,7 +467,7 @@ class ContactsManager final : public Actor {
 
   void reorder_bot_usernames(UserId bot_user_id, vector<string> &&usernames, Promise<Unit> &&promise);
 
-  void set_emoji_status(EmojiStatus emoji_status, Promise<Unit> &&promise);
+  void set_emoji_status(const EmojiStatus &emoji_status, Promise<Unit> &&promise);
 
   void set_chat_description(ChatId chat_id, const string &description, Promise<Unit> &&promise);
 
@@ -466,6 +482,11 @@ class ContactsManager final : public Actor {
 
   void set_channel_accent_color(ChannelId channel_id, AccentColorId accent_color_id,
                                 CustomEmojiId background_custom_emoji_id, Promise<Unit> &&promise);
+
+  void set_channel_profile_accent_color(ChannelId channel_id, AccentColorId profile_accent_color_id,
+                                        CustomEmojiId profile_background_custom_emoji_id, Promise<Unit> &&promise);
+
+  void set_channel_emoji_status(ChannelId channel_id, const EmojiStatus &emoji_status, Promise<Unit> &&promise);
 
   void set_channel_sticker_set(ChannelId channel_id, StickerSetId sticker_set_id, Promise<Unit> &&promise);
 
@@ -572,6 +593,8 @@ class ContactsManager final : public Actor {
 
   void get_created_public_dialogs(PublicDialogType type, Promise<td_api::object_ptr<td_api::chats>> &&promise,
                                   bool from_binlog);
+
+  void open_channel_recommended_channel(DialogId dialog_id, DialogId opened_dialog_id, Promise<Unit> &&promise);
 
   void check_created_public_dialogs_limit(PublicDialogType type, Promise<Unit> &&promise);
 
@@ -824,10 +847,7 @@ class ContactsManager final : public Actor {
     bool is_name_changed = true;
     bool is_username_changed = true;
     bool is_photo_changed = true;
-    bool is_accent_color_id_changed = true;
-    bool is_background_custom_emoji_id_changed = true;
-    bool is_profile_accent_color_id_changed = true;
-    bool is_profile_background_custom_emoji_id_changed = true;
+    bool is_accent_color_changed = true;
     bool is_phone_number_changed = true;
     bool is_emoji_status_changed = true;
     bool is_is_contact_changed = true;
@@ -994,8 +1014,12 @@ class ContactsManager final : public Actor {
     int64 access_hash = 0;
     string title;
     DialogPhoto photo;
+    EmojiStatus emoji_status;
+    EmojiStatus last_sent_emoji_status;
     AccentColorId accent_color_id;
     CustomEmojiId background_custom_emoji_id;
+    AccentColorId profile_accent_color_id;
+    CustomEmojiId profile_background_custom_emoji_id;
     Usernames usernames;
     vector<RestrictionReason> restriction_reasons;
     DialogParticipantStatus status = DialogParticipantStatus::Banned(0);
@@ -1003,6 +1027,7 @@ class ContactsManager final : public Actor {
                                          false, false, false, false, false, false, false, false, ChannelType::Unknown};
     int32 date = 0;
     int32 participant_count = 0;
+    int32 boost_level = 0;
 
     double max_active_story_id_next_reload_time = 0.0;
     StoryId max_active_story_id;
@@ -1033,8 +1058,8 @@ class ContactsManager final : public Actor {
     bool is_title_changed = true;
     bool is_username_changed = true;
     bool is_photo_changed = true;
-    bool is_accent_color_id_changed = true;
-    bool is_background_custom_emoji_id_changed = true;
+    bool is_emoji_status_changed = true;
+    bool is_accent_color_changed = true;
     bool is_default_permissions_changed = true;
     bool is_status_changed = true;
     bool is_stories_hidden_changed = true;
@@ -1543,9 +1568,14 @@ class ContactsManager final : public Actor {
   void on_update_channel_photo(Channel *c, ChannelId channel_id,
                                tl_object_ptr<telegram_api::ChatPhoto> &&chat_photo_ptr);
   void on_update_channel_photo(Channel *c, ChannelId channel_id, DialogPhoto &&photo, bool invalidate_photo_cache);
+  void on_update_channel_emoji_status(Channel *c, ChannelId channel_id, EmojiStatus emoji_status);
   void on_update_channel_accent_color_id(Channel *c, ChannelId channel_id, AccentColorId accent_color_id);
   void on_update_channel_background_custom_emoji_id(Channel *c, ChannelId channel_id,
                                                     CustomEmojiId background_custom_emoji_id);
+  void on_update_channel_profile_accent_color_id(Channel *c, ChannelId channel_id,
+                                                 AccentColorId profile_accent_color_id);
+  void on_update_channel_profile_background_custom_emoji_id(Channel *c, ChannelId channel_id,
+                                                            CustomEmojiId profile_background_custom_emoji_id);
   static void on_update_channel_title(Channel *c, ChannelId channel_id, string &&title);
   void on_update_channel_usernames(Channel *c, ChannelId channel_id, Usernames &&usernames);
   void on_update_channel_status(Channel *c, ChannelId channel_id, DialogParticipantStatus &&status);
@@ -1971,6 +2001,8 @@ class ContactsManager final : public Actor {
 
   static void on_user_emoji_status_timeout_callback(void *contacts_manager_ptr, int64 user_id_long);
 
+  static void on_channel_emoji_status_timeout_callback(void *contacts_manager_ptr, int64 channel_id_long);
+
   static void on_channel_unban_timeout_callback(void *contacts_manager_ptr, int64 channel_id_long);
 
   static void on_user_nearby_timeout_callback(void *contacts_manager_ptr, int64 user_id_long);
@@ -1984,6 +2016,8 @@ class ContactsManager final : public Actor {
   void on_user_online_timeout(UserId user_id);
 
   void on_user_emoji_status_timeout(UserId user_id);
+
+  void on_channel_emoji_status_timeout(ChannelId channel_id);
 
   void on_channel_unban_timeout(ChannelId channel_id);
 
@@ -2179,6 +2213,7 @@ class ContactsManager final : public Actor {
 
   MultiTimeout user_online_timeout_{"UserOnlineTimeout"};
   MultiTimeout user_emoji_status_timeout_{"UserEmojiStatusTimeout"};
+  MultiTimeout channel_emoji_status_timeout_{"ChannelEmojiStatusTimeout"};
   MultiTimeout channel_unban_timeout_{"ChannelUnbanTimeout"};
   MultiTimeout user_nearby_timeout_{"UserNearbyTimeout"};
   MultiTimeout slow_mode_delay_timeout_{"SlowModeDelayTimeout"};

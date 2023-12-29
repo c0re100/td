@@ -40,17 +40,17 @@ class StatisticsManager final : public Actor {
                              Promise<td_api::object_ptr<td_api::StatisticalGraph>> &&promise);
 
   void get_message_public_forwards(MessageFullId message_full_id, string offset, int32 limit,
-                                   Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
-
-  void on_get_message_public_forwards(int32 total_count,
-                                      vector<telegram_api::object_ptr<telegram_api::Message>> &&messages,
-                                      int32 next_rate, Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
+                                   Promise<td_api::object_ptr<td_api::publicForwards>> &&promise);
 
   void get_story_public_forwards(StoryFullId story_full_id, string offset, int32 limit,
-                                 Promise<td_api::object_ptr<td_api::storyPublicForwards>> &&promise);
+                                 Promise<td_api::object_ptr<td_api::publicForwards>> &&promise);
 
-  void on_get_story_public_forwards(telegram_api::object_ptr<telegram_api::stats_publicForwards> &&public_forwards,
-                                    Promise<td_api::object_ptr<td_api::storyPublicForwards>> &&promise);
+  void on_get_public_forwards(telegram_api::object_ptr<telegram_api::stats_publicForwards> &&public_forwards,
+                              Promise<td_api::object_ptr<td_api::publicForwards>> &&promise);
+
+  void get_channel_differences_if_needed(telegram_api::object_ptr<telegram_api::stats_publicForwards> &&public_forwards,
+                                         Promise<td_api::object_ptr<td_api::publicForwards>> promise,
+                                         const char *source);
 
  private:
   void tear_down() final;
@@ -68,10 +68,10 @@ class StatisticsManager final : public Actor {
                                    Promise<td_api::object_ptr<td_api::StatisticalGraph>> &&promise);
 
   void send_get_message_public_forwards_query(DcId dc_id, MessageFullId message_full_id, string offset, int32 limit,
-                                              Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
+                                              Promise<td_api::object_ptr<td_api::publicForwards>> &&promise);
 
   void send_get_story_public_forwards_query(DcId dc_id, StoryFullId story_full_id, string offset, int32 limit,
-                                            Promise<td_api::object_ptr<td_api::storyPublicForwards>> &&promise);
+                                            Promise<td_api::object_ptr<td_api::publicForwards>> &&promise);
 
   Td *td_;
   ActorShared<> parent_;
