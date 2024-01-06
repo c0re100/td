@@ -11932,12 +11932,12 @@ void MessagesManager::unload_dialog(DialogId dialog_id, int32 delay) {
     d->have_full_history_source = 0;
   }
 
-  if (!unloaded_message_ids.empty()) {
-    send_closure_later(
-        G()->td(), &Td::send_update,
-        td_api::make_object<td_api::updateDeleteMessages>(get_chat_id_object(dialog_id, "updateDeleteMessages"),
-                                                          std::move(unloaded_message_ids), false, true));
-  }
+  //if (!unloaded_message_ids.empty()) {
+  //  send_closure_later(
+  //      G()->td(), &Td::send_update,
+  //      td_api::make_object<td_api::updateDeleteMessages>(get_chat_id_object(dialog_id, "updateDeleteMessages"),
+  //                                                        std::move(unloaded_message_ids), false, true));
+  //}
 
   if (has_left_to_unload_messages) {
     LOG(DEBUG) << "Need to unload more messages in " << dialog_id;
