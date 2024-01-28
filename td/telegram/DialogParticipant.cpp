@@ -1,5 +1,5 @@
 ﻿//
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -245,7 +245,7 @@ RestrictedRights::RestrictedRights(const td_api::object_ptr<td_api::chatPermissi
                            rights->can_send_voice_notes_, rights->can_send_stickers_, rights->can_send_animations_, 
                            rights->can_send_games_, rights->can_use_inline_bots_, rights->can_add_web_page_previews_, 
                            rights->can_send_polls_, rights->can_change_info_, rights->can_invite_users_, 
-                           rights->can_pin_messages_, rights->can_manage_topics_, channel_type);
+                           rights->can_pin_messages_, rights->can_create_topics_, channel_type);
 }
 
 RestrictedRights::RestrictedRights(bool can_send_messages, bool can_send_audios, bool can_send_documents,

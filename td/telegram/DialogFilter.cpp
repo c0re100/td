@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,6 +8,7 @@
 
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogId.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
@@ -115,7 +116,7 @@ Result<unique_ptr<DialogFilter>> DialogFilter::create_dialog_filter(Td *td, Dial
         continue;
       }
 
-      input_dialog_ids.push_back(td->messages_manager_->get_input_dialog_id(DialogId(chat_id)));
+      input_dialog_ids.push_back(td->dialog_manager_->get_input_dialog_id(DialogId(chat_id)));
     }
   };
   add_chats(dialog_filter->pinned_dialog_ids_, filter->pinned_chat_ids_);
@@ -704,7 +705,7 @@ vector<DialogId> DialogFilter::get_dialogs_for_invite_link(Td *td) {
   vector<DialogId> result;
   for_each_dialog([&](const InputDialogId &input_dialog_id) {
     auto dialog_id = input_dialog_id.get_dialog_id();
-    if (!td->messages_manager_->have_dialog_force(dialog_id, "get_dialogs_for_invite_link")) {
+    if (!td->dialog_manager_->have_dialog_force(dialog_id, "get_dialogs_for_invite_link")) {
       return;
     }
     bool is_good = false;

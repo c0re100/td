@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -107,7 +107,7 @@ class Scheduler {
   void destroy_on_scheduler(int32 sched_id, ArgsT &...values);
 
   template <ActorSendType send_type, class EventT>
-  void send_lambda(ActorRef actor_ref, EventT &&lambda);
+  void send_lambda(ActorRef actor_ref, EventT &&func);
 
   template <ActorSendType send_type, class EventT>
   void send_closure(ActorRef actor_ref, EventT &&closure);

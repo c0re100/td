@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -41,7 +41,11 @@ class CallManager;
 class ConfigManager;
 class ConnectionCreator;
 class ContactsManager;
+class DialogActionManager;
 class DialogFilterManager;
+class DialogInviteLinkManager;
+class DialogManager;
+class DialogParticipantManager;
 class DownloadManager;
 class FileManager;
 class FileReferenceManager;
@@ -50,6 +54,7 @@ class GameManager;
 class GroupCallManager;
 class LanguagePackManager;
 class LinkManager;
+class MessageImportManager;
 class MessagesManager;
 class NetQueryDispatcher;
 class NotificationManager;
@@ -244,11 +249,39 @@ class Global final : public ActorContext {
     contacts_manager_ = contacts_manager;
   }
 
+  ActorId<DialogActionManager> dialog_action_manager() const {
+    return dialog_action_manager_;
+  }
+  void set_dialog_action_manager(ActorId<DialogActionManager> dialog_action_manager) {
+    dialog_action_manager_ = std::move(dialog_action_manager);
+  }
+
   ActorId<DialogFilterManager> dialog_filter_manager() const {
     return dialog_filter_manager_;
   }
   void set_dialog_filter_manager(ActorId<DialogFilterManager> dialog_filter_manager) {
     dialog_filter_manager_ = std::move(dialog_filter_manager);
+  }
+
+  ActorId<DialogInviteLinkManager> dialog_invite_link_manager() const {
+    return dialog_invite_link_manager_;
+  }
+  void set_dialog_invite_link_manager(ActorId<DialogInviteLinkManager> dialog_invite_link_manager) {
+    dialog_invite_link_manager_ = std::move(dialog_invite_link_manager);
+  }
+
+  ActorId<DialogManager> dialog_manager() const {
+    return dialog_manager_;
+  }
+  void set_dialog_manager(ActorId<DialogManager> dialog_manager) {
+    dialog_manager_ = std::move(dialog_manager);
+  }
+
+  ActorId<DialogParticipantManager> dialog_participant_manager() const {
+    return dialog_participant_manager_;
+  }
+  void set_dialog_participant_manager(ActorId<DialogParticipantManager> dialog_participant_manager) {
+    dialog_participant_manager_ = std::move(dialog_participant_manager);
   }
 
   ActorId<DownloadManager> download_manager() const {
@@ -305,6 +338,13 @@ class Global final : public ActorContext {
   }
   void set_link_manager(ActorId<LinkManager> link_manager) {
     link_manager_ = link_manager;
+  }
+
+  ActorId<MessageImportManager> message_import_manager() const {
+    return message_import_manager_;
+  }
+  void set_message_import_manager(ActorId<MessageImportManager> message_import_manager) {
+    message_import_manager_ = message_import_manager;
   }
 
   ActorId<MessagesManager> messages_manager() const {
@@ -546,7 +586,11 @@ class Global final : public ActorContext {
   ActorId<CallManager> call_manager_;
   ActorId<ConfigManager> config_manager_;
   ActorId<ContactsManager> contacts_manager_;
+  ActorId<DialogActionManager> dialog_action_manager_;
   ActorId<DialogFilterManager> dialog_filter_manager_;
+  ActorId<DialogInviteLinkManager> dialog_invite_link_manager_;
+  ActorId<DialogManager> dialog_manager_;
+  ActorId<DialogParticipantManager> dialog_participant_manager_;
   ActorId<DownloadManager> download_manager_;
   ActorId<FileManager> file_manager_;
   ActorId<FileReferenceManager> file_reference_manager_;
@@ -555,6 +599,7 @@ class Global final : public ActorContext {
   ActorId<GroupCallManager> group_call_manager_;
   ActorId<LanguagePackManager> language_pack_manager_;
   ActorId<LinkManager> link_manager_;
+  ActorId<MessageImportManager> message_import_manager_;
   ActorId<MessagesManager> messages_manager_;
   ActorId<NotificationManager> notification_manager_;
   ActorId<NotificationSettingsManager> notification_settings_manager_;

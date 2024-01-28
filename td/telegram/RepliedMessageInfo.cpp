@@ -1,13 +1,13 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #include "td/telegram/RepliedMessageInfo.h"
 
-#include "td/telegram/ContactsManager.h"
 #include "td/telegram/Dependencies.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/MessageContent.h"
 #include "td/telegram/MessageContentType.h"
 #include "td/telegram/MessageCopyOptions.h"
@@ -18,6 +18,7 @@
 #include "td/telegram/ScheduledServerMessageId.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/telegram_api.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/logging.h"
@@ -180,7 +181,7 @@ RepliedMessageInfo RepliedMessageInfo::clone(Td *td) const {
   result.origin_date_ = origin_date_;
   result.origin_ = origin_;
   if (content_ != nullptr) {
-    result.content_ = dup_message_content(td, DialogId(td->contacts_manager_->get_my_id()), content_.get(),
+    result.content_ = dup_message_content(td, td->dialog_manager_->get_my_dialog_id(), content_.get(),
                                           MessageContentDupType::Forward, MessageCopyOptions());
   }
   result.quote_ = quote_;
@@ -315,7 +316,7 @@ td_api::object_ptr<td_api::messageReplyToMessage> RepliedMessageInfo::get_messag
   } else {
     CHECK(dialog_id.is_valid());
   }
-  auto chat_id = td->messages_manager_->get_chat_id_object(dialog_id, "messageReplyToMessage");
+  auto chat_id = td->dialog_manager_->get_chat_id_object(dialog_id, "messageReplyToMessage");
   if (message_id_ == MessageId()) {
     chat_id = 0;
   }

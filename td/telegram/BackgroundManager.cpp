@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -11,6 +11,7 @@
 #include "td/telegram/BackgroundType.hpp"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogId.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/Document.h"
 #include "td/telegram/DocumentsManager.h"
 #include "td/telegram/DocumentsManager.hpp"
@@ -122,7 +123,7 @@ class SetChatWallPaperQuery final : public Td::ResultHandler {
     }
 
     int32 flags = 0;
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Write);
     if (input_peer == nullptr) {
       return on_error(Status::Error(400, "Can't access the chat"));
     }
@@ -162,11 +163,11 @@ class SetChatWallPaperQuery final : public Td::ResultHandler {
 
   void on_error(Status status) final {
     if (is_remove_) {
-      td_->messages_manager_->reload_dialog_info_full(dialog_id_, "SetChatWallPaperQuery");
+      td_->dialog_manager_->reload_dialog_info_full(dialog_id_, "SetChatWallPaperQuery");
     } else if (is_revert_ && status.message() == "WALLPAPER_NOT_FOUND") {
       return td_->background_manager_->delete_dialog_background(dialog_id_, false, std::move(promise_));
     }
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "SetChatWallPaperQuery");
+    td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "SetChatWallPaperQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -411,6 +412,10 @@ class BackgroundManager::BackgroundsLogEvent {
 };
 
 void BackgroundManager::start_up() {
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+
   max_local_background_id_ = BackgroundId(to_integer<int64>(G()->td_db()->get_binlog_pmc()->get("max_bg_id")));
 
   // first parse all log events and fix max_local_background_id_ value
@@ -737,10 +742,10 @@ void BackgroundManager::delete_background(bool for_dark_theme, Promise<Unit> &&p
 }
 
 Result<DialogId> BackgroundManager::get_background_dialog(DialogId dialog_id) {
-  if (!td_->messages_manager_->have_dialog_force(dialog_id, "set_dialog_background")) {
+  if (!td_->dialog_manager_->have_dialog_force(dialog_id, "set_dialog_background")) {
     return Status::Error(400, "Chat not found");
   }
-  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Write)) {
+  if (!td_->dialog_manager_->have_input_peer(dialog_id, AccessRights::Write)) {
     return Status::Error(400, "Can't access the chat");
   }
 

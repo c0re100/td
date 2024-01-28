@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -10,12 +10,13 @@
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/Dependencies.h"
 #include "td/telegram/DialogId.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/InputDialogId.h"
-#include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/StoryId.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/telegram_api.h"
 #include "td/telegram/UserId.h"
 
 #include "td/utils/logging.h"
@@ -39,7 +40,7 @@ MessageInputReplyTo::MessageInputReplyTo(Td *td,
       auto story_id = StoryId(reply_to->story_id_);
       if (user_id.is_valid() && story_id.is_valid()) {
         DialogId dialog_id(user_id);
-        td->messages_manager_->force_create_dialog(dialog_id, "MessageInputReplyTo", true);
+        td->dialog_manager_->force_create_dialog(dialog_id, "MessageInputReplyTo", true);
         story_full_id_ = {dialog_id, story_id};
       }
       break;
@@ -53,10 +54,10 @@ MessageInputReplyTo::MessageInputReplyTo(Td *td,
       DialogId dialog_id;
       if (reply_to->reply_to_peer_id_ != nullptr) {
         dialog_id = InputDialogId(reply_to->reply_to_peer_id_).get_dialog_id();
-        if (!dialog_id.is_valid() || !td->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
+        if (!dialog_id.is_valid() || !td->dialog_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
           return;
         }
-        td->messages_manager_->force_create_dialog(dialog_id, "inputReplyToMessage");
+        td->dialog_manager_->force_create_dialog(dialog_id, "inputReplyToMessage");
       }
       message_id_ = message_id;
       dialog_id_ = dialog_id;
@@ -116,7 +117,7 @@ telegram_api::object_ptr<telegram_api::InputReplyTo> MessageInputReplyTo::get_in
   }
   telegram_api::object_ptr<telegram_api::InputPeer> input_peer;
   if (dialog_id_ != DialogId()) {
-    input_peer = td->messages_manager_->get_input_peer(dialog_id_, AccessRights::Read);
+    input_peer = td->dialog_manager_->get_input_peer(dialog_id_, AccessRights::Read);
     if (input_peer == nullptr) {
       LOG(INFO) << "Failed to get input peer for " << dialog_id_;
       return nullptr;
@@ -142,7 +143,7 @@ telegram_api::object_ptr<telegram_api::InputReplyTo> MessageInputReplyTo::get_in
 td_api::object_ptr<td_api::InputMessageReplyTo> MessageInputReplyTo::get_input_message_reply_to_object(Td *td) const {
   if (story_full_id_.is_valid()) {
     return td_api::make_object<td_api::inputMessageReplyToStory>(
-        td->messages_manager_->get_chat_id_object(story_full_id_.get_dialog_id(), "inputMessageReplyToStory"),
+        td->dialog_manager_->get_chat_id_object(story_full_id_.get_dialog_id(), "inputMessageReplyToStory"),
         story_full_id_.get_story_id().get());
   }
   if (!message_id_.is_valid() && !message_id_.is_valid_scheduled()) {
@@ -153,7 +154,7 @@ td_api::object_ptr<td_api::InputMessageReplyTo> MessageInputReplyTo::get_input_m
     quote = td_api::make_object<td_api::inputTextQuote>(get_formatted_text_object(quote_, true, -1), quote_position_);
   }
   return td_api::make_object<td_api::inputMessageReplyToMessage>(
-      td->messages_manager_->get_chat_id_object(dialog_id_, "inputMessageReplyToMessage"), message_id_.get(),
+      td->dialog_manager_->get_chat_id_object(dialog_id_, "inputMessageReplyToMessage"), message_id_.get(),
       std::move(quote));
 }
 
@@ -197,6 +198,13 @@ StringBuilder &operator<<(StringBuilder &string_builder, const MessageInputReply
     return string_builder << input_reply_to.story_full_id_;
   }
   return string_builder << "nothing";
+}
+
+StringBuilder &operator<<(StringBuilder &string_builder, const MessageInputReplyTo *input_reply_to_ptr) {
+  if (input_reply_to_ptr == nullptr) {
+    return string_builder << "nothing";
+  }
+  return string_builder << *input_reply_to_ptr;
 }
 
 }  // namespace td

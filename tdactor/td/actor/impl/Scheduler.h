@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -215,15 +215,15 @@ void Scheduler::send_impl(const ActorId<> &actor_id, const RunFuncT &run_func, c
 }
 
 template <ActorSendType send_type, class EventT>
-void Scheduler::send_lambda(ActorRef actor_ref, EventT &&lambda) {
+void Scheduler::send_lambda(ActorRef actor_ref, EventT &&func) {
   return send_impl<send_type>(
       actor_ref.get(),
       [&](ActorInfo *actor_info) {
         event_context_ptr_->link_token = actor_ref.token();
-        lambda();
+        func();
       },
       [&] {
-        auto event = Event::lambda(std::forward<EventT>(lambda));
+        auto event = Event::from_lambda(std::forward<EventT>(func));
         event.set_link_token(actor_ref.token());
         return event;
       });

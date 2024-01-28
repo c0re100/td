@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -48,11 +48,16 @@ class BoostManager;
 class BotInfoManager;
 class CallManager;
 class CallbackQueriesManager;
+class CommonDialogManager;
 class ConfigManager;
 class ContactsManager;
 class CountryInfoManager;
 class DeviceTokenManager;
+class DialogActionManager;
 class DialogFilterManager;
+class DialogInviteLinkManager;
+class DialogManager;
+class DialogParticipantManager;
 class DocumentsManager;
 class DownloadManager;
 class FileManager;
@@ -64,6 +69,7 @@ class InlineQueriesManager;
 class HashtagHints;
 class LanguagePackManager;
 class LinkManager;
+class MessageImportManager;
 class MessagesManager;
 class NetStatsManager;
 class NotificationManager;
@@ -168,12 +174,22 @@ class Td final : public Actor {
   ActorOwn<BoostManager> boost_manager_actor_;
   unique_ptr<BotInfoManager> bot_info_manager_;
   ActorOwn<BotInfoManager> bot_info_manager_actor_;
+  unique_ptr<CommonDialogManager> common_dialog_manager_;
+  ActorOwn<CommonDialogManager> common_dialog_manager_actor_;
   unique_ptr<ContactsManager> contacts_manager_;
   ActorOwn<ContactsManager> contacts_manager_actor_;
   unique_ptr<CountryInfoManager> country_info_manager_;
   ActorOwn<CountryInfoManager> country_info_manager_actor_;
+  unique_ptr<DialogActionManager> dialog_action_manager_;
+  ActorOwn<DialogActionManager> dialog_action_manager_actor_;
   unique_ptr<DialogFilterManager> dialog_filter_manager_;
   ActorOwn<DialogFilterManager> dialog_filter_manager_actor_;
+  unique_ptr<DialogInviteLinkManager> dialog_invite_link_manager_;
+  ActorOwn<DialogInviteLinkManager> dialog_invite_link_manager_actor_;
+  unique_ptr<DialogManager> dialog_manager_;
+  ActorOwn<DialogManager> dialog_manager_actor_;
+  unique_ptr<DialogParticipantManager> dialog_participant_manager_;
+  ActorOwn<DialogParticipantManager> dialog_participant_manager_actor_;
   unique_ptr<DownloadManager> download_manager_;
   ActorOwn<DownloadManager> download_manager_actor_;
   unique_ptr<FileManager> file_manager_;
@@ -190,6 +206,8 @@ class Td final : public Actor {
   ActorOwn<InlineQueriesManager> inline_queries_manager_actor_;
   unique_ptr<LinkManager> link_manager_;
   ActorOwn<LinkManager> link_manager_actor_;
+  unique_ptr<MessageImportManager> message_import_manager_;
+  ActorOwn<MessageImportManager> message_import_manager_actor_;
   unique_ptr<MessagesManager> messages_manager_;
   ActorOwn<MessagesManager> messages_manager_actor_;
   unique_ptr<NotificationManager> notification_manager_;
@@ -493,6 +511,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::resendRecoveryEmailAddressCode &request);
 
+  void on_request(uint64 id, const td_api::cancelRecoveryEmailAddressVerification &request);
+
   void on_request(uint64 id, td_api::requestPasswordRecovery &request);
 
   void on_request(uint64 id, td_api::checkPasswordRecoveryCode &request);
@@ -585,6 +605,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getMessageThread &request);
 
+  void on_request(uint64 id, const td_api::getMessageReadDate &request);
+
   void on_request(uint64 id, const td_api::getMessageViewers &request);
 
   void on_request(uint64 id, const td_api::getMessages &request);
@@ -650,6 +672,22 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::loadChats &request);
 
   void on_request(uint64 id, const td_api::getChats &request);
+
+  void on_request(uint64 id, const td_api::getPinnedSavedMessagesTopics &request);
+
+  void on_request(uint64 id, const td_api::getSavedMessagesTopics &request);
+
+  void on_request(uint64 id, const td_api::getSavedMessagesTopicHistory &request);
+
+  void on_request(uint64 id, const td_api::getSavedMessagesTopicMessageByDate &request);
+
+  void on_request(uint64 id, const td_api::deleteSavedMessagesTopicHistory &request);
+
+  void on_request(uint64 id, const td_api::deleteSavedMessagesTopicMessagesByDate &request);
+
+  void on_request(uint64 id, const td_api::toggleSavedMessagesTopicIsPinned &request);
+
+  void on_request(uint64 id, const td_api::setPinnedSavedMessagesTopics &request);
 
   void on_request(uint64 id, td_api::searchPublicChat &request);
 
@@ -717,6 +755,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::searchMessages &request);
 
+  void on_request(uint64 id, td_api::searchSavedMessages &request);
+
   void on_request(uint64 id, const td_api::searchCallMessages &request);
 
   void on_request(uint64 id, td_api::searchOutgoingDocumentMessages &request);
@@ -754,6 +794,10 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::getMessageAddedReactions &request);
 
   void on_request(uint64 id, const td_api::setDefaultReactionType &request);
+
+  void on_request(uint64 id, const td_api::getSavedMessagesTags &request);
+
+  void on_request(uint64 id, td_api::setSavedMessagesTagLabel &request);
 
   void on_request(uint64 id, td_api::getMessagePublicForwards &request);
 
@@ -883,13 +927,13 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::createSupergroupChat &request);
 
-  void on_request(uint64 id, td_api::createSecretChat &request);
+  void on_request(uint64 id, const td_api::createSecretChat &request);
 
   void on_request(uint64 id, td_api::createNewBasicGroupChat &request);
 
   void on_request(uint64 id, td_api::createNewSupergroupChat &request);
 
-  void on_request(uint64 id, td_api::createNewSecretChat &request);
+  void on_request(uint64 id, const td_api::createNewSecretChat &request);
 
   void on_request(uint64 id, const td_api::createCall &request);
 
@@ -1008,6 +1052,16 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::getArchiveChatListSettings &request);
 
   void on_request(uint64 id, td_api::setArchiveChatListSettings &request);
+
+  void on_request(uint64 id, const td_api::getReadDatePrivacySettings &request);
+
+  void on_request(uint64 id, td_api::setReadDatePrivacySettings &request);
+
+  void on_request(uint64 id, const td_api::getNewChatPrivacySettings &request);
+
+  void on_request(uint64 id, td_api::setNewChatPrivacySettings &request);
+
+  void on_request(uint64 id, const td_api::canSendMessageToUser &request);
 
   void on_request(uint64 id, td_api::setChatTitle &request);
 
@@ -1429,6 +1483,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::searchEmojis &request);
 
+  void on_request(uint64 id, td_api::getKeywordEmojis &request);
+
   void on_request(uint64 id, const td_api::getEmojiCategories &request);
 
   void on_request(uint64 id, td_api::getAnimatedEmoji &request);
@@ -1715,6 +1771,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::searchStringsByPrefix &request);
 
+  void on_request(uint64 id, const td_api::getCountryFlagEmoji &request);
+
   void on_request(uint64 id, const td_api::getFileMimeType &request);
 
   void on_request(uint64 id, const td_api::getFileExtension &request);
@@ -1777,6 +1835,7 @@ class Td final : public Actor {
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::parseMarkdown &request);
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::getMarkdownText &request);
   static td_api::object_ptr<td_api::Object> do_static_request(td_api::searchStringsByPrefix &request);
+  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getCountryFlagEmoji &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getFileMimeType &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getFileExtension &request);
   static td_api::object_ptr<td_api::Object> do_static_request(const td_api::cleanFileName &request);
@@ -1803,10 +1862,6 @@ class Td final : public Actor {
     int32 api_id_ = 0;
     string api_hash_;
     bool use_secret_chats_ = false;
-
-    // TODO move to options and remove
-    bool enable_storage_optimizer_ = false;
-    bool ignore_file_names_ = false;
   };
 
   void finish_set_parameters();
@@ -1817,7 +1872,13 @@ class Td final : public Actor {
 
   void init_file_manager();
 
+  void init_non_actor_managers();
+
   void init_managers();
+
+  void init_pure_actor_managers();
+
+  void process_binlog_events(TdDb::OpenedDatabase &&events);
 
   void clear();
 

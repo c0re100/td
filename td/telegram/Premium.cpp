@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -12,6 +12,7 @@
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogId.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/Document.h"
 #include "td/telegram/DocumentsManager.h"
 #include "td/telegram/GiveawayParameters.h"
@@ -105,7 +106,7 @@ Result<telegram_api::object_ptr<telegram_api::InputPeer>> get_boost_input_peer(T
     return nullptr;
   }
 
-  if (!td->messages_manager_->have_dialog_force(dialog_id, "get_boost_input_peer")) {
+  if (!td->dialog_manager_->have_dialog_force(dialog_id, "get_boost_input_peer")) {
     return Status::Error(400, "Chat to boost not found");
   }
   if (dialog_id.get_type() != DialogType::Channel ||
@@ -115,7 +116,7 @@ Result<telegram_api::object_ptr<telegram_api::InputPeer>> get_boost_input_peer(T
   if (!td->contacts_manager_->get_channel_status(dialog_id.get_channel_id()).is_administrator()) {
     return Status::Error(400, "Not enough rights in the chat");
   }
-  auto boost_input_peer = td->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
+  auto boost_input_peer = td->dialog_manager_->get_input_peer(dialog_id, AccessRights::Write);
   CHECK(boost_input_peer != nullptr);
   return std::move(boost_input_peer);
 }
@@ -296,7 +297,7 @@ class GetPremiumGiftCodeOptionsQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
-    td_->messages_manager_->on_get_dialog_error(boosted_dialog_id_, status, "GetPremiumGiftCodeOptionsQuery");
+    td_->dialog_manager_->on_get_dialog_error(boosted_dialog_id_, status, "GetPremiumGiftCodeOptionsQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -333,12 +334,12 @@ class CheckGiftCodeQuery final : public Td::ResultHandler {
     if (result->from_id_ != nullptr) {
       creator_dialog_id = DialogId(result->from_id_);
       if (!creator_dialog_id.is_valid() ||
-          !td_->messages_manager_->have_dialog_info_force(creator_dialog_id, "CheckGiftCodeQuery")) {
+          !td_->dialog_manager_->have_dialog_info_force(creator_dialog_id, "CheckGiftCodeQuery")) {
         LOG(ERROR) << "Receive " << to_string(result);
         return on_error(Status::Error(500, "Receive invalid response"));
       }
       if (creator_dialog_id.get_type() != DialogType::User) {
-        td_->messages_manager_->force_create_dialog(creator_dialog_id, "CheckGiftCodeQuery", true);
+        td_->dialog_manager_->force_create_dialog(creator_dialog_id, "CheckGiftCodeQuery", true);
       }
     }
     UserId user_id(result->to_id_);
@@ -403,7 +404,7 @@ class LaunchPrepaidGiveawayQuery final : public Td::ResultHandler {
 
   void send(int64 giveaway_id, const GiveawayParameters &parameters) {
     auto dialog_id = parameters.get_boosted_dialog_id();
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Write);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Write);
     CHECK(input_peer != nullptr);
     send_query(G()->net_query_creator().create(telegram_api::payments_launchPrepaidGiveaway(
         std::move(input_peer), giveaway_id, parameters.get_input_store_payment_premium_giveaway(td_, string(), 0))));
@@ -436,7 +437,7 @@ class GetGiveawayInfoQuery final : public Td::ResultHandler {
 
   void send(DialogId dialog_id, ServerMessageId server_message_id) {
     dialog_id_ = dialog_id;
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read);
     if (input_peer == nullptr) {
       return on_error(Status::Error(400, "Can't access the chat"));
     }
@@ -467,10 +468,9 @@ class GetGiveawayInfoQuery final : public Td::ResultHandler {
               LOG(ERROR) << "Receive " << to_string(info);
             } else {
               DialogId dialog_id(channel_id);
-              td_->messages_manager_->force_create_dialog(dialog_id, "GetGiveawayInfoQuery");
+              td_->dialog_manager_->force_create_dialog(dialog_id, "GetGiveawayInfoQuery");
               return td_api::make_object<td_api::premiumGiveawayParticipantStatusAdministrator>(
-                  td_->messages_manager_->get_chat_id_object(dialog_id,
-                                                             "premiumGiveawayParticipantStatusAdministrator"));
+                  td_->dialog_manager_->get_chat_id_object(dialog_id, "premiumGiveawayParticipantStatusAdministrator"));
             }
           }
           if (!info->disallowed_country_.empty()) {
@@ -513,7 +513,7 @@ class GetGiveawayInfoQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetGiveawayInfoQuery");
+    td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "GetGiveawayInfoQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -643,7 +643,8 @@ const vector<Slice> &get_premium_limit_keys() {
                                         "stories_sent_weekly",
                                         "stories_sent_monthly",
                                         "stories_suggested_reactions",
-                                        "recommended_channels"};
+                                        "recommended_channels",
+                                        "saved_dialogs_pinned"};
   return limit_keys;
 }
 
@@ -664,6 +665,8 @@ static Slice get_limit_type_key(const td_api::PremiumLimitType *limit_type) {
       return Slice("dialogs_pinned");
     case td_api::premiumLimitTypePinnedArchivedChatCount::ID:
       return Slice("dialogs_folder_pinned");
+    case td_api::premiumLimitTypePinnedSavedMessagesTopicCount::ID:
+      return Slice("saved_dialogs_pinned");
     case td_api::premiumLimitTypeCreatedPublicChatCount::ID:
       return Slice("channels_public");
     case td_api::premiumLimitTypeCaptionLength::ID:
@@ -833,6 +836,9 @@ static td_api::object_ptr<td_api::premiumLimit> get_premium_limit_object(Slice k
     }
     if (key == "dialogs_folder_pinned") {
       return td_api::make_object<td_api::premiumLimitTypePinnedArchivedChatCount>();
+    }
+    if (key == "saved_dialogs_pinned") {
+      return td_api::make_object<td_api::premiumLimitTypePinnedSavedMessagesTopicCount>();
     }
     if (key == "channels_public") {
       return td_api::make_object<td_api::premiumLimitTypeCreatedPublicChatCount>();

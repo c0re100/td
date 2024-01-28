@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -76,7 +76,9 @@ enum class MessageContentType : int32 {
   Giveaway,
   GiveawayLaunch,
   GiveawayResults,
-  GiveawayWinners
+  GiveawayWinners,
+  ExpiredVideoNote,
+  ExpiredVoiceNote
 };
 // increase MessageUnsupported::CURRENT_VERSION each time a new message content type is added
 
@@ -91,6 +93,8 @@ bool is_secret_message_content(int32 ttl, MessageContentType content_type);
 bool is_service_message_content(MessageContentType content_type);
 
 bool is_supported_reply_message_content(MessageContentType content_type);
+
+bool is_expired_message_content(MessageContentType content_type);
 
 bool can_have_message_content_caption(MessageContentType content_type);
 

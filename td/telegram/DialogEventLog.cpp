@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2023
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -13,6 +13,7 @@
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogInviteLink.h"
 #include "td/telegram/DialogLocation.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/DialogParticipant.h"
 #include "td/telegram/EmojiStatus.h"
 #include "td/telegram/ForumTopicInfo.h"
@@ -232,14 +233,14 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
     case telegram_api::channelAdminLogEventActionChangeLinkedChat::ID: {
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeLinkedChat>(action_ptr);
 
-      auto get_dialog_from_channel_id = [messages_manager = td->messages_manager_.get()](int64 channel_id_int) {
+      auto get_dialog_from_channel_id = [dialog_manager = td->dialog_manager_.get()](int64 channel_id_int) {
         ChannelId channel_id(channel_id_int);
         if (!channel_id.is_valid()) {
           return DialogId();
         }
 
         DialogId dialog_id(channel_id);
-        messages_manager->force_create_dialog(dialog_id, "get_dialog_from_channel_id");
+        dialog_manager->force_create_dialog(dialog_id, "get_dialog_from_channel_id");
         return dialog_id;
       };
 
@@ -250,8 +251,8 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
         return nullptr;
       }
       return td_api::make_object<td_api::chatEventLinkedChatChanged>(
-          td->messages_manager_->get_chat_id_object(old_linked_dialog_id, "chatEventLinkedChatChanged"),
-          td->messages_manager_->get_chat_id_object(new_linked_dialog_id, "chatEventLinkedChatChanged 2"));
+          td->dialog_manager_->get_chat_id_object(old_linked_dialog_id, "chatEventLinkedChatChanged"),
+          td->dialog_manager_->get_chat_id_object(new_linked_dialog_id, "chatEventLinkedChatChanged 2"));
     }
     case telegram_api::channelAdminLogEventActionChangeLocation::ID: {
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeLocation>(action_ptr);
@@ -618,7 +619,7 @@ static telegram_api::object_ptr<telegram_api::channelAdminLogEventsFilter> get_i
 void get_dialog_event_log(Td *td, DialogId dialog_id, const string &query, int64 from_event_id, int32 limit,
                           const td_api::object_ptr<td_api::chatEventLogFilters> &filters,
                           const vector<UserId> &user_ids, Promise<td_api::object_ptr<td_api::chatEvents>> &&promise) {
-  if (!td->messages_manager_->have_dialog_force(dialog_id, "get_dialog_event_log")) {
+  if (!td->dialog_manager_->have_dialog_force(dialog_id, "get_dialog_event_log")) {
     return promise.set_error(Status::Error(400, "Chat not found"));
   }
 
