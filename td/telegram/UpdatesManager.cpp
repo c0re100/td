@@ -55,6 +55,7 @@
 #include "td/telegram/ReactionListType.h"
 #include "td/telegram/ReactionManager.h"
 #include "td/telegram/ReactionType.h"
+#include "td/telegram/SavedMessagesManager.h"
 #include "td/telegram/ScheduledServerMessageId.h"
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/SecretChatsManager.h"
@@ -784,7 +785,7 @@ bool UpdatesManager::is_acceptable_message_reply_header(
     }
     case telegram_api::messageReplyStoryHeader::ID: {
       auto reply_header = static_cast<const telegram_api::messageReplyStoryHeader *>(header.get());
-      return is_acceptable_user(UserId(reply_header->user_id_));
+      return is_acceptable_peer(reply_header->peer_);
     }
     default:
       UNREACHABLE();
@@ -980,6 +981,7 @@ bool UpdatesManager::is_acceptable_message(const telegram_api::Message *message_
         case telegram_api::messageActionSetChatWallPaper::ID:
         case telegram_api::messageActionGiveawayLaunch::ID:
         case telegram_api::messageActionGiveawayResults::ID:
+        case telegram_api::messageActionBoostApply::ID:
           break;
         case telegram_api::messageActionChatCreate::ID: {
           auto chat_create = static_cast<const telegram_api::messageActionChatCreate *>(action);
@@ -1180,7 +1182,7 @@ void UpdatesManager::on_get_updates_impl(tl_object_ptr<telegram_api::Updates> up
       auto message = make_tl_object<telegram_api::message>(
           fix_short_message_flags(update->flags_), update->out_, update->mentioned_, update->media_unread_,
           update->silent_, false, false, false, false, false, false, false, update->id_,
-          make_tl_object<telegram_api::peerUser>(from_id), make_tl_object<telegram_api::peerUser>(update->user_id_),
+          make_tl_object<telegram_api::peerUser>(from_id), 0, make_tl_object<telegram_api::peerUser>(update->user_id_),
           nullptr, std::move(update->fwd_from_), update->via_bot_id_, std::move(update->reply_to_), update->date_,
           update->message_, nullptr, nullptr, std::move(update->entities_), 0, 0, nullptr, 0, string(), 0, nullptr,
           Auto(), update->ttl_period_);
@@ -1194,7 +1196,7 @@ void UpdatesManager::on_get_updates_impl(tl_object_ptr<telegram_api::Updates> up
       auto message = make_tl_object<telegram_api::message>(
           fix_short_message_flags(update->flags_), update->out_, update->mentioned_, update->media_unread_,
           update->silent_, false, false, false, false, false, false, false, update->id_,
-          make_tl_object<telegram_api::peerUser>(update->from_id_),
+          make_tl_object<telegram_api::peerUser>(update->from_id_), 0,
           make_tl_object<telegram_api::peerChat>(update->chat_id_), nullptr, std::move(update->fwd_from_),
           update->via_bot_id_, std::move(update->reply_to_), update->date_, update->message_, nullptr, nullptr,
           std::move(update->entities_), 0, 0, nullptr, 0, string(), 0, nullptr, Auto(), update->ttl_period_);
@@ -2097,7 +2099,9 @@ void UpdatesManager::on_get_pts_update(int32 pts,
     }
     case telegram_api::updates_differenceEmpty::ID:
     case telegram_api::updates_differenceTooLong::ID: {
-      LOG(ERROR) << "Receive " << to_string(difference_ptr);
+      LOG(ERROR) << "Receive " << oneline(to_string(difference_ptr)) << " for request with PTS = " << pts - 1
+                 << ", but have pending " << oneline(to_string(pending_pts_updates_.begin()->update))
+                 << " with PTS = " << pending_pts_updates_.begin()->pts;
       break;
       default:
         UNREACHABLE();
@@ -4045,12 +4049,12 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updatePinnedDialogs> 
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateSavedDialogPinned> update, Promise<Unit> &&promise) {
-  td_->messages_manager_->on_update_pinned_saved_messages_topics();
+  td_->saved_messages_manager_->reload_pinned_saved_messages_topics();
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updatePinnedSavedDialogs> update, Promise<Unit> &&promise) {
-  td_->messages_manager_->on_update_pinned_saved_messages_topics();
+  td_->saved_messages_manager_->reload_pinned_saved_messages_topics();
   promise.set_value(Unit());
 }
 

@@ -55,6 +55,7 @@ class Td;
 
 class StoryManager final : public Actor {
   struct Story {
+    DialogId sender_dialog_id_;
     int32 date_ = 0;
     int32 expire_date_ = 0;
     int32 receive_date_ = 0;
@@ -226,8 +227,8 @@ class StoryManager final : public Actor {
                   td_api::object_ptr<td_api::inputStoryAreas> &&input_areas,
                   td_api::object_ptr<td_api::formattedText> &&input_caption, Promise<Unit> &&promise);
 
-  void set_story_privacy_settings(DialogId owner_dialog_id, StoryId story_id,
-                                  td_api::object_ptr<td_api::StoryPrivacySettings> &&settings, Promise<Unit> &&promise);
+  void set_story_privacy_settings(StoryId story_id, td_api::object_ptr<td_api::StoryPrivacySettings> &&settings,
+                                  Promise<Unit> &&promise);
 
   void toggle_story_is_pinned(DialogId owner_dialog_id, StoryId story_id, bool is_pinned, Promise<Unit> &&promise);
 

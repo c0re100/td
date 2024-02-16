@@ -15,18 +15,25 @@
 #include "td/telegram/misc.h"
 #include "td/telegram/OptionManager.h"
 #include "td/telegram/ReactionManager.hpp"
+#include "td/telegram/ReactionType.hpp"
+#include "td/telegram/SavedMessagesManager.h"
 #include "td/telegram/StickerFormat.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
 
+#include "td/db/SqliteKeyValue.h"
+#include "td/db/SqliteKeyValueAsync.h"
+
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
 #include "td/utils/ScopeGuard.h"
+#include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
+#include "td/utils/tl_helpers.h"
 
 #include <algorithm>
 #include <type_traits>
@@ -180,9 +187,17 @@ class GetSavedReactionTagsQuery final : public Td::ResultHandler {
       : promise_(std::move(promise)) {
   }
 
-  void send(int64 hash) {
-    send_query(G()->net_query_creator().create(telegram_api::messages_getSavedReactionTags(hash),
-                                               {td_->dialog_manager_->get_my_dialog_id()}));
+  void send(SavedMessagesTopicId saved_messages_topic_id, int64 hash) {
+    int32 flags = 0;
+    telegram_api::object_ptr<telegram_api::InputPeer> saved_input_peer;
+    if (saved_messages_topic_id.is_valid()) {
+      flags |= telegram_api::messages_getSavedReactionTags::PEER_MASK;
+      saved_input_peer = saved_messages_topic_id.get_input_peer(td_);
+      CHECK(saved_input_peer != nullptr);
+    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::messages_getSavedReactionTags(flags, std::move(saved_input_peer), hash),
+        {td_->dialog_manager_->get_my_dialog_id()}));
   }
 
   void on_result(BufferSlice packet) final {
@@ -246,6 +261,41 @@ td_api::object_ptr<td_api::savedMessagesTag> ReactionManager::SavedReactionTag::
   return td_api::make_object<td_api::savedMessagesTag>(reaction_type_.get_reaction_type_object(), title_, count_);
 }
 
+template <class StorerT>
+void ReactionManager::SavedReactionTag::store(StorerT &storer) const {
+  bool has_title = !title_.empty();
+  bool has_count = count_ != 0;
+  BEGIN_STORE_FLAGS();
+  STORE_FLAG(has_title);
+  STORE_FLAG(has_count);
+  END_STORE_FLAGS();
+  td::store(reaction_type_, storer);
+  if (has_title) {
+    td::store(title_, storer);
+  }
+  if (has_count) {
+    td::store(count_, storer);
+  }
+}
+
+template <class ParserT>
+void ReactionManager::SavedReactionTag::parse(ParserT &parser) {
+  bool has_title;
+  bool has_count;
+  BEGIN_PARSE_FLAGS();
+  PARSE_FLAG(has_title);
+  PARSE_FLAG(has_count);
+  END_PARSE_FLAGS();
+  td::parse(reaction_type_, parser);
+  hash_ = reaction_type_.get_hash();
+  if (has_title) {
+    td::parse(title_, parser);
+  }
+  if (has_count) {
+    td::parse(count_, parser);
+  }
+}
+
 bool operator==(const ReactionManager::SavedReactionTag &lhs, const ReactionManager::SavedReactionTag &rhs) {
   return lhs.reaction_type_ == rhs.reaction_type_ && lhs.title_ == rhs.title_ && lhs.count_ == rhs.count_;
 }
@@ -272,13 +322,12 @@ td_api::object_ptr<td_api::savedMessagesTags> ReactionManager::SavedReactionTags
       transform(tags_, [](const SavedReactionTag &tag) { return tag.get_saved_messages_tag_object(); }));
 }
 
-void ReactionManager::SavedReactionTags::update_saved_messages_tags(const vector<ReactionType> &old_tags,
-                                                                    const vector<ReactionType> &new_tags,
-                                                                    bool &is_changed, bool &need_reload_title) {
+bool ReactionManager::SavedReactionTags::update_saved_messages_tags(const vector<ReactionType> &old_tags,
+                                                                    const vector<ReactionType> &new_tags) {
   if (!is_inited_) {
-    return;
+    return false;
   }
-  is_changed = false;
+  bool is_changed = false;
   for (const auto &old_tag : old_tags) {
     if (!td::contains(new_tags, old_tag)) {
       CHECK(!old_tag.is_empty());
@@ -309,7 +358,6 @@ void ReactionManager::SavedReactionTags::update_saved_messages_tags(const vector
       }
       if (!is_found) {
         tags_.emplace_back(new_tag, string(), 1);
-        need_reload_title = true;
       }
     }
   }
@@ -317,6 +365,7 @@ void ReactionManager::SavedReactionTags::update_saved_messages_tags(const vector
     std::sort(tags_.begin(), tags_.end());
     hash_ = calc_hash();
   }
+  return is_changed;
 }
 
 bool ReactionManager::SavedReactionTags::set_tag_title(const ReactionType &reaction_type, const string &title) {
@@ -340,7 +389,7 @@ bool ReactionManager::SavedReactionTags::set_tag_title(const ReactionType &react
   tags_.emplace_back(reaction_type, title, 0);
   std::sort(tags_.begin(), tags_.end());
   hash_ = calc_hash();
-  return false;
+  return true;
 }
 
 int64 ReactionManager::SavedReactionTags::calc_hash() const {
@@ -353,6 +402,23 @@ int64 ReactionManager::SavedReactionTags::calc_hash() const {
     numbers.push_back(tag.count_);
   }
   return get_vector_hash(numbers);
+}
+
+template <class StorerT>
+void ReactionManager::SavedReactionTags::store(StorerT &storer) const {
+  CHECK(is_inited_);
+  BEGIN_STORE_FLAGS();
+  END_STORE_FLAGS();
+  td::store(tags_, storer);
+}
+
+template <class ParserT>
+void ReactionManager::SavedReactionTags::parse(ParserT &parser) {
+  BEGIN_PARSE_FLAGS();
+  END_PARSE_FLAGS();
+  td::parse(tags_, parser);
+  hash_ = calc_hash();
+  is_inited_ = true;
 }
 
 ReactionManager::ReactionManager(Td *td, ActorShared<> parent) : td_(td), parent_(std::move(parent)) {
@@ -428,13 +494,27 @@ td_api::object_ptr<td_api::availableReactions> ReactionManager::get_sorted_avail
   }
 
   bool is_premium = td_->option_manager_->get_option_boolean("is_premium");
-  bool show_premium = is_premium;
+  bool show_premium = is_premium || is_tag;
   vector<ReactionType> recent_reactions;
   vector<ReactionType> top_reactions;
   if (is_tag) {
-    top_reactions = get_reaction_list(ReactionListType::DefaultTag).reaction_types_;
     if (is_premium) {
-      append(top_reactions, get_reaction_list(ReactionListType::Top).reaction_types_);
+      auto all_tags = get_saved_reaction_tags(SavedMessagesTopicId());
+      for (auto &tag : all_tags->tags_) {
+        top_reactions.push_back(tag.reaction_type_);
+      }
+      for (auto &reaction_type : get_reaction_list(ReactionListType::DefaultTag).reaction_types_) {
+        if (!td::contains(top_reactions, reaction_type)) {
+          top_reactions.push_back(reaction_type);
+        }
+      }
+      for (auto &reaction_type : get_reaction_list(ReactionListType::Top).reaction_types_) {
+        if (!td::contains(top_reactions, reaction_type)) {
+          top_reactions.push_back(reaction_type);
+        }
+      }
+    } else {
+      top_reactions = get_reaction_list(ReactionListType::DefaultTag).reaction_types_;
     }
   } else {
     recent_reactions = get_reaction_list(ReactionListType::Recent).reaction_types_;
@@ -475,8 +555,8 @@ td_api::object_ptr<td_api::availableReactions> ReactionManager::get_sorted_avail
         if (reaction_type.is_custom_reaction()) {
           added_custom_reaction_types.insert(reaction_type);
         }
-        reaction_objects.push_back(
-            td_api::make_object<td_api::availableReaction>(reaction_type.get_reaction_type_object(), false));
+        reaction_objects.push_back(td_api::make_object<td_api::availableReaction>(
+            reaction_type.get_reaction_type_object(), is_tag && !is_premium));
       } else if (reaction_type.is_custom_reaction() && available_reactions.allow_all_custom_ &&
                  added_custom_reaction_types.insert(reaction_type).second) {
         // add implicitly available custom reaction
@@ -488,14 +568,11 @@ td_api::object_ptr<td_api::availableReactions> ReactionManager::get_sorted_avail
     }
   };
   if (show_premium) {
-    if (top_reactions.size() > 2 * static_cast<size_t>(row_size)) {
+    if (!is_tag && top_reactions.size() > 2 * static_cast<size_t>(row_size)) {
       top_reactions.resize(2 * static_cast<size_t>(row_size));
     }
     add_reactions(top_reaction_objects, top_reactions);
-
-    if (!recent_reactions.empty()) {
-      add_reactions(recent_reaction_objects, recent_reactions);
-    }
+    add_reactions(recent_reaction_objects, recent_reactions);
   } else {
     add_reactions(top_reaction_objects, top_reactions);
   }
@@ -873,31 +950,103 @@ void ReactionManager::send_set_default_reaction_query() {
       ReactionType(td_->option_manager_->get_option_string("default_reaction")));
 }
 
-void ReactionManager::get_saved_messages_tags(Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise) {
-  if (tags_.is_inited_) {
-    return promise.set_value(tags_.get_saved_messages_tags_object());
+void ReactionManager::load_all_saved_reaction_tags_from_database() {
+  if (are_all_tags_loaded_from_database_ || all_tags_.is_inited_ || !G()->use_message_database()) {
+    return;
   }
-  reget_saved_messages_tags(std::move(promise));
+  are_all_tags_loaded_from_database_ = true;
+
+  auto value = G()->td_db()->get_sqlite_sync_pmc()->get(get_saved_messages_tags_database_key(SavedMessagesTopicId()));
+  if (!value.empty()) {
+    if (log_event_parse(all_tags_, value).is_ok()) {
+      send_update_saved_messages_tags(SavedMessagesTopicId(), &all_tags_, true);
+    } else {
+      LOG(ERROR) << "Failed to load all tags from database";
+      all_tags_ = {};
+    }
+  }
+  reget_saved_messages_tags(SavedMessagesTopicId(), Auto());
 }
 
-void ReactionManager::reget_saved_messages_tags(Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise) {
-  auto &promises = pending_get_saved_reaction_tags_queries_;
+void ReactionManager::load_saved_reaction_tags_from_database(SavedMessagesTopicId saved_messages_topic_id,
+                                                             SavedReactionTags *tags) {
+  if (!G()->use_message_database()) {
+    return;
+  }
+
+  auto value = G()->td_db()->get_sqlite_sync_pmc()->get(get_saved_messages_tags_database_key(saved_messages_topic_id));
+  if (value.empty()) {
+    return;
+  }
+  if (log_event_parse(*tags, value).is_error()) {
+    LOG(ERROR) << "Failed to load all tags from database";
+    *tags = {};
+    return;
+  }
+
+  send_update_saved_messages_tags(saved_messages_topic_id, tags, true);
+  reget_saved_messages_tags(saved_messages_topic_id, Auto());
+}
+
+ReactionManager::SavedReactionTags *ReactionManager::get_saved_reaction_tags(
+    SavedMessagesTopicId saved_messages_topic_id) {
+  if (saved_messages_topic_id == SavedMessagesTopicId()) {
+    load_all_saved_reaction_tags_from_database();
+    return &all_tags_;
+  }
+  auto &tags = topic_tags_[saved_messages_topic_id];
+  if (tags == nullptr) {
+    tags = make_unique<SavedReactionTags>();
+    load_saved_reaction_tags_from_database(saved_messages_topic_id, tags.get());
+  }
+  return tags.get();
+}
+
+void ReactionManager::get_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id,
+                                              Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise) {
+  if (!saved_messages_topic_id.is_valid() && saved_messages_topic_id != SavedMessagesTopicId()) {
+    return promise.set_error(Status::Error(400, "Invalid Saved Messages topic specified"));
+  }
+  const auto *tags = get_saved_reaction_tags(saved_messages_topic_id);
+  if (tags->is_inited_) {
+    return promise.set_value(tags->get_saved_messages_tags_object());
+  }
+  reget_saved_messages_tags(saved_messages_topic_id, std::move(promise));
+}
+
+void ReactionManager::reget_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id,
+                                                Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise) {
+  auto &promises = saved_messages_topic_id == SavedMessagesTopicId()
+                       ? pending_get_all_saved_reaction_tags_queries_
+                       : pending_get_topic_saved_reaction_tags_queries_[saved_messages_topic_id];
   promises.push_back(std::move(promise));
   if (promises.size() != 1) {
     return;
   }
-  auto query_promise = PromiseCreator::lambda(
-      [actor_id = actor_id(this)](Result<telegram_api::object_ptr<telegram_api::messages_SavedReactionTags>> r_tags) {
-        send_closure(actor_id, &ReactionManager::on_get_saved_messages_tags, std::move(r_tags));
+  auto query_promise =
+      PromiseCreator::lambda([actor_id = actor_id(this), saved_messages_topic_id](
+                                 Result<telegram_api::object_ptr<telegram_api::messages_SavedReactionTags>> r_tags) {
+        send_closure(actor_id, &ReactionManager::on_get_saved_messages_tags, saved_messages_topic_id,
+                     std::move(r_tags));
       });
-  td_->create_handler<GetSavedReactionTagsQuery>(std::move(query_promise))->send(tags_.hash_);
+  const auto *tags = get_saved_reaction_tags(saved_messages_topic_id);
+  td_->create_handler<GetSavedReactionTagsQuery>(std::move(query_promise))->send(saved_messages_topic_id, tags->hash_);
 }
 
 void ReactionManager::on_get_saved_messages_tags(
+    SavedMessagesTopicId saved_messages_topic_id,
     Result<telegram_api::object_ptr<telegram_api::messages_SavedReactionTags>> &&r_tags) {
   G()->ignore_result_if_closing(r_tags);
-  auto promises = std::move(pending_get_saved_reaction_tags_queries_);
-  reset_to_empty(pending_get_saved_reaction_tags_queries_);
+  vector<Promise<td_api::object_ptr<td_api::savedMessagesTags>>> promises;
+  if (saved_messages_topic_id == SavedMessagesTopicId()) {
+    promises = std::move(pending_get_all_saved_reaction_tags_queries_);
+    reset_to_empty(pending_get_all_saved_reaction_tags_queries_);
+  } else {
+    auto it = pending_get_topic_saved_reaction_tags_queries_.find(saved_messages_topic_id);
+    CHECK(it != pending_get_topic_saved_reaction_tags_queries_.end());
+    promises = std::move(it->second);
+    pending_get_topic_saved_reaction_tags_queries_.erase(it);
+  }
   CHECK(!promises.empty());
 
   if (r_tags.is_error()) {
@@ -906,9 +1055,12 @@ void ReactionManager::on_get_saved_messages_tags(
 
   auto tags_ptr = r_tags.move_as_ok();
   bool need_send_update = false;
+  auto *reaction_tags = get_saved_reaction_tags(saved_messages_topic_id);
   switch (tags_ptr->get_id()) {
     case telegram_api::messages_savedReactionTagsNotModified::ID:
-      // nothing to do
+      if (!reaction_tags->is_inited_) {
+        LOG(ERROR) << "Receive messages.savedReactionTagsNotModified for non-inited tags";
+      }
       break;
     case telegram_api::messages_savedReactionTags::ID: {
       auto tags = telegram_api::move_object_as<telegram_api::messages_savedReactionTags>(tags_ptr);
@@ -921,15 +1073,15 @@ void ReactionManager::on_get_saved_messages_tags(
         }
       }
       std::sort(saved_reaction_tags.begin(), saved_reaction_tags.end());
-      tags_.hash_ = tags->hash_;
-      if (saved_reaction_tags != tags_.tags_) {
-        tags_.tags_ = std::move(saved_reaction_tags);
+      reaction_tags->hash_ = tags->hash_;
+      if (saved_reaction_tags != reaction_tags->tags_) {
+        reaction_tags->tags_ = std::move(saved_reaction_tags);
         need_send_update = true;
       }
-      if (tags_.hash_ != tags_.calc_hash()) {
+      if (reaction_tags->hash_ != reaction_tags->calc_hash()) {
         LOG(ERROR) << "Receive unexpected Saved Messages tag hash";
       }
-      tags_.is_inited_ = true;
+      reaction_tags->is_inited_ = true;
       break;
     }
     default:
@@ -937,41 +1089,60 @@ void ReactionManager::on_get_saved_messages_tags(
   }
 
   if (need_send_update) {
-    send_update_saved_messages_tags();
+    send_update_saved_messages_tags(saved_messages_topic_id, reaction_tags);
   }
   for (auto &promise : promises) {
-    promise.set_value(tags_.get_saved_messages_tags_object());
+    if (promise) {
+      promise.set_value(reaction_tags->get_saved_messages_tags_object());
+    }
   }
 }
 
-td_api::object_ptr<td_api::updateSavedMessagesTags> ReactionManager::get_update_saved_messages_tags_object() const {
-  return td_api::make_object<td_api::updateSavedMessagesTags>(tags_.get_saved_messages_tags_object());
+string ReactionManager::get_saved_messages_tags_database_key(SavedMessagesTopicId saved_messages_topic_id) {
+  return PSTRING() << "saved_messages_tags" << saved_messages_topic_id.get_unique_id();
 }
 
-void ReactionManager::send_update_saved_messages_tags() {
-  send_closure(G()->td(), &Td::send_update, get_update_saved_messages_tags_object());
+td_api::object_ptr<td_api::updateSavedMessagesTags> ReactionManager::get_update_saved_messages_tags_object(
+    SavedMessagesTopicId saved_messages_topic_id, const SavedReactionTags *tags) const {
+  CHECK(tags != nullptr);
+  return td_api::make_object<td_api::updateSavedMessagesTags>(
+      td_->saved_messages_manager_->get_saved_messages_topic_id_object(saved_messages_topic_id),
+      tags->get_saved_messages_tags_object());
+}
+
+void ReactionManager::send_update_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id,
+                                                      const SavedReactionTags *tags, bool from_database) {
+  send_closure(G()->td(), &Td::send_update, get_update_saved_messages_tags_object(saved_messages_topic_id, tags));
+  if (!from_database && G()->use_message_database()) {
+    G()->td_db()->get_sqlite_pmc()->set(get_saved_messages_tags_database_key(saved_messages_topic_id),
+                                        log_event_store(*tags).as_slice().str(), Promise<Unit>());
+  }
 }
 
 void ReactionManager::on_update_saved_reaction_tags(Promise<Unit> &&promise) {
-  reget_saved_messages_tags(PromiseCreator::lambda(
-      [promise = std::move(promise)](Result<td_api::object_ptr<td_api::savedMessagesTags>> result) mutable {
-        promise.set_value(Unit());
-      }));
+  reget_saved_messages_tags(
+      SavedMessagesTopicId(),
+      PromiseCreator::lambda(
+          [promise = std::move(promise)](Result<td_api::object_ptr<td_api::savedMessagesTags>> result) mutable {
+            promise.set_value(Unit());
+          }));
 }
 
-void ReactionManager::update_saved_messages_tags(const vector<ReactionType> &old_tags,
+void ReactionManager::update_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id,
+                                                 const vector<ReactionType> &old_tags,
                                                  const vector<ReactionType> &new_tags) {
   if (old_tags == new_tags) {
     return;
   }
-  bool is_changed = false;
-  bool need_reload_title = false;
-  tags_.update_saved_messages_tags(old_tags, new_tags, is_changed, need_reload_title);
-  if (is_changed) {
-    send_update_saved_messages_tags();
+  auto *all_tags = get_saved_reaction_tags(SavedMessagesTopicId());
+  if (all_tags->update_saved_messages_tags(old_tags, new_tags)) {
+    send_update_saved_messages_tags(SavedMessagesTopicId(), all_tags);
   }
-  if (need_reload_title && td_->option_manager_->get_option_boolean("is_premium")) {
-    on_update_saved_reaction_tags(Auto());
+  if (saved_messages_topic_id != SavedMessagesTopicId()) {
+    auto tags = get_saved_reaction_tags(saved_messages_topic_id);
+    if (tags->update_saved_messages_tags(old_tags, new_tags)) {
+      send_update_saved_messages_tags(saved_messages_topic_id, tags);
+    }
   }
 }
 
@@ -981,8 +1152,9 @@ void ReactionManager::set_saved_messages_tag_title(ReactionType reaction_type, s
   }
   title = clean_name(title, MAX_TAG_TITLE_LENGTH);
 
-  if (tags_.set_tag_title(reaction_type, title)) {
-    send_update_saved_messages_tags();
+  auto *all_tags = get_saved_reaction_tags(SavedMessagesTopicId());
+  if (all_tags->set_tag_title(reaction_type, title)) {
+    send_update_saved_messages_tags(SavedMessagesTopicId(), all_tags);
   }
 
   auto query_promise =
@@ -1004,8 +1176,11 @@ void ReactionManager::get_current_state(vector<td_api::object_ptr<td_api::Update
   if (!active_reaction_types_.empty()) {
     updates.push_back(get_update_active_emoji_reactions_object());
   }
-  if (tags_.is_inited_) {
-    updates.push_back(get_update_saved_messages_tags_object());
+  if (all_tags_.is_inited_) {
+    updates.push_back(get_update_saved_messages_tags_object(SavedMessagesTopicId(), &all_tags_));
+  }
+  for (auto &it : topic_tags_) {
+    updates.push_back(get_update_saved_messages_tags_object(it.first, it.second.get()));
   }
 }
 

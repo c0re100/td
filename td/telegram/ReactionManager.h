@@ -11,12 +11,14 @@
 #include "td/telegram/ReactionListType.h"
 #include "td/telegram/ReactionType.h"
 #include "td/telegram/ReactionUnavailabilityReason.h"
+#include "td/telegram/SavedMessagesTopicId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 
 #include "td/actor/actor.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/Promise.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
@@ -69,11 +71,13 @@ class ReactionManager final : public Actor {
 
   void send_set_default_reaction_query();
 
-  void get_saved_messages_tags(Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise);
+  void get_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id,
+                               Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise);
 
   void on_update_saved_reaction_tags(Promise<Unit> &&promise);
 
-  void update_saved_messages_tags(const vector<ReactionType> &old_tags, const vector<ReactionType> &new_tags);
+  void update_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id, const vector<ReactionType> &old_tags,
+                                  const vector<ReactionType> &new_tags);
 
   void set_saved_messages_tag_title(ReactionType reaction_type, string title, Promise<Unit> &&promise);
 
@@ -149,6 +153,12 @@ class ReactionManager final : public Actor {
     }
 
     td_api::object_ptr<td_api::savedMessagesTag> get_saved_messages_tag_object() const;
+
+    template <class StorerT>
+    void store(StorerT &storer) const;
+
+    template <class ParserT>
+    void parse(ParserT &parser);
   };
 
   friend bool operator==(const SavedReactionTag &lhs, const SavedReactionTag &rhs);
@@ -166,12 +176,17 @@ class ReactionManager final : public Actor {
 
     td_api::object_ptr<td_api::savedMessagesTags> get_saved_messages_tags_object() const;
 
-    void update_saved_messages_tags(const vector<ReactionType> &old_tags, const vector<ReactionType> &new_tags,
-                                    bool &is_changed, bool &need_reload_title);
+    bool update_saved_messages_tags(const vector<ReactionType> &old_tags, const vector<ReactionType> &new_tags);
 
     bool set_tag_title(const ReactionType &reaction_type, const string &title);
 
     int64 calc_hash() const;
+
+    template <class StorerT>
+    void store(StorerT &storer) const;
+
+    template <class ParserT>
+    void parse(ParserT &parser);
   };
 
   td_api::object_ptr<td_api::emojiReaction> get_emoji_reaction_object(const string &emoji) const;
@@ -198,18 +213,32 @@ class ReactionManager final : public Actor {
 
   td_api::object_ptr<td_api::updateActiveEmojiReactions> get_update_active_emoji_reactions_object() const;
 
-  void reget_saved_messages_tags(Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise);
+  SavedReactionTags *get_saved_reaction_tags(SavedMessagesTopicId saved_messages_topic_id);
 
-  void on_get_saved_messages_tags(Result<telegram_api::object_ptr<telegram_api::messages_SavedReactionTags>> &&r_tags);
+  void reget_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id,
+                                 Promise<td_api::object_ptr<td_api::savedMessagesTags>> &&promise);
 
-  td_api::object_ptr<td_api::updateSavedMessagesTags> get_update_saved_messages_tags_object() const;
+  void on_get_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id,
+                                  Result<telegram_api::object_ptr<telegram_api::messages_SavedReactionTags>> &&r_tags);
 
-  void send_update_saved_messages_tags();
+  string get_saved_messages_tags_database_key(SavedMessagesTopicId saved_messages_topic_id);
+
+  void load_all_saved_reaction_tags_from_database();
+
+  void load_saved_reaction_tags_from_database(SavedMessagesTopicId saved_messages_topic_id, SavedReactionTags *tags);
+
+  td_api::object_ptr<td_api::updateSavedMessagesTags> get_update_saved_messages_tags_object(
+      SavedMessagesTopicId saved_messages_topic_id, const SavedReactionTags *tags) const;
+
+  void send_update_saved_messages_tags(SavedMessagesTopicId saved_messages_topic_id, const SavedReactionTags *tags,
+                                       bool from_database = false);
 
   Td *td_;
   ActorShared<> parent_;
 
   bool is_inited_ = false;
+  bool are_reactions_loaded_from_database_ = false;
+  bool are_all_tags_loaded_from_database_ = false;
 
   vector<std::pair<string, Promise<td_api::object_ptr<td_api::emojiReaction>>>> pending_get_emoji_reaction_queries_;
 
@@ -218,10 +247,13 @@ class ReactionManager final : public Actor {
 
   ReactionList reaction_lists_[MAX_REACTION_LIST_TYPE];
 
-  SavedReactionTags tags_;
-  vector<Promise<td_api::object_ptr<td_api::savedMessagesTags>>> pending_get_saved_reaction_tags_queries_;
+  SavedReactionTags all_tags_;
+  FlatHashMap<SavedMessagesTopicId, unique_ptr<SavedReactionTags>, SavedMessagesTopicIdHash> topic_tags_;
 
-  bool are_reactions_loaded_from_database_ = false;
+  vector<Promise<td_api::object_ptr<td_api::savedMessagesTags>>> pending_get_all_saved_reaction_tags_queries_;
+  FlatHashMap<SavedMessagesTopicId, vector<Promise<td_api::object_ptr<td_api::savedMessagesTags>>>,
+              SavedMessagesTopicIdHash>
+      pending_get_topic_saved_reaction_tags_queries_;
 };
 
 }  // namespace td

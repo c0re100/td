@@ -120,6 +120,7 @@
 #include "td/telegram/ReactionType.h"
 #include "td/telegram/ReportReason.h"
 #include "td/telegram/RequestActor.h"
+#include "td/telegram/SavedMessagesManager.h"
 #include "td/telegram/SavedMessagesTopicId.h"
 #include "td/telegram/ScopeNotificationSettings.h"
 #include "td/telegram/SecretChatId.h"
@@ -2964,10 +2965,11 @@ void Td::run_request(uint64 id, tl_object_ptr<td_api::Function> function) {
                                            !parameters.second.use_message_database_ &&
                                            !parameters.first.use_secret_chats_;
 
-          auto promise = PromiseCreator::lambda([actor_id = actor_id(this), parameters = std::move(parameters.first)](
-                                                    Result<TdDb::OpenedDatabase> r_opened_database) mutable {
-            send_closure(actor_id, &Td::init, std::move(parameters), std::move(r_opened_database));
-          });
+          auto promise = PromiseCreator::lambda(
+              [actor_id = actor_id(this), parameters = std::move(parameters.first),
+               parent = create_reference()](Result<TdDb::OpenedDatabase> r_opened_database) mutable {
+                send_closure(actor_id, &Td::init, std::move(parameters), std::move(r_opened_database));
+              });
           auto use_sqlite_pmc = parameters.second.use_message_database_ || parameters.second.use_chat_info_database_ ||
                                 parameters.second.use_file_database_;
           return TdDb::open(use_sqlite_pmc ? G()->get_database_scheduler_id() : G()->get_slow_net_scheduler_id(),
@@ -3064,7 +3066,12 @@ void Td::on_update(telegram_api::object_ptr<telegram_api::Updates> updates, uint
   }
 
   if (updates == nullptr) {
-    updates_manager_->schedule_get_difference("failed to fetch updates");
+    if (auth_manager_->is_bot()) {
+      G()->net_query_dispatcher().update_mtproto_header();
+    } else {
+      // this could be a min-channel update
+      updates_manager_->schedule_get_difference("failed to fetch updates");
+    }
   } else {
     updates_manager_->on_update_from_auth_key_id(auth_key_id);
     updates_manager_->on_get_updates(std::move(updates), Promise<Unit>());
@@ -3216,6 +3223,7 @@ void Td::dec_actor_refcnt() {
       reset_manager(poll_manager_, "PollManager");
       reset_manager(privacy_manager_, "PrivacyManager");
       reset_manager(reaction_manager_, "ReactionManager");
+      reset_manager(saved_messages_manager_, "SavedMessagesManager");
       reset_manager(sponsored_message_manager_, "SponsoredMessageManager");
       reset_manager(statistics_manager_, "StatisticsManager");
       reset_manager(stickers_manager_, "StickersManager");
@@ -3271,7 +3279,6 @@ void Td::dec_request_actor_refcnt() {
   request_actor_refcnt_--;
   LOG(DEBUG) << "Decrease request actor count to " << request_actor_refcnt_;
   if (request_actor_refcnt_ == 0) {
-    LOG(INFO) << "Have no request actors";
     clear();
     dec_actor_refcnt();  // remove guard
   }
@@ -3328,7 +3335,9 @@ void Td::clear() {
   alarm_timeout_.cancel_timeout(PROMO_DATA_ALARM_ID);
 
   auto reset_actor = [&timer](ActorOwn<Actor> actor) {
-    LOG(DEBUG) << "Start clearing " << actor.get().get_name() << timer;
+    if (!actor.empty()) {
+      LOG(DEBUG) << "Start clearing " << actor.get().get_name() << timer;
+    }
   };
 
   // close all pure actors
@@ -3383,6 +3392,7 @@ void Td::clear() {
   reset_actor(ActorOwn<Actor>(std::move(poll_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(privacy_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(reaction_manager_actor_)));
+  reset_actor(ActorOwn<Actor>(std::move(saved_messages_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(sponsored_message_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(statistics_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(stickers_manager_actor_)));
@@ -3419,10 +3429,10 @@ void Td::close_impl(bool destroy_flag) {
 
   LOG(WARNING) << (destroy_flag ? "Destroy" : "Close") << " Td in state " << static_cast<int32>(state_);
   if (state_ == State::WaitParameters) {
-    clear_requests();
     state_ = State::Close;
     close_flag_ = 4;
     G()->set_close_flag();
+    clear_requests();
     send_update(td_api::make_object<td_api::updateAuthorizationState>(
         td_api::make_object<td_api::authorizationStateClosing>()));
 
@@ -3510,6 +3520,18 @@ void Td::init(Parameters parameters, Result<TdDb::OpenedDatabase> r_opened_datab
   auto events = r_opened_database.move_as_ok();
 
   VLOG(td_init) << "Successfully inited database";
+
+  if (state_ == State::Close) {
+    LOG(INFO) << "Close asynchronously opened database";
+    auto database_ptr = events.database.get();
+    auto promise = PromiseCreator::lambda([database = std::move(events.database)](Unit) {
+      // destroy the database after closing
+    });
+    database_ptr->close(
+        database_ptr->use_file_database() ? G()->get_database_scheduler_id() : G()->get_slow_net_scheduler_id(),
+        destroy_flag_, std::move(promise));
+    return finish_set_parameters();
+  }
 
   G()->init(actor_id(this), std::move(events.database)).ensure();
 
@@ -3899,6 +3921,9 @@ void Td::init_managers() {
   reaction_manager_ = make_unique<ReactionManager>(this, create_reference());
   reaction_manager_actor_ = register_actor("ReactionManager", reaction_manager_.get());
   G()->set_reaction_manager(reaction_manager_actor_.get());
+  saved_messages_manager_ = make_unique<SavedMessagesManager>(this, create_reference());
+  saved_messages_manager_actor_ = register_actor("SavedMessagesManager", saved_messages_manager_.get());
+  G()->set_saved_messages_manager(saved_messages_manager_actor_.get());
   sponsored_message_manager_ = make_unique<SponsoredMessageManager>(this, create_reference());
   sponsored_message_manager_actor_ = register_actor("SponsoredMessageManager", sponsored_message_manager_.get());
   G()->set_sponsored_message_manager(sponsored_message_manager_actor_.get());
@@ -4188,7 +4213,7 @@ void Td::on_request(uint64 id, td_api::registerUser &request) {
   CLEAN_INPUT_STRING(request.first_name_);
   CLEAN_INPUT_STRING(request.last_name_);
   send_closure(auth_manager_actor_, &AuthManager::register_user, id, std::move(request.first_name_),
-               std::move(request.last_name_));
+               std::move(request.last_name_), request.disable_notification_);
 }
 
 void Td::on_request(uint64 id, td_api::requestQrCodeAuthentication &request) {
@@ -4284,6 +4309,8 @@ void Td::on_request(uint64 id, const td_api::getCurrentState &request) {
     dialog_participant_manager_->get_current_state(updates);
 
     notification_manager_->get_current_state(updates);
+
+    saved_messages_manager_->get_current_state(updates);
 
     story_manager_->get_current_state(updates);
 
@@ -5035,62 +5062,54 @@ void Td::on_request(uint64 id, const td_api::getChats &request) {
   messages_manager_->get_dialogs_from_list(DialogListId(request.chat_list_), request.limit_, std::move(promise));
 }
 
-void Td::on_request(uint64 id, const td_api::getPinnedSavedMessagesTopics &request) {
+void Td::on_request(uint64 id, const td_api::loadSavedMessagesTopics &request) {
   CHECK_IS_USER();
-  CREATE_REQUEST_PROMISE();
-  messages_manager_->get_pinned_saved_messages_topics(std::move(promise));
-}
-
-void Td::on_request(uint64 id, const td_api::getSavedMessagesTopics &request) {
-  CHECK_IS_USER();
-  // don't need to check offset UTF-8 correctness
-  CREATE_REQUEST_PROMISE();
-  messages_manager_->get_saved_messages_topics(request.offset_, request.limit_, std::move(promise));
+  CREATE_OK_REQUEST_PROMISE();
+  saved_messages_manager_->load_saved_messages_topics(request.limit_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getSavedMessagesTopicHistory &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  messages_manager_->get_saved_messages_topic_history(SavedMessagesTopicId(this, request.saved_messages_topic_),
-                                                      MessageId(request.from_message_id_), request.offset_,
-                                                      request.limit_, std::move(promise));
+  saved_messages_manager_->get_saved_messages_topic_history(
+      saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_), MessageId(request.from_message_id_),
+      request.offset_, request.limit_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::getSavedMessagesTopicMessageByDate &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  messages_manager_->get_saved_messages_topic_message_by_date(SavedMessagesTopicId(this, request.saved_messages_topic_),
-                                                              request.date_, std::move(promise));
+  saved_messages_manager_->get_saved_messages_topic_message_by_date(
+      saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_), request.date_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::deleteSavedMessagesTopicHistory &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  messages_manager_->delete_saved_messages_topic_history(SavedMessagesTopicId(this, request.saved_messages_topic_),
-                                                         std::move(promise));
+  saved_messages_manager_->delete_saved_messages_topic_history(
+      saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::deleteSavedMessagesTopicMessagesByDate &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  messages_manager_->delete_saved_messages_topic_messages_by_date(
-      SavedMessagesTopicId(this, request.saved_messages_topic_), request.min_date_, request.max_date_,
+  saved_messages_manager_->delete_saved_messages_topic_messages_by_date(
+      saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_), request.min_date_, request.max_date_,
       std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::toggleSavedMessagesTopicIsPinned &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  messages_manager_->toggle_saved_messages_topic_is_pinned(SavedMessagesTopicId(this, request.saved_messages_topic_),
-                                                           request.is_pinned_, std::move(promise));
+  saved_messages_manager_->toggle_saved_messages_topic_is_pinned(
+      saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_), request.is_pinned_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::setPinnedSavedMessagesTopics &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  auto saved_messages_topic_ids = transform(request.saved_messages_topics_,
-                                            [this](const auto &topic) { return SavedMessagesTopicId(this, topic); });
-  messages_manager_->set_pinned_saved_messages_topics(std::move(saved_messages_topic_ids), std::move(promise));
+  saved_messages_manager_->set_pinned_saved_messages_topics(
+      saved_messages_manager_->get_topic_ids(request.saved_messages_topic_ids_), std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::searchPublicChat &request) {
@@ -5286,7 +5305,7 @@ void Td::on_request(uint64 id, const td_api::getMessageThreadHistory &request) {
 void Td::on_request(uint64 id, td_api::getChatMessageCalendar &request) {
   CHECK_IS_USER();
   CREATE_REQUEST(GetChatMessageCalendarRequest, request.chat_id_,
-                 SavedMessagesTopicId(this, request.saved_messages_topic_), request.from_message_id_,
+                 saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_), request.from_message_id_,
                  std::move(request.filter_));
 }
 
@@ -5295,7 +5314,8 @@ void Td::on_request(uint64 id, td_api::searchChatMessages &request) {
   CLEAN_INPUT_STRING(request.query_);
   CREATE_REQUEST(SearchChatMessagesRequest, request.chat_id_, std::move(request.query_), std::move(request.sender_id_),
                  request.from_message_id_, request.offset_, request.limit_, std::move(request.filter_),
-                 request.message_thread_id_, SavedMessagesTopicId(this, request.saved_messages_topic_), ReactionType());
+                 request.message_thread_id_, saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_),
+                 ReactionType());
 }
 
 void Td::on_request(uint64 id, td_api::searchSecretMessages &request) {
@@ -5323,8 +5343,8 @@ void Td::on_request(uint64 id, td_api::searchSavedMessages &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.query_);
   CREATE_REQUEST(SearchChatMessagesRequest, dialog_manager_->get_my_dialog_id().get(), std::move(request.query_),
-                 nullptr, request.from_message_id_, request.offset_, request.limit_, nullptr, 0, SavedMessagesTopicId(),
-                 ReactionType(request.tag_));
+                 nullptr, request.from_message_id_, request.offset_, request.limit_, nullptr, 0,
+                 saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_), ReactionType(request.tag_));
 }
 
 void Td::on_request(uint64 id, const td_api::searchCallMessages &request) {
@@ -5365,7 +5385,7 @@ void Td::on_request(uint64 id, const td_api::getChatSparseMessagePositions &requ
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
   messages_manager_->get_dialog_sparse_message_positions(
-      DialogId(request.chat_id_), SavedMessagesTopicId(this, request.saved_messages_topic_),
+      DialogId(request.chat_id_), saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_),
       get_message_search_filter(request.filter_), MessageId(request.from_message_id_), request.limit_,
       std::move(promise));
 }
@@ -5381,7 +5401,7 @@ void Td::on_request(uint64 id, const td_api::getChatMessageCount &request) {
     }
   });
   messages_manager_->get_dialog_message_count(
-      DialogId(request.chat_id_), SavedMessagesTopicId(this, request.saved_messages_topic_),
+      DialogId(request.chat_id_), saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_),
       get_message_search_filter(request.filter_), request.return_local_, std::move(query_promise));
 }
 
@@ -5397,7 +5417,7 @@ void Td::on_request(uint64 id, const td_api::getChatMessagePosition &request) {
   });
   messages_manager_->get_dialog_message_position(
       {DialogId(request.chat_id_), MessageId(request.message_id_)}, get_message_search_filter(request.filter_),
-      MessageId(request.message_thread_id_), SavedMessagesTopicId(this, request.saved_messages_topic_),
+      MessageId(request.message_thread_id_), saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_),
       std::move(query_promise));
 }
 
@@ -5475,7 +5495,8 @@ void Td::on_request(uint64 id, const td_api::setDefaultReactionType &request) {
 void Td::on_request(uint64 id, const td_api::getSavedMessagesTags &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  reaction_manager_->get_saved_messages_tags(std::move(promise));
+  reaction_manager_->get_saved_messages_tags(saved_messages_manager_->get_topic_id(request.saved_messages_topic_id_),
+                                             std::move(promise));
 }
 
 void Td::on_request(uint64 id, td_api::setSavedMessagesTagLabel &request) {
@@ -5767,8 +5788,8 @@ void Td::on_request(uint64 id, td_api::editStory &request) {
 void Td::on_request(uint64 id, td_api::setStoryPrivacySettings &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  story_manager_->set_story_privacy_settings(DialogId(request.story_sender_chat_id_), StoryId(request.story_id_),
-                                             std::move(request.privacy_settings_), std::move(promise));
+  story_manager_->set_story_privacy_settings(StoryId(request.story_id_), std::move(request.privacy_settings_),
+                                             std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::toggleStoryIsPinned &request) {
@@ -6760,13 +6781,13 @@ void Td::on_request(uint64 id, const td_api::activateStoryStealthMode &request) 
 void Td::on_request(uint64 id, const td_api::getChatBoostLevelFeatures &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  promise.set_value(boost_manager_->get_chat_boost_level_features_object(request.level_));
+  promise.set_value(boost_manager_->get_chat_boost_level_features_object(!request.is_channel_, request.level_));
 }
 
 void Td::on_request(uint64 id, const td_api::getChatBoostFeatures &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
-  promise.set_value(boost_manager_->get_chat_boost_features_object());
+  promise.set_value(boost_manager_->get_chat_boost_features_object(!request.is_channel_));
 }
 
 void Td::on_request(uint64 id, const td_api::getAvailableChatBoostSlots &request) {
@@ -7783,6 +7804,18 @@ void Td::on_request(uint64 id, const td_api::setSupergroupStickerSet &request) {
   CREATE_OK_REQUEST_PROMISE();
   contacts_manager_->set_channel_sticker_set(ChannelId(request.supergroup_id_), StickerSetId(request.sticker_set_id_),
                                              std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::setSupergroupCustomEmojiStickerSet &request) {
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->set_channel_emoji_sticker_set(
+      ChannelId(request.supergroup_id_), StickerSetId(request.custom_emoji_sticker_set_id_), std::move(promise));
+}
+
+void Td::on_request(uint64 id, const td_api::setSupergroupUnrestrictBoostCount &request) {
+  CREATE_OK_REQUEST_PROMISE();
+  contacts_manager_->set_channel_unrestrict_boost_count(ChannelId(request.supergroup_id_),
+                                                        request.unrestrict_boost_count_, std::move(promise));
 }
 
 void Td::on_request(uint64 id, const td_api::toggleSupergroupSignMessages &request) {

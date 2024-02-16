@@ -80,6 +80,7 @@ class PhoneNumberManager;
 class PollManager;
 class PrivacyManager;
 class ReactionManager;
+class SavedMessagesManager;
 class SecureManager;
 class SecretChatsManager;
 class SponsoredMessageManager;
@@ -220,6 +221,8 @@ class Td final : public Actor {
   ActorOwn<PrivacyManager> privacy_manager_actor_;
   unique_ptr<ReactionManager> reaction_manager_;
   ActorOwn<ReactionManager> reaction_manager_actor_;
+  unique_ptr<SavedMessagesManager> saved_messages_manager_;
+  ActorOwn<SavedMessagesManager> saved_messages_manager_actor_;
   unique_ptr<SponsoredMessageManager> sponsored_message_manager_;
   ActorOwn<SponsoredMessageManager> sponsored_message_manager_actor_;
   unique_ptr<StatisticsManager> statistics_manager_;
@@ -673,9 +676,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getChats &request);
 
-  void on_request(uint64 id, const td_api::getPinnedSavedMessagesTopics &request);
-
-  void on_request(uint64 id, const td_api::getSavedMessagesTopics &request);
+  void on_request(uint64 id, const td_api::loadSavedMessagesTopics &request);
 
   void on_request(uint64 id, const td_api::getSavedMessagesTopicHistory &request);
 
@@ -1382,6 +1383,10 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::reorderSupergroupActiveUsernames &request);
 
   void on_request(uint64 id, const td_api::setSupergroupStickerSet &request);
+
+  void on_request(uint64 id, const td_api::setSupergroupCustomEmojiStickerSet &request);
+
+  void on_request(uint64 id, const td_api::setSupergroupUnrestrictBoostCount &request);
 
   void on_request(uint64 id, const td_api::toggleSupergroupSignMessages &request);
 

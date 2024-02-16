@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.24 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.25 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -409,6 +409,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageReplyHeader.cpp
   td/telegram/MessageReplyInfo.cpp
   td/telegram/MessageSearchFilter.cpp
+  td/telegram/MessageSelfDestructType.cpp
   td/telegram/MessageSender.cpp
   td/telegram/MessagesInfo.cpp
   td/telegram/MessagesManager.cpp
@@ -469,6 +470,7 @@ set(TDLIB_SOURCE
   td/telegram/ReportReason.cpp
   td/telegram/RequestedDialogType.cpp
   td/telegram/RestrictionReason.cpp
+  td/telegram/SavedMessagesManager.cpp
   td/telegram/SavedMessagesTopicId.cpp
   td/telegram/ScopeNotificationSettings.cpp
   td/telegram/SecretChatActor.cpp
@@ -712,6 +714,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageReplyHeader.h
   td/telegram/MessageReplyInfo.h
   td/telegram/MessageSearchFilter.h
+  td/telegram/MessageSelfDestructType.h
   td/telegram/MessageSender.h
   td/telegram/MessagesInfo.h
   td/telegram/MessagesManager.h
@@ -794,6 +797,7 @@ set(TDLIB_SOURCE
   td/telegram/RequestActor.h
   td/telegram/RequestedDialogType.h
   td/telegram/RestrictionReason.h
+  td/telegram/SavedMessagesManager.h
   td/telegram/SavedMessagesTopicId.h
   td/telegram/ScheduledServerMessageId.h
   td/telegram/ScopeNotificationSettings.h

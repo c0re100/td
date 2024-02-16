@@ -374,7 +374,7 @@ class DialogParticipantStatus {
 
   RestrictedRights get_effective_restricted_rights() const;
 
-  DialogParticipantStatus apply_restrictions(RestrictedRights default_restrictions, bool is_bot) const;
+  DialogParticipantStatus apply_restrictions(RestrictedRights default_restrictions, bool is_booster, bool is_bot) const;
 
   tl_object_ptr<td_api::ChatMemberStatus> get_chat_member_status_object() const;
 
@@ -387,6 +387,10 @@ class DialogParticipantStatus {
 
   bool can_manage_dialog() const {
     return get_administrator_rights().can_manage_dialog();
+  }
+
+  bool can_change_info_and_settings_as_administrator() const {
+    return get_administrator_rights().can_change_info_and_settings();
   }
 
   bool can_change_info_and_settings() const {

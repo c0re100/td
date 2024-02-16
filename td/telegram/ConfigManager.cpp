@@ -867,8 +867,6 @@ class ConfigRecoverer final : public Actor {
     if (wakeup_timestamp) {
       VLOG(config_recoverer) << "Wakeup in " << format::as_time(wakeup_timestamp.in());
       set_timeout_at(wakeup_timestamp.at());
-    } else {
-      VLOG(config_recoverer) << "Wakeup never";
     }
   }
 
@@ -1975,7 +1973,10 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       }
       if (key == "channel_bg_icon_level_min" || key == "channel_custom_wallpaper_level_min" ||
           key == "channel_emoji_status_level_min" || key == "channel_profile_bg_icon_level_min" ||
-          key == "channel_wallpaper_level_min" || key == "pm_read_date_expire_period") {
+          key == "channel_wallpaper_level_min" || key == "pm_read_date_expire_period" ||
+          key == "group_transcribe_level_min" || key == "group_emoji_stickers_level_min" ||
+          key == "group_profile_bg_icon_level_min" || key == "group_emoji_status_level_min" ||
+          key == "group_wallpaper_level_min" || key == "group_custom_wallpaper_level_min") {
         G()->set_option_integer(key, get_json_value_int(std::move(key_value->value_), key));
         continue;
       }

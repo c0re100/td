@@ -78,7 +78,8 @@ enum class MessageContentType : int32 {
   GiveawayResults,
   GiveawayWinners,
   ExpiredVideoNote,
-  ExpiredVoiceNote
+  ExpiredVoiceNote,
+  BoostApply
 };
 // increase MessageUnsupported::CURRENT_VERSION each time a new message content type is added
 
@@ -88,7 +89,7 @@ bool is_allowed_media_group_content(MessageContentType content_type);
 
 bool is_homogenous_media_group_content(MessageContentType content_type);
 
-bool is_secret_message_content(int32 ttl, MessageContentType content_type);
+bool can_be_secret_message_content(MessageContentType content_type);
 
 bool is_service_message_content(MessageContentType content_type);
 

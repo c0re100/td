@@ -267,6 +267,8 @@ class ContactsManager final : public Actor {
   void on_update_channel_stories_hidden(ChannelId channel_id, bool stories_hidden);
   void on_update_channel_description(ChannelId channel_id, string &&description);
   void on_update_channel_sticker_set(ChannelId channel_id, StickerSetId sticker_set_id);
+  void on_update_channel_emoji_sticker_set(ChannelId channel_id, StickerSetId sticker_set_id);
+  void on_update_channel_unrestrict_boost_count(ChannelId channel_id, int32 unrestrict_boost_count);
   void on_update_channel_linked_channel_id(ChannelId channel_id, ChannelId group_channel_id);
   void on_update_channel_location(ChannelId channel_id, const DialogLocation &location);
   void on_update_channel_slow_mode_delay(ChannelId channel_id, int32 slow_mode_delay, Promise<Unit> &&promise);
@@ -315,7 +317,7 @@ class ContactsManager final : public Actor {
 
   void unregister_message_channels(MessageFullId message_full_id, vector<ChannelId> channel_ids);
 
-  bool can_use_premium_custom_emoji() const;
+  bool can_use_premium_custom_emoji(DialogId dialog_id) const;
 
   UserId get_my_id() const;
 
@@ -467,6 +469,10 @@ class ContactsManager final : public Actor {
   void set_channel_emoji_status(ChannelId channel_id, const EmojiStatus &emoji_status, Promise<Unit> &&promise);
 
   void set_channel_sticker_set(ChannelId channel_id, StickerSetId sticker_set_id, Promise<Unit> &&promise);
+
+  void set_channel_emoji_sticker_set(ChannelId channel_id, StickerSetId sticker_set_id, Promise<Unit> &&promise);
+
+  void set_channel_unrestrict_boost_count(ChannelId channel_id, int32 unrestrict_boost_count, Promise<Unit> &&promise);
 
   void toggle_channel_sign_messages(ChannelId channel_id, bool sign_messages, Promise<Unit> &&promise);
 
@@ -650,6 +656,7 @@ class ContactsManager final : public Actor {
   ChannelId get_channel_linked_channel_id(ChannelId channel_id, const char *source);
   int32 get_channel_slow_mode_delay(ChannelId channel_id, const char *source);
   bool get_channel_effective_has_hidden_participants(ChannelId channel_id, const char *source);
+  int32 get_channel_my_boost_count(ChannelId channel_id);
 
   void add_chat_participant(ChatId chat_id, UserId user_id, int32 forward_limit, Promise<Unit> &&promise);
 
@@ -1035,6 +1042,8 @@ class ContactsManager final : public Actor {
     int32 administrator_count = 0;
     int32 restricted_count = 0;
     int32 banned_count = 0;
+    int32 boost_count = 0;
+    int32 unrestrict_boost_count = 0;
 
     DialogInviteLink invite_link;
 
@@ -1044,6 +1053,7 @@ class ContactsManager final : public Actor {
     uint32 repair_request_version = 0;
 
     StickerSetId sticker_set_id;
+    StickerSetId emoji_sticker_set_id;
 
     ChannelId linked_channel_id;
 
@@ -1389,7 +1399,7 @@ class ContactsManager final : public Actor {
 
   static ChannelType get_channel_type(const Channel *c);
   static DialogParticipantStatus get_channel_status(const Channel *c);
-  DialogParticipantStatus get_channel_permissions(const Channel *c) const;
+  DialogParticipantStatus get_channel_permissions(ChannelId channel_id, const Channel *c) const;
   static bool get_channel_sign_messages(const Channel *c);
   static bool get_channel_has_linked_channel(const Channel *c);
   static bool get_channel_can_be_deleted(const Channel *c);

@@ -14,6 +14,7 @@
 #include "td/telegram/LinkManager.h"
 #include "td/telegram/MessageContent.h"
 #include "td/telegram/MessageEntity.h"
+#include "td/telegram/MessageSelfDestructType.h"
 #include "td/telegram/net/NetQueryCreator.h"
 #include "td/telegram/OptionManager.h"
 #include "td/telegram/Photo.h"
@@ -429,16 +430,13 @@ void SponsoredMessageManager::on_get_dialog_sponsored_messages(
         auto message_text = get_message_text(td_->contacts_manager_.get(), std::move(sponsored_message->message_),
                                              std::move(sponsored_message->entities_), true, true, 0, false,
                                              "on_get_dialog_sponsored_messages");
-        int32 ttl = 0;
-        bool disable_web_page_preview = false;
-        auto content =
-            get_message_content(td_, std::move(message_text), nullptr, sponsor_dialog_id, G()->unix_time(), true,
-                                UserId(), &ttl, &disable_web_page_preview, "on_get_dialog_sponsored_messages");
-        if (ttl != 0) {
-          LOG(ERROR) << "Receive sponsored message with self-destruct time " << ttl;
+        MessageSelfDestructType ttl;
+        auto content = get_message_content(td_, std::move(message_text), nullptr, sponsor_dialog_id, G()->unix_time(),
+                                           true, UserId(), &ttl, nullptr, "on_get_dialog_sponsored_messages");
+        if (!ttl.is_empty()) {
+          LOG(ERROR) << "Receive sponsored message with " << ttl;
           continue;
         }
-        CHECK(disable_web_page_preview);
 
         current_sponsored_message_id_ = current_sponsored_message_id_.get_next_message_id(MessageType::Local);
         if (!current_sponsored_message_id_.is_valid_sponsored()) {

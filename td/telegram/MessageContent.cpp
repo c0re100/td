@@ -498,7 +498,7 @@ class MessageChatSetTtl final : public MessageContent {
 
 class MessageUnsupported final : public MessageContent {
  public:
-  static constexpr int32 CURRENT_VERSION = 28;
+  static constexpr int32 CURRENT_VERSION = 30;
   int32 version = CURRENT_VERSION;
 
   MessageUnsupported() = default;
@@ -1088,6 +1088,19 @@ class MessageExpiredVoiceNote final : public MessageContent {
   }
 };
 
+class MessageBoostApply final : public MessageContent {
+ public:
+  int32 boost_count = 0;
+
+  MessageBoostApply() = default;
+  explicit MessageBoostApply(int32 boost_count) : boost_count(boost_count) {
+  }
+
+  MessageContentType get_type() const final {
+    return MessageContentType::BoostApply;
+  }
+};
+
 template <class StorerT>
 static void store(const MessageContent *content, StorerT &storer) {
   CHECK(content != nullptr);
@@ -1637,6 +1650,13 @@ static void store(const MessageContent *content, StorerT &storer) {
       break;
     case MessageContentType::ExpiredVoiceNote:
       break;
+    case MessageContentType::BoostApply: {
+      const auto *m = static_cast<const MessageBoostApply *>(content);
+      BEGIN_STORE_FLAGS();
+      END_STORE_FLAGS();
+      store(m->boost_count, storer);
+      break;
+    }
     default:
       UNREACHABLE();
   }
@@ -2362,6 +2382,17 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
     case MessageContentType::ExpiredVoiceNote:
       content = make_unique<MessageExpiredVoiceNote>();
       break;
+    case MessageContentType::BoostApply: {
+      auto m = make_unique<MessageBoostApply>();
+      BEGIN_PARSE_FLAGS();
+      END_PARSE_FLAGS();
+      parse(m->boost_count, parser);
+      if (m->boost_count < 0) {
+        is_bad = true;
+      }
+      content = std::move(m);
+      break;
+    }
 
     default:
       is_bad = true;
@@ -2834,27 +2865,9 @@ static Result<InputMessageContent> create_input_message_content(
       UNREACHABLE();
   }
 
-  if (self_destruct_type != nullptr && dialog_id.get_type() != DialogType::User) {
+  TRY_RESULT(ttl, MessageSelfDestructType::get_message_self_destruct_type(std::move(self_destruct_type)));
+  if (!ttl.is_empty() && dialog_id.get_type() != DialogType::User) {
     return Status::Error(400, "Messages can self-destruct only in private chats");
-  }
-  int32 ttl = 0;
-  if (self_destruct_type != nullptr) {
-    switch (self_destruct_type->get_id()) {
-      case td_api::messageSelfDestructTypeTimer::ID: {
-        ttl = static_cast<const td_api::messageSelfDestructTypeTimer *>(self_destruct_type.get())->self_destruct_time_;
-
-        static constexpr int32 MAX_PRIVATE_MESSAGE_TTL = 60;  // server side limit
-        if (ttl <= 0 || ttl > MAX_PRIVATE_MESSAGE_TTL) {
-          return Status::Error(400, "Invalid message content self-destruct time specified");
-        }
-        break;
-      }
-      case td_api::messageSelfDestructTypeImmediately::ID:
-        ttl = 0x7FFFFFFF;
-        break;
-      default:
-        UNREACHABLE();
-    }
   }
 
   return InputMessageContent{std::move(content), disable_web_page_preview, invert_media, clear_draft, ttl,
@@ -3025,6 +3038,7 @@ bool can_have_input_media(const Td *td, const MessageContent *content, bool is_s
     case MessageContentType::GiveawayResults:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       return false;
     case MessageContentType::Animation:
     case MessageContentType::Audio:
@@ -3165,6 +3179,7 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
     case MessageContentType::GiveawayWinners:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       break;
     default:
       UNREACHABLE();
@@ -3174,7 +3189,7 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
 
 static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     const MessageContent *content, Td *td, tl_object_ptr<telegram_api::InputFile> input_file,
-    tl_object_ptr<telegram_api::InputFile> input_thumbnail, int32 ttl, const string &emoji) {
+    tl_object_ptr<telegram_api::InputFile> input_thumbnail, MessageSelfDestructType ttl, const string &emoji) {
   if (!can_have_input_media(td, content, false)) {
     return nullptr;
   }
@@ -3225,7 +3240,8 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     }
     case MessageContentType::Photo: {
       const auto *m = static_cast<const MessagePhoto *>(content);
-      return photo_get_input_media(td->file_manager_.get(), m->photo, std::move(input_file), ttl, m->has_spoiler);
+      return photo_get_input_media(td->file_manager_.get(), m->photo, std::move(input_file), ttl.get_input_ttl(),
+                                   m->has_spoiler);
     }
     case MessageContentType::Poll: {
       const auto *m = static_cast<const MessagePoll *>(content);
@@ -3246,17 +3262,17 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     }
     case MessageContentType::Video: {
       const auto *m = static_cast<const MessageVideo *>(content);
-      return td->videos_manager_->get_input_media(m->file_id, std::move(input_file), std::move(input_thumbnail), ttl,
-                                                  m->has_spoiler);
+      return td->videos_manager_->get_input_media(m->file_id, std::move(input_file), std::move(input_thumbnail),
+                                                  ttl.get_input_ttl(), m->has_spoiler);
     }
     case MessageContentType::VideoNote: {
       const auto *m = static_cast<const MessageVideoNote *>(content);
       return td->video_notes_manager_->get_input_media(m->file_id, std::move(input_file), std::move(input_thumbnail),
-                                                       ttl);
+                                                       ttl.get_input_ttl());
     }
     case MessageContentType::VoiceNote: {
       const auto *m = static_cast<const MessageVoiceNote *>(content);
-      return td->voice_notes_manager_->get_input_media(m->file_id, std::move(input_file), ttl);
+      return td->voice_notes_manager_->get_input_media(m->file_id, std::move(input_file), ttl.get_input_ttl());
     }
     case MessageContentType::Text:
     case MessageContentType::Unsupported:
@@ -3306,6 +3322,7 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     case MessageContentType::GiveawayWinners:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       break;
     default:
       UNREACHABLE();
@@ -3316,8 +3333,8 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
 tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td,
                                                         tl_object_ptr<telegram_api::InputFile> input_file,
                                                         tl_object_ptr<telegram_api::InputFile> input_thumbnail,
-                                                        FileId file_id, FileId thumbnail_file_id, int32 ttl,
-                                                        const string &emoji, bool force) {
+                                                        FileId file_id, FileId thumbnail_file_id,
+                                                        MessageSelfDestructType ttl, const string &emoji, bool force) {
   bool had_input_file = input_file != nullptr;
   bool had_input_thumbnail = input_thumbnail != nullptr;
   auto input_media = get_input_media_impl(content, td, std::move(input_file), std::move(input_thumbnail), ttl, emoji);
@@ -3349,8 +3366,8 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
   return input_media;
 }
 
-tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td, int32 ttl,
-                                                        const string &emoji, bool force) {
+tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td,
+                                                        MessageSelfDestructType ttl, const string &emoji, bool force) {
   auto input_media = get_input_media_impl(content, td, nullptr, nullptr, ttl, emoji);
   auto file_reference = FileManager::extract_file_reference(input_media);
   if (file_reference == FileReferenceView::invalid_file_reference()) {
@@ -3510,6 +3527,7 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td) {
     case MessageContentType::GiveawayWinners:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       break;
     default:
       UNREACHABLE();
@@ -3734,6 +3752,7 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
     case MessageContentType::GiveawayResults:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       UNREACHABLE();
   }
   return Status::OK();
@@ -3880,6 +3899,7 @@ static int32 get_message_content_media_index_mask(const MessageContent *content,
     case MessageContentType::GiveawayWinners:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       return 0;
     default:
       UNREACHABLE();
@@ -4161,6 +4181,8 @@ vector<UserId> get_message_content_min_user_ids(const Td *td, const MessageConte
       break;
     case MessageContentType::ExpiredVoiceNote:
       break;
+    case MessageContentType::BoostApply:
+      break;
     default:
       UNREACHABLE();
       break;
@@ -4405,8 +4427,8 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
       };
       if (old_->text.text != new_->text.text) {
         if (need_message_changed_warning && need_message_text_changed_warning(old_, new_)) {
-          LOG(ERROR) << "Message text has changed in " << get_content_object(old_content) << ". New content is "
-                     << get_content_object(new_content);
+          LOG(ERROR) << "Message text has changed for a message in " << dialog_id << " from "
+                     << get_content_object(old_content) << " to " << get_content_object(new_content);
         }
       }
       if (old_->text.entities != new_->text.entities) {
@@ -4415,8 +4437,8 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
             old_->text.entities.size() <= MAX_CUSTOM_ENTITIES_COUNT &&
             need_message_entities_changed_warning(old_->text.entities, new_->text.entities) &&
             td->option_manager_->get_option_integer("session_count") <= 1) {
-          LOG(WARNING) << "Entities have changed in " << get_content_object(old_content) << ". New content is "
-                       << get_content_object(new_content);
+          LOG(WARNING) << "Entities have changed for a message in " << dialog_id << " from "
+                       << get_content_object(old_content) << " to " << get_content_object(new_content);
         }
       }
       break;
@@ -4565,6 +4587,7 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
     case MessageContentType::GiveawayWinners:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       break;
     default:
       UNREACHABLE();
@@ -4714,6 +4737,7 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
     case MessageContentType::GiveawayWinners:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       LOG(ERROR) << "Receive new file " << new_file_id << " in a sent message of the type " << content_type;
       break;
     default:
@@ -5240,6 +5264,14 @@ void compare_message_contents(Td *td, const MessageContent *old_content, const M
       break;
     case MessageContentType::ExpiredVoiceNote:
       break;
+    case MessageContentType::BoostApply: {
+      const auto *lhs = static_cast<const MessageBoostApply *>(old_content);
+      const auto *rhs = static_cast<const MessageBoostApply *>(new_content);
+      if (lhs->boost_count != rhs->boost_count) {
+        need_update = true;
+      }
+      break;
+    }
     default:
       UNREACHABLE();
       break;
@@ -5873,8 +5905,8 @@ unique_ptr<MessageContent> get_secret_message_content(
 unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
                                                tl_object_ptr<telegram_api::MessageMedia> &&media_ptr,
                                                DialogId owner_dialog_id, int32 message_date, bool is_content_read,
-                                               UserId via_bot_user_id, int32 *ttl, bool *disable_web_page_preview,
-                                               const char *source) {
+                                               UserId via_bot_user_id, MessageSelfDestructType *ttl,
+                                               bool *disable_web_page_preview, const char *source) {
   if (!td->auth_manager_->was_authorized() && !G()->close_flag() && media_ptr != nullptr &&
       media_ptr->get_id() != telegram_api::messageMediaEmpty::ID) {
     LOG(ERROR) << "Receive without authorization from " << source << ": " << to_string(media_ptr);
@@ -5889,7 +5921,7 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
       if (message.text.empty()) {
         LOG(ERROR) << "Receive empty message text and media from " << source;
       }
-      if (disable_web_page_preview != nullptr) {
+      if (disable_web_page_preview != nullptr && !get_first_url(message).empty()) {
         *disable_web_page_preview = true;
       }
       return td::make_unique<MessageText>(std::move(message), WebPageId(), false, false, false, string());
@@ -5911,7 +5943,7 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
       }
 
       if (ttl != nullptr && (media->flags_ & telegram_api::messageMediaPhoto::TTL_SECONDS_MASK) != 0) {
-        *ttl = media->ttl_seconds_;
+        *ttl = MessageSelfDestructType(media->ttl_seconds_, true);
       }
       return make_unique<MessagePhoto>(std::move(photo), std::move(message), media->spoiler_);
     }
@@ -6002,7 +6034,7 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
       CHECK(document_id == telegram_api::document::ID);
 
       if (ttl != nullptr && (media->flags_ & telegram_api::messageMediaDocument::TTL_SECONDS_MASK) != 0) {
-        *ttl = media->ttl_seconds_;
+        *ttl = MessageSelfDestructType(media->ttl_seconds_, true);
       }
       return get_document_message_content(td, move_tl_object_as<telegram_api::document>(document_ptr), owner_dialog_id,
                                           std::move(message), is_content_read, !media->nopremium_, media->spoiler_,
@@ -6023,9 +6055,6 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
           move_tl_object_as<telegram_api::messageMediaInvoice>(media_ptr), td, owner_dialog_id, std::move(message)));
     case telegram_api::messageMediaWebPage::ID: {
       auto media = move_tl_object_as<telegram_api::messageMediaWebPage>(media_ptr);
-      if (disable_web_page_preview != nullptr) {
-        *disable_web_page_preview = (media->webpage_ == nullptr);
-      }
       string web_page_url;
       if (media->manual_ || media->force_small_media_ || media->force_large_media_) {
         web_page_url = WebPagesManager::get_web_page_url(media->webpage_);
@@ -6122,7 +6151,7 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
   }
 
   // explicit empty media message
-  if (disable_web_page_preview != nullptr) {
+  if (disable_web_page_preview != nullptr && !get_first_url(message).empty()) {
     *disable_web_page_preview = true;
   }
   return td::make_unique<MessageText>(std::move(message), WebPageId(), false, false, false, string());
@@ -6404,6 +6433,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::GiveawayResults:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       return nullptr;
     default:
       UNREACHABLE();
@@ -6763,7 +6793,7 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
     }
     case telegram_api::messageActionSetChatWallPaper::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionSetChatWallPaper>(action_ptr);
-      BackgroundInfo background_info(td, std::move(action->wallpaper_));
+      BackgroundInfo background_info(td, std::move(action->wallpaper_), true);
       if (!background_info.is_valid()) {
         break;
       }
@@ -6801,6 +6831,10 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       }
       return td::make_unique<MessageGiveawayResults>(reply_to_message_id, action->winners_count_,
                                                      action->unclaimed_count_);
+    }
+    case telegram_api::messageActionBoostApply::ID: {
+      auto action = move_tl_object_as<telegram_api::messageActionBoostApply>(action_ptr);
+      return make_unique<MessageBoostApply>(max(action->boosts_, 0));
     }
     default:
       UNREACHABLE();
@@ -7211,6 +7245,10 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       return make_tl_object<td_api::messageExpiredVideoNote>();
     case MessageContentType::ExpiredVoiceNote:
       return make_tl_object<td_api::messageExpiredVoiceNote>();
+    case MessageContentType::BoostApply: {
+      const auto *m = static_cast<const MessageBoostApply *>(content);
+      return td_api::make_object<td_api::messageChatBoost>(m->boost_count);
+    }
     default:
       UNREACHABLE();
       return nullptr;
@@ -7645,6 +7683,7 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::GiveawayWinners:
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
+    case MessageContentType::BoostApply:
       return string();
     default:
       UNREACHABLE();
@@ -7986,6 +8025,8 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
     case MessageContentType::ExpiredVideoNote:
       break;
     case MessageContentType::ExpiredVoiceNote:
+      break;
+    case MessageContentType::BoostApply:
       break;
     default:
       UNREACHABLE();

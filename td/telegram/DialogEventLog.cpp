@@ -219,12 +219,15 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeStickerSet>(action_ptr);
       auto old_sticker_set_id = td->stickers_manager_->add_sticker_set(std::move(action->prev_stickerset_));
       auto new_sticker_set_id = td->stickers_manager_->add_sticker_set(std::move(action->new_stickerset_));
-      if (!old_sticker_set_id.is_valid() || !new_sticker_set_id.is_valid()) {
-        LOG(ERROR) << "Skip " << to_string(action);
-        return nullptr;
-      }
       return td_api::make_object<td_api::chatEventStickerSetChanged>(old_sticker_set_id.get(),
                                                                      new_sticker_set_id.get());
+    }
+    case telegram_api::channelAdminLogEventActionChangeEmojiStickerSet::ID: {
+      auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeEmojiStickerSet>(action_ptr);
+      auto old_sticker_set_id = td->stickers_manager_->add_sticker_set(std::move(action->prev_stickerset_));
+      auto new_sticker_set_id = td->stickers_manager_->add_sticker_set(std::move(action->new_stickerset_));
+      return td_api::make_object<td_api::chatEventCustomEmojiStickerSetChanged>(old_sticker_set_id.get(),
+                                                                                new_sticker_set_id.get());
     }
     case telegram_api::channelAdminLogEventActionTogglePreHistoryHidden::ID: {
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionTogglePreHistoryHidden>(action_ptr);
@@ -455,8 +458,8 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
     }
     case telegram_api::channelAdminLogEventActionChangeWallpaper::ID: {
       auto action = move_tl_object_as<telegram_api::channelAdminLogEventActionChangeWallpaper>(action_ptr);
-      auto old_background_info = BackgroundInfo(td, std::move(action->prev_value_));
-      auto new_background_info = BackgroundInfo(td, std::move(action->new_value_));
+      auto old_background_info = BackgroundInfo(td, std::move(action->prev_value_), true);
+      auto new_background_info = BackgroundInfo(td, std::move(action->new_value_), true);
       return td_api::make_object<td_api::chatEventBackgroundChanged>(
           old_background_info.get_chat_background_object(td), new_background_info.get_chat_background_object(td));
     }

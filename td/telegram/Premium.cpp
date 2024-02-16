@@ -32,6 +32,7 @@
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
+#include "td/utils/FlatHashSet.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
@@ -98,6 +99,15 @@ static td_api::object_ptr<td_api::PremiumFeature> get_premium_feature_object(Sli
   if (premium_feature == "wallpapers") {
     return td_api::make_object<td_api::premiumFeatureBackgroundForBoth>();
   }
+  if (premium_feature == "saved_tags") {
+    return td_api::make_object<td_api::premiumFeatureSavedMessagesTags>();
+  }
+  if (premium_feature == "message_privacy") {
+    return td_api::make_object<td_api::premiumFeatureMessagePrivacy>();
+  }
+  if (premium_feature == "last_seen") {
+    return td_api::make_object<td_api::premiumFeatureLastSeenTimes>();
+  }
   return nullptr;
 }
 
@@ -109,8 +119,7 @@ Result<telegram_api::object_ptr<telegram_api::InputPeer>> get_boost_input_peer(T
   if (!td->dialog_manager_->have_dialog_force(dialog_id, "get_boost_input_peer")) {
     return Status::Error(400, "Chat to boost not found");
   }
-  if (dialog_id.get_type() != DialogType::Channel ||
-      !td->contacts_manager_->is_broadcast_channel(dialog_id.get_channel_id())) {
+  if (dialog_id.get_type() != DialogType::Channel) {
     return Status::Error(400, "Can't boost the chat");
   }
   if (!td->contacts_manager_->get_channel_status(dialog_id.get_channel_id()).is_administrator()) {
@@ -214,9 +223,15 @@ class GetPremiumPromoQuery final : public Td::ResultHandler {
     }
 
     vector<td_api::object_ptr<td_api::premiumFeaturePromotionAnimation>> animations;
+    FlatHashSet<string> video_sections;
     for (size_t i = 0; i < promo->video_sections_.size(); i++) {
       auto feature = get_premium_feature_object(promo->video_sections_[i]);
       if (feature == nullptr) {
+        LOG(INFO) << "Receive unknown Premium feature animation " << promo->video_sections_[i];
+        continue;
+      }
+      if (!video_sections.insert(promo->video_sections_[i]).second) {
+        LOG(ERROR) << "Receive duplicate Premium feature animation " << promo->video_sections_[i];
         continue;
       }
 
@@ -747,6 +762,12 @@ static string get_premium_source(const td_api::PremiumFeature *feature) {
       return "peer_colors";
     case td_api::premiumFeatureBackgroundForBoth::ID:
       return "wallpapers";
+    case td_api::premiumFeatureSavedMessagesTags::ID:
+      return "saved_tags";
+    case td_api::premiumFeatureMessagePrivacy::ID:
+      return "message_privacy";
+    case td_api::premiumFeatureLastSeenTimes::ID:
+      return "last_seen";
     default:
       UNREACHABLE();
   }
@@ -771,6 +792,8 @@ static string get_premium_source(const td_api::PremiumStoryFeature *feature) {
       return "stories__save_stories_to_gallery";
     case td_api::premiumStoryFeatureLinksAndFormatting::ID:
       return "stories__links_and_formatting";
+    case td_api::premiumStoryFeatureVideoQuality::ID:
+      return "stories__quality";
     default:
       UNREACHABLE();
       return string();
@@ -890,12 +913,13 @@ void get_premium_limit(const td_api::object_ptr<td_api::PremiumLimitType> &limit
 
 void get_premium_features(Td *td, const td_api::object_ptr<td_api::PremiumSource> &source,
                           Promise<td_api::object_ptr<td_api::premiumFeatures>> &&promise) {
-  auto premium_features = full_split(
-      G()->get_option_string(
-          "premium_features",
-          "stories,double_limits,animated_emoji,translations,more_upload,faster_download,voice_to_text,no_ads,infinite_"
-          "reactions,premium_stickers,advanced_chat_management,profile_badge,animated_userpics,app_icons,emoji_status"),
-      ',');
+  auto premium_features =
+      full_split(G()->get_option_string(
+                     "premium_features",
+                     "stories,more_upload,double_limits,last_seen,voice_to_text,faster_download,translations,animated_"
+                     "emoji,emoji_status,saved_tags,peer_colors,wallpapers,profile_badge,message_privacy,advanced_chat_"
+                     "management,no_ads,app_icons,infinite_reactions,animated_userpics,premium_stickers"),
+                 ',');
   vector<td_api::object_ptr<td_api::PremiumFeature>> features;
   for (const auto &premium_feature : premium_features) {
     auto feature = get_premium_feature_object(premium_feature);

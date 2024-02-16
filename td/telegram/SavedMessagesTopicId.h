@@ -11,7 +11,6 @@
 #include "td/telegram/telegram_api.h"
 
 #include "td/utils/common.h"
-#include "td/utils/HashTableUtils.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
 
@@ -41,8 +40,6 @@ class SavedMessagesTopicId {
   SavedMessagesTopicId(DialogId my_dialog_id, const MessageForwardInfo *message_forward_info,
                        DialogId real_forward_from_dialog_id);
 
-  SavedMessagesTopicId(const Td *td, const td_api::object_ptr<td_api::SavedMessagesTopic> &saved_messages_topic);
-
   bool is_valid() const {
     return dialog_id_.is_valid();
   }
@@ -53,7 +50,11 @@ class SavedMessagesTopicId {
 
   bool is_author_hidden() const;
 
-  td_api::object_ptr<td_api::SavedMessagesTopic> get_saved_messages_topic_object(Td *td) const;
+  int64 get_unique_id() const {
+    return dialog_id_.get();
+  }
+
+  td_api::object_ptr<td_api::SavedMessagesTopicType> get_saved_messages_topic_type_object(const Td *td) const;
 
   telegram_api::object_ptr<telegram_api::InputPeer> get_input_peer(const Td *td) const;
 
@@ -74,7 +75,7 @@ class SavedMessagesTopicId {
 
 struct SavedMessagesTopicIdHash {
   uint32 operator()(SavedMessagesTopicId saved_messages_topic_id) const {
-    return Hash<DialogId>()(saved_messages_topic_id.dialog_id_);
+    return DialogIdHash()(saved_messages_topic_id.dialog_id_);
   }
 };
 
