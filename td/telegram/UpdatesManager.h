@@ -104,9 +104,6 @@ class UpdatesManager final : public Actor {
 
   static bool are_empty_updates(const telegram_api::Updates *updates_ptr);
 
-  static vector<UserId> extract_group_invite_privacy_forbidden_updates(
-      tl_object_ptr<telegram_api::Updates> &updates_ptr);
-
   static FlatHashSet<int64> get_sent_messages_random_ids(const telegram_api::Updates *updates_ptr);
 
   static const telegram_api::Message *get_message_by_random_id(const telegram_api::Updates *updates_ptr,
@@ -634,8 +631,6 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateTranscribedAudio> update, Promise<Unit> &&promise);
 
-  void on_update(tl_object_ptr<telegram_api::updateGroupInvitePrivacyForbidden> update, Promise<Unit> &&promise);
-
   void on_update(tl_object_ptr<telegram_api::updateAutoSaveSettings> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateStory> update, Promise<Unit> &&promise);
@@ -661,6 +656,14 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateQuickReplyMessage> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateDeleteQuickReplyMessages> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotBusinessConnect> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotNewBusinessMessage> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotEditBusinessMessage> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotDeleteBusinessMessage> update, Promise<Unit> &&promise);
 
   // unsupported updates
 };

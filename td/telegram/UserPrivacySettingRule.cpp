@@ -53,6 +53,9 @@ UserPrivacySettingRule::UserPrivacySettingRule(Td *td, const td_api::UserPrivacy
     case td_api::userPrivacySettingRuleAllowContacts::ID:
       type_ = Type::AllowContacts;
       break;
+    case td_api::userPrivacySettingRuleAllowPremiumUsers::ID:
+      type_ = Type::AllowPremium;
+      break;
     case td_api::userPrivacySettingRuleAllowAll::ID:
       type_ = Type::AllowAll;
       break;
@@ -90,6 +93,9 @@ UserPrivacySettingRule::UserPrivacySettingRule(Td *td,
   switch (rule->get_id()) {
     case telegram_api::privacyValueAllowContacts::ID:
       type_ = Type::AllowContacts;
+      break;
+    case telegram_api::privacyValueAllowPremium::ID:
+      type_ = Type::AllowPremium;
       break;
     case telegram_api::privacyValueAllowCloseFriends::ID:
       type_ = Type::AllowCloseFriends;
@@ -156,6 +162,8 @@ td_api::object_ptr<td_api::UserPrivacySettingRule> UserPrivacySettingRule::get_u
   switch (type_) {
     case Type::AllowContacts:
       return make_tl_object<td_api::userPrivacySettingRuleAllowContacts>();
+    case Type::AllowPremium:
+      return make_tl_object<td_api::userPrivacySettingRuleAllowPremiumUsers>();
     case Type::AllowCloseFriends:
       LOG(ERROR) << "Have AllowCloseFriends rule";
       return make_tl_object<td_api::userPrivacySettingRuleAllowUsers>();
@@ -187,6 +195,8 @@ telegram_api::object_ptr<telegram_api::InputPrivacyRule> UserPrivacySettingRule:
   switch (type_) {
     case Type::AllowContacts:
       return make_tl_object<telegram_api::inputPrivacyValueAllowContacts>();
+    case Type::AllowPremium:
+      return make_tl_object<telegram_api::inputPrivacyValueAllowPremium>();
     case Type::AllowCloseFriends:
       return make_tl_object<telegram_api::inputPrivacyValueAllowCloseFriends>();
     case Type::AllowAll:

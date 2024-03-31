@@ -21,6 +21,7 @@
 #include "td/telegram/net/MtprotoHeader.h"
 #include "td/telegram/net/NetQueryDispatcher.h"
 #include "td/telegram/NotificationManager.h"
+#include "td/telegram/PeopleNearbyManager.h"
 #include "td/telegram/ReactionType.h"
 #include "td/telegram/StateManager.h"
 #include "td/telegram/StickersManager.h"
@@ -140,6 +141,8 @@ OptionManager::OptionManager(Td *td)
   set_default_integer_option("group_custom_wallpaper_level_min", is_test_dc ? 4 : 10);
   set_default_integer_option("quick_reply_shortcut_count_max", is_test_dc ? 10 : 100);
   set_default_integer_option("quick_reply_shortcut_message_count_max", 20);
+  set_default_integer_option("business_intro_title_length_max", 32);
+  set_default_integer_option("business_intro_message_length_max", 70);
 
   if (options.isset("my_phone_number") || !options.isset("my_id")) {
     update_premium_options();
@@ -179,6 +182,9 @@ void OptionManager::update_premium_options() {
     set_option_integer("monthly_sent_story_count_max", get_option_integer("stories_sent_monthly_limit_premium", 3000));
     set_option_integer("story_suggested_reaction_area_count_max",
                        get_option_integer("stories_suggested_reactions_limit_premium", 5));
+
+    set_option_boolean("can_set_new_chat_privacy_settings", true);
+    set_option_boolean("can_use_text_entities_in_story_caption", true);
   } else {
     set_option_integer("saved_animations_limit", get_option_integer("saved_gifs_limit_default", 200));
     set_option_integer("favorite_stickers_limit", get_option_integer("stickers_faved_limit_default", 5));
@@ -200,6 +206,10 @@ void OptionManager::update_premium_options() {
     set_option_integer("monthly_sent_story_count_max", get_option_integer("stories_sent_monthly_limit_default", 30));
     set_option_integer("story_suggested_reaction_area_count_max",
                        get_option_integer("stories_suggested_reactions_limit_default", 1));
+
+    set_option_boolean("can_set_new_chat_privacy_settings", !get_option_boolean("need_premium_for_new_chat_privacy"));
+    set_option_boolean("can_use_text_entities_in_story_caption",
+                       !get_option_boolean("need_premium_for_story_caption_entities"));
   }
 }
 
@@ -332,6 +342,7 @@ bool OptionManager::is_internal_option(Slice name) {
                                                               "animation_search_provider",
                                                               "authorization_autoconfirm_period",
                                                               "base_language_pack_version",
+                                                              "business_features",
                                                               "call_receive_timeout_ms",
                                                               "call_ring_timeout_ms",
                                                               "caption_length_limit_default",
@@ -378,6 +389,7 @@ bool OptionManager::is_internal_option(Slice name) {
                                                               "ignored_restriction_reasons",
                                                               "language_pack_version",
                                                               "my_phone_number",
+                                                              "need_premium_for_new_chat_privacy",
                                                               "need_premium_for_story_caption_entities",
                                                               "need_synchronize_archive_all_stories",
                                                               "notification_cloud_delay_ms",
@@ -519,9 +531,7 @@ void OptionManager::on_option_updated(Slice name) {
         }
       }
       if (name == "is_premium") {
-        set_option_boolean(
-            "can_use_text_entities_in_story_caption",
-            !get_option_boolean("need_premium_for_story_caption_entities") || get_option_boolean("is_premium"));
+        update_premium_options();
       }
       break;
     case 'l':
@@ -542,11 +552,17 @@ void OptionManager::on_option_updated(Slice name) {
         }
       }
       break;
+    case 'm':
+      if (name == "my_phone_number") {
+        send_closure(G()->config_manager(), &ConfigManager::reget_config, Promise<Unit>());
+      }
+      break;
     case 'n':
+      if (name == "need_premium_for_new_chat_privacy") {
+        update_premium_options();
+      }
       if (name == "need_premium_for_story_caption_entities") {
-        set_option_boolean(
-            "can_use_text_entities_in_story_caption",
-            !get_option_boolean("need_premium_for_story_caption_entities") || get_option_boolean("is_premium"));
+        update_premium_options();
       }
       if (name == "need_synchronize_archive_all_stories") {
         send_closure(td_->story_manager_actor_, &StoryManager::try_synchronize_archive_all_stories);
@@ -636,7 +652,8 @@ void OptionManager::get_option(const string &name, Promise<td_api::object_ptr<td
       }
       if (!is_bot && name == "is_location_visible") {
         if (is_td_inited_) {
-          send_closure_later(td_->contacts_manager_actor_, &ContactsManager::get_is_location_visible, wrap_promise());
+          send_closure_later(td_->people_nearby_manager_actor_, &PeopleNearbyManager::get_is_location_visible,
+                             wrap_promise());
         } else {
           pending_get_options_.emplace_back(name, std::move(promise));
         }
@@ -667,7 +684,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.26");
+        return td_api::make_object<td_api::optionValueString>("1.8.27");
       }
       break;
   }
@@ -845,7 +862,7 @@ void OptionManager::set_option(const string &name, td_api::object_ptr<td_api::Op
         return;
       }
       if (!is_bot && set_boolean_option("is_location_visible")) {
-        ContactsManager::set_location_visibility(td_);
+        PeopleNearbyManager::set_location_visibility(td_);
         return;
       }
       break;

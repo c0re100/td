@@ -822,7 +822,7 @@ void QuickReplyManager::on_reload_quick_reply_shortcuts(
           CHECK(is_changed);
           send_update_quick_reply_shortcut_deleted(old_shortcut);
         } else {
-          // some local messages has left
+          // some local messages left
           if (added_shortcut_names.count(old_shortcut->name_)) {
             LOG(INFO) << "Local shortcut " << old_shortcut->name_ << " has been created server-side";
             for (auto &shortcut : new_shortcuts) {
@@ -1435,8 +1435,9 @@ Result<vector<QuickReplyManager::QuickReplyMessageContent>> QuickReplyManager::g
                                     content->get_type() == MessageContentType::Text &&
                                     !has_message_content_web_page(content.get());
     result.push_back({std::move(content), message->message_id, message->reply_to_message_id,
-                      dup_reply_markup(message->reply_markup), message->media_album_id, message->invert_media,
-                      disable_web_page_preview});
+                      dup_reply_markup(message->reply_markup),
+                      message->hide_via_bot ? UserId() : message->via_bot_user_id, message->media_album_id,
+                      message->invert_media, disable_web_page_preview});
   }
 
   return std::move(result);

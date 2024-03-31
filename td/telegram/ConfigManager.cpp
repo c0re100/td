@@ -27,6 +27,7 @@
 #include "td/telegram/Premium.h"
 #include "td/telegram/ReactionType.h"
 #include "td/telegram/StateManager.h"
+#include "td/telegram/SuggestedAction.hpp"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
@@ -950,6 +951,18 @@ void ConfigManager::start_up() {
     expire_time_ = expire_time;
     set_timeout_in(expire_time_.in());
   }
+
+  auto log_event_string = G()->td_db()->get_binlog_pmc()->get(get_suggested_actions_database_key());
+  if (!log_event_string.empty()) {
+    vector<SuggestedAction> suggested_actions;
+    auto status = log_event_parse(suggested_actions, log_event_string);
+    if (status.is_error()) {
+      LOG(ERROR) << "Failed to parse suggested actions from binlog: " << status;
+      save_suggested_actions();
+    } else {
+      update_suggested_actions(suggested_actions_, std::move(suggested_actions));
+    }
+  }
 }
 
 ActorShared<> ConfigManager::create_reference() {
@@ -1115,7 +1128,9 @@ void ConfigManager::do_set_ignore_sensitive_content_restrictions(bool ignore_sen
 }
 
 void ConfigManager::hide_suggested_action(SuggestedAction suggested_action) {
-  remove_suggested_action(suggested_actions_, suggested_action);
+  if (remove_suggested_action(suggested_actions_, suggested_action)) {
+    save_suggested_actions();
+  }
 }
 
 void ConfigManager::dismiss_suggested_action(SuggestedAction suggested_action, Promise<Unit> &&promise) {
@@ -1156,7 +1171,9 @@ void ConfigManager::on_result(NetQueryPtr net_query) {
       fail_promises(promises, result_ptr.move_as_error());
       return;
     }
-    remove_suggested_action(suggested_actions_, suggested_action);
+    if (remove_suggested_action(suggested_actions_, suggested_action)) {
+      save_suggested_actions();
+    }
     reget_app_config(Auto());
 
     set_promises(promises);
@@ -1489,6 +1506,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   int32 transcribe_audio_trial_weekly_number = 0;
   int32 transcribe_audio_trial_duration_max = 0;
   int32 transcribe_audio_trial_cooldown_until = 0;
+  vector<string> business_features;
   if (config->get_id() == telegram_api::jsonObject::ID) {
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
@@ -1990,6 +2008,35 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
                                 get_json_value_int(std::move(key_value->value_), key));
         continue;
       }
+      if (key == "intro_title_length_limit") {
+        G()->set_option_integer("business_intro_title_length_max",
+                                get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "intro_description_length_limit") {
+        G()->set_option_integer("business_intro_message_length_max",
+                                get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "business_promo_order") {
+        if (value->get_id() == telegram_api::jsonArray::ID) {
+          auto features = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
+          for (auto &feature : features) {
+            auto business_feature = get_json_value_string(std::move(feature), key);
+            if (!td::contains(business_feature, ',')) {
+              business_features.push_back(std::move(business_feature));
+            }
+          }
+        } else {
+          LOG(ERROR) << "Receive unexpected business_promo_order " << to_string(*value);
+        }
+        continue;
+      }
+      if (key == "new_noncontact_peers_require_premium_without_ownpremium") {
+        G()->set_option_boolean("need_premium_for_new_chat_privacy",
+                                !get_json_value_bool(std::move(key_value->value_), key));
+        continue;
+      }
 
       new_values.push_back(std::move(key_value));
     }
@@ -2093,11 +2140,13 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
     premium_bot_username.clear();  // just in case
     premium_invoice_slug.clear();  // just in case
     premium_features.clear();      // just in case
+    business_features.clear();     // just in case
     options.set_option_empty("is_premium_available");
   } else {
     options.set_option_boolean("is_premium_available", is_premium_available);
   }
   options.set_option_string("premium_features", implode(premium_features, ','));
+  options.set_option_string("business_features", implode(business_features, ','));
   if (premium_bot_username.empty()) {
     options.set_option_empty("premium_bot_username");
   } else {
@@ -2148,7 +2197,22 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
 
   // do not update suggested actions while changing content settings or dismissing an action
   if (!is_set_content_settings_request_sent_ && dismiss_suggested_action_request_count_ == 0) {
-    update_suggested_actions(suggested_actions_, std::move(suggested_actions));
+    if (update_suggested_actions(suggested_actions_, std::move(suggested_actions))) {
+      save_suggested_actions();
+    }
+  }
+}
+
+string ConfigManager::get_suggested_actions_database_key() {
+  return "suggested_actions";
+}
+
+void ConfigManager::save_suggested_actions() {
+  if (suggested_actions_.empty()) {
+    G()->td_db()->get_binlog_pmc()->erase(get_suggested_actions_database_key());
+  } else {
+    G()->td_db()->get_binlog_pmc()->set(get_suggested_actions_database_key(),
+                                        log_event_store(suggested_actions_).as_slice().str());
   }
 }
 

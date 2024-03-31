@@ -7,6 +7,7 @@
 #include "td/telegram/DialogManager.h"
 
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/BotCommand.h"
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ChannelType.h"
 #include "td/telegram/ChatId.h"
@@ -17,6 +18,7 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
+#include "td/telegram/OptionManager.h"
 #include "td/telegram/ReportReason.h"
 #include "td/telegram/SecretChatId.h"
 #include "td/telegram/SecretChatsManager.h"
@@ -125,6 +127,65 @@ class ResolveUsernameQuery final : public Td::ResultHandler {
     td_->contacts_manager_->on_get_chats(std::move(ptr->chats_), "ResolveUsernameQuery");
 
     promise_.set_value(DialogId(ptr->peer_));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class DismissSuggestionQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+  DialogId dialog_id_;
+
+ public:
+  explicit DismissSuggestionQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(SuggestedAction action) {
+    dialog_id_ = action.dialog_id_;
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id_, AccessRights::Read);
+    CHECK(input_peer != nullptr);
+
+    send_query(G()->net_query_creator().create(
+        telegram_api::help_dismissSuggestion(std::move(input_peer), action.get_suggested_action_str())));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::help_dismissSuggestion>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "DismissSuggestionQuery");
+    promise_.set_error(std::move(status));
+  }
+};
+
+class MigrateChatQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit MigrateChatQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(ChatId chat_id) {
+    send_query(G()->net_query_creator().create(telegram_api::messages_migrateChat(chat_id.get()), {{chat_id}}));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::messages_migrateChat>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for MigrateChatQuery: " << to_string(ptr);
+    td_->updates_manager_->on_get_updates(std::move(ptr), std::move(promise_));
   }
 
   void on_error(Status status) final {
@@ -811,26 +872,26 @@ td_api::object_ptr<td_api::chats> DialogManager::get_chats_object(const std::pai
   return get_chats_object(dialog_ids.first, dialog_ids.second, source);
 }
 
-td_api::object_ptr<td_api::ChatType> DialogManager::get_chat_type_object(DialogId dialog_id) const {
+td_api::object_ptr<td_api::ChatType> DialogManager::get_chat_type_object(DialogId dialog_id, const char *source) const {
   switch (dialog_id.get_type()) {
     case DialogType::User:
       return td_api::make_object<td_api::chatTypePrivate>(
-          td_->contacts_manager_->get_user_id_object(dialog_id.get_user_id(), "chatTypePrivate"));
+          td_->contacts_manager_->get_user_id_object(dialog_id.get_user_id(), source));
     case DialogType::Chat:
       return td_api::make_object<td_api::chatTypeBasicGroup>(
-          td_->contacts_manager_->get_basic_group_id_object(dialog_id.get_chat_id(), "chatTypeBasicGroup"));
+          td_->contacts_manager_->get_basic_group_id_object(dialog_id.get_chat_id(), source));
     case DialogType::Channel: {
       auto channel_id = dialog_id.get_channel_id();
       return td_api::make_object<td_api::chatTypeSupergroup>(
-          td_->contacts_manager_->get_supergroup_id_object(channel_id, "chatTypeSupergroup"),
+          td_->contacts_manager_->get_supergroup_id_object(channel_id, source),
           !td_->contacts_manager_->is_megagroup_channel(channel_id));
     }
     case DialogType::SecretChat: {
       auto secret_chat_id = dialog_id.get_secret_chat_id();
       auto user_id = td_->contacts_manager_->get_secret_chat_user_id(secret_chat_id);
       return td_api::make_object<td_api::chatTypeSecret>(
-          td_->contacts_manager_->get_secret_chat_id_object(secret_chat_id, "chatTypeSecret"),
-          td_->contacts_manager_->get_user_id_object(user_id, "chatTypeSecret"));
+          td_->contacts_manager_->get_secret_chat_id_object(secret_chat_id, source),
+          td_->contacts_manager_->get_user_id_object(user_id, source));
     }
     case DialogType::None:
     default:
@@ -853,6 +914,49 @@ NotificationSettingsScope DialogManager::get_dialog_notification_setting_scope(D
       UNREACHABLE();
       return NotificationSettingsScope::Private;
   }
+}
+
+void DialogManager::migrate_dialog_to_megagroup(DialogId dialog_id,
+                                                Promise<td_api::object_ptr<td_api::chat>> &&promise) {
+  if (!have_dialog_force(dialog_id, "migrate_dialog_to_megagroup")) {
+    return promise.set_error(Status::Error(400, "Chat not found"));
+  }
+  if (dialog_id.get_type() != DialogType::Chat) {
+    return promise.set_error(Status::Error(400, "Only basic group chats can be converted to supergroup"));
+  }
+
+  auto chat_id = dialog_id.get_chat_id();
+  if (!td_->contacts_manager_->get_chat_status(chat_id).is_creator()) {
+    return promise.set_error(Status::Error(400, "Need creator rights in the chat"));
+  }
+  if (td_->contacts_manager_->get_chat_migrated_to_channel_id(chat_id).is_valid()) {
+    return on_migrate_chat_to_megagroup(chat_id, std::move(promise));
+  }
+
+  auto query_promise = PromiseCreator::lambda(
+      [actor_id = actor_id(this), chat_id, promise = std::move(promise)](Result<Unit> &&result) mutable {
+        if (result.is_error()) {
+          return promise.set_error(result.move_as_error());
+        }
+        send_closure(actor_id, &DialogManager::on_migrate_chat_to_megagroup, chat_id, std::move(promise));
+      });
+  td_->create_handler<MigrateChatQuery>(std::move(query_promise))->send(chat_id);
+}
+
+void DialogManager::on_migrate_chat_to_megagroup(ChatId chat_id, Promise<td_api::object_ptr<td_api::chat>> &&promise) {
+  auto channel_id = td_->contacts_manager_->get_chat_migrated_to_channel_id(chat_id);
+  if (!channel_id.is_valid()) {
+    LOG(ERROR) << "Can't find the supergroup to which the basic group has migrated";
+    return promise.set_error(Status::Error(500, "Supergroup not found"));
+  }
+  if (!td_->contacts_manager_->have_channel(channel_id)) {
+    LOG(ERROR) << "Can't find info about the supergroup to which the basic group has migrated";
+    return promise.set_error(Status::Error(500, "Supergroup info is not found"));
+  }
+
+  auto dialog_id = DialogId(channel_id);
+  force_create_dialog(dialog_id, "on_migrate_chat_to_megagroup");
+  promise.set_value(td_->messages_manager_->get_chat_object(dialog_id, "on_migrate_chat_to_megagroup"));
 }
 
 bool DialogManager::is_anonymous_administrator(DialogId dialog_id, string *author_signature) const {
@@ -1772,6 +1876,20 @@ Status DialogManager::can_pin_messages(DialogId dialog_id) const {
   return Status::OK();
 }
 
+bool DialogManager::can_use_premium_custom_emoji_in_dialog(DialogId dialog_id) const {
+  if (td_->auth_manager_->is_bot()) {
+    return true;
+  }
+  if (dialog_id == get_my_dialog_id() || td_->option_manager_->get_option_boolean("is_premium")) {
+    return true;
+  }
+  if (dialog_id.get_type() == DialogType::Channel &&
+      td_->contacts_manager_->can_use_premium_custom_emoji_in_channel(dialog_id.get_channel_id())) {
+    return true;
+  }
+  return false;
+}
+
 bool DialogManager::is_dialog_removed_from_dialog_list(DialogId dialog_id) const {
   switch (dialog_id.get_type()) {
     case DialogType::User:
@@ -1788,6 +1906,40 @@ bool DialogManager::is_dialog_removed_from_dialog_list(DialogId dialog_id) const
       break;
   }
   return false;
+}
+
+void DialogManager::on_update_dialog_bot_commands(
+    DialogId dialog_id, UserId bot_user_id, vector<telegram_api::object_ptr<telegram_api::botCommand>> &&bot_commands) {
+  if (!bot_user_id.is_valid()) {
+    LOG(ERROR) << "Receive updateBotCommands about invalid " << bot_user_id;
+    return;
+  }
+  if (!td_->contacts_manager_->have_user_force(bot_user_id, "on_update_dialog_bot_commands") ||
+      !td_->contacts_manager_->is_user_bot(bot_user_id)) {
+    return;
+  }
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+
+  switch (dialog_id.get_type()) {
+    case DialogType::User:
+      if (DialogId(bot_user_id) != dialog_id) {
+        LOG(ERROR) << "Receive commands of " << bot_user_id << " in " << dialog_id;
+        return;
+      }
+      return td_->contacts_manager_->on_update_user_commands(bot_user_id, std::move(bot_commands));
+    case DialogType::Chat:
+      return td_->contacts_manager_->on_update_chat_bot_commands(dialog_id.get_chat_id(),
+                                                                 BotCommands(bot_user_id, std::move(bot_commands)));
+    case DialogType::Channel:
+      return td_->contacts_manager_->on_update_channel_bot_commands(dialog_id.get_channel_id(),
+                                                                    BotCommands(bot_user_id, std::move(bot_commands)));
+    case DialogType::SecretChat:
+    default:
+      LOG(ERROR) << "Receive updateBotCommands in " << dialog_id;
+      break;
+  }
 }
 
 void DialogManager::on_dialog_usernames_updated(DialogId dialog_id, const Usernames &old_usernames,
@@ -2109,6 +2261,91 @@ void DialogManager::drop_username(const string &username) {
 
     resolved_usernames_.erase(cleaned_username);
   }
+}
+
+void DialogManager::set_dialog_pending_suggestions(DialogId dialog_id, vector<string> &&pending_suggestions) {
+  if (dismiss_suggested_action_queries_.count(dialog_id) != 0) {
+    return;
+  }
+  auto it = dialog_suggested_actions_.find(dialog_id);
+  if (it == dialog_suggested_actions_.end() && !pending_suggestions.empty()) {
+    return;
+  }
+  vector<SuggestedAction> suggested_actions;
+  for (auto &action_str : pending_suggestions) {
+    SuggestedAction suggested_action(action_str, dialog_id);
+    if (!suggested_action.is_empty()) {
+      if (suggested_action == SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, dialog_id} &&
+          (dialog_id.get_type() != DialogType::Channel ||
+           !td_->contacts_manager_->can_convert_channel_to_gigagroup(dialog_id.get_channel_id()))) {
+        LOG(INFO) << "Skip ConvertToGigagroup suggested action";
+      } else {
+        suggested_actions.push_back(suggested_action);
+      }
+    }
+  }
+  if (it == dialog_suggested_actions_.end()) {
+    it = dialog_suggested_actions_.emplace(dialog_id, vector<SuggestedAction>()).first;
+  }
+  update_suggested_actions(it->second, std::move(suggested_actions));
+  if (it->second.empty()) {
+    dialog_suggested_actions_.erase(it);
+  }
+}
+
+void DialogManager::remove_dialog_suggested_action(SuggestedAction action) {
+  auto it = dialog_suggested_actions_.find(action.dialog_id_);
+  if (it == dialog_suggested_actions_.end()) {
+    return;
+  }
+  remove_suggested_action(it->second, action);
+  if (it->second.empty()) {
+    dialog_suggested_actions_.erase(it);
+  }
+}
+
+void DialogManager::dismiss_dialog_suggested_action(SuggestedAction action, Promise<Unit> &&promise) {
+  auto dialog_id = action.dialog_id_;
+  if (!td_->messages_manager_->have_dialog(dialog_id)) {
+    return promise.set_error(Status::Error(400, "Chat not found"));
+  }
+  if (!have_input_peer(dialog_id, AccessRights::Read)) {
+    return promise.set_error(Status::Error(400, "Can't access the chat"));
+  }
+
+  auto it = dialog_suggested_actions_.find(dialog_id);
+  if (it == dialog_suggested_actions_.end() || !td::contains(it->second, action)) {
+    return promise.set_value(Unit());
+  }
+
+  auto action_str = action.get_suggested_action_str();
+  if (action_str.empty()) {
+    return promise.set_value(Unit());
+  }
+
+  auto &queries = dismiss_suggested_action_queries_[dialog_id];
+  queries.push_back(std::move(promise));
+  if (queries.size() == 1) {
+    auto query_promise = PromiseCreator::lambda([actor_id = actor_id(this), action](Result<Unit> &&result) {
+      send_closure(actor_id, &DialogManager::on_dismiss_suggested_action, action, std::move(result));
+    });
+    td_->create_handler<DismissSuggestionQuery>(std::move(query_promise))->send(std::move(action));
+  }
+}
+
+void DialogManager::on_dismiss_suggested_action(SuggestedAction action, Result<Unit> &&result) {
+  auto it = dismiss_suggested_action_queries_.find(action.dialog_id_);
+  CHECK(it != dismiss_suggested_action_queries_.end());
+  auto promises = std::move(it->second);
+  dismiss_suggested_action_queries_.erase(it);
+
+  if (result.is_error()) {
+    return fail_promises(promises, result.move_as_error());
+  }
+
+  remove_dialog_suggested_action(action);
+
+  set_promises(promises);
 }
 
 }  // namespace td

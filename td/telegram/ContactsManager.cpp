@@ -7,14 +7,15 @@
 #include "td/telegram/ContactsManager.h"
 
 #include "td/telegram/AnimationsManager.h"
-#include "td/telegram/Application.h"
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/Birthdate.hpp"
 #include "td/telegram/BlockListId.h"
 #include "td/telegram/BotMenuButton.h"
 #include "td/telegram/BusinessAwayMessage.h"
 #include "td/telegram/BusinessGreetingMessage.h"
 #include "td/telegram/BusinessInfo.h"
 #include "td/telegram/BusinessInfo.hpp"
+#include "td/telegram/BusinessIntro.h"
 #include "td/telegram/BusinessWorkHours.h"
 #include "td/telegram/CommonDialogManager.h"
 #include "td/telegram/ConfigManager.h"
@@ -47,6 +48,7 @@
 #include "td/telegram/NotificationManager.h"
 #include "td/telegram/OptionManager.h"
 #include "td/telegram/PeerColor.h"
+#include "td/telegram/PeopleNearbyManager.h"
 #include "td/telegram/Photo.h"
 #include "td/telegram/Photo.hpp"
 #include "td/telegram/PhotoSize.h"
@@ -59,6 +61,7 @@
 #include "td/telegram/StickerPhotoSize.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StoryManager.h"
+#include "td/telegram/SuggestedAction.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
@@ -96,38 +99,6 @@
 
 namespace td {
 
-class DismissSuggestionQuery final : public Td::ResultHandler {
-  Promise<Unit> promise_;
-  DialogId dialog_id_;
-
- public:
-  explicit DismissSuggestionQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
-  }
-
-  void send(SuggestedAction action) {
-    dialog_id_ = action.dialog_id_;
-    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id_, AccessRights::Read);
-    CHECK(input_peer != nullptr);
-
-    send_query(G()->net_query_creator().create(
-        telegram_api::help_dismissSuggestion(std::move(input_peer), action.get_suggested_action_str())));
-  }
-
-  void on_result(BufferSlice packet) final {
-    auto result_ptr = fetch_result<telegram_api::help_dismissSuggestion>(packet);
-    if (result_ptr.is_error()) {
-      return on_error(result_ptr.move_as_error());
-    }
-
-    promise_.set_value(Unit());
-  }
-
-  void on_error(Status status) final {
-    td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "DismissSuggestionQuery");
-    promise_.set_error(std::move(status));
-  }
-};
-
 class GetContactsQuery final : public Td::ResultHandler {
  public:
   void send(int64 hash) {
@@ -147,6 +118,28 @@ class GetContactsQuery final : public Td::ResultHandler {
 
   void on_error(Status status) final {
     td_->contacts_manager_->on_get_contacts_failed(std::move(status));
+  }
+};
+
+class GetContactsBirthdaysQuery final : public Td::ResultHandler {
+ public:
+  void send() {
+    send_query(G()->net_query_creator().create(telegram_api::contacts_getBirthdays()));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::contacts_getBirthdays>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for GetContactsBirthdaysQuery: " << to_string(ptr);
+    td_->contacts_manager_->on_get_contact_birthdates(std::move(ptr));
+  }
+
+  void on_error(Status status) final {
+    td_->contacts_manager_->on_get_contact_birthdates(nullptr);
   }
 };
 
@@ -443,40 +436,6 @@ class ResetContactsQuery final : public Td::ResultHandler {
   }
 };
 
-class SearchDialogsNearbyQuery final : public Td::ResultHandler {
-  Promise<tl_object_ptr<telegram_api::Updates>> promise_;
-
- public:
-  explicit SearchDialogsNearbyQuery(Promise<tl_object_ptr<telegram_api::Updates>> &&promise)
-      : promise_(std::move(promise)) {
-  }
-
-  void send(const Location &location, bool from_background, int32 expire_date) {
-    int32 flags = 0;
-    if (from_background) {
-      flags |= telegram_api::contacts_getLocated::BACKGROUND_MASK;
-    }
-    if (expire_date != -1) {
-      flags |= telegram_api::contacts_getLocated::SELF_EXPIRES_MASK;
-    }
-    send_query(G()->net_query_creator().create(
-        telegram_api::contacts_getLocated(flags, false /*ignored*/, location.get_input_geo_point(), expire_date)));
-  }
-
-  void on_result(BufferSlice packet) final {
-    auto result_ptr = fetch_result<telegram_api::contacts_getLocated>(packet);
-    if (result_ptr.is_error()) {
-      return on_error(result_ptr.move_as_error());
-    }
-
-    promise_.set_value(result_ptr.move_as_ok());
-  }
-
-  void on_error(Status status) final {
-    promise_.set_error(std::move(status));
-  }
-};
-
 class UploadProfilePhotoQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   UserId user_id_;
@@ -627,10 +586,10 @@ class UploadProfilePhotoQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
-    promise_.set_error(std::move(status));
     if (file_id_.is_valid()) {
       td_->file_manager_->delete_partial_remote_location(file_id_);
     }
+    promise_.set_error(std::move(status));
   }
 };
 
@@ -1063,6 +1022,79 @@ class ReorderBotUsernamesQuery final : public Td::ResultHandler {
   }
 };
 
+class UpdateBirthdayQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit UpdateBirthdayQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(const Birthdate &birthdate) {
+    int32 flags = 0;
+    if (!birthdate.is_empty()) {
+      flags |= telegram_api::account_updateBirthday::BIRTHDAY_MASK;
+    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::account_updateBirthday(flags, birthdate.get_input_birthday()), {{"me"}}));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::account_updateBirthday>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    LOG(DEBUG) << "Receive result for UpdateBirthdayQuery: " << result_ptr.ok();
+    if (result_ptr.ok()) {
+      promise_.set_value(Unit());
+    } else {
+      promise_.set_error(Status::Error(400, "Failed to change birthdate"));
+    }
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class UpdatePersonalChannelQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit UpdatePersonalChannelQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(ChannelId channel_id) {
+    telegram_api::object_ptr<telegram_api::InputChannel> input_channel;
+    if (channel_id == ChannelId()) {
+      input_channel = telegram_api::make_object<telegram_api::inputChannelEmpty>();
+    } else {
+      input_channel = td_->contacts_manager_->get_input_channel(channel_id);
+      CHECK(input_channel != nullptr);
+    }
+    send_query(G()->net_query_creator().create(telegram_api::account_updatePersonalChannel(std::move(input_channel)),
+                                               {{"me"}}));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::account_updatePersonalChannel>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    LOG(DEBUG) << "Receive result for UpdatePersonalChannelQuery: " << result_ptr.ok();
+    if (result_ptr.ok()) {
+      promise_.set_value(Unit());
+    } else {
+      promise_.set_error(Status::Error(400, "Failed to change personal chat"));
+    }
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
 class UpdateEmojiStatusQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
 
@@ -1114,7 +1146,9 @@ class CreateChatQuery final : public Td::ResultHandler {
       return on_error(result_ptr.move_as_error());
     }
 
-    td_->messages_manager_->on_create_new_dialog(result_ptr.move_as_ok(), DialogType::Chat, std::move(promise_));
+    auto ptr = result_ptr.move_as_ok();
+    LOG(INFO) << "Receive result for CreateChatQuery: " << to_string(ptr);
+    td_->messages_manager_->on_create_new_dialog(std::move(ptr->updates_), DialogType::Chat, std::move(promise_));
   }
 
   void on_error(Status status) final {
@@ -2272,82 +2306,6 @@ class DeleteChannelQuery final : public Td::ResultHandler {
   }
 };
 
-class MigrateChatQuery final : public Td::ResultHandler {
-  Promise<Unit> promise_;
-
- public:
-  explicit MigrateChatQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
-  }
-
-  void send(ChatId chat_id) {
-    send_query(G()->net_query_creator().create(telegram_api::messages_migrateChat(chat_id.get()), {{chat_id}}));
-  }
-
-  void on_result(BufferSlice packet) final {
-    auto result_ptr = fetch_result<telegram_api::messages_migrateChat>(packet);
-    if (result_ptr.is_error()) {
-      return on_error(result_ptr.move_as_error());
-    }
-
-    auto ptr = result_ptr.move_as_ok();
-    LOG(INFO) << "Receive result for MigrateChatQuery: " << to_string(ptr);
-    td_->updates_manager_->on_get_updates(std::move(ptr), std::move(promise_));
-  }
-
-  void on_error(Status status) final {
-    promise_.set_error(std::move(status));
-  }
-};
-
-class GetChannelRecommendationsQuery final : public Td::ResultHandler {
-  Promise<std::pair<int32, vector<tl_object_ptr<telegram_api::Chat>>>> promise_;
-  ChannelId channel_id_;
-
- public:
-  explicit GetChannelRecommendationsQuery(
-      Promise<std::pair<int32, vector<tl_object_ptr<telegram_api::Chat>>>> &&promise)
-      : promise_(std::move(promise)) {
-  }
-
-  void send(ChannelId channel_id) {
-    channel_id_ = channel_id;
-
-    auto input_channel = td_->contacts_manager_->get_input_channel(channel_id);
-    CHECK(input_channel != nullptr);
-    send_query(
-        G()->net_query_creator().create(telegram_api::channels_getChannelRecommendations(std::move(input_channel))));
-  }
-
-  void on_result(BufferSlice packet) final {
-    auto result_ptr = fetch_result<telegram_api::channels_getChannelRecommendations>(packet);
-    if (result_ptr.is_error()) {
-      return on_error(result_ptr.move_as_error());
-    }
-
-    auto chats_ptr = result_ptr.move_as_ok();
-    LOG(INFO) << "Receive result for GetChannelRecommendationsQuery: " << to_string(chats_ptr);
-    switch (chats_ptr->get_id()) {
-      case telegram_api::messages_chats::ID: {
-        auto chats = move_tl_object_as<telegram_api::messages_chats>(chats_ptr);
-        auto total_count = static_cast<int32>(chats->chats_.size());
-        return promise_.set_value({total_count, std::move(chats->chats_)});
-      }
-      case telegram_api::messages_chatsSlice::ID: {
-        auto chats = move_tl_object_as<telegram_api::messages_chatsSlice>(chats_ptr);
-        return promise_.set_value({chats->count_, std::move(chats->chats_)});
-      }
-      default:
-        UNREACHABLE();
-        return promise_.set_error(Status::Error("Unreachable"));
-    }
-  }
-
-  void on_error(Status status) final {
-    td_->contacts_manager_->on_get_channel_error(channel_id_, status, "GetChannelRecommendationsQuery");
-    promise_.set_error(std::move(status));
-  }
-};
-
 class GetCreatedPublicChannelsQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
   PublicDialogType type_;
@@ -2362,11 +2320,15 @@ class GetCreatedPublicChannelsQuery final : public Td::ResultHandler {
     if (type_ == PublicDialogType::IsLocationBased) {
       flags |= telegram_api::channels_getAdminedPublicChannels::BY_LOCATION_MASK;
     }
+    if (type_ == PublicDialogType::ForPersonalDialog) {
+      CHECK(!check_limit);
+      flags |= telegram_api::channels_getAdminedPublicChannels::FOR_PERSONAL_MASK;
+    }
     if (check_limit) {
       flags |= telegram_api::channels_getAdminedPublicChannels::CHECK_LIMIT_MASK;
     }
-    send_query(G()->net_query_creator().create(
-        telegram_api::channels_getAdminedPublicChannels(flags, false /*ignored*/, false /*ignored*/)));
+    send_query(G()->net_query_creator().create(telegram_api::channels_getAdminedPublicChannels(
+        flags, false /*ignored*/, false /*ignored*/, false /*ignored*/)));
   }
 
   void on_result(BufferSlice packet) final {
@@ -2839,9 +2801,6 @@ ContactsManager::ContactsManager(Td *td, ActorShared<> parent) : td_(td), parent
   }
   if (G()->use_sqlite_pmc()) {
     G()->td_db()->get_sqlite_pmc()->erase_by_prefix("us_bot_info", Auto());
-    if (!G()->use_message_database()) {
-      G()->td_db()->get_sqlite_pmc()->erase_by_prefix("channel_recommendations", Auto());
-    }
   }
 
   if (!td_->auth_manager_->is_bot()) {
@@ -2851,21 +2810,6 @@ ContactsManager::ContactsManager(Td *td, ActorShared<> parent) : td_(td), parent
     if (was_online_local_ >= unix_time && !td_->is_online()) {
       was_online_local_ = unix_time - 1;
     }
-
-    location_visibility_expire_date_ =
-        to_integer<int32>(G()->td_db()->get_binlog_pmc()->get("location_visibility_expire_date"));
-    if (location_visibility_expire_date_ != 0 && location_visibility_expire_date_ <= G()->unix_time()) {
-      location_visibility_expire_date_ = 0;
-      G()->td_db()->get_binlog_pmc()->erase("location_visibility_expire_date");
-    }
-    auto pending_location_visibility_expire_date_string =
-        G()->td_db()->get_binlog_pmc()->get("pending_location_visibility_expire_date");
-    if (!pending_location_visibility_expire_date_string.empty()) {
-      pending_location_visibility_expire_date_ = to_integer<int32>(pending_location_visibility_expire_date_string);
-    }
-    update_is_location_visible();
-    LOG(INFO) << "Loaded location_visibility_expire_date = " << location_visibility_expire_date_
-              << " and pending_location_visibility_expire_date = " << pending_location_visibility_expire_date_;
   }
 
   user_online_timeout_.set_callback(on_user_online_timeout_callback);
@@ -2879,9 +2823,6 @@ ContactsManager::ContactsManager(Td *td, ActorShared<> parent) : td_(td), parent
 
   channel_unban_timeout_.set_callback(on_channel_unban_timeout_callback);
   channel_unban_timeout_.set_callback_data(static_cast<void *>(this));
-
-  user_nearby_timeout_.set_callback(on_user_nearby_timeout_callback);
-  user_nearby_timeout_.set_callback_data(static_cast<void *>(this));
 
   slow_mode_delay_timeout_.set_callback(on_slow_mode_delay_timeout_callback);
   slow_mode_delay_timeout_.set_callback_data(static_cast<void *>(this));
@@ -2926,12 +2867,6 @@ ContactsManager::~ContactsManager() {
       unavailable_chat_fulls_, loaded_from_database_channels_, unavailable_channel_fulls_,
       loaded_from_database_secret_chats_, resolved_phone_numbers_, all_imported_contacts_, linked_channel_ids_,
       restricted_user_ids_, restricted_channel_ids_);
-}
-
-void ContactsManager::start_up() {
-  if (!pending_location_visibility_expire_date_) {
-    try_send_set_location_visibility_query();
-  }
 }
 
 void ContactsManager::tear_down() {
@@ -3066,35 +3001,6 @@ void ContactsManager::on_channel_unban_timeout(ChannelId channel_id) {
   update_channel(c, channel_id);  // always call, because in case of failure we need to reactivate timeout
 }
 
-void ContactsManager::on_user_nearby_timeout_callback(void *contacts_manager_ptr, int64 user_id_long) {
-  if (G()->close_flag()) {
-    return;
-  }
-
-  auto contacts_manager = static_cast<ContactsManager *>(contacts_manager_ptr);
-  send_closure_later(contacts_manager->actor_id(contacts_manager), &ContactsManager::on_user_nearby_timeout,
-                     UserId(user_id_long));
-}
-
-void ContactsManager::on_user_nearby_timeout(UserId user_id) {
-  if (G()->close_flag()) {
-    return;
-  }
-
-  auto u = get_user(user_id);
-  CHECK(u != nullptr);
-
-  LOG(INFO) << "Remove " << user_id << " from nearby list";
-  DialogId dialog_id(user_id);
-  for (size_t i = 0; i < users_nearby_.size(); i++) {
-    if (users_nearby_[i].dialog_id == dialog_id) {
-      users_nearby_.erase(users_nearby_.begin() + i);
-      send_update_users_nearby();
-      return;
-    }
-  }
-}
-
 void ContactsManager::on_slow_mode_delay_timeout_callback(void *contacts_manager_ptr, int64 channel_id_long) {
   if (G()->close_flag()) {
     return;
@@ -3179,6 +3085,7 @@ void ContactsManager::User::store(StorerT &storer) const {
     STORE_FLAG(has_profile_accent_color_id);
     STORE_FLAG(has_profile_background_custom_emoji_id);
     STORE_FLAG(contact_require_premium);
+    STORE_FLAG(is_business_bot);
     END_STORE_FLAGS();
   }
   store(first_name, storer);
@@ -3305,6 +3212,7 @@ void ContactsManager::User::parse(ParserT &parser) {
     PARSE_FLAG(has_profile_accent_color_id);
     PARSE_FLAG(has_profile_background_custom_emoji_id);
     PARSE_FLAG(contact_require_premium);
+    PARSE_FLAG(is_business_bot);
     END_PARSE_FLAGS();
   }
   parse(first_name, parser);
@@ -3434,6 +3342,8 @@ void ContactsManager::UserFull::store(StorerT &storer) const {
   bool has_personal_photo = !personal_photo.is_empty();
   bool has_fallback_photo = !fallback_photo.is_empty();
   bool has_business_info = business_info != nullptr && !business_info->is_empty();
+  bool has_birthdate = !birthdate.is_empty();
+  bool has_personal_channel_id = personal_channel_id.is_valid();
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_about);
   STORE_FLAG(is_blocked);
@@ -3461,6 +3371,8 @@ void ContactsManager::UserFull::store(StorerT &storer) const {
   STORE_FLAG(read_dates_private);
   STORE_FLAG(contact_require_premium);
   STORE_FLAG(has_business_info);  // 25
+  STORE_FLAG(has_birthdate);
+  STORE_FLAG(has_personal_channel_id);
   END_STORE_FLAGS();
   if (has_about) {
     store(about, storer);
@@ -3507,6 +3419,12 @@ void ContactsManager::UserFull::store(StorerT &storer) const {
   if (has_business_info) {
     store(business_info, storer);
   }
+  if (has_birthdate) {
+    store(birthdate, storer);
+  }
+  if (has_personal_channel_id) {
+    store(personal_channel_id, storer);
+  }
 }
 
 template <class ParserT>
@@ -3526,6 +3444,8 @@ void ContactsManager::UserFull::parse(ParserT &parser) {
   bool has_personal_photo;
   bool has_fallback_photo;
   bool has_business_info;
+  bool has_birthdate;
+  bool has_personal_channel_id;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_about);
   PARSE_FLAG(is_blocked);
@@ -3553,6 +3473,8 @@ void ContactsManager::UserFull::parse(ParserT &parser) {
   PARSE_FLAG(read_dates_private);
   PARSE_FLAG(contact_require_premium);
   PARSE_FLAG(has_business_info);
+  PARSE_FLAG(has_birthdate);
+  PARSE_FLAG(has_personal_channel_id);
   END_PARSE_FLAGS();
   if (has_about) {
     parse(about, parser);
@@ -3598,6 +3520,12 @@ void ContactsManager::UserFull::parse(ParserT &parser) {
   }
   if (has_business_info) {
     parse(business_info, parser);
+  }
+  if (has_birthdate) {
+    parse(birthdate, parser);
+  }
+  if (has_personal_channel_id) {
+    parse(personal_channel_id, parser);
   }
 }
 
@@ -4417,42 +4345,6 @@ void ContactsManager::SecretChat::parse(ParserT &parser) {
   }
 }
 
-template <class StorerT>
-void ContactsManager::RecommendedDialogs::store(StorerT &storer) const {
-  bool has_dialog_ids = !dialog_ids_.empty();
-  bool has_total_count = static_cast<size_t>(total_count_) != dialog_ids_.size();
-  BEGIN_STORE_FLAGS();
-  STORE_FLAG(has_dialog_ids);
-  STORE_FLAG(has_total_count);
-  END_STORE_FLAGS();
-  if (has_dialog_ids) {
-    td::store(dialog_ids_, storer);
-  }
-  store_time(next_reload_time_, storer);
-  if (has_total_count) {
-    td::store(total_count_, storer);
-  }
-}
-
-template <class ParserT>
-void ContactsManager::RecommendedDialogs::parse(ParserT &parser) {
-  bool has_dialog_ids;
-  bool has_total_count;
-  BEGIN_PARSE_FLAGS();
-  PARSE_FLAG(has_dialog_ids);
-  PARSE_FLAG(has_total_count);
-  END_PARSE_FLAGS();
-  if (has_dialog_ids) {
-    td::parse(dialog_ids_, parser);
-  }
-  parse_time(next_reload_time_, parser);
-  if (has_total_count) {
-    td::parse(total_count_, parser);
-  } else {
-    total_count_ = static_cast<int32>(dialog_ids_.size());
-  }
-}
-
 Result<tl_object_ptr<telegram_api::InputUser>> ContactsManager::get_input_user(UserId user_id) const {
   if (user_id == get_my_id()) {
     return make_tl_object<telegram_api::inputUserSelf>();
@@ -5078,6 +4970,14 @@ bool ContactsManager::can_poll_channel_active_stories(ChannelId channel_id) cons
   return need_poll_channel_active_stories(c, channel_id) && Time::now() >= c->max_active_story_id_next_reload_time;
 }
 
+bool ContactsManager::can_use_premium_custom_emoji_in_channel(ChannelId channel_id) const {
+  if (!is_megagroup_channel(channel_id)) {
+    return false;
+  }
+  auto channel_full = get_channel_full_const(channel_id);
+  return channel_full == nullptr || channel_full->emoji_sticker_set_id.is_valid();
+}
+
 string ContactsManager::get_user_private_forward_name(UserId user_id) {
   auto user_full = get_user_full_force(user_id, "get_user_private_forward_name");
   if (user_full != nullptr) {
@@ -5202,6 +5102,14 @@ string ContactsManager::get_channel_editable_username(ChannelId channel_id) cons
   return c->usernames.get_editable_username();
 }
 
+bool ContactsManager::has_user_fragment_username(UserId user_id) const {
+  auto u = get_user(user_id);
+  if (u == nullptr) {
+    return false;
+  }
+  return u->usernames.get_active_usernames().size() > (u->usernames.has_editable_username() ? 1u : 0u);
+}
+
 UserId ContactsManager::get_secret_chat_user_id(SecretChatId secret_chat_id) const {
   auto c = get_secret_chat(secret_chat_id);
   if (c == nullptr) {
@@ -5242,26 +5150,6 @@ FolderId ContactsManager::get_secret_chat_initial_folder_id(SecretChatId secret_
   return c->initial_folder_id;
 }
 
-bool ContactsManager::can_use_premium_custom_emoji(DialogId dialog_id) const {
-  if (td_->option_manager_->get_option_boolean("is_premium")) {
-    return true;
-  }
-  if (dialog_id.get_type() == DialogType::Channel) {
-    auto channel_id = dialog_id.get_channel_id();
-    if (!td_->auth_manager_->is_bot() && is_megagroup_channel(channel_id)) {
-      auto channel_full = get_channel_full_const(channel_id);
-      if (channel_full == nullptr || channel_full->emoji_sticker_set_id.is_valid()) {
-        return true;
-      }
-    }
-  }
-  if (!td_->auth_manager_->is_bot()) {
-    return false;
-  }
-  const User *u = get_user(get_my_id());
-  return u == nullptr || u->usernames.get_active_usernames().size() > (u->usernames.has_editable_username() ? 1u : 0u);
-}
-
 UserId ContactsManager::get_my_id() const {
   LOG_IF(ERROR, !my_id_.is_valid()) << "Wrong or unknown my ID returned";
   return my_id_;
@@ -5271,6 +5159,7 @@ void ContactsManager::set_my_id(UserId my_id) {
   UserId my_old_id = my_id_;
   if (my_old_id.is_valid() && my_old_id != my_id) {
     LOG(ERROR) << "Already know that me is " << my_old_id << " but received userSelf with " << my_id;
+    return;
   }
   if (!my_id.is_valid()) {
     LOG(ERROR) << "Receive invalid my ID " << my_id;
@@ -5976,14 +5865,14 @@ void ContactsManager::on_update_contacts_reset() {
   if (!are_imported_contacts_loaded_) {
     if (load_imported_contacts_queries_.empty()) {
       CHECK(all_imported_contacts_.empty());
-      LOG(INFO) << "Imported contacts was never loaded, just clear them";
+      LOG(INFO) << "Imported contacts were never loaded, just clear them";
     } else {
       LOG(INFO) << "Imported contacts are being loaded, clear them after they will be loaded";
       need_clear_imported_contacts_ = true;
     }
   } else {
     if (!are_imported_contacts_changing_) {
-      LOG(INFO) << "Imported contacts was loaded, but aren't changing now, just clear them";
+      LOG(INFO) << "Imported contacts were loaded, but aren't changing now, just clear them";
       all_imported_contacts_.clear();
     } else {
       LOG(INFO) << "Imported contacts are changing now, clear them after they will be changed";
@@ -6023,6 +5912,48 @@ std::pair<int32, vector<UserId>> ContactsManager::search_contacts(const string &
 
   promise.set_value(Unit());
   return {narrow_cast<int32>(result.first), std::move(user_ids)};
+}
+
+void ContactsManager::reload_contact_birthdates(bool force) {
+  if (!G()->close_flag() && !td_->auth_manager_->is_bot() && !contact_birthdates_.is_being_synced_ &&
+      (contact_birthdates_.next_sync_time_ < Time::now() || force)) {
+    contact_birthdates_.is_being_synced_ = true;
+    td_->create_handler<GetContactsBirthdaysQuery>()->send();
+  }
+}
+
+void ContactsManager::on_get_contact_birthdates(
+    telegram_api::object_ptr<telegram_api::contacts_contactBirthdays> &&birthdays) {
+  CHECK(contact_birthdates_.is_being_synced_);
+  contact_birthdates_.is_being_synced_ = false;
+  if (birthdays == nullptr) {
+    contact_birthdates_.next_sync_time_ = Time::now() + Random::fast(120, 180);
+    return;
+  }
+  contact_birthdates_.next_sync_time_ = Time::now() + Random::fast(86400 / 4, 86400 / 3);
+
+  on_get_users(std::move(birthdays->users_), "on_get_contact_birthdates");
+  vector<std::pair<UserId, Birthdate>> users;
+  for (auto &contact : birthdays->contacts_) {
+    UserId user_id(contact->contact_id_);
+    if (is_user_contact(user_id)) {
+      Birthdate birthdate(std::move(contact->birthday_));
+      UserFull *user_full = get_user_full_force(user_id, "on_get_contact_birthdates");
+      if (user_full != nullptr && user_full->birthdate != birthdate) {
+        user_full->birthdate = birthdate;
+        user_full->is_changed = true;
+        update_user_full(user_full, user_id, "on_get_contact_birthdates");
+      }
+      if (!birthdate.is_empty()) {
+        users.emplace_back(user_id, birthdate);
+      }
+    }
+  }
+  if (contact_birthdates_.users_ != users) {
+    contact_birthdates_.users_ = std::move(users);
+    send_closure(G()->td(), &Td::send_update, get_update_contact_close_birthdays());
+  }
+  // there is no need to save them between restarts
 }
 
 vector<UserId> ContactsManager::get_close_friends(Promise<Unit> &&promise) {
@@ -6137,385 +6068,10 @@ void ContactsManager::share_phone_number(UserId user_id, Promise<Unit> &&promise
   td_->create_handler<AcceptContactQuery>(std::move(promise))->send(user_id, std::move(input_user));
 }
 
-void ContactsManager::search_dialogs_nearby(const Location &location,
-                                            Promise<td_api::object_ptr<td_api::chatsNearby>> &&promise) {
-  if (location.empty()) {
-    return promise.set_error(Status::Error(400, "Invalid location specified"));
-  }
-  last_user_location_ = location;
-  try_send_set_location_visibility_query();
-
-  auto query_promise = PromiseCreator::lambda([actor_id = actor_id(this), promise = std::move(promise)](
-                                                  Result<tl_object_ptr<telegram_api::Updates>> result) mutable {
-    send_closure(actor_id, &ContactsManager::on_get_dialogs_nearby, std::move(result), std::move(promise));
-  });
-  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))->send(location, false, -1);
-}
-
-vector<td_api::object_ptr<td_api::chatNearby>> ContactsManager::get_chats_nearby_object(
-    const vector<DialogNearby> &dialogs_nearby) const {
-  return transform(dialogs_nearby, [td = td_](const DialogNearby &dialog_nearby) {
-    return td_api::make_object<td_api::chatNearby>(
-        td->dialog_manager_->get_chat_id_object(dialog_nearby.dialog_id, "chatNearby"), dialog_nearby.distance);
-  });
-}
-
-void ContactsManager::send_update_users_nearby() const {
-  send_closure(G()->td(), &Td::send_update,
-               td_api::make_object<td_api::updateUsersNearby>(get_chats_nearby_object(users_nearby_)));
-}
-
-void ContactsManager::on_get_dialogs_nearby(Result<tl_object_ptr<telegram_api::Updates>> result,
-                                            Promise<td_api::object_ptr<td_api::chatsNearby>> &&promise) {
-  if (result.is_error()) {
-    return promise.set_error(result.move_as_error());
-  }
-
-  auto updates_ptr = result.move_as_ok();
-  if (updates_ptr->get_id() != telegram_api::updates::ID) {
-    LOG(ERROR) << "Receive " << oneline(to_string(*updates_ptr)) << " instead of updates";
-    return promise.set_error(Status::Error(500, "Receive unsupported response from the server"));
-  }
-
-  auto update = telegram_api::move_object_as<telegram_api::updates>(updates_ptr);
-  LOG(INFO) << "Receive chats nearby in " << to_string(update);
-
-  on_get_users(std::move(update->users_), "on_get_dialogs_nearby");
-  on_get_chats(std::move(update->chats_), "on_get_dialogs_nearby");
-
-  for (auto &dialog_nearby : users_nearby_) {
-    user_nearby_timeout_.cancel_timeout(dialog_nearby.dialog_id.get_user_id().get());
-  }
-  auto old_users_nearby = std::move(users_nearby_);
-  users_nearby_.clear();
-  channels_nearby_.clear();
-  int32 location_visibility_expire_date = 0;
-  for (auto &update_ptr : update->updates_) {
-    if (update_ptr->get_id() != telegram_api::updatePeerLocated::ID) {
-      LOG(ERROR) << "Receive unexpected " << to_string(update);
-      continue;
-    }
-
-    auto expire_date = on_update_peer_located(
-        std::move(static_cast<telegram_api::updatePeerLocated *>(update_ptr.get())->peers_), false);
-    if (expire_date != -1) {
-      location_visibility_expire_date = expire_date;
-    }
-  }
-  if (location_visibility_expire_date != location_visibility_expire_date_) {
-    set_location_visibility_expire_date(location_visibility_expire_date);
-    update_is_location_visible();
-  }
-
-  std::sort(users_nearby_.begin(), users_nearby_.end());
-  if (old_users_nearby != users_nearby_) {
-    send_update_users_nearby();  // for other clients connected to the same TDLib instance
-  }
-  promise.set_value(td_api::make_object<td_api::chatsNearby>(get_chats_nearby_object(users_nearby_),
-                                                             get_chats_nearby_object(channels_nearby_)));
-}
-
-void ContactsManager::set_location(const Location &location, Promise<Unit> &&promise) {
-  if (location.empty()) {
-    return promise.set_error(Status::Error(400, "Invalid location specified"));
-  }
-  last_user_location_ = location;
-  try_send_set_location_visibility_query();
-
-  auto query_promise = PromiseCreator::lambda(
-      [promise = std::move(promise)](Result<tl_object_ptr<telegram_api::Updates>> result) mutable {
-        promise.set_value(Unit());
-      });
-  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))->send(location, true, -1);
-}
-
-void ContactsManager::set_location_visibility(Td *td) {
-  bool is_location_visible = td->option_manager_->get_option_boolean("is_location_visible");
-  auto pending_location_visibility_expire_date = is_location_visible ? std::numeric_limits<int32>::max() : 0;
-  if (td->contacts_manager_ == nullptr) {
-    G()->td_db()->get_binlog_pmc()->set("pending_location_visibility_expire_date",
-                                        to_string(pending_location_visibility_expire_date));
-    return;
-  }
-  if (td->contacts_manager_->pending_location_visibility_expire_date_ == -1 &&
-      pending_location_visibility_expire_date == td->contacts_manager_->location_visibility_expire_date_) {
-    return;
-  }
-  if (td->contacts_manager_->pending_location_visibility_expire_date_ != pending_location_visibility_expire_date) {
-    td->contacts_manager_->pending_location_visibility_expire_date_ = pending_location_visibility_expire_date;
-    G()->td_db()->get_binlog_pmc()->set("pending_location_visibility_expire_date",
-                                        to_string(pending_location_visibility_expire_date));
-  }
-  td->contacts_manager_->try_send_set_location_visibility_query();
-}
-
-void ContactsManager::try_send_set_location_visibility_query() {
-  if (G()->close_flag()) {
-    return;
-  }
-  if (pending_location_visibility_expire_date_ == -1) {
-    return;
-  }
-
-  LOG(INFO) << "Trying to send set location visibility query";
-  if (is_set_location_visibility_request_sent_) {
-    return;
-  }
-  if (pending_location_visibility_expire_date_ != 0 && last_user_location_.empty()) {
-    return;
-  }
-
-  is_set_location_visibility_request_sent_ = true;
-  auto query_promise =
-      PromiseCreator::lambda([actor_id = actor_id(this), set_expire_date = pending_location_visibility_expire_date_](
-                                 Result<tl_object_ptr<telegram_api::Updates>> result) {
-        send_closure(actor_id, &ContactsManager::on_set_location_visibility_expire_date, set_expire_date,
-                     result.is_ok() ? 0 : result.error().code());
-      });
-  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))
-      ->send(last_user_location_, true, pending_location_visibility_expire_date_);
-}
-
-void ContactsManager::on_set_location_visibility_expire_date(int32 set_expire_date, int32 error_code) {
-  bool success = error_code == 0;
-  is_set_location_visibility_request_sent_ = false;
-
-  if (set_expire_date != pending_location_visibility_expire_date_) {
-    try_send_set_location_visibility_query();
-    return;
-  }
-
-  if (success) {
-    set_location_visibility_expire_date(pending_location_visibility_expire_date_);
-  } else {
-    if (G()->close_flag()) {
-      // request will be re-sent after restart
-      return;
-    }
-    if (error_code != 406) {
-      LOG(ERROR) << "Failed to set location visibility expire date to " << pending_location_visibility_expire_date_;
-    }
-  }
-  G()->td_db()->get_binlog_pmc()->erase("pending_location_visibility_expire_date");
-  pending_location_visibility_expire_date_ = -1;
-  update_is_location_visible();
-}
-
-void ContactsManager::get_is_location_visible(Promise<Unit> &&promise) {
-  auto query_promise = PromiseCreator::lambda([actor_id = actor_id(this), promise = std::move(promise)](
-                                                  Result<tl_object_ptr<telegram_api::Updates>> result) mutable {
-    send_closure(actor_id, &ContactsManager::on_get_is_location_visible, std::move(result), std::move(promise));
-  });
-  td_->create_handler<SearchDialogsNearbyQuery>(std::move(query_promise))->send(Location(), true, -1);
-}
-
-void ContactsManager::on_get_is_location_visible(Result<tl_object_ptr<telegram_api::Updates>> &&result,
-                                                 Promise<Unit> &&promise) {
-  TRY_STATUS_PROMISE(promise, G()->close_status());
-  if (result.is_error()) {
-    if (result.error().message() == "GEO_POINT_INVALID" && pending_location_visibility_expire_date_ == -1 &&
-        location_visibility_expire_date_ > 0) {
-      set_location_visibility_expire_date(0);
-      update_is_location_visible();
-    }
-    return promise.set_value(Unit());
-  }
-
-  auto updates_ptr = result.move_as_ok();
-  if (updates_ptr->get_id() != telegram_api::updates::ID) {
-    LOG(ERROR) << "Receive " << oneline(to_string(*updates_ptr)) << " instead of updates";
-    return promise.set_value(Unit());
-  }
-
-  auto updates = std::move(telegram_api::move_object_as<telegram_api::updates>(updates_ptr)->updates_);
-  if (updates.size() != 1 || updates[0]->get_id() != telegram_api::updatePeerLocated::ID) {
-    LOG(ERROR) << "Receive unexpected " << to_string(updates);
-    return promise.set_value(Unit());
-  }
-
-  auto peers = std::move(static_cast<telegram_api::updatePeerLocated *>(updates[0].get())->peers_);
-  if (peers.size() != 1 || peers[0]->get_id() != telegram_api::peerSelfLocated::ID) {
-    LOG(ERROR) << "Receive unexpected " << to_string(peers);
-    return promise.set_value(Unit());
-  }
-
-  auto location_visibility_expire_date = static_cast<telegram_api::peerSelfLocated *>(peers[0].get())->expires_;
-  if (location_visibility_expire_date != location_visibility_expire_date_) {
-    set_location_visibility_expire_date(location_visibility_expire_date);
-    update_is_location_visible();
-  }
-
-  promise.set_value(Unit());
-}
-
-int32 ContactsManager::on_update_peer_located(vector<tl_object_ptr<telegram_api::PeerLocated>> &&peers,
-                                              bool from_update) {
-  auto now = G()->unix_time();
-  bool need_update = false;
-  int32 location_visibility_expire_date = -1;
-  for (auto &peer_located_ptr : peers) {
-    if (peer_located_ptr->get_id() == telegram_api::peerSelfLocated::ID) {
-      auto peer_self_located = telegram_api::move_object_as<telegram_api::peerSelfLocated>(peer_located_ptr);
-      if (peer_self_located->expires_ == 0 || peer_self_located->expires_ > G()->unix_time()) {
-        location_visibility_expire_date = peer_self_located->expires_;
-      }
-      continue;
-    }
-
-    CHECK(peer_located_ptr->get_id() == telegram_api::peerLocated::ID);
-    auto peer_located = telegram_api::move_object_as<telegram_api::peerLocated>(peer_located_ptr);
-    DialogId dialog_id(peer_located->peer_);
-    int32 expires_at = peer_located->expires_;
-    int32 distance = peer_located->distance_;
-    if (distance < 0 || distance > 50000000) {
-      LOG(ERROR) << "Receive wrong distance to " << to_string(peer_located);
-      continue;
-    }
-    if (expires_at <= now) {
-      LOG(INFO) << "Skip expired result " << to_string(peer_located);
-      continue;
-    }
-
-    auto dialog_type = dialog_id.get_type();
-    if (dialog_type == DialogType::User) {
-      auto user_id = dialog_id.get_user_id();
-      if (!have_user(user_id)) {
-        LOG(ERROR) << "Can't find " << user_id;
-        continue;
-      }
-      if (expires_at < now + 86400) {
-        user_nearby_timeout_.set_timeout_in(user_id.get(), expires_at - now + 1);
-      }
-    } else if (dialog_type == DialogType::Channel) {
-      auto channel_id = dialog_id.get_channel_id();
-      if (!have_channel(channel_id)) {
-        LOG(ERROR) << "Can't find " << channel_id;
-        continue;
-      }
-      if (expires_at != std::numeric_limits<int32>::max()) {
-        LOG(ERROR) << "Receive expiring at " << expires_at << " group location in " << to_string(peer_located);
-      }
-      if (from_update) {
-        LOG(ERROR) << "Receive nearby " << channel_id << " from update";
-        continue;
-      }
-    } else {
-      LOG(ERROR) << "Receive chat of wrong type in " << to_string(peer_located);
-      continue;
-    }
-
-    td_->dialog_manager_->force_create_dialog(dialog_id, "on_update_peer_located");
-
-    if (from_update) {
-      CHECK(dialog_type == DialogType::User);
-      bool is_found = false;
-      for (auto &dialog_nearby : users_nearby_) {
-        if (dialog_nearby.dialog_id == dialog_id) {
-          if (dialog_nearby.distance != distance) {
-            dialog_nearby.distance = distance;
-            need_update = true;
-          }
-          is_found = true;
-          break;
-        }
-      }
-      if (!is_found) {
-        users_nearby_.emplace_back(dialog_id, distance);
-        all_users_nearby_.insert(dialog_id.get_user_id());
-        need_update = true;
-      }
-    } else {
-      if (dialog_type == DialogType::User) {
-        users_nearby_.emplace_back(dialog_id, distance);
-        all_users_nearby_.insert(dialog_id.get_user_id());
-      } else {
-        channels_nearby_.emplace_back(dialog_id, distance);
-      }
-    }
-  }
-  if (need_update) {
-    std::sort(users_nearby_.begin(), users_nearby_.end());
-    send_update_users_nearby();
-  }
-  return location_visibility_expire_date;
-}
-
-void ContactsManager::set_location_visibility_expire_date(int32 expire_date) {
-  if (location_visibility_expire_date_ == expire_date) {
-    return;
-  }
-
-  LOG(INFO) << "Set set_location_visibility_expire_date to " << expire_date;
-  location_visibility_expire_date_ = expire_date;
-  if (expire_date == 0) {
-    G()->td_db()->get_binlog_pmc()->erase("location_visibility_expire_date");
-  } else {
-    G()->td_db()->get_binlog_pmc()->set("location_visibility_expire_date", to_string(expire_date));
-  }
-  // the caller must call update_is_location_visible() itself
-}
-
-void ContactsManager::update_is_location_visible() {
-  auto expire_date = pending_location_visibility_expire_date_ != -1 ? pending_location_visibility_expire_date_
-                                                                    : location_visibility_expire_date_;
-  td_->option_manager_->set_option_boolean("is_location_visible", expire_date != 0);
-}
-
-void ContactsManager::on_update_bot_commands(DialogId dialog_id, UserId bot_user_id,
-                                             vector<tl_object_ptr<telegram_api::botCommand>> &&bot_commands) {
-  if (!bot_user_id.is_valid()) {
-    LOG(ERROR) << "Receive updateBotCOmmands about invalid " << bot_user_id;
-    return;
-  }
-  if (!have_user(bot_user_id) || !is_user_bot(bot_user_id)) {
-    return;
-  }
-  if (td_->auth_manager_->is_bot()) {
-    return;
-  }
-
-  switch (dialog_id.get_type()) {
-    case DialogType::User: {
-      UserId user_id(dialog_id.get_user_id());
-      auto user_full = get_user_full(user_id);
-      if (user_full != nullptr) {
-        on_update_user_full_commands(user_full, user_id, std::move(bot_commands));
-        update_user_full(user_full, user_id, "on_update_bot_commands");
-      }
-      break;
-    }
-    case DialogType::Chat: {
-      ChatId chat_id(dialog_id.get_chat_id());
-      auto chat_full = get_chat_full(chat_id);
-      if (chat_full != nullptr && BotCommands::update_all_bot_commands(
-                                      chat_full->bot_commands, BotCommands(bot_user_id, std::move(bot_commands)))) {
-        chat_full->is_changed = true;
-        update_chat_full(chat_full, chat_id, "on_update_bot_commands");
-      }
-      break;
-    }
-    case DialogType::Channel: {
-      ChannelId channel_id(dialog_id.get_channel_id());
-      auto channel_full = get_channel_full(channel_id, true, "on_update_bot_commands");
-      if (channel_full != nullptr &&
-          BotCommands::update_all_bot_commands(channel_full->bot_commands,
-                                               BotCommands(bot_user_id, std::move(bot_commands)))) {
-        channel_full->is_changed = true;
-        update_channel_full(channel_full, channel_id, "on_update_bot_commands");
-      }
-      break;
-    }
-    case DialogType::SecretChat:
-    default:
-      LOG(ERROR) << "Receive updateBotCommands in " << dialog_id;
-      break;
-  }
-}
-
 void ContactsManager::on_update_bot_menu_button(UserId bot_user_id,
                                                 tl_object_ptr<telegram_api::BotMenuButton> &&bot_menu_button) {
   if (!bot_user_id.is_valid()) {
-    LOG(ERROR) << "Receive updateBotCOmmands about invalid " << bot_user_id;
+    LOG(ERROR) << "Receive updateBotMenuButton about invalid " << bot_user_id;
     return;
   }
   if (!have_user_force(bot_user_id, "on_update_bot_menu_button") || !is_user_bot(bot_user_id)) {
@@ -6921,6 +6477,66 @@ void ContactsManager::reorder_bot_usernames(UserId bot_user_id, vector<string> &
     return promise.set_value(Unit());
   }
   td_->create_handler<ReorderBotUsernamesQuery>(std::move(promise))->send(bot_user_id, std::move(usernames));
+}
+
+void ContactsManager::set_birthdate(Birthdate &&birthdate, Promise<Unit> &&promise) {
+  dismiss_suggested_action(SuggestedAction{SuggestedAction::Type::BirthdaySetup}, Promise<Unit>());
+  auto query_promise = PromiseCreator::lambda(
+      [actor_id = actor_id(this), birthdate, promise = std::move(promise)](Result<Unit> result) mutable {
+        if (result.is_ok()) {
+          send_closure(actor_id, &ContactsManager::on_set_birthdate, birthdate, std::move(promise));
+        } else {
+          promise.set_error(result.move_as_error());
+        }
+      });
+  td_->create_handler<UpdateBirthdayQuery>(std::move(query_promise))->send(birthdate);
+}
+
+void ContactsManager::on_set_birthdate(Birthdate birthdate, Promise<Unit> &&promise) {
+  auto my_user_id = get_my_id();
+  UserFull *user_full = get_user_full_force(my_user_id, "on_set_birthdate");
+  if (user_full != nullptr && user_full->birthdate != birthdate) {
+    user_full->birthdate = std::move(birthdate);
+    user_full->is_changed = true;
+    update_user_full(user_full, my_user_id, "on_set_birthdate");
+  }
+  promise.set_value(Unit());
+}
+
+void ContactsManager::set_personal_channel(DialogId dialog_id, Promise<Unit> &&promise) {
+  ChannelId channel_id;
+  if (dialog_id != DialogId() && !td_->dialog_manager_->have_dialog_force(dialog_id, "set_personal_channel")) {
+    return promise.set_error(Status::Error(400, "Chat not found"));
+  }
+  if (dialog_id != DialogId()) {
+    if (dialog_id.get_type() != DialogType::Channel) {
+      return promise.set_error(Status::Error(400, "Chat can't be set as a personal chat"));
+    }
+    channel_id = dialog_id.get_channel_id();
+    if (!is_suitable_created_public_channel(PublicDialogType::ForPersonalDialog, get_channel(channel_id))) {
+      return promise.set_error(Status::Error(400, "Chat can't be set as a personal chat"));
+    }
+  }
+  auto query_promise = PromiseCreator::lambda(
+      [actor_id = actor_id(this), channel_id, promise = std::move(promise)](Result<Unit> result) mutable {
+        if (result.is_ok()) {
+          send_closure(actor_id, &ContactsManager::on_set_personal_channel, channel_id, std::move(promise));
+        } else {
+          promise.set_error(result.move_as_error());
+        }
+      });
+  td_->create_handler<UpdatePersonalChannelQuery>(std::move(query_promise))->send(channel_id);
+}
+
+void ContactsManager::on_set_personal_channel(ChannelId channel_id, Promise<Unit> &&promise) {
+  auto my_user_id = get_my_id();
+  UserFull *user_full = get_user_full_force(my_user_id, "on_set_personal_channel");
+  if (user_full != nullptr && user_full->personal_channel_id != channel_id) {
+    user_full->personal_channel_id = channel_id;
+    user_full->is_changed = true;
+    update_user_full(user_full, my_user_id, "on_set_personal_channel");
+  }
+  promise.set_value(Unit());
 }
 
 void ContactsManager::set_emoji_status(const EmojiStatus &emoji_status, Promise<Unit> &&promise) {
@@ -7368,18 +6984,12 @@ void ContactsManager::toggle_channel_is_forum(ChannelId channel_id, bool is_foru
 }
 
 void ContactsManager::convert_channel_to_gigagroup(ChannelId channel_id, Promise<Unit> &&promise) {
-  auto c = get_channel(channel_id);
-  if (c == nullptr) {
-    return promise.set_error(Status::Error(400, "Supergroup not found"));
-  }
-  if (!get_channel_status(c).is_creator()) {
-    return promise.set_error(Status::Error(400, "Not enough rights to convert group to broadcast group"));
-  }
-  if (get_channel_type(c) != ChannelType::Megagroup) {
-    return promise.set_error(Status::Error(400, "Chat must be a supergroup"));
+  if (!can_convert_channel_to_gigagroup(channel_id)) {
+    return promise.set_error(Status::Error(400, "Can't convert the chat to a broadcast group"));
   }
 
-  remove_dialog_suggested_action(SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
+  td_->dialog_manager_->remove_dialog_suggested_action(
+      SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
 
   td_->create_handler<ConvertToGigagroupQuery>(std::move(promise))->send(channel_id);
 }
@@ -7570,13 +7180,8 @@ void ContactsManager::get_channel_statistics_dc_id_impl(ChannelId channel_id, bo
   promise.set_value(DcId(channel_full->stats_dc_id));
 }
 
-bool ContactsManager::can_get_channel_message_statistics(DialogId dialog_id) const {
+bool ContactsManager::can_get_channel_message_statistics(ChannelId channel_id) const {
   CHECK(!td_->auth_manager_->is_bot());
-  if (dialog_id.get_type() != DialogType::Channel) {
-    return false;
-  }
-
-  auto channel_id = dialog_id.get_channel_id();
   const Channel *c = get_channel(channel_id);
   if (c == nullptr || c->is_megagroup) {
     return false;
@@ -7590,13 +7195,8 @@ bool ContactsManager::can_get_channel_message_statistics(DialogId dialog_id) con
   return c->status.can_post_messages();
 }
 
-bool ContactsManager::can_get_channel_story_statistics(DialogId dialog_id) const {
+bool ContactsManager::can_get_channel_story_statistics(ChannelId channel_id) const {
   CHECK(!td_->auth_manager_->is_bot());
-  if (dialog_id.get_type() != DialogType::Channel) {
-    return false;
-  }
-
-  auto channel_id = dialog_id.get_channel_id();
   const Channel *c = get_channel(channel_id);
   if (c == nullptr || c->is_megagroup) {
     return false;
@@ -7608,6 +7208,15 @@ bool ContactsManager::can_get_channel_story_statistics(DialogId dialog_id) const
   }
 
   return c->status.can_post_messages();
+}
+
+bool ContactsManager::can_convert_channel_to_gigagroup(ChannelId channel_id) const {
+  const Channel *c = get_channel(channel_id);
+  return c == nullptr || get_channel_type(c) != ChannelType::Megagroup || !get_channel_status(c).is_creator() ||
+         c->is_gigagroup ||
+         c->default_permissions != RestrictedRights(false, false, false, false, false, false, false, false, false,
+                                                    false, false, false, false, false, false, false, false,
+                                                    ChannelType::Unknown);
 }
 
 void ContactsManager::report_channel_spam(ChannelId channel_id, const vector<MessageId> &message_ids,
@@ -7707,58 +7316,6 @@ void ContactsManager::delete_channel(ChannelId channel_id, Promise<Unit> &&promi
   td_->create_handler<DeleteChannelQuery>(std::move(promise))->send(channel_id);
 }
 
-void ContactsManager::migrate_dialog_to_megagroup(DialogId dialog_id,
-                                                  Promise<td_api::object_ptr<td_api::chat>> &&promise) {
-  LOG(INFO) << "Trying to upgrade " << dialog_id << " to a supergroup";
-
-  if (!td_->dialog_manager_->have_dialog_force(dialog_id, "migrate_dialog_to_megagroup")) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (dialog_id.get_type() != DialogType::Chat) {
-    return promise.set_error(Status::Error(400, "Only basic group chats can be converted to supergroup"));
-  }
-
-  auto chat_id = dialog_id.get_chat_id();
-  auto c = get_chat(chat_id);
-  if (c == nullptr) {
-    return promise.set_error(Status::Error(400, "Chat info not found"));
-  }
-  if (!c->status.is_creator()) {
-    return promise.set_error(Status::Error(400, "Need creator rights in the chat"));
-  }
-  if (c->migrated_to_channel_id.is_valid()) {
-    return on_migrate_chat_to_megagroup(chat_id, std::move(promise));
-  }
-
-  auto query_promise = PromiseCreator::lambda(
-      [actor_id = actor_id(this), chat_id, promise = std::move(promise)](Result<Unit> &&result) mutable {
-        if (result.is_error()) {
-          return promise.set_error(result.move_as_error());
-        }
-        send_closure(actor_id, &ContactsManager::on_migrate_chat_to_megagroup, chat_id, std::move(promise));
-      });
-  td_->create_handler<MigrateChatQuery>(std::move(query_promise))->send(chat_id);
-}
-
-void ContactsManager::on_migrate_chat_to_megagroup(ChatId chat_id,
-                                                   Promise<td_api::object_ptr<td_api::chat>> &&promise) {
-  auto c = get_chat(chat_id);
-  CHECK(c != nullptr);
-  if (!c->migrated_to_channel_id.is_valid()) {
-    LOG(ERROR) << "Can't find the supergroup to which the basic group has migrated";
-    return promise.set_error(Status::Error(500, "Supergroup not found"));
-  }
-  auto channel_id = c->migrated_to_channel_id;
-  if (!have_channel(channel_id)) {
-    LOG(ERROR) << "Can't find info about the supergroup to which the basic group has migrated";
-    return promise.set_error(Status::Error(500, "Supergroup info is not found"));
-  }
-
-  auto dialog_id = DialogId(channel_id);
-  td_->dialog_manager_->force_create_dialog(dialog_id, "on_migrate_chat_to_megagroup");
-  promise.set_value(td_->messages_manager_->get_chat_object(dialog_id));
-}
-
 vector<ChannelId> ContactsManager::get_channel_ids(vector<tl_object_ptr<telegram_api::Chat>> &&chats,
                                                    const char *source) {
   vector<ChannelId> channel_ids;
@@ -7796,275 +7353,6 @@ vector<DialogId> ContactsManager::get_dialog_ids(vector<tl_object_ptr<telegram_a
   return dialog_ids;
 }
 
-bool ContactsManager::is_suitable_recommended_channel(DialogId dialog_id) const {
-  if (dialog_id.get_type() != DialogType::Channel) {
-    return false;
-  }
-  return is_suitable_recommended_channel(dialog_id.get_channel_id());
-}
-
-bool ContactsManager::is_suitable_recommended_channel(ChannelId channel_id) const {
-  const Channel *c = get_channel(channel_id);
-  if (c == nullptr) {
-    return false;
-  }
-  return have_input_peer_channel(c, channel_id, AccessRights::Read) && !get_channel_status(c).is_member();
-}
-
-bool ContactsManager::are_suitable_recommended_dialogs(const RecommendedDialogs &recommended_dialogs) const {
-  for (auto recommended_dialog_id : recommended_dialogs.dialog_ids_) {
-    if (!is_suitable_recommended_channel(recommended_dialog_id)) {
-      return false;
-    }
-  }
-  auto is_premium = td_->option_manager_->get_option_boolean("is_premium");
-  auto have_all = recommended_dialogs.dialog_ids_.size() == static_cast<size_t>(recommended_dialogs.total_count_);
-  if (!have_all && is_premium) {
-    return false;
-  }
-  return true;
-}
-
-void ContactsManager::get_channel_recommendations(DialogId dialog_id, bool return_local,
-                                                  Promise<td_api::object_ptr<td_api::chats>> &&chats_promise,
-                                                  Promise<td_api::object_ptr<td_api::count>> &&count_promise) {
-  if (!td_->dialog_manager_->have_dialog_force(dialog_id, "get_channel_recommendations")) {
-    if (chats_promise) {
-      chats_promise.set_error(Status::Error(400, "Chat not found"));
-    }
-    if (count_promise) {
-      count_promise.set_error(Status::Error(400, "Chat not found"));
-    }
-    return;
-  }
-  if (dialog_id.get_type() != DialogType::Channel) {
-    if (chats_promise) {
-      chats_promise.set_value(td_api::make_object<td_api::chats>());
-    }
-    if (count_promise) {
-      count_promise.set_value(td_api::make_object<td_api::count>(0));
-    }
-    return;
-  }
-  auto channel_id = dialog_id.get_channel_id();
-  if (!is_broadcast_channel(channel_id) || get_input_channel(channel_id) == nullptr) {
-    if (chats_promise) {
-      chats_promise.set_value(td_api::make_object<td_api::chats>());
-    }
-    if (count_promise) {
-      count_promise.set_value(td_api::make_object<td_api::count>(0));
-    }
-    return;
-  }
-  bool use_database = true;
-  auto it = channel_recommended_dialogs_.find(channel_id);
-  if (it != channel_recommended_dialogs_.end()) {
-    if (are_suitable_recommended_dialogs(it->second)) {
-      auto next_reload_time = it->second.next_reload_time_;
-      if (chats_promise) {
-        chats_promise.set_value(td_->dialog_manager_->get_chats_object(it->second.total_count_, it->second.dialog_ids_,
-                                                                       "get_channel_recommendations"));
-      }
-      if (count_promise) {
-        count_promise.set_value(td_api::make_object<td_api::count>(it->second.total_count_));
-      }
-      if (next_reload_time > Time::now()) {
-        return;
-      }
-      chats_promise = {};
-      count_promise = {};
-    } else {
-      LOG(INFO) << "Drop cache for similar chats of " << dialog_id;
-      channel_recommended_dialogs_.erase(it);
-      if (G()->use_message_database()) {
-        G()->td_db()->get_sqlite_pmc()->erase(get_channel_recommendations_database_key(channel_id), Auto());
-      }
-    }
-    use_database = false;
-  }
-  load_channel_recommendations(channel_id, use_database, return_local, std::move(chats_promise),
-                               std::move(count_promise));
-}
-
-string ContactsManager::get_channel_recommendations_database_key(ChannelId channel_id) {
-  return PSTRING() << "channel_recommendations" << channel_id.get();
-}
-
-void ContactsManager::load_channel_recommendations(ChannelId channel_id, bool use_database, bool return_local,
-                                                   Promise<td_api::object_ptr<td_api::chats>> &&chats_promise,
-                                                   Promise<td_api::object_ptr<td_api::count>> &&count_promise) {
-  if (count_promise) {
-    get_channel_recommendation_count_queries_[return_local][channel_id].push_back(std::move(count_promise));
-  }
-  auto &queries = get_channel_recommendations_queries_[channel_id];
-  queries.push_back(std::move(chats_promise));
-  if (queries.size() == 1) {
-    if (G()->use_message_database() && use_database) {
-      G()->td_db()->get_sqlite_pmc()->get(
-          get_channel_recommendations_database_key(channel_id),
-          PromiseCreator::lambda([actor_id = actor_id(this), channel_id](string value) {
-            send_closure(actor_id, &ContactsManager::on_load_channel_recommendations_from_database, channel_id,
-                         std::move(value));
-          }));
-    } else {
-      reload_channel_recommendations(channel_id);
-    }
-  }
-}
-
-void ContactsManager::fail_load_channel_recommendations_queries(ChannelId channel_id, Status &&error) {
-  for (int return_local = 0; return_local < 2; return_local++) {
-    auto it = get_channel_recommendation_count_queries_[return_local].find(channel_id);
-    if (it != get_channel_recommendation_count_queries_[return_local].end()) {
-      auto promises = std::move(it->second);
-      CHECK(!promises.empty());
-      get_channel_recommendation_count_queries_[return_local].erase(it);
-      fail_promises(promises, error.clone());
-    }
-  }
-  auto it = get_channel_recommendations_queries_.find(channel_id);
-  CHECK(it != get_channel_recommendations_queries_.end());
-  auto promises = std::move(it->second);
-  CHECK(!promises.empty());
-  get_channel_recommendations_queries_.erase(it);
-  fail_promises(promises, std::move(error));
-}
-
-void ContactsManager::finish_load_channel_recommendations_queries(ChannelId channel_id, int32 total_count,
-                                                                  vector<DialogId> dialog_ids) {
-  for (int return_local = 0; return_local < 2; return_local++) {
-    auto it = get_channel_recommendation_count_queries_[return_local].find(channel_id);
-    if (it != get_channel_recommendation_count_queries_[return_local].end()) {
-      auto promises = std::move(it->second);
-      CHECK(!promises.empty());
-      get_channel_recommendation_count_queries_[return_local].erase(it);
-      for (auto &promise : promises) {
-        promise.set_value(td_api::make_object<td_api::count>(total_count));
-      }
-    }
-  }
-  auto it = get_channel_recommendations_queries_.find(channel_id);
-  CHECK(it != get_channel_recommendations_queries_.end());
-  auto promises = std::move(it->second);
-  CHECK(!promises.empty());
-  get_channel_recommendations_queries_.erase(it);
-  for (auto &promise : promises) {
-    if (promise) {
-      promise.set_value(td_->dialog_manager_->get_chats_object(total_count, dialog_ids,
-                                                               "finish_load_channel_recommendations_queries"));
-    }
-  }
-}
-
-void ContactsManager::on_load_channel_recommendations_from_database(ChannelId channel_id, string value) {
-  if (G()->close_flag()) {
-    return fail_load_channel_recommendations_queries(channel_id, G()->close_status());
-  }
-
-  if (value.empty()) {
-    return reload_channel_recommendations(channel_id);
-  }
-  auto &recommended_dialogs = channel_recommended_dialogs_[channel_id];
-  if (log_event_parse(recommended_dialogs, value).is_error()) {
-    channel_recommended_dialogs_.erase(channel_id);
-    G()->td_db()->get_sqlite_pmc()->erase(get_channel_recommendations_database_key(channel_id), Auto());
-    return reload_channel_recommendations(channel_id);
-  }
-  Dependencies dependencies;
-  for (auto dialog_id : recommended_dialogs.dialog_ids_) {
-    dependencies.add_dialog_and_dependencies(dialog_id);
-  }
-  if (!dependencies.resolve_force(td_, "on_load_channel_recommendations_from_database") ||
-      !are_suitable_recommended_dialogs(recommended_dialogs)) {
-    channel_recommended_dialogs_.erase(channel_id);
-    G()->td_db()->get_sqlite_pmc()->erase(get_channel_recommendations_database_key(channel_id), Auto());
-    return reload_channel_recommendations(channel_id);
-  }
-
-  auto next_reload_time = recommended_dialogs.next_reload_time_;
-  finish_load_channel_recommendations_queries(channel_id, recommended_dialogs.total_count_,
-                                              recommended_dialogs.dialog_ids_);
-
-  if (next_reload_time <= Time::now()) {
-    load_channel_recommendations(channel_id, false, false, Auto(), Auto());
-  }
-}
-
-void ContactsManager::reload_channel_recommendations(ChannelId channel_id) {
-  auto it = get_channel_recommendation_count_queries_[1].find(channel_id);
-  if (it != get_channel_recommendation_count_queries_[1].end()) {
-    auto promises = std::move(it->second);
-    CHECK(!promises.empty());
-    get_channel_recommendation_count_queries_[1].erase(it);
-    for (auto &promise : promises) {
-      promise.set_value(td_api::make_object<td_api::count>(-1));
-    }
-  }
-  auto query_promise =
-      PromiseCreator::lambda([actor_id = actor_id(this), channel_id](
-                                 Result<std::pair<int32, vector<tl_object_ptr<telegram_api::Chat>>>> &&result) {
-        send_closure(actor_id, &ContactsManager::on_get_channel_recommendations, channel_id, std::move(result));
-      });
-  td_->create_handler<GetChannelRecommendationsQuery>(std::move(query_promise))->send(channel_id);
-}
-
-void ContactsManager::on_get_channel_recommendations(
-    ChannelId channel_id, Result<std::pair<int32, vector<tl_object_ptr<telegram_api::Chat>>>> &&r_chats) {
-  G()->ignore_result_if_closing(r_chats);
-
-  if (r_chats.is_error()) {
-    return fail_load_channel_recommendations_queries(channel_id, r_chats.move_as_error());
-  }
-
-  auto chats = r_chats.move_as_ok();
-  auto total_count = chats.first;
-  auto channel_ids = get_channel_ids(std::move(chats.second), "on_get_channel_recommendations");
-  vector<DialogId> dialog_ids;
-  if (total_count < static_cast<int32>(channel_ids.size())) {
-    LOG(ERROR) << "Receive total_count = " << total_count << " and " << channel_ids.size() << " similar chats for "
-               << channel_id;
-    total_count = static_cast<int32>(channel_ids.size());
-  }
-  for (auto recommended_channel_id : channel_ids) {
-    auto recommended_dialog_id = DialogId(recommended_channel_id);
-    td_->dialog_manager_->force_create_dialog(recommended_dialog_id, "on_get_channel_recommendations");
-    if (is_suitable_recommended_channel(recommended_channel_id)) {
-      dialog_ids.push_back(recommended_dialog_id);
-    } else {
-      total_count--;
-    }
-  }
-  auto &recommended_dialogs = channel_recommended_dialogs_[channel_id];
-  recommended_dialogs.total_count_ = total_count;
-  recommended_dialogs.dialog_ids_ = dialog_ids;
-  recommended_dialogs.next_reload_time_ = Time::now() + CHANNEL_RECOMMENDATIONS_CACHE_TIME;
-
-  if (G()->use_message_database()) {
-    G()->td_db()->get_sqlite_pmc()->set(get_channel_recommendations_database_key(channel_id),
-                                        log_event_store(recommended_dialogs).as_slice().str(), Promise<Unit>());
-  }
-
-  finish_load_channel_recommendations_queries(channel_id, total_count, std::move(dialog_ids));
-}
-
-void ContactsManager::open_channel_recommended_channel(DialogId dialog_id, DialogId opened_dialog_id,
-                                                       Promise<Unit> &&promise) {
-  if (!td_->dialog_manager_->have_dialog_force(dialog_id, "open_channel_recommended_channel") ||
-      !td_->dialog_manager_->have_dialog_force(opened_dialog_id, "open_channel_recommended_channel")) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (dialog_id.get_type() != DialogType::Channel || opened_dialog_id.get_type() != DialogType::Channel) {
-    return promise.set_error(Status::Error(400, "Invalid chat specified"));
-  }
-  vector<telegram_api::object_ptr<telegram_api::jsonObjectValue>> data;
-  data.push_back(telegram_api::make_object<telegram_api::jsonObjectValue>(
-      "ref_channel_id", make_tl_object<telegram_api::jsonString>(to_string(dialog_id.get_channel_id().get()))));
-  data.push_back(telegram_api::make_object<telegram_api::jsonObjectValue>(
-      "open_channel_id", make_tl_object<telegram_api::jsonString>(to_string(opened_dialog_id.get_channel_id().get()))));
-  save_app_log(td_, "channels.open_recommended_channel", DialogId(),
-               telegram_api::make_object<telegram_api::jsonObject>(std::move(data)), std::move(promise));
-}
-
 void ContactsManager::return_created_public_dialogs(Promise<td_api::object_ptr<td_api::chats>> &&promise,
                                                     const vector<ChannelId> &channel_ids) {
   if (!promise) {
@@ -8086,6 +7374,8 @@ bool ContactsManager::is_suitable_created_public_channel(PublicDialogType type, 
       return c->usernames.has_editable_username();
     case PublicDialogType::IsLocationBased:
       return c->has_location;
+    case PublicDialogType::ForPersonalDialog:
+      return !c->is_megagroup && c->usernames.has_first_username();
     default:
       UNREACHABLE();
       return false;
@@ -8133,7 +7423,7 @@ void ContactsManager::get_created_public_dialogs(PublicDialogType type,
           }
           created_public_channels_inited_[index] = true;
 
-          if (type == PublicDialogType::HasUsername) {
+          if (type == PublicDialogType::ForPersonalDialog) {
             update_created_public_broadcasts();
           }
 
@@ -8178,7 +7468,8 @@ void ContactsManager::finish_get_created_public_dialogs(PublicDialogType type, R
 }
 
 void ContactsManager::update_created_public_channels(Channel *c, ChannelId channel_id) {
-  for (auto type : {PublicDialogType::HasUsername, PublicDialogType::IsLocationBased}) {
+  for (auto type :
+       {PublicDialogType::HasUsername, PublicDialogType::IsLocationBased, PublicDialogType::ForPersonalDialog}) {
     auto index = static_cast<int32>(type);
     if (!created_public_channels_inited_[index]) {
       continue;
@@ -8193,7 +7484,7 @@ void ContactsManager::update_created_public_channels(Channel *c, ChannelId chann
       }
     }
     if (was_changed) {
-      if (!c->is_megagroup && type == PublicDialogType::HasUsername) {
+      if (type == PublicDialogType::ForPersonalDialog) {
         update_created_public_broadcasts();
       }
 
@@ -8220,7 +7511,7 @@ void ContactsManager::on_get_created_public_channels(PublicDialogType type,
   }
   created_public_channels_inited_[index] = true;
 
-  if (type == PublicDialogType::HasUsername) {
+  if (type == PublicDialogType::ForPersonalDialog) {
     update_created_public_broadcasts();
   }
 
@@ -8240,16 +7531,8 @@ void ContactsManager::save_created_public_channels(PublicDialogType type) {
 }
 
 void ContactsManager::update_created_public_broadcasts() {
-  CHECK(created_public_channels_inited_[0]);
-  vector<ChannelId> channel_ids;
-  for (auto &channel_id : created_public_channels_[0]) {
-    auto c = get_channel(channel_id);
-    if (!c->is_megagroup) {
-      channel_ids.push_back(channel_id);
-    }
-  }
   send_closure_later(G()->messages_manager(), &MessagesManager::on_update_created_public_broadcasts,
-                     std::move(channel_ids));
+                     created_public_channels_[2]);
 }
 
 void ContactsManager::check_created_public_dialogs_limit(PublicDialogType type, Promise<Unit> &&promise) {
@@ -8404,62 +7687,6 @@ void ContactsManager::unregister_message_channels(MessageFullId message_full_id,
       }
     }
   }
-}
-
-void ContactsManager::remove_dialog_suggested_action(SuggestedAction action) {
-  auto it = dialog_suggested_actions_.find(action.dialog_id_);
-  if (it == dialog_suggested_actions_.end()) {
-    return;
-  }
-  remove_suggested_action(it->second, action);
-  if (it->second.empty()) {
-    dialog_suggested_actions_.erase(it);
-  }
-}
-
-void ContactsManager::dismiss_dialog_suggested_action(SuggestedAction action, Promise<Unit> &&promise) {
-  auto dialog_id = action.dialog_id_;
-  if (!td_->messages_manager_->have_dialog(dialog_id)) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (!td_->dialog_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
-    return promise.set_error(Status::Error(400, "Can't access the chat"));
-  }
-
-  auto it = dialog_suggested_actions_.find(dialog_id);
-  if (it == dialog_suggested_actions_.end() || !td::contains(it->second, action)) {
-    return promise.set_value(Unit());
-  }
-
-  auto action_str = action.get_suggested_action_str();
-  if (action_str.empty()) {
-    return promise.set_value(Unit());
-  }
-
-  auto &queries = dismiss_suggested_action_queries_[dialog_id];
-  queries.push_back(std::move(promise));
-  if (queries.size() == 1) {
-    auto query_promise = PromiseCreator::lambda([actor_id = actor_id(this), action](Result<Unit> &&result) {
-      send_closure(actor_id, &ContactsManager::on_dismiss_suggested_action, action, std::move(result));
-    });
-    td_->create_handler<DismissSuggestionQuery>(std::move(query_promise))->send(std::move(action));
-  }
-}
-
-void ContactsManager::on_dismiss_suggested_action(SuggestedAction action, Result<Unit> &&result) {
-  auto it = dismiss_suggested_action_queries_.find(action.dialog_id_);
-  CHECK(it != dismiss_suggested_action_queries_.end());
-  auto promises = std::move(it->second);
-  dismiss_suggested_action_queries_.erase(it);
-
-  if (result.is_error()) {
-    fail_promises(promises, result.move_as_error());
-    return;
-  }
-
-  remove_dialog_suggested_action(action);
-
-  set_promises(promises);
 }
 
 void ContactsManager::on_import_contacts_finished(int64 random_id, vector<UserId> imported_contact_user_ids,
@@ -8823,7 +8050,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   if (u == nullptr) {
     if (!is_received) {
       // we must preload received inaccessible users from database in order to not save
-      // the min-user to the database and to not override access_hash and another info
+      // the min-user to the database and to not override access_hash and other data
       u = get_user_force(user_id, "on_get_user 2");
       if (u == nullptr) {
         LOG(INFO) << "Receive inaccessible " << user_id;
@@ -8866,6 +8093,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   bool is_scam = (flags & USER_FLAG_IS_SCAM) != 0;
   bool can_be_edited_bot = (flags2 & USER_FLAG_CAN_BE_EDITED_BOT) != 0;
   bool is_inline_bot = (flags & USER_FLAG_IS_INLINE_BOT) != 0;
+  bool is_business_bot = user->bot_business_;
   string inline_query_placeholder = std::move(user->bot_inline_placeholder_);
   bool need_location_bot = (flags & USER_FLAG_NEED_LOCATION_BOT) != 0;
   bool has_bot_info_version = (flags & USER_FLAG_HAS_BOT_INFO_VERSION) != 0;
@@ -8876,17 +8104,20 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   bool stories_hidden = user->stories_hidden_;
   bool contact_require_premium = user->contact_require_premium_;
 
-  LOG_IF(ERROR, !can_join_groups && !is_bot)
-      << "Receive not bot " << user_id << " which can't join groups from " << source;
-  LOG_IF(ERROR, can_read_all_group_messages && !is_bot)
-      << "Receive not bot " << user_id << " which can read all group messages from " << source;
-  LOG_IF(ERROR, can_be_added_to_attach_menu && !is_bot)
-      << "Receive not bot " << user_id << " which can be added to attachment menu from " << source;
-  LOG_IF(ERROR, can_be_edited_bot && !is_bot)
-      << "Receive not bot " << user_id << " which is inline bot from " << source;
-  LOG_IF(ERROR, is_inline_bot && !is_bot) << "Receive not bot " << user_id << " which is inline bot from " << source;
-  LOG_IF(ERROR, need_location_bot && !is_inline_bot)
-      << "Receive not inline bot " << user_id << " which needs user location from " << source;
+  if (!is_bot && (!can_join_groups || can_read_all_group_messages || can_be_added_to_attach_menu || can_be_edited_bot ||
+                  is_inline_bot || is_business_bot)) {
+    LOG(ERROR) << "Receive not bot " << user_id << " with bot properties from " << source;
+    can_join_groups = true;
+    can_read_all_group_messages = false;
+    can_be_added_to_attach_menu = false;
+    can_be_edited_bot = false;
+    is_inline_bot = false;
+    is_business_bot = false;
+  }
+  if (need_location_bot && !is_inline_bot) {
+    LOG(ERROR) << "Receive not inline bot " << user_id << " which needs user location from " << source;
+    need_location_bot = false;
+  }
 
   if (is_deleted) {
     // just in case
@@ -8899,6 +8130,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
     can_be_added_to_attach_menu = false;
     can_be_edited_bot = false;
     is_inline_bot = false;
+    is_business_bot = false;
     inline_query_placeholder = string();
     need_location_bot = false;
     has_bot_info_version = false;
@@ -8912,8 +8144,8 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
   if (is_verified != u->is_verified || is_support != u->is_support || is_bot != u->is_bot ||
       can_join_groups != u->can_join_groups || can_read_all_group_messages != u->can_read_all_group_messages ||
       is_scam != u->is_scam || is_fake != u->is_fake || is_inline_bot != u->is_inline_bot ||
-      inline_query_placeholder != u->inline_query_placeholder || need_location_bot != u->need_location_bot ||
-      can_be_added_to_attach_menu != u->can_be_added_to_attach_menu) {
+      is_business_bot != u->is_business_bot || inline_query_placeholder != u->inline_query_placeholder ||
+      need_location_bot != u->need_location_bot || can_be_added_to_attach_menu != u->can_be_added_to_attach_menu) {
     if (is_bot != u->is_bot) {
       LOG_IF(ERROR, !is_deleted && !u->is_deleted && u->is_received)
           << "User.is_bot has changed for " << user_id << "/" << u->usernames << " from " << source << " from "
@@ -8928,6 +8160,7 @@ void ContactsManager::on_get_user(tl_object_ptr<telegram_api::User> &&user_ptr, 
     u->is_scam = is_scam;
     u->is_fake = is_fake;
     u->is_inline_bot = is_inline_bot;
+    u->is_business_bot = is_business_bot;
     u->inline_query_placeholder = std::move(inline_query_placeholder);
     u->need_location_bot = need_location_bot;
     u->can_be_added_to_attach_menu = can_be_added_to_attach_menu;
@@ -9343,9 +8576,9 @@ ContactsManager::User *ContactsManager::get_user_force(UserId user_id, const cha
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
         false /*ignored*/, false /*ignored*/, false /*ignored*/, 0, false /*ignored*/, false /*ignored*/,
-        false /*ignored*/, false /*ignored*/, false /*ignored*/, user_id.get(), 1, first_name, string(), username,
-        phone_number, std::move(profile_photo), nullptr, bot_info_version, Auto(), string(), string(), nullptr,
-        vector<telegram_api::object_ptr<telegram_api::username>>(), 0, nullptr, nullptr);
+        false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, user_id.get(), 1, first_name,
+        string(), username, phone_number, std::move(profile_photo), nullptr, bot_info_version, Auto(), string(),
+        string(), nullptr, vector<telegram_api::object_ptr<telegram_api::username>>(), 0, nullptr, nullptr);
     on_get_user(std::move(user), "get_user_force");
     u = get_user(user_id);
     CHECK(u != nullptr && u->is_received);
@@ -10177,6 +9410,10 @@ void ContactsManager::on_load_user_full_from_database(UserId user_id, string val
 
   Dependencies dependencies;
   dependencies.add(user_id);
+  if (user_full->business_info != nullptr) {
+    user_full->business_info->add_dependencies(dependencies);
+  }
+  dependencies.add(user_full->personal_channel_id);
   if (!dependencies.resolve_force(td_, "on_load_user_full_from_database")) {
     users_full_.erase(user_id);
     G()->td_db()->get_sqlite_pmc()->erase(get_user_full_database_key(user_id), Auto());
@@ -10507,8 +9744,10 @@ void ContactsManager::update_user(User *u, UserId user_id, bool from_binlog, boo
     if (td_->option_manager_->get_option_boolean("is_premium") != u->is_premium) {
       td_->option_manager_->set_option_boolean("is_premium", u->is_premium);
       send_closure(td_->config_manager_, &ConfigManager::request_config, true);
-      td_->reaction_manager_->reload_reaction_list(ReactionListType::Top);
-      td_->messages_manager_->update_is_translatable(u->is_premium);
+      if (!td_->auth_manager_->is_bot()) {
+        td_->reaction_manager_->reload_reaction_list(ReactionListType::Top, "update_user is_premium");
+        td_->messages_manager_->update_is_translatable(u->is_premium);
+      }
     }
   }
   if (u->is_name_changed || u->is_username_changed || u->is_is_contact_changed) {
@@ -10879,7 +10118,8 @@ void ContactsManager::update_channel(Channel *c, ChannelId channel_id, bool from
     if (c->default_permissions != RestrictedRights(false, false, false, false, false, false, false, false, false, false,
                                                    false, false, false, false, false, false, false,
                                                    ChannelType::Unknown)) {
-      remove_dialog_suggested_action(SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
+      td_->dialog_manager_->remove_dialog_suggested_action(
+          SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
     }
     c->is_default_permissions_changed = false;
   }
@@ -10968,9 +10208,6 @@ void ContactsManager::update_channel(Channel *c, ChannelId channel_id, bool from
   if (c->had_read_access && !have_read_access) {
     send_closure_later(G()->messages_manager(), &MessagesManager::on_dialog_deleted, DialogId(channel_id),
                        Promise<Unit>());
-    if (G()->use_message_database()) {
-      G()->td_db()->get_sqlite_pmc()->erase(get_channel_recommendations_database_key(channel_id), Promise<Unit>());
-    }
   } else if (!from_database && c->was_member != is_member) {
     DialogId dialog_id(channel_id);
     send_closure_later(G()->messages_manager(), &MessagesManager::force_create_dialog, dialog_id, "update channel",
@@ -11063,6 +10300,9 @@ void ContactsManager::update_user_full(UserFull *user_full, UserId user_id, cons
     if (user_full->description_animation_file_id.is_valid()) {
       file_ids.push_back(user_full->description_animation_file_id);
     }
+    if (user_full->business_info != nullptr) {
+      append(file_ids, user_full->business_info->get_file_ids(td_));
+    }
     if (user_full->registered_file_ids != file_ids) {
       auto &file_source_id = user_full->file_source_id;
       if (!file_source_id.is_valid()) {
@@ -11100,6 +10340,10 @@ void ContactsManager::update_user_full(UserFull *user_full, UserId user_id, cons
                  make_tl_object<td_api::updateUserFullInfo>(get_user_id_object(user_id, "updateUserFullInfo"),
                                                             get_user_full_info_object(user_id, user_full)));
     user_full->need_send_update = false;
+
+    if (user_id == get_my_id() && !user_full->birthdate.is_empty() && !td_->auth_manager_->is_bot()) {
+      dismiss_suggested_action(SuggestedAction{SuggestedAction::Type::BirthdaySetup}, Promise<Unit>());
+    }
   }
   if (user_full->need_save_to_database) {
     if (!from_database) {
@@ -11298,6 +10542,7 @@ void ContactsManager::on_get_user_full(tl_object_ptr<telegram_api::userFull> &&u
   on_update_user_full_away_message(user_full, user_id, BusinessAwayMessage(std::move(user->business_away_message_)));
   on_update_user_full_greeting_message(user_full, user_id,
                                        BusinessGreetingMessage(std::move(user->business_greeting_message_)));
+  on_update_user_full_intro(user_full, user_id, BusinessIntro(td_, std::move(user->business_intro_)));
   on_update_user_full_need_phone_number_privacy_exception(user_full, user_id,
                                                           user->settings_->need_contacts_exception_);
   on_update_user_full_wallpaper_overridden(user_full, user_id, user->wallpaper_overridden_);
@@ -11311,6 +10556,8 @@ void ContactsManager::on_get_user_full(tl_object_ptr<telegram_api::userFull> &&u
   AdministratorRights group_administrator_rights(user->bot_group_admin_rights_, ChannelType::Megagroup);
   AdministratorRights broadcast_administrator_rights(user->bot_broadcast_admin_rights_, ChannelType::Broadcast);
   bool has_pinned_stories = user->stories_pinned_available_;
+  auto birthdate = Birthdate(std::move(user->birthday_));
+  auto personal_channel_id = ChannelId(user->personal_channel_id_);
   if (user_full->can_be_called != can_be_called || user_full->supports_video_calls != supports_video_calls ||
       user_full->has_private_calls != has_private_calls ||
       user_full->group_administrator_rights != group_administrator_rights ||
@@ -11330,6 +10577,15 @@ void ContactsManager::on_get_user_full(tl_object_ptr<telegram_api::userFull> &&u
 
     user_full->is_changed = true;
   }
+  if (user_full->birthdate != birthdate) {
+    user_full->birthdate = birthdate;
+    user_full->is_changed = true;
+
+    if (u->is_contact) {
+      reload_contact_birthdates(true);
+    }
+  }
+
   if (user_full->private_forward_name != user->private_forward_name_) {
     if (user_full->private_forward_name.empty() != user->private_forward_name_.empty()) {
       user_full->is_changed = true;
@@ -11380,6 +10636,19 @@ void ContactsManager::on_get_user_full(tl_object_ptr<telegram_api::userFull> &&u
     user_full->description_photo = std::move(description_photo);
     user_full->description_animation_file_id = description_animation_file_id;
     user_full->is_changed = true;
+  }
+  if (personal_channel_id != ChannelId() && !personal_channel_id.is_valid()) {
+    LOG(ERROR) << "Receive personal " << personal_channel_id;
+    personal_channel_id = ChannelId();
+  }
+  if (user_full->personal_channel_id != personal_channel_id) {
+    user_full->personal_channel_id = personal_channel_id;
+    user_full->is_changed = true;
+  }
+  if (user_full->personal_channel_id != ChannelId()) {
+    auto personal_message_id = MessageId(ServerMessageId(user->personal_channel_message_));
+    td_->messages_manager_->get_channel_difference_if_needed(DialogId(user_full->personal_channel_id),
+                                                             personal_message_id, "on_get_user_full personal chat");
   }
 
   auto photo = get_photo(td_, std::move(user->profile_photo_), DialogId(user_id));
@@ -11755,10 +11024,10 @@ void ContactsManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&c
 
     ChannelFull *channel_full = add_channel_full(channel_id);
 
-    bool have_participant_count = (channel->flags_ & CHANNEL_FULL_FLAG_HAS_PARTICIPANT_COUNT) != 0;
+    bool have_participant_count = (channel->flags_ & telegram_api::channelFull::PARTICIPANTS_COUNT_MASK) != 0;
     auto participant_count = have_participant_count ? channel->participants_count_ : channel_full->participant_count;
     auto administrator_count = 0;
-    if ((channel->flags_ & CHANNEL_FULL_FLAG_HAS_ADMINISTRATOR_COUNT) != 0) {
+    if ((channel->flags_ & telegram_api::channelFull::ADMINS_COUNT_MASK) != 0) {
       administrator_count = channel->admins_count_;
     } else if (c->is_megagroup || c->status.is_administrator()) {
       // in megagroups and administered channels don't drop known number of administrators
@@ -11791,7 +11060,7 @@ void ContactsManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&c
           td_->stickers_manager_->on_get_sticker_set(std::move(channel->emojiset_), true, "on_get_channel_full");
     }
     DcId stats_dc_id;
-    if ((channel->flags_ & CHANNEL_FULL_FLAG_HAS_STATISTICS_DC_ID) != 0) {
+    if ((channel->flags_ & telegram_api::channelFull::STATS_DC_MASK) != 0) {
       stats_dc_id = DcId::create(channel->stats_dc_);
     }
     if (!stats_dc_id.is_exact() && can_view_statistics) {
@@ -11863,7 +11132,7 @@ void ContactsManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&c
 
     td_->messages_manager_->on_read_channel_outbox(channel_id,
                                                    MessageId(ServerMessageId(channel->read_outbox_max_id_)));
-    if ((channel->flags_ & CHANNEL_FULL_FLAG_HAS_AVAILABLE_MIN_MESSAGE_ID) != 0) {
+    if ((channel->flags_ & telegram_api::channelFull::AVAILABLE_MIN_ID_MASK) != 0) {
       td_->messages_manager_->on_update_channel_max_unavailable_message_id(
           channel_id, MessageId(ServerMessageId(channel->available_min_id_)), "ChannelFull");
     }
@@ -11931,7 +11200,7 @@ void ContactsManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&c
     }
 
     ChannelId linked_channel_id;
-    if ((channel->flags_ & CHANNEL_FULL_FLAG_HAS_LINKED_CHANNEL_ID) != 0) {
+    if ((channel->flags_ & telegram_api::channelFull::LINKED_CHAT_ID_MASK) != 0) {
       linked_channel_id = ChannelId(channel->linked_chat_id_);
       auto linked_channel = get_channel_force(linked_channel_id, "ChannelFull");
       if (linked_channel == nullptr || c->is_megagroup == linked_channel->is_megagroup ||
@@ -11982,33 +11251,8 @@ void ContactsManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&c
       }
     }
 
-    if (dismiss_suggested_action_queries_.count(DialogId(channel_id)) == 0) {
-      auto it = dialog_suggested_actions_.find(DialogId(channel_id));
-      if (it != dialog_suggested_actions_.end() || !channel->pending_suggestions_.empty()) {
-        vector<SuggestedAction> suggested_actions;
-        for (auto &action_str : channel->pending_suggestions_) {
-          SuggestedAction suggested_action(action_str, DialogId(channel_id));
-          if (!suggested_action.is_empty()) {
-            if (suggested_action == SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)} &&
-                (c->is_gigagroup ||
-                 c->default_permissions != RestrictedRights(false, false, false, false, false, false, false, false,
-                                                            false, false, false, false, false, false, false, false,
-                                                            false, ChannelType::Unknown))) {
-              LOG(INFO) << "Skip ConvertToGigagroup suggested action";
-            } else {
-              suggested_actions.push_back(suggested_action);
-            }
-          }
-        }
-        if (it == dialog_suggested_actions_.end()) {
-          it = dialog_suggested_actions_.emplace(DialogId(channel_id), vector<SuggestedAction>()).first;
-        }
-        update_suggested_actions(it->second, std::move(suggested_actions));
-        if (it->second.empty()) {
-          dialog_suggested_actions_.erase(it);
-        }
-      }
-    }
+    td_->dialog_manager_->set_dialog_pending_suggestions(DialogId(channel_id),
+                                                         std::move(channel->pending_suggestions_));
   }
   promise.set_value(Unit());
 }
@@ -12451,6 +11695,8 @@ void ContactsManager::on_update_user_is_contact(User *u, UserId user_id, bool is
     if (u->is_contact != is_contact) {
       u->is_contact = is_contact;
       u->is_is_contact_changed = true;
+
+      reload_contact_birthdates(true);
     }
     if (u->is_mutual_contact != is_mutual_contact) {
       u->is_mutual_contact = is_mutual_contact;
@@ -12769,6 +12015,37 @@ void ContactsManager::on_update_user_full_greeting_message(UserFull *user_full, 
   }
   if (BusinessInfo::set_greeting_message(user_full->business_info, std::move(greeting_message))) {
     user_full->is_changed = true;
+  }
+}
+
+void ContactsManager::on_update_user_intro(UserId user_id, BusinessIntro &&intro) {
+  LOG(INFO) << "Receive " << intro << " for " << user_id;
+  if (!user_id.is_valid()) {
+    LOG(ERROR) << "Receive invalid " << user_id;
+    return;
+  }
+
+  UserFull *user_full = get_user_full_force(user_id, "on_update_user_intro");
+  if (user_full == nullptr) {
+    return;
+  }
+  on_update_user_full_intro(user_full, user_id, std::move(intro));
+  update_user_full(user_full, user_id, "on_update_user_intro");
+}
+
+void ContactsManager::on_update_user_full_intro(UserFull *user_full, UserId user_id, BusinessIntro &&intro) {
+  CHECK(user_full != nullptr);
+  if (BusinessInfo::set_intro(user_full->business_info, std::move(intro))) {
+    user_full->is_changed = true;
+  }
+}
+
+void ContactsManager::on_update_user_commands(
+    UserId user_id, vector<telegram_api::object_ptr<telegram_api::botCommand>> &&bot_commands) {
+  UserFull *user_full = get_user_full_force(user_id, "on_update_user_commands");
+  if (user_full != nullptr) {
+    on_update_user_full_commands(user_full, user_id, std::move(bot_commands));
+    update_user_full(user_full, user_id, "on_update_user_commands");
   }
 }
 
@@ -13158,6 +12435,7 @@ void ContactsManager::drop_user_full(UserId user_id) {
   user_full->menu_button = nullptr;
   user_full->commands.clear();
   user_full->common_chat_count = 0;
+  user_full->personal_channel_id = ChannelId();
   user_full->business_info = nullptr;
   user_full->private_forward_name.clear();
   user_full->group_administrator_rights = {};
@@ -13167,6 +12445,7 @@ void ContactsManager::drop_user_full(UserId user_id) {
   user_full->has_pinned_stories = false;
   user_full->read_dates_private = false;
   user_full->contact_require_premium = false;
+  user_full->birthdate = {};
   user_full->is_changed = true;
 
   update_user_full(user_full, user_id, "drop_user_full");
@@ -13623,34 +12902,6 @@ void ContactsManager::on_update_channel_full_photo(ChannelFull *channel_full, Ch
 
   td_->file_manager_->change_files_source(file_source_id, channel_full->registered_photo_file_ids, photo_file_ids);
   channel_full->registered_photo_file_ids = std::move(photo_file_ids);
-}
-
-void ContactsManager::on_get_permanent_dialog_invite_link(DialogId dialog_id, const DialogInviteLink &invite_link) {
-  switch (dialog_id.get_type()) {
-    case DialogType::Chat: {
-      auto chat_id = dialog_id.get_chat_id();
-      auto chat_full = get_chat_full_force(chat_id, "on_get_permanent_dialog_invite_link");
-      if (chat_full != nullptr && update_permanent_invite_link(chat_full->invite_link, invite_link)) {
-        chat_full->is_changed = true;
-        update_chat_full(chat_full, chat_id, "on_get_permanent_dialog_invite_link");
-      }
-      break;
-    }
-    case DialogType::Channel: {
-      auto channel_id = dialog_id.get_channel_id();
-      auto channel_full = get_channel_full_force(channel_id, true, "on_get_permanent_dialog_invite_link");
-      if (channel_full != nullptr && update_permanent_invite_link(channel_full->invite_link, invite_link)) {
-        channel_full->is_changed = true;
-        update_channel_full(channel_full, channel_id, "on_get_permanent_dialog_invite_link");
-      }
-      break;
-    }
-    case DialogType::User:
-    case DialogType::SecretChat:
-    case DialogType::None:
-    default:
-      UNREACHABLE();
-  }
 }
 
 void ContactsManager::on_update_chat_full_invite_link(ChatFull *chat_full,
@@ -14404,6 +13655,22 @@ void ContactsManager::on_update_channel_photo(Channel *c, ChannelId channel_id,
       true);
 }
 
+void ContactsManager::on_update_chat_bot_commands(ChatId chat_id, BotCommands &&bot_commands) {
+  auto chat_full = get_chat_full_force(chat_id, "on_update_chat_bot_commands");
+  if (chat_full != nullptr && BotCommands::update_all_bot_commands(chat_full->bot_commands, std::move(bot_commands))) {
+    chat_full->is_changed = true;
+    update_chat_full(chat_full, chat_id, "on_update_chat_bot_commands");
+  }
+}
+
+void ContactsManager::on_update_chat_permanent_invite_link(ChatId chat_id, const DialogInviteLink &invite_link) {
+  auto chat_full = get_chat_full_force(chat_id, "on_update_chat_permanent_invite_link");
+  if (chat_full != nullptr && update_permanent_invite_link(chat_full->invite_link, invite_link)) {
+    chat_full->is_changed = true;
+    update_chat_full(chat_full, chat_id, "on_update_chat_permanent_invite_link");
+  }
+}
+
 void ContactsManager::on_update_channel_photo(Channel *c, ChannelId channel_id, DialogPhoto &&photo,
                                               bool invalidate_photo_cache) {
   if (td_->auth_manager_->is_bot()) {
@@ -14537,7 +13804,8 @@ void ContactsManager::on_channel_status_changed(Channel *c, ChannelId channel_id
 
     send_get_channel_full_query(nullptr, channel_id, Auto(), "update channel owner");
     td_->dialog_participant_manager_->reload_dialog_administrators(DialogId(channel_id), {}, Auto());
-    remove_dialog_suggested_action(SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
+    td_->dialog_manager_->remove_dialog_suggested_action(
+        SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
   }
 
   if (old_status.is_member() != new_status.is_member() || new_status.is_banned()) {
@@ -15092,6 +14360,7 @@ Result<ContactsManager::BotData> ContactsManager::get_bot_data(UserId user_id) c
   bot_data.can_join_groups = u->can_join_groups;
   bot_data.can_read_all_group_messages = u->can_read_all_group_messages;
   bot_data.is_inline = u->is_inline_bot;
+  bot_data.is_business = u->is_business_bot;
   bot_data.need_location = u->need_location_bot;
   bot_data.can_be_added_to_attach_menu = u->can_be_added_to_attach_menu;
   return bot_data;
@@ -15119,7 +14388,8 @@ bool ContactsManager::is_user_status_exact(UserId user_id) const {
 
 bool ContactsManager::can_report_user(UserId user_id) const {
   auto u = get_user(user_id);
-  return u != nullptr && !u->is_deleted && !u->is_support && (u->is_bot || all_users_nearby_.count(user_id) != 0);
+  return u != nullptr && !u->is_deleted && !u->is_support &&
+         (u->is_bot || td_->people_nearby_manager_->is_user_nearby(user_id));
 }
 
 const ContactsManager::User *ContactsManager::get_user(UserId user_id) const {
@@ -16185,7 +15455,7 @@ void ContactsManager::on_create_new_secret_chat(SecretChatId secret_chat_id,
   CHECK(secret_chat_id.is_valid());
   DialogId dialog_id(secret_chat_id);
   td_->dialog_manager_->force_create_dialog(dialog_id, "on_create_new_secret_chat");
-  promise.set_value(td_->messages_manager_->get_chat_object(dialog_id));
+  promise.set_value(td_->messages_manager_->get_chat_object(dialog_id, "on_create_new_secret_chat"));
 }
 
 bool ContactsManager::have_secret_chat(SecretChatId secret_chat_id) const {
@@ -16340,6 +15610,24 @@ void ContactsManager::on_update_channel_administrator_count(ChannelId channel_id
     }
 
     update_channel_full(channel_full, channel_id, "on_update_channel_administrator_count");
+  }
+}
+
+void ContactsManager::on_update_channel_bot_commands(ChannelId channel_id, BotCommands &&bot_commands) {
+  auto channel_full = get_channel_full_force(channel_id, true, "on_update_channel_bot_commands");
+  if (channel_full != nullptr &&
+      BotCommands::update_all_bot_commands(channel_full->bot_commands, std::move(bot_commands))) {
+    channel_full->is_changed = true;
+    update_channel_full(channel_full, channel_id, "on_update_channel_bot_commands");
+  }
+}
+
+void ContactsManager::on_update_channel_permanent_invite_link(ChannelId channel_id,
+                                                              const DialogInviteLink &invite_link) {
+  auto channel_full = get_channel_full_force(channel_id, true, "on_update_channel_permanent_invite_link");
+  if (channel_full != nullptr && update_permanent_invite_link(channel_full->invite_link, invite_link)) {
+    channel_full->is_changed = true;
+    update_channel_full(channel_full, channel_id, "on_update_channel_permanent_invite_link");
   }
 }
 
@@ -16546,7 +15834,8 @@ void ContactsManager::on_get_channel(telegram_api::channel &channel, const char 
     is_forum = false;
   }
   if (is_gigagroup) {
-    remove_dialog_suggested_action(SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
+    td_->dialog_manager_->remove_dialog_suggested_action(
+        SuggestedAction{SuggestedAction::Type::ConvertToGigagroup, DialogId(channel_id)});
   }
 
   DialogParticipantStatus status = [&] {
@@ -16990,6 +16279,14 @@ bool ContactsManager::get_user_has_unread_stories(const User *u) {
   return u->max_active_story_id.get() > u->max_read_story_id.get();
 }
 
+td_api::object_ptr<td_api::updateContactCloseBirthdays> ContactsManager::get_update_contact_close_birthdays() const {
+  return td_api::make_object<td_api::updateContactCloseBirthdays>(
+      transform(contact_birthdates_.users_, [this](const std::pair<UserId, Birthdate> &user) {
+        return td_api::make_object<td_api::closeBirthdayUser>(get_user_id_object(user.first, "closeBirthdayUser"),
+                                                              user.second.get_birthdate_object());
+      }));
+}
+
 td_api::object_ptr<td_api::updateUser> ContactsManager::get_update_user_object(UserId user_id, const User *u) const {
   if (u == nullptr) {
     return get_update_unknown_user_object(user_id);
@@ -17029,7 +16326,7 @@ tl_object_ptr<td_api::user> ContactsManager::get_user_object(UserId user_id, con
   } else if (u->is_bot) {
     type = make_tl_object<td_api::userTypeBot>(u->can_be_edited_bot, u->can_join_groups, u->can_read_all_group_messages,
                                                u->is_inline_bot, u->inline_query_placeholder, u->need_location_bot,
-                                               u->can_be_added_to_attach_menu);
+                                               u->is_business_bot, u->can_be_added_to_attach_menu);
   } else {
     type = make_tl_object<td_api::userTypeRegular>();
   }
@@ -17126,6 +16423,12 @@ tl_object_ptr<td_api::userFullInfo> ContactsManager::get_user_full_info_object(U
   auto business_info = is_premium && user_full->business_info != nullptr
                            ? user_full->business_info->get_business_info_object(td_)
                            : nullptr;
+  int64 personal_chat_id = 0;
+  if (user_full->personal_channel_id.is_valid()) {
+    DialogId dialog_id(user_full->personal_channel_id);
+    td_->dialog_manager_->force_create_dialog(dialog_id, "get_user_full_info_object", true);
+    personal_chat_id = td_->dialog_manager_->get_chat_id_object(dialog_id, "get_user_full_info_object");
+  }
   return td_api::make_object<td_api::userFullInfo>(
       get_chat_photo_object(td_->file_manager_.get(), user_full->personal_photo),
       get_chat_photo_object(td_->file_manager_.get(), user_full->photo),
@@ -17133,6 +16436,7 @@ tl_object_ptr<td_api::userFullInfo> ContactsManager::get_user_full_info_object(U
       user_full->can_be_called, user_full->supports_video_calls, user_full->has_private_calls,
       !user_full->private_forward_name.empty(), voice_messages_forbidden, user_full->has_pinned_stories,
       user_full->need_phone_number_privacy_exception, user_full->wallpaper_overridden, std::move(bio_object),
+      user_full->birthdate.get_birthdate_object(), personal_chat_id,
       get_premium_payment_options_object(user_full->premium_gift_options), user_full->common_chat_count,
       std::move(business_info), std::move(bot_info));
 }
@@ -17430,6 +16734,10 @@ void ContactsManager::get_current_state(vector<td_api::object_ptr<td_api::Update
     updates.push_back(td_api::make_object<td_api::updateBasicGroupFullInfo>(
         chat_id.get(), get_basic_group_full_info_object(chat_id, chat_full.get())));
   });
+
+  if (!contact_birthdates_.users_.empty()) {
+    updates.push_back(get_update_contact_close_birthdays());
+  }
 }
 
 }  // namespace td

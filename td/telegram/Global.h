@@ -37,6 +37,7 @@ class AuthManager;
 class AutosaveManager;
 class BackgroundManager;
 class BoostManager;
+class BusinessConnectionManager;
 class BusinessManager;
 class CallManager;
 class ConfigManager;
@@ -62,6 +63,7 @@ class NotificationManager;
 class NotificationSettingsManager;
 class OptionManager;
 class PasswordManager;
+class PeopleNearbyManager;
 class QuickReplyManager;
 class ReactionManager;
 class SavedMessagesManager;
@@ -232,6 +234,13 @@ class Global final : public ActorContext {
     boost_manager_ = boost_manager;
   }
 
+  ActorId<BusinessConnectionManager> business_connection_manager() const {
+    return business_connection_manager_;
+  }
+  void set_business_connection_manager(ActorId<BusinessConnectionManager> business_connection_manager) {
+    business_connection_manager_ = business_connection_manager;
+  }
+
   ActorId<BusinessManager> business_manager() const {
     return business_manager_;
   }
@@ -389,6 +398,13 @@ class Global final : public ActorContext {
   }
   void set_password_manager(ActorId<PasswordManager> password_manager) {
     password_manager_ = password_manager;
+  }
+
+  ActorId<PeopleNearbyManager> people_nearby_manager() const {
+    return people_nearby_manager_;
+  }
+  void set_people_nearby_manager(ActorId<PeopleNearbyManager> people_nearby_manager) {
+    people_nearby_manager_ = people_nearby_manager;
   }
 
   ActorId<QuickReplyManager> quick_reply_manager() const {
@@ -615,6 +631,7 @@ class Global final : public ActorContext {
   ActorId<AutosaveManager> autosave_manager_;
   ActorId<BackgroundManager> background_manager_;
   ActorId<BoostManager> boost_manager_;
+  ActorId<BusinessConnectionManager> business_connection_manager_;
   ActorId<BusinessManager> business_manager_;
   ActorId<CallManager> call_manager_;
   ActorId<ConfigManager> config_manager_;
@@ -637,6 +654,7 @@ class Global final : public ActorContext {
   ActorId<NotificationManager> notification_manager_;
   ActorId<NotificationSettingsManager> notification_settings_manager_;
   ActorId<PasswordManager> password_manager_;
+  ActorId<PeopleNearbyManager> people_nearby_manager_;
   ActorId<QuickReplyManager> quick_reply_manager_;
   ActorId<ReactionManager> reaction_manager_;
   ActorId<SavedMessagesManager> saved_messages_manager_;

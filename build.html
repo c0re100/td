@@ -368,10 +368,10 @@ function getSupportedOs(language) {
     case 'C#':
       return ['Windows (through C++/CLI)', 'Universal Windows Platform (through C++/CX)', 'Windows (.NET Core)', 'Linux (.NET Core)', 'macOS (.NET Core)', 'FreeBSD (.NET Core)'];
     case 'Dart':
-      return ['Android', 'iOS', 'Windows', 'Linux', 'macOS', 'tvOS', 'watchOS'];
+      return ['Android', 'iOS', 'Windows', 'Linux', 'macOS', 'tvOS', 'visionOS', 'watchOS'];
     case 'Swift':
     case 'Objective-C':
-      return ['Windows', 'Linux', 'macOS', 'iOS', 'tvOS', 'watchOS'];
+      return ['Windows', 'Linux', 'macOS', 'iOS', 'tvOS', 'visionOS', 'watchOS'];
     default:
       return ['Windows', 'Linux', 'macOS', 'FreeBSD', 'OpenBSD', 'NetBSD'];
   }
@@ -474,7 +474,7 @@ function getTarget(language, os) {
   if (os.includes('Android')) {
     return 'Android';
   }
-  if (os.includes('iOS') || os.includes('tvOS') || os.includes('watchOS')) {
+  if (os.includes('iOS') || os.includes('tvOS') || os.includes('visionOS') || os.includes('watchOS')) {
     return 'iOS';
   }
 
@@ -728,7 +728,7 @@ function onOptionsChanged() {
     if (os_windows) {
       pre_text.push('Download and install <a href="https://www.oracle.com/technetwork/java/javase/downloads/index.html">JDK</a>.');
     } else if (os_linux && linux_distro === 'Alpine') {
-      pre_text.push('Add community repository for your Alpine version (not edge) in /etc/apk/repositories. For example, you can do it through vim, preliminary installing it via "apk add --update vim".');
+      pre_text.push('Add community repository for your Alpine version (not edge) in /etc/apk/repositories. For example, you can do it through vim, preliminary installing it via "apk add vim".');
     }
   }
   if (os_linux && linux_distro === 'Other') {
@@ -827,7 +827,7 @@ function onOptionsChanged() {
         if (target === 'JNI') {
           packages += ' openjdk8';
         }
-        commands.push(sudo + 'apk add --update ' + packages);
+        commands.push(sudo + 'apk add ' + packages);
         break;
       case 'CentOS 7':
       case 'CentOS 8':

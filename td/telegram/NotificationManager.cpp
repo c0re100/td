@@ -620,14 +620,14 @@ void NotificationManager::on_get_notifications_from_database(NotificationGroupId
   auto first_notification_id = get_first_notification_id(group);
   if (first_notification_id.is_valid()) {
     while (!notifications.empty() && notifications.back().notification_id.get() >= first_notification_id.get()) {
-      // possible if notifications was added after the database request was sent
+      // possible if notifications were added after the database request was sent
       notifications.pop_back();
     }
   }
   auto first_object_id = get_first_object_id(group);
   if (first_object_id.is_valid()) {
     while (!notifications.empty() && notifications.back().type->get_object_id() >= first_object_id) {
-      // possible if notifications was added after the database request was sent
+      // possible if notifications were added after the database request was sent
       notifications.pop_back();
     }
   }
@@ -3080,8 +3080,8 @@ void NotificationManager::add_push_notification_user(
       false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
       false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
       false /*ignored*/, 0, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-      false /*ignored*/, sender_user_id.get(), sender_access_hash, user_name, string(), string(), string(),
-      std::move(sender_photo), nullptr, 0, Auto(), string(), string(), nullptr,
+      false /*ignored*/, false /*ignored*/, sender_user_id.get(), sender_access_hash, user_name, string(), string(),
+      string(), std::move(sender_photo), nullptr, 0, Auto(), string(), string(), nullptr,
       vector<telegram_api::object_ptr<telegram_api::username>>(), 0, nullptr, nullptr);
   td_->contacts_manager_->on_get_user(std::move(user), "add_push_notification_user");
 }

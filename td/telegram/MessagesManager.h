@@ -147,6 +147,8 @@ class MessagesManager final : public Actor {
 
   void on_get_empty_messages(DialogId dialog_id, const vector<MessageId> &empty_message_ids);
 
+  void get_channel_difference_if_needed(DialogId dialog_id, MessageId message_id, const char *source);
+
   void get_channel_difference_if_needed(DialogId dialog_id, MessagesInfo &&messages_info,
                                         Promise<MessagesInfo> &&promise, const char *source);
 
@@ -409,9 +411,9 @@ class MessagesManager final : public Actor {
   };
   ForwardedMessageInfo get_forwarded_message_info(MessageFullId message_full_id);
 
-  MessageInputReplyTo get_message_input_reply_to(DialogId dialog_id, MessageId top_thread_message_id,
-                                                 td_api::object_ptr<td_api::InputMessageReplyTo> &&reply_to,
-                                                 bool for_draft);
+  MessageInputReplyTo create_message_input_reply_to(DialogId dialog_id, MessageId top_thread_message_id,
+                                                    td_api::object_ptr<td_api::InputMessageReplyTo> &&reply_to,
+                                                    bool for_draft);
 
   Result<td_api::object_ptr<td_api::message>> send_message(
       DialogId dialog_id, const MessageId top_thread_message_id,
@@ -682,7 +684,7 @@ class MessagesManager final : public Actor {
 
   int64 get_chat_id_object(DialogId dialog_id, const char *source) const;
 
-  td_api::object_ptr<td_api::chat> get_chat_object(DialogId dialog_id);
+  td_api::object_ptr<td_api::chat> get_chat_object(DialogId dialog_id, const char *source);
 
   td_api::object_ptr<td_api::draftMessage> get_my_dialog_draft_message_object() const;
 
@@ -789,14 +791,19 @@ class MessagesManager final : public Actor {
   td_api::object_ptr<td_api::message> get_dialog_event_log_message_object(
       DialogId dialog_id, tl_object_ptr<telegram_api::Message> &&message, DialogId &sender_dialog_id);
 
-  tl_object_ptr<td_api::message> get_message_object(MessageFullId message_full_id, const char *source);
+  td_api::object_ptr<td_api::businessMessage> get_business_message_object(
+      telegram_api::object_ptr<telegram_api::Message> &&message,
+      telegram_api::object_ptr<telegram_api::Message> &&reply_to_message);
 
-  tl_object_ptr<td_api::messages> get_messages_object(int32 total_count, DialogId dialog_id,
-                                                      const vector<MessageId> &message_ids, bool skip_not_found,
-                                                      const char *source);
+  td_api::object_ptr<td_api::message> get_message_object(MessageFullId message_full_id, const char *source);
 
-  tl_object_ptr<td_api::messages> get_messages_object(int32 total_count, const vector<MessageFullId> &message_full_ids,
-                                                      bool skip_not_found, const char *source);
+  td_api::object_ptr<td_api::messages> get_messages_object(int32 total_count, DialogId dialog_id,
+                                                           const vector<MessageId> &message_ids, bool skip_not_found,
+                                                           const char *source);
+
+  td_api::object_ptr<td_api::messages> get_messages_object(int32 total_count,
+                                                           const vector<MessageFullId> &message_full_ids,
+                                                           bool skip_not_found, const char *source);
 
   void process_pts_update(tl_object_ptr<telegram_api::Update> &&update_ptr);
 
@@ -983,6 +990,7 @@ class MessagesManager final : public Actor {
     tl_object_ptr<telegram_api::messageFwdHeader> forward_header;
     MessageReplyHeader reply_header;
     UserId via_bot_user_id;
+    UserId via_business_bot_user_id;
     int32 view_count = 0;
     int32 forward_count = 0;
     tl_object_ptr<telegram_api::messageReplies> reply_info;
@@ -998,6 +1006,7 @@ class MessagesManager final : public Actor {
     bool is_legacy = false;
     bool hide_edit_date = false;
     bool is_from_scheduled = false;
+    bool is_from_offline = false;
     bool is_pinned = false;
     bool noforwards = false;
     bool has_mention = false;
@@ -1037,6 +1046,7 @@ class MessagesManager final : public Actor {
     string send_emoji;                        // for send_message
 
     UserId via_bot_user_id;
+    UserId via_business_bot_user_id;
 
     vector<RestrictionReason> restriction_reasons;
 
@@ -1055,6 +1065,7 @@ class MessagesManager final : public Actor {
     bool is_content_secret = false;  // must be shown only while tapped
     bool is_mention_notification_disabled = false;
     bool is_from_scheduled = false;
+    bool is_from_offline = false;
     bool is_pinned = false;
     bool are_media_timestamp_entities_found = false;
     bool noforwards = false;
@@ -1641,11 +1652,12 @@ class MessagesManager final : public Actor {
   void finish_delete_secret_chat_history(DialogId dialog_id, bool remove_from_dialog_list, MessageId last_message_id,
                                          Promise<Unit> promise);
 
-  MessageInfo parse_telegram_api_message(tl_object_ptr<telegram_api::Message> message_ptr, bool is_scheduled,
-                                         const char *source) const;
+  static MessageInfo parse_telegram_api_message(Td *td, tl_object_ptr<telegram_api::Message> message_ptr,
+                                                bool is_scheduled, const char *source);
 
-  std::pair<DialogId, unique_ptr<Message>> create_message(MessageInfo &&message_info, bool is_channel_message,
-                                                          const char *source);
+  static std::pair<DialogId, unique_ptr<Message>> create_message(Td *td, MessageInfo &&message_info,
+                                                                 bool is_channel_message, bool is_business_message,
+                                                                 const char *source);
 
   MessageId find_old_message_id(DialogId dialog_id, MessageId message_id) const;
 
@@ -1720,9 +1732,9 @@ class MessagesManager final : public Actor {
 
   static MessageFullId get_replied_message_id(DialogId dialog_id, const Message *m);
 
-  MessageInputReplyTo get_message_input_reply_to(Dialog *d, MessageId top_thread_message_id,
-                                                 td_api::object_ptr<td_api::InputMessageReplyTo> &&reply_to,
-                                                 bool for_draft);
+  MessageInputReplyTo create_message_input_reply_to(Dialog *d, MessageId top_thread_message_id,
+                                                    td_api::object_ptr<td_api::InputMessageReplyTo> &&reply_to,
+                                                    bool for_draft);
 
   static const MessageInputReplyTo *get_message_input_reply_to(const Message *m);
 
@@ -2382,11 +2394,15 @@ class MessagesManager final : public Actor {
   td_api::object_ptr<td_api::MessageContent> get_message_message_content_object(DialogId dialog_id,
                                                                                 const Message *m) const;
 
-  tl_object_ptr<td_api::message> get_message_object(DialogId dialog_id, const Message *m, const char *source) const;
+  td_api::object_ptr<td_api::message> get_message_object(DialogId dialog_id, const Message *m,
+                                                         const char *source) const;
 
-  static tl_object_ptr<td_api::messages> get_messages_object(int32 total_count,
-                                                             vector<tl_object_ptr<td_api::message>> &&messages,
-                                                             bool skip_not_found);
+  static td_api::object_ptr<td_api::messages> get_messages_object(int32 total_count,
+                                                                  vector<tl_object_ptr<td_api::message>> &&messages,
+                                                                  bool skip_not_found);
+
+  td_api::object_ptr<td_api::message> get_business_message_message_object(
+      telegram_api::object_ptr<telegram_api::Message> &&message);
 
   vector<DialogId> sort_dialogs_by_order(const vector<DialogId> &dialog_ids, int32 limit) const;
 
@@ -2598,7 +2614,7 @@ class MessagesManager final : public Actor {
 
   td_api::object_ptr<td_api::MessageSender> get_default_message_sender_object(const Dialog *d) const;
 
-  td_api::object_ptr<td_api::chat> get_chat_object(const Dialog *d) const;
+  td_api::object_ptr<td_api::chat> get_chat_object(const Dialog *d, const char *source) const;
 
   Dialog *get_dialog(DialogId dialog_id);
   const Dialog *get_dialog(DialogId dialog_id) const;
@@ -2897,6 +2913,8 @@ class MessagesManager final : public Actor {
   bool need_channel_difference_to_add_message(DialogId dialog_id,
                                               const tl_object_ptr<telegram_api::Message> &message_ptr);
 
+  bool need_channel_difference_to_add_message(DialogId dialog_id, MessageId message_id);
+
   void run_after_channel_difference(DialogId dialog_id, MessageId expected_max_message_id, Promise<Unit> &&promise,
                                     const char *source);
 
@@ -3181,7 +3199,6 @@ class MessagesManager final : public Actor {
 
   struct PendingCreatedDialog {
     Promise<td_api::object_ptr<td_api::chat>> promise_;
-    vector<UserId> group_invite_privacy_forbidden_user_ids_;
   };
   FlatHashMap<DialogId, PendingCreatedDialog, DialogIdHash> pending_created_dialogs_;
 

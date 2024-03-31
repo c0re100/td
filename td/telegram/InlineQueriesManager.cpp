@@ -2086,7 +2086,7 @@ bool InlineQueriesManager::load_recently_used_bots(Promise<Unit> &promise) {
 
   LOG(INFO) << "Load recently used inline bots " << saved_bots << '/' << saved_bot_ids;
   if (recently_used_bots_loaded_ == 1 && resolve_recent_inline_bots_multipromise_.promise_count() == 0) {
-    // queries was sent and have already been finished
+    // queries were sent and have already been finished
     auto newly_used_bots = std::move(recently_used_bot_user_ids_);
     recently_used_bot_user_ids_.clear();
 
@@ -2140,7 +2140,6 @@ void InlineQueriesManager::on_new_query(int64 query_id, UserId sender_user_id, L
     LOG(ERROR) << "Receive new inline query from invalid " << sender_user_id;
     return;
   }
-  LOG_IF(ERROR, !td_->contacts_manager_->have_user(sender_user_id)) << "Receive unknown " << sender_user_id;
   if (!td_->auth_manager_->is_bot()) {
     LOG(ERROR) << "Receive new inline query";
     return;
@@ -2152,7 +2151,8 @@ void InlineQueriesManager::on_new_query(int64 query_id, UserId sender_user_id, L
 
     switch (peer_type->get_id()) {
       case telegram_api::inlineQueryPeerTypeSameBotPM::ID:
-        return td_api::make_object<td_api::chatTypePrivate>(sender_user_id.get());
+        return td_api::make_object<td_api::chatTypePrivate>(
+            td_->contacts_manager_->get_user_id_object(sender_user_id, "inlineQueryPeerTypeSameBotPM"));
       case telegram_api::inlineQueryPeerTypeBotPM::ID:
       case telegram_api::inlineQueryPeerTypePM::ID:
         return td_api::make_object<td_api::chatTypePrivate>(0);

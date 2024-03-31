@@ -46,9 +46,11 @@ class AutosaveManager;
 class BackgroundManager;
 class BoostManager;
 class BotInfoManager;
+class BusinessConnectionManager;
 class BusinessManager;
 class CallManager;
 class CallbackQueriesManager;
+class ChannelRecommendationManager;
 class CommonDialogManager;
 class ConfigManager;
 class ContactsManager;
@@ -77,6 +79,7 @@ class NotificationManager;
 class NotificationSettingsManager;
 class OptionManager;
 class PasswordManager;
+class PeopleNearbyManager;
 class PhoneNumberManager;
 class PollManager;
 class PrivacyManager;
@@ -178,8 +181,12 @@ class Td final : public Actor {
   ActorOwn<BoostManager> boost_manager_actor_;
   unique_ptr<BotInfoManager> bot_info_manager_;
   ActorOwn<BotInfoManager> bot_info_manager_actor_;
+  unique_ptr<BusinessConnectionManager> business_connection_manager_;
+  ActorOwn<BusinessConnectionManager> business_connection_manager_actor_;
   unique_ptr<BusinessManager> business_manager_;
   ActorOwn<BusinessManager> business_manager_actor_;
+  unique_ptr<ChannelRecommendationManager> channel_recommendation_manager_;
+  ActorOwn<ChannelRecommendationManager> channel_recommendation_manager_actor_;
   unique_ptr<CommonDialogManager> common_dialog_manager_;
   ActorOwn<CommonDialogManager> common_dialog_manager_actor_;
   unique_ptr<ContactsManager> contacts_manager_;
@@ -224,6 +231,8 @@ class Td final : public Actor {
   ActorOwn<PollManager> poll_manager_actor_;
   unique_ptr<PrivacyManager> privacy_manager_;
   ActorOwn<PrivacyManager> privacy_manager_actor_;
+  unique_ptr<PeopleNearbyManager> people_nearby_manager_;
+  ActorOwn<PeopleNearbyManager> people_nearby_manager_actor_;
   unique_ptr<QuickReplyManager> quick_reply_manager_;
   ActorOwn<QuickReplyManager> quick_reply_manager_actor_;
   unique_ptr<ReactionManager> reaction_manager_;
@@ -627,6 +636,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::clickChatSponsoredMessage &request);
 
+  void on_request(uint64 id, const td_api::reportChatSponsoredMessage &request);
+
   void on_request(uint64 id, const td_api::getMessageLink &request);
 
   void on_request(uint64 id, const td_api::getMessageEmbeddingCode &request);
@@ -730,6 +741,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::getSuitableDiscussionChats &request);
 
   void on_request(uint64 id, const td_api::getInactiveSupergroupChats &request);
+
+  void on_request(uint64 id, const td_api::getSuitablePersonalChats &request);
 
   void on_request(uint64 id, const td_api::openChat &request);
 
@@ -866,6 +879,10 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::editInlineMessageReplyMarkup &request);
 
   void on_request(uint64 id, td_api::editMessageSchedulingState &request);
+
+  void on_request(uint64 id, td_api::sendBusinessMessage &request);
+
+  void on_request(uint64 id, td_api::sendBusinessMessageAlbum &request);
 
   void on_request(uint64 id, const td_api::loadQuickReplyShortcuts &request);
 
@@ -1337,6 +1354,10 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::reorderActiveUsernames &request);
 
+  void on_request(uint64 id, td_api::setBirthdate &request);
+
+  void on_request(uint64 id, const td_api::setPersonalChat &request);
+
   void on_request(uint64 id, const td_api::setEmojiStatus &request);
 
   void on_request(uint64 id, const td_api::getThemedEmojiStatuses &request);
@@ -1398,6 +1419,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::setBusinessGreetingMessageSettings &request);
 
   void on_request(uint64 id, td_api::setBusinessAwayMessageSettings &request);
+
+  void on_request(uint64 id, td_api::setBusinessIntro &request);
 
   void on_request(uint64 id, td_api::setProfilePhoto &request);
 
@@ -1493,6 +1516,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::addStickerToSet &request);
 
+  void on_request(uint64 id, td_api::replaceStickerInSet &request);
+
   void on_request(uint64 id, td_api::setStickerSetThumbnail &request);
 
   void on_request(uint64 id, td_api::setCustomEmojiStickerSetThumbnail &request);
@@ -1510,6 +1535,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::setStickerKeywords &request);
 
   void on_request(uint64 id, td_api::setStickerMaskPosition &request);
+
+  void on_request(uint64 id, const td_api::getOwnedStickerSets &request);
 
   void on_request(uint64 id, const td_api::getRecentStickers &request);
 
@@ -1620,6 +1647,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::stopPoll &request);
 
   void on_request(uint64 id, const td_api::hideSuggestedAction &request);
+
+  void on_request(uint64 id, td_api::getBusinessConnection &request);
 
   void on_request(uint64 id, const td_api::getLoginUrlInfo &request);
 
@@ -1767,6 +1796,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::assignGooglePlayTransaction &request);
 
+  void on_request(uint64 id, const td_api::getBusinessFeatures &request);
+
   void on_request(uint64 id, td_api::acceptTermsOfService &request);
 
   void on_request(uint64 id, const td_api::getCountries &request);
@@ -1774,6 +1805,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::getCountryCode &request);
 
   void on_request(uint64 id, const td_api::getPhoneNumberInfo &request);
+
+  void on_request(uint64 id, td_api::getCollectibleItemInfo &request);
 
   void on_request(uint64 id, const td_api::getApplicationDownloadLink &request);
 

@@ -825,8 +825,7 @@ Result<unique_ptr<ReplyMarkup>> get_reply_markup(td_api::object_ptr<td_api::Repl
 }
 
 Result<unique_ptr<ReplyMarkup>> get_reply_markup(td_api::object_ptr<td_api::ReplyMarkup> &&reply_markup_ptr,
-                                                 DialogId dialog_id, bool is_bot, bool is_anonymous) {
-  auto dialog_type = dialog_id.get_type();
+                                                 DialogType dialog_type, bool is_bot, bool is_anonymous) {
   bool only_inline_keyboard = is_anonymous;
   bool request_buttons_allowed = dialog_type == DialogType::User;
   bool switch_inline_buttons_allowed = !is_anonymous;
@@ -896,10 +895,7 @@ static tl_object_ptr<telegram_api::KeyboardButton> get_input_keyboard_button(con
       return make_tl_object<telegram_api::keyboardButtonSimpleWebView>(keyboard_button.text, keyboard_button.url);
     case KeyboardButton::Type::RequestDialog:
       CHECK(keyboard_button.requested_dialog_type != nullptr);
-      return make_tl_object<telegram_api::keyboardButtonRequestPeer>(
-          keyboard_button.text, keyboard_button.requested_dialog_type->get_button_id(),
-          keyboard_button.requested_dialog_type->get_input_request_peer_type_object(),
-          keyboard_button.requested_dialog_type->get_max_quantity());
+      return keyboard_button.requested_dialog_type->get_input_keyboard_button_request_peer(keyboard_button.text);
     default:
       UNREACHABLE();
       return nullptr;
