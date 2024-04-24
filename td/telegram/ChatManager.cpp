@@ -8752,7 +8752,7 @@ td_api::object_ptr<td_api::updateBasicGroup> ChatManager::get_update_basic_group
 
 td_api::object_ptr<td_api::updateBasicGroup> ChatManager::get_update_unknown_basic_group_object(ChatId chat_id) {
   return td_api::make_object<td_api::updateBasicGroup>(td_api::make_object<td_api::basicGroup>(
-      chat_id.get(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0));
+      chat_id.get(), -1, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0));
 }
 
 int64 ChatManager::get_basic_group_id_object(ChatId chat_id, const char *source) const {
@@ -8780,7 +8780,7 @@ tl_object_ptr<td_api::basicGroup> ChatManager::get_basic_group_object(ChatId cha
 
 tl_object_ptr<td_api::basicGroup> ChatManager::get_basic_group_object_const(ChatId chat_id, const Chat *c) const {
   return make_tl_object<td_api::basicGroup>(
-      chat_id.get(), c->participant_count, get_chat_status(c).get_chat_member_status_object(), c->is_active,
+      chat_id.get(), -1, c->participant_count, get_chat_status(c).get_chat_member_status_object(), c->is_active,
       get_supergroup_id_object(c->migrated_to_channel_id, "get_basic_group_object"));
 }
 
@@ -8817,7 +8817,7 @@ td_api::object_ptr<td_api::updateSupergroup> ChatManager::get_update_unknown_sup
   auto min_channel = get_min_channel(channel_id);
   bool is_megagroup = min_channel == nullptr ? false : min_channel->is_megagroup_;
   return td_api::make_object<td_api::updateSupergroup>(td_api::make_object<td_api::supergroup>(
-      channel_id.get(), nullptr, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, 0, false,
+      channel_id.get(), -1, nullptr, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, 0, false,
       false, false, !is_megagroup, false, false, !is_megagroup, false, false, false, string(), false, false, false,
       false));
 }
@@ -8854,7 +8854,7 @@ tl_object_ptr<td_api::supergroup> ChatManager::get_supergroup_object(ChannelId c
     return nullptr;
   }
   return td_api::make_object<td_api::supergroup>(
-      channel_id.get(), c->usernames.get_usernames_object(), c->date,
+      channel_id.get(), -1, c->usernames.get_usernames_object(), c->date,
       get_channel_status(c).get_chat_member_status_object(), c->participant_count, c->boost_level,
       c->has_linked_channel, c->has_location, c->sign_messages, get_channel_join_to_send(c),
       get_channel_join_request(c), c->is_slow_mode_enabled, !c->is_megagroup, c->is_gigagroup, c->is_forum,

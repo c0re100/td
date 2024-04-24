@@ -7715,7 +7715,7 @@ td_api::object_ptr<td_api::updateUser> UserManager::get_update_user_object(UserI
 td_api::object_ptr<td_api::updateUser> UserManager::get_update_unknown_user_object(UserId user_id) const {
   auto have_access = user_id == get_my_id() || user_messages_.count(user_id) != 0;
   return td_api::make_object<td_api::updateUser>(td_api::make_object<td_api::user>(
-      user_id.get(), "", "", nullptr, "", td_api::make_object<td_api::userStatusEmpty>(), nullptr,
+      user_id.get(), -1, "", "", nullptr, "", td_api::make_object<td_api::userStatusEmpty>(), nullptr,
       td_->theme_manager_->get_accent_color_id_object(AccentColorId(user_id)), 0, -1, 0, nullptr, false, false, false,
       false, false, false, "", false, false, false, false, false, have_access,
       td_api::make_object<td_api::userTypeUnknown>(), "", false));
@@ -7754,7 +7754,7 @@ td_api::object_ptr<td_api::user> UserManager::get_user_object(UserId user_id, co
   auto accent_color_id = u->accent_color_id.is_valid() ? u->accent_color_id : AccentColorId(user_id);
   auto restricts_new_chats = u->contact_require_premium && !u->is_mutual_contact;
   return td_api::make_object<td_api::user>(
-      user_id.get(), u->first_name, u->last_name, u->usernames.get_usernames_object(), u->phone_number,
+      user_id.get(), -1, u->first_name, u->last_name, u->usernames.get_usernames_object(), u->phone_number,
       get_user_status_object(user_id, u, G()->unix_time()),
       get_profile_photo_object(td_->file_manager_.get(), u->photo),
       td_->theme_manager_->get_accent_color_id_object(accent_color_id, AccentColorId(user_id)),
