@@ -7,13 +7,14 @@
 #include "td/telegram/PeopleNearbyManager.h"
 
 #include "td/telegram/AuthManager.h"
-#include "td/telegram/ContactsManager.h"
+#include "td/telegram/ChatManager.h"
 #include "td/telegram/DialogManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/OptionManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
+#include "td/telegram/UserManager.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
@@ -165,8 +166,8 @@ void PeopleNearbyManager::on_get_dialogs_nearby(Result<telegram_api::object_ptr<
   auto update = telegram_api::move_object_as<telegram_api::updates>(updates_ptr);
   LOG(INFO) << "Receive chats nearby in " << to_string(update);
 
-  td_->contacts_manager_->on_get_users(std::move(update->users_), "on_get_dialogs_nearby");
-  td_->contacts_manager_->on_get_chats(std::move(update->chats_), "on_get_dialogs_nearby");
+  td_->user_manager_->on_get_users(std::move(update->users_), "on_get_dialogs_nearby");
+  td_->chat_manager_->on_get_chats(std::move(update->chats_), "on_get_dialogs_nearby");
 
   for (auto &dialog_nearby : users_nearby_) {
     user_nearby_timeout_.cancel_timeout(dialog_nearby.dialog_id.get_user_id().get());
@@ -364,7 +365,7 @@ int32 PeopleNearbyManager::on_update_peer_located(vector<telegram_api::object_pt
     auto dialog_type = dialog_id.get_type();
     if (dialog_type == DialogType::User) {
       auto user_id = dialog_id.get_user_id();
-      if (!td_->contacts_manager_->have_user(user_id)) {
+      if (!td_->user_manager_->have_user(user_id)) {
         LOG(ERROR) << "Can't find " << user_id;
         continue;
       }
@@ -373,7 +374,7 @@ int32 PeopleNearbyManager::on_update_peer_located(vector<telegram_api::object_pt
       }
     } else if (dialog_type == DialogType::Channel) {
       auto channel_id = dialog_id.get_channel_id();
-      if (!td_->contacts_manager_->have_channel(channel_id)) {
+      if (!td_->chat_manager_->have_channel(channel_id)) {
         LOG(ERROR) << "Can't find " << channel_id;
         continue;
       }

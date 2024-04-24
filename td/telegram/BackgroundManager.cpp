@@ -9,7 +9,7 @@
 #include "td/telegram/AccessRights.h"
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/BackgroundType.hpp"
-#include "td/telegram/ContactsManager.h"
+#include "td/telegram/ChatManager.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/DialogManager.h"
 #include "td/telegram/Document.h"
@@ -25,6 +25,7 @@
 #include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UpdatesManager.h"
+#include "td/telegram/UserManager.h"
 
 #include "td/db/SqliteKeyValueAsync.h"
 
@@ -764,12 +765,7 @@ void BackgroundManager::delete_background(bool for_dark_theme, Promise<Unit> &&p
 }
 
 Result<DialogId> BackgroundManager::get_background_dialog(DialogId dialog_id) {
-  if (!td_->dialog_manager_->have_dialog_force(dialog_id, "get_background_dialog")) {
-    return Status::Error(400, "Chat not found");
-  }
-  if (!td_->dialog_manager_->have_input_peer(dialog_id, AccessRights::Write)) {
-    return Status::Error(400, "Can't access the chat");
-  }
+  TRY_STATUS(td_->dialog_manager_->check_dialog_access(dialog_id, true, AccessRights::Write, "get_background_dialog"));
 
   switch (dialog_id.get_type()) {
     case DialogType::User:
@@ -778,14 +774,13 @@ Result<DialogId> BackgroundManager::get_background_dialog(DialogId dialog_id) {
       return Status::Error(400, "Can't change background in the chat");
     case DialogType::Channel: {
       auto channel_id = dialog_id.get_channel_id();
-      if (!td_->contacts_manager_->get_channel_permissions(channel_id)
-               .can_change_info_and_settings_as_administrator()) {
+      if (!td_->chat_manager_->get_channel_permissions(channel_id).can_change_info_and_settings_as_administrator()) {
         return Status::Error(400, "Not enough rights in the chat");
       }
       return dialog_id;
     }
     case DialogType::SecretChat: {
-      auto user_id = td_->contacts_manager_->get_secret_chat_user_id(dialog_id.get_secret_chat_id());
+      auto user_id = td_->user_manager_->get_secret_chat_user_id(dialog_id.get_secret_chat_id());
       if (!user_id.is_valid()) {
         return Status::Error(400, "Can't access the user");
       }

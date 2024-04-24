@@ -19,8 +19,8 @@
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ChannelType.h"
 #include "td/telegram/ChatId.h"
+#include "td/telegram/ChatManager.h"
 #include "td/telegram/ConfigManager.h"
-#include "td/telegram/ContactsManager.h"
 #include "td/telegram/DialogAction.h"
 #include "td/telegram/DialogActionManager.h"
 #include "td/telegram/DialogFilterManager.h"
@@ -81,6 +81,7 @@
 #include "td/telegram/ThemeManager.h"
 #include "td/telegram/TimeZoneManager.h"
 #include "td/telegram/TranscriptionManager.h"
+#include "td/telegram/UserManager.h"
 #include "td/telegram/Usernames.h"
 #include "td/telegram/WebPagesManager.h"
 
@@ -703,16 +704,15 @@ void UpdatesManager::set_date(int32 date, bool from_update, string date_source) 
 }
 
 bool UpdatesManager::is_acceptable_user(UserId user_id) const {
-  return td_->contacts_manager_->have_user_force(user_id, "is_acceptable_user") &&
-         td_->contacts_manager_->have_user(user_id);
+  return td_->user_manager_->have_user_force(user_id, "is_acceptable_user") && td_->user_manager_->have_user(user_id);
 }
 
 bool UpdatesManager::is_acceptable_chat(ChatId chat_id) const {
-  return td_->contacts_manager_->have_chat_force(chat_id, "is_acceptable_chat");
+  return td_->chat_manager_->have_chat_force(chat_id, "is_acceptable_chat");
 }
 
 bool UpdatesManager::is_acceptable_channel(ChannelId channel_id) const {
-  return td_->contacts_manager_->have_channel_force(channel_id, "is_acceptable_channel");
+  return td_->chat_manager_->have_channel_force(channel_id, "is_acceptable_channel");
 }
 
 bool UpdatesManager::is_acceptable_peer(const tl_object_ptr<telegram_api::Peer> &peer) const {
@@ -753,7 +753,7 @@ bool UpdatesManager::is_acceptable_message_entities(
     if (entity->get_id() == telegram_api::messageEntityMentionName::ID) {
       auto entity_mention_name = static_cast<const telegram_api::messageEntityMentionName *>(entity.get());
       UserId user_id(entity_mention_name->user_id_);
-      if (!is_acceptable_user(user_id) || td_->contacts_manager_->get_input_user(user_id).is_error()) {
+      if (!is_acceptable_user(user_id) || td_->user_manager_->get_input_user(user_id).is_error()) {
         return false;
       }
     }
@@ -770,7 +770,7 @@ bool UpdatesManager::is_acceptable_reply_markup(const tl_object_ptr<telegram_api
       if (button->get_id() == telegram_api::keyboardButtonUserProfile::ID) {
         auto user_profile_button = static_cast<const telegram_api::keyboardButtonUserProfile *>(button.get());
         UserId user_id(user_profile_button->user_id_);
-        if (!is_acceptable_user(user_id) || td_->contacts_manager_->get_input_user(user_id).is_error()) {
+        if (!is_acceptable_user(user_id) || td_->user_manager_->get_input_user(user_id).is_error()) {
           return false;
         }
       }
@@ -878,7 +878,7 @@ bool UpdatesManager::is_acceptable_message_media(
           for (auto &page_block : *page_blocks) {
             if (page_block->get_id() == telegram_api::pageBlockChannel::ID) {
               auto page_block_channel = static_cast<const telegram_api::pageBlockChannel *>(page_block.get());
-              auto channel_id = ContactsManager::get_channel_id(page_block_channel->channel_);
+              auto channel_id = ChatManager::get_channel_id(page_block_channel->channel_);
               if (channel_id.is_valid()) {
                 if (!is_acceptable_channel(channel_id)) {
                   return false;
@@ -1189,7 +1189,7 @@ void UpdatesManager::on_get_updates_impl(tl_object_ptr<telegram_api::Updates> up
       break;
     case telegram_api::updateShortMessage::ID: {
       auto update = move_tl_object_as<telegram_api::updateShortMessage>(updates_ptr);
-      auto from_id = update->out_ ? td_->contacts_manager_->get_my_id().get() : update->user_id_;
+      auto from_id = update->out_ ? td_->user_manager_->get_my_id().get() : update->user_id_;
       auto message = make_tl_object<telegram_api::message>(
           fix_short_message_flags(update->flags_), update->out_, update->mentioned_, update->media_unread_,
           update->silent_, false, false, false, false, false, false, false, 0, false, update->id_,
@@ -1231,8 +1231,8 @@ void UpdatesManager::on_get_updates_impl(tl_object_ptr<telegram_api::Updates> up
     }
     case telegram_api::updatesCombined::ID: {
       auto updates = move_tl_object_as<telegram_api::updatesCombined>(updates_ptr);
-      td_->contacts_manager_->on_get_users(std::move(updates->users_), "updatesCombined");
-      td_->contacts_manager_->on_get_chats(std::move(updates->chats_), "updatesCombined");
+      td_->user_manager_->on_get_users(std::move(updates->users_), "updatesCombined");
+      td_->chat_manager_->on_get_chats(std::move(updates->chats_), "updatesCombined");
       on_pending_updates(std::move(updates->updates_), updates->seq_start_, updates->seq_, updates->date_, Time::now(),
                          std::move(promise), "telegram_api::updatesCombined");
       break;
@@ -1245,8 +1245,8 @@ void UpdatesManager::on_get_updates_impl(tl_object_ptr<telegram_api::Updates> up
         source_str = PSTRING() << "update " << updates->updates_[0]->get_id();
         source = source_str.c_str();
       }
-      td_->contacts_manager_->on_get_users(std::move(updates->users_), source);
-      td_->contacts_manager_->on_get_chats(std::move(updates->chats_), source);
+      td_->user_manager_->on_get_users(std::move(updates->users_), source);
+      td_->chat_manager_->on_get_chats(std::move(updates->chats_), source);
       on_pending_updates(std::move(updates->updates_), updates->seq_, updates->seq_, updates->date_, Time::now(),
                          std::move(promise), "telegram_api::updates");
       break;
@@ -1616,7 +1616,7 @@ vector<DialogId> UpdatesManager::get_chat_dialog_ids(const telegram_api::Updates
   vector<DialogId> dialog_ids;
   dialog_ids.reserve(chats->size());
   for (const auto &chat : *chats) {
-    auto dialog_id = ContactsManager::get_dialog_id(chat);
+    auto dialog_id = ChatManager::get_dialog_id(chat);
     if (dialog_id.is_valid()) {
       dialog_ids.push_back(dialog_id);
     } else {
@@ -1624,7 +1624,7 @@ vector<DialogId> UpdatesManager::get_chat_dialog_ids(const telegram_api::Updates
     }
   }
   if (dialog_ids.size() > 1) {
-    td::remove(dialog_ids, DialogId(ContactsManager::get_unsupported_channel_id()));
+    td::remove(dialog_ids, DialogId(ChatManager::get_unsupported_channel_id()));
   }
   return dialog_ids;
 }
@@ -1784,6 +1784,16 @@ void UpdatesManager::on_server_pong(tl_object_ptr<telegram_api::updates_state> &
   }
 }
 
+void UpdatesManager::notify_speed_limited(bool is_upload) {
+  if (Time::now() < next_notify_speed_limited_[is_upload]) {
+    return;
+  }
+  next_notify_speed_limited_[is_upload] =
+      Time::now() +
+      static_cast<double>(td_->option_manager_->get_option_integer("upload_premium_speedup_notify_period"));
+  send_closure(G()->td(), &Td::send_update, td_api::make_object<td_api::updateSpeedLimitNotification>(is_upload));
+}
+
 void UpdatesManager::process_get_difference_updates(
     vector<tl_object_ptr<telegram_api::Message>> &&new_messages,
     vector<tl_object_ptr<telegram_api::EncryptedMessage>> &&new_encrypted_messages,
@@ -1907,8 +1917,8 @@ void UpdatesManager::on_get_difference(tl_object_ptr<telegram_api::updates_Diffe
       auto difference = move_tl_object_as<telegram_api::updates_difference>(difference_ptr);
       VLOG(get_difference) << "In get difference receive " << difference->users_.size() << " users and "
                            << difference->chats_.size() << " chats";
-      td_->contacts_manager_->on_get_users(std::move(difference->users_), "updates.difference");
-      td_->contacts_manager_->on_get_chats(std::move(difference->chats_), "updates.difference");
+      td_->user_manager_->on_get_users(std::move(difference->users_), "updates.difference");
+      td_->chat_manager_->on_get_chats(std::move(difference->chats_), "updates.difference");
 
       if (get_difference_retry_count_ <= 5) {
         for (const auto &message : difference->new_messages_) {
@@ -1943,8 +1953,8 @@ void UpdatesManager::on_get_difference(tl_object_ptr<telegram_api::updates_Diffe
 
       VLOG(get_difference) << "In get difference receive " << difference->users_.size() << " users and "
                            << difference->chats_.size() << " chats";
-      td_->contacts_manager_->on_get_users(std::move(difference->users_), "updates.differenceSlice");
-      td_->contacts_manager_->on_get_chats(std::move(difference->chats_), "updates.differenceSlice");
+      td_->user_manager_->on_get_users(std::move(difference->users_), "updates.differenceSlice");
+      td_->chat_manager_->on_get_chats(std::move(difference->chats_), "updates.differenceSlice");
 
       if (get_difference_retry_count_ <= 5) {
         for (const auto &message : difference->new_messages_) {
@@ -2040,8 +2050,8 @@ void UpdatesManager::on_get_pts_update(int32 pts,
         return;
       }
 
-      td_->contacts_manager_->on_get_users(std::move(difference->users_), "on_get_pts_update");
-      td_->contacts_manager_->on_get_chats(std::move(difference->chats_), "on_get_pts_update");
+      td_->user_manager_->on_get_users(std::move(difference->users_), "on_get_pts_update");
+      td_->chat_manager_->on_get_chats(std::move(difference->chats_), "on_get_pts_update");
 
       for (auto &message : difference->new_messages_) {
         difference->other_updates_.push_back(
@@ -2236,10 +2246,9 @@ void UpdatesManager::try_reload_data() {
   LOG(INFO) << "Reload data";
   td_->animations_manager_->reload_saved_animations(true);
   td_->autosave_manager_->reload_autosave_settings();
-  td_->contacts_manager_->reload_contact_birthdates(false);
-  td_->contacts_manager_->reload_created_public_dialogs(PublicDialogType::HasUsername, std::move(promise));
-  td_->contacts_manager_->reload_created_public_dialogs(PublicDialogType::IsLocationBased, Auto());
-  td_->contacts_manager_->reload_created_public_dialogs(PublicDialogType::ForPersonalDialog, Auto());
+  td_->chat_manager_->reload_created_public_dialogs(PublicDialogType::HasUsername, std::move(promise));
+  td_->chat_manager_->reload_created_public_dialogs(PublicDialogType::IsLocationBased, Auto());
+  td_->chat_manager_->reload_created_public_dialogs(PublicDialogType::ForPersonalDialog, Auto());
   get_default_emoji_statuses(td_, Auto());
   get_default_channel_emoji_statuses(td_, Auto());
   td_->notification_settings_manager_->reload_saved_ringtones(Auto());
@@ -2282,6 +2291,7 @@ void UpdatesManager::try_reload_data() {
   td_->theme_manager_->reload_chat_themes();
   td_->theme_manager_->reload_profile_accent_colors();
   td_->time_zone_manager_->reload_time_zones(Auto());
+  td_->user_manager_->reload_contact_birthdates(false);
 
   schedule_data_reload();
 }
@@ -2370,7 +2380,7 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
           auto dialog_id = DialogId::get_message_dialog_id(*message_ptr);
           if (dialog_id.get_type() == DialogType::Channel) {
             auto channel_id = dialog_id.get_channel_id();
-            if (td_->contacts_manager_->have_channel_force(channel_id, source)) {
+            if (td_->chat_manager_->have_channel_force(channel_id, source)) {
               if (td_->messages_manager_->is_old_channel_update(dialog_id, pts)) {
                 // the update will be ignored anyway, so there is no reason to replace it or force get_difference
                 LOG(INFO) << "Allow an outdated unacceptable update from " << source;
@@ -2402,7 +2412,7 @@ void UpdatesManager::on_pending_updates(vector<tl_object_ptr<telegram_api::Updat
     if (dialog_id.get_type() == DialogType::User) {
       auto user_id = dialog_id.get_user_id();
       if (user_id.is_valid()) {
-        td_->contacts_manager_->on_update_user_local_was_online(user_id, date);
+        td_->user_manager_->on_update_user_local_was_online(user_id, date);
       }
     }
   }
@@ -3516,7 +3526,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannelTooLong>
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannel> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->invalidate_channel_full(ChannelId(update->channel_id_), false, "updateChannel");
+  td_->chat_manager_->invalidate_channel_full(ChannelId(update->channel_id_), false, "updateChannel");
   promise.set_value(Unit());
 }
 
@@ -3953,36 +3963,36 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChannelUserTypi
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateEncryptedChatTyping> update, Promise<Unit> &&promise) {
   SecretChatId secret_chat_id(update->chat_id_);
-  UserId user_id = td_->contacts_manager_->get_secret_chat_user_id(secret_chat_id);
+  UserId user_id = td_->user_manager_->get_secret_chat_user_id(secret_chat_id);
   td_->dialog_action_manager_->on_dialog_action(DialogId(secret_chat_id), MessageId(), DialogId(user_id),
                                                 DialogAction::get_typing_action(), get_short_update_date());
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateUserStatus> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_user_online(UserId(update->user_id_), std::move(update->status_));
+  td_->user_manager_->on_update_user_online(UserId(update->user_id_), std::move(update->status_));
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateUserName> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_user_name(UserId(update->user_id_), std::move(update->first_name_),
-                                              std::move(update->last_name_),
-                                              Usernames{string(), std::move(update->usernames_)});
+  td_->user_manager_->on_update_user_name(UserId(update->user_id_), std::move(update->first_name_),
+                                          std::move(update->last_name_),
+                                          Usernames{string(), std::move(update->usernames_)});
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateUserPhone> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_user_phone_number(UserId(update->user_id_), std::move(update->phone_));
+  td_->user_manager_->on_update_user_phone_number(UserId(update->user_id_), std::move(update->phone_));
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateUser> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->invalidate_user_full(UserId(update->user_id_));
+  td_->user_manager_->invalidate_user_full(UserId(update->user_id_));
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateUserEmojiStatus> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_user_emoji_status(UserId(update->user_id_), std::move(update->emoji_status_));
+  td_->user_manager_->on_update_user_emoji_status(UserId(update->user_id_), std::move(update->emoji_status_));
   promise.set_value(Unit());
 }
 
@@ -4004,32 +4014,31 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateBotCommands> up
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateBotMenuButton> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_bot_menu_button(UserId(update->bot_id_), std::move(update->button_));
+  td_->user_manager_->on_update_bot_menu_button(UserId(update->bot_id_), std::move(update->button_));
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChatParticipants> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_get_chat_participants(std::move(update->participants_), true);
+  td_->chat_manager_->on_get_chat_participants(std::move(update->participants_), true);
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChatParticipantAdd> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_chat_add_user(ChatId(update->chat_id_), UserId(update->inviter_id_),
-                                                  UserId(update->user_id_), update->date_, update->version_);
+  td_->chat_manager_->on_update_chat_add_user(ChatId(update->chat_id_), UserId(update->inviter_id_),
+                                              UserId(update->user_id_), update->date_, update->version_);
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChatParticipantAdmin> update,
                                Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_chat_edit_administrator(ChatId(update->chat_id_), UserId(update->user_id_),
-                                                            update->is_admin_, update->version_);
+  td_->chat_manager_->on_update_chat_edit_administrator(ChatId(update->chat_id_), UserId(update->user_id_),
+                                                        update->is_admin_, update->version_);
   promise.set_value(Unit());
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChatParticipantDelete> update,
                                Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_chat_delete_user(ChatId(update->chat_id_), UserId(update->user_id_),
-                                                     update->version_);
+  td_->chat_manager_->on_update_chat_delete_user(ChatId(update->chat_id_), UserId(update->user_id_), update->version_);
   promise.set_value(Unit());
 }
 
@@ -4039,12 +4048,12 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateChatDefaultBann
   auto version = update->version_;
   switch (dialog_id.get_type()) {
     case DialogType::Chat:
-      td_->contacts_manager_->on_update_chat_default_permissions(
+      td_->chat_manager_->on_update_chat_default_permissions(
           dialog_id.get_chat_id(), RestrictedRights(update->default_banned_rights_, ChannelType::Unknown), version);
       break;
     case DialogType::Channel:
       LOG_IF(ERROR, version != 0) << "Receive version " << version << " in " << dialog_id;
-      td_->contacts_manager_->on_update_channel_default_permissions(
+      td_->chat_manager_->on_update_channel_default_permissions(
           dialog_id.get_channel_id(), RestrictedRights(update->default_banned_rights_, ChannelType::Megagroup));
       break;
     case DialogType::None:
@@ -4239,7 +4248,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateBotShippingQuer
     send_closure(
         G()->td(), &Td::send_update,
         make_tl_object<td_api::updateNewShippingQuery>(
-            update->query_id_, td_->contacts_manager_->get_user_id_object(user_id, "updateNewShippingQuery"),
+            update->query_id_, td_->user_manager_->get_user_id_object(user_id, "updateNewShippingQuery"),
             update->payload_.as_slice().str(),
             get_address_object(get_address(std::move(update->shipping_address_)))));  // TODO use convert_address
   }
@@ -4253,12 +4262,11 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateBotPrecheckoutQ
   } else if (update->total_amount_ <= 0 || !check_currency_amount(update->total_amount_)) {
     LOG(ERROR) << "Receive pre-checkout query with invalid total amount " << update->total_amount_;
   } else {
-    send_closure(
-        G()->td(), &Td::send_update,
-        make_tl_object<td_api::updateNewPreCheckoutQuery>(
-            update->query_id_, td_->contacts_manager_->get_user_id_object(user_id, "updateNewPreCheckoutQuery"),
-            update->currency_, update->total_amount_, update->payload_.as_slice().str(), update->shipping_option_id_,
-            get_order_info_object(get_order_info(std::move(update->info_)))));
+    send_closure(G()->td(), &Td::send_update,
+                 make_tl_object<td_api::updateNewPreCheckoutQuery>(
+                     update->query_id_, td_->user_manager_->get_user_id_object(user_id, "updateNewPreCheckoutQuery"),
+                     update->currency_, update->total_amount_, update->payload_.as_slice().str(),
+                     update->shipping_option_id_, get_order_info_object(get_order_info(std::move(update->info_)))));
   }
   promise.set_value(Unit());
 }
@@ -4316,7 +4324,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateGroupCallPartic
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateContactsReset> update, Promise<Unit> &&promise) {
-  td_->contacts_manager_->on_update_contacts_reset();
+  td_->user_manager_->on_update_contacts_reset();
   promise.set_value(Unit());
 }
 
@@ -4419,7 +4427,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateTheme> update, 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updatePeerWallpaper> update, Promise<Unit> &&promise) {
   auto dialog_id = DialogId(update->peer_);
   if (dialog_id.get_type() == DialogType::User) {
-    td_->contacts_manager_->on_update_user_wallpaper_overridden(dialog_id.get_user_id(), update->wallpaper_overridden_);
+    td_->user_manager_->on_update_user_wallpaper_overridden(dialog_id.get_user_id(), update->wallpaper_overridden_);
   }
   td_->messages_manager_->on_update_dialog_background(dialog_id, std::move(update->wallpaper_));
   promise.set_value(Unit());

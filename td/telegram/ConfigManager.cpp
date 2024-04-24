@@ -8,7 +8,6 @@
 
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/ConnectionState.h"
-#include "td/telegram/ContactsManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/JsonValue.h"
 #include "td/telegram/LinkManager.h"
@@ -32,6 +31,7 @@
 #include "td/telegram/TdDb.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/TranscriptionManager.h"
+#include "td/telegram/UserManager.h"
 
 #include "td/mtproto/AuthData.h"
 #include "td/mtproto/AuthKey.h"
@@ -1502,7 +1502,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   int32 dialog_filter_update_period = 300;
   // bool archive_all_stories = false;
   int32 story_viewers_expire_period = 86400;
-  int64 stories_changelog_user_id = ContactsManager::get_service_notifications_user_id().get();
+  int64 stories_changelog_user_id = UserManager::get_service_notifications_user_id().get();
   int32 transcribe_audio_trial_weekly_number = 0;
   int32 transcribe_audio_trial_duration_max = 0;
   int32 transcribe_audio_trial_cooldown_until = 0;
@@ -1991,10 +1991,11 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       }
       if (key == "channel_bg_icon_level_min" || key == "channel_custom_wallpaper_level_min" ||
           key == "channel_emoji_status_level_min" || key == "channel_profile_bg_icon_level_min" ||
-          key == "channel_wallpaper_level_min" || key == "pm_read_date_expire_period" ||
-          key == "group_transcribe_level_min" || key == "group_emoji_stickers_level_min" ||
-          key == "group_profile_bg_icon_level_min" || key == "group_emoji_status_level_min" ||
-          key == "group_wallpaper_level_min" || key == "group_custom_wallpaper_level_min") {
+          key == "channel_restrict_sponsored_level_min" || key == "channel_wallpaper_level_min" ||
+          key == "pm_read_date_expire_period" || key == "group_transcribe_level_min" ||
+          key == "group_emoji_stickers_level_min" || key == "group_profile_bg_icon_level_min" ||
+          key == "group_emoji_status_level_min" || key == "group_wallpaper_level_min" ||
+          key == "group_custom_wallpaper_level_min") {
         G()->set_option_integer(key, get_json_value_int(std::move(key_value->value_), key));
         continue;
       }
@@ -2009,12 +2010,12 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         continue;
       }
       if (key == "intro_title_length_limit") {
-        G()->set_option_integer("business_intro_title_length_max",
+        G()->set_option_integer("business_start_page_title_length_max",
                                 get_json_value_int(std::move(key_value->value_), key));
         continue;
       }
       if (key == "intro_description_length_limit") {
-        G()->set_option_integer("business_intro_message_length_max",
+        G()->set_option_integer("business_start_page_message_length_max",
                                 get_json_value_int(std::move(key_value->value_), key));
         continue;
       }
@@ -2035,6 +2036,26 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       if (key == "new_noncontact_peers_require_premium_without_ownpremium") {
         G()->set_option_boolean("need_premium_for_new_chat_privacy",
                                 !get_json_value_bool(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "channel_revenue_withdrawal_enabled") {
+        G()->set_option_boolean("can_withdraw_chat_revenue", get_json_value_bool(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "upload_premium_speedup_download") {
+        G()->set_option_integer("premium_download_speedup", get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "upload_premium_speedup_upload") {
+        G()->set_option_integer("premium_upload_speedup", get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "upload_premium_speedup_notify_period") {
+        G()->set_option_integer(key, get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "business_chat_links_limit") {
+        G()->set_option_integer("business_chat_link_count_max", get_json_value_int(std::move(key_value->value_), key));
         continue;
       }
 
@@ -2173,7 +2194,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   } else {
     options.set_option_empty("gift_premium_from_input_field");
   }
-  if (stories_changelog_user_id != ContactsManager::get_service_notifications_user_id().get()) {
+  if (stories_changelog_user_id != UserManager::get_service_notifications_user_id().get()) {
     options.set_option_integer("stories_changelog_user_id", stories_changelog_user_id);
   } else {
     options.set_option_empty("stories_changelog_user_id");

@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.27 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.28 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -304,6 +304,8 @@ set(TDLIB_SOURCE
   td/telegram/BotMenuButton.cpp
   td/telegram/BusinessAwayMessage.cpp
   td/telegram/BusinessAwayMessageSchedule.cpp
+  td/telegram/BusinessBotManageBar.cpp
+  td/telegram/BusinessChatLink.cpp
   td/telegram/BusinessConnectedBot.cpp
   td/telegram/BusinessConnectionManager.cpp
   td/telegram/BusinessGreetingMessage.cpp
@@ -318,13 +320,13 @@ set(TDLIB_SOURCE
   td/telegram/CallManager.cpp
   td/telegram/ChannelParticipantFilter.cpp
   td/telegram/ChannelRecommendationManager.cpp
+  td/telegram/ChatManager.cpp
   td/telegram/ChatReactions.cpp
   td/telegram/ClientActor.cpp
   td/telegram/CommonDialogManager.cpp
   td/telegram/ConfigManager.cpp
   td/telegram/ConnectionState.cpp
   td/telegram/Contact.cpp
-  td/telegram/ContactsManager.cpp
   td/telegram/CountryInfoManager.cpp
   td/telegram/DelayDispatcher.cpp
   td/telegram/Dependencies.cpp
@@ -395,6 +397,7 @@ set(TDLIB_SOURCE
   td/telegram/GroupCallVideoPayload.cpp
   td/telegram/HashtagHints.cpp
   td/telegram/InlineQueriesManager.cpp
+  td/telegram/InputBusinessChatLink.cpp
   td/telegram/InputDialogId.cpp
   td/telegram/InputGroupCallId.cpp
   td/telegram/InputInvoice.cpp
@@ -430,6 +433,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageTtl.cpp
   td/telegram/MessageViewer.cpp
   td/telegram/misc.cpp
+  td/telegram/MissingInvitee.cpp
   td/telegram/net/AuthDataShared.cpp
   td/telegram/net/ConnectionCreator.cpp
   td/telegram/net/DcAuthManager.cpp
@@ -531,6 +535,7 @@ set(TDLIB_SOURCE
   td/telegram/TranscriptionManager.cpp
   td/telegram/TranslationManager.cpp
   td/telegram/UpdatesManager.cpp
+  td/telegram/UserManager.cpp
   td/telegram/Usernames.cpp
   td/telegram/UserPrivacySetting.cpp
   td/telegram/UserPrivacySettingRule.cpp
@@ -596,6 +601,8 @@ set(TDLIB_SOURCE
   td/telegram/BotMenuButton.h
   td/telegram/BusinessAwayMessage.h
   td/telegram/BusinessAwayMessageSchedule.h
+  td/telegram/BusinessBotManageBar.h
+  td/telegram/BusinessChatLink.h
   td/telegram/BusinessConnectedBot.h
   td/telegram/BusinessConnectionId.h
   td/telegram/BusinessConnectionManager.h
@@ -616,13 +623,13 @@ set(TDLIB_SOURCE
   td/telegram/ChannelRecommendationManager.h
   td/telegram/ChannelType.h
   td/telegram/ChatId.h
+  td/telegram/ChatManager.h
   td/telegram/ChatReactions.h
   td/telegram/ClientActor.h
   td/telegram/CommonDialogManager.h
   td/telegram/ConfigManager.h
   td/telegram/ConnectionState.h
   td/telegram/Contact.h
-  td/telegram/ContactsManager.h
   td/telegram/CountryInfoManager.h
   td/telegram/CustomEmojiId.h
   td/telegram/DelayDispatcher.h
@@ -711,6 +718,7 @@ set(TDLIB_SOURCE
   td/telegram/GroupCallVideoPayload.h
   td/telegram/HashtagHints.h
   td/telegram/InlineQueriesManager.h
+  td/telegram/InputBusinessChatLink.h
   td/telegram/InputDialogId.h
   td/telegram/InputGroupCallId.h
   td/telegram/InputInvoice.h
@@ -754,6 +762,7 @@ set(TDLIB_SOURCE
   td/telegram/MessageViewer.h
   td/telegram/MinChannel.h
   td/telegram/misc.h
+  td/telegram/MissingInvitee.h
   td/telegram/net/AuthDataShared.h
   td/telegram/net/AuthKeyState.h
   td/telegram/net/ConnectionCreator.h
@@ -889,6 +898,7 @@ set(TDLIB_SOURCE
   td/telegram/UniqueId.h
   td/telegram/UpdatesManager.h
   td/telegram/UserId.h
+  td/telegram/UserManager.h
   td/telegram/Usernames.h
   td/telegram/UserPrivacySetting.h
   td/telegram/UserPrivacySettingRule.h

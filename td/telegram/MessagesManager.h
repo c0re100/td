@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include "td/telegram/AccessRights.h"
 #include "td/telegram/AffectedHistory.h"
 #include "td/telegram/BackgroundInfo.h"
 #include "td/telegram/ChannelId.h"
@@ -105,6 +106,7 @@
 namespace td {
 
 struct BinlogEvent;
+class BusinessBotManageBar;
 class Dependencies;
 class DialogActionBar;
 class DialogFilter;
@@ -113,6 +115,7 @@ struct InputMessageContent;
 class MessageContent;
 class MessageForwardInfo;
 struct MessageReactions;
+class MissingInvitees;
 class Td;
 class Usernames;
 
@@ -262,6 +265,10 @@ class MessagesManager final : public Actor {
   void update_is_translatable(bool new_is_premium);
 
   void on_update_dialog_is_blocked(DialogId dialog_id, bool is_blocked, bool is_blocked_for_stories);
+
+  void on_update_dialog_business_bot_is_paused(DialogId dialog_id, bool is_paused);
+
+  void on_update_dialog_business_bot_removed(DialogId dialog_id);
 
   void on_update_dialog_last_pinned_message_id(DialogId dialog_id, MessageId last_pinned_message_id);
 
@@ -849,6 +856,8 @@ class MessagesManager final : public Actor {
 
   void reget_dialog_action_bar(DialogId dialog_id, const char *source, bool is_repair = true);
 
+  void hide_all_business_bot_manager_bars();
+
   void on_get_peer_settings(DialogId dialog_id, tl_object_ptr<telegram_api::peerSettings> &&peer_settings,
                             bool ignore_privacy_exception = false);
 
@@ -883,8 +892,10 @@ class MessagesManager final : public Actor {
 
   void on_upload_message_media_fail(DialogId dialog_id, MessageId message_id, Status error);
 
-  void on_create_new_dialog(telegram_api::object_ptr<telegram_api::Updates> &&updates, DialogType expected_type,
-                            Promise<td_api::object_ptr<td_api::chat>> &&promise);
+  void on_create_new_dialog(telegram_api::object_ptr<telegram_api::Updates> &&updates,
+                            MissingInvitees &&missing_invitees,
+                            Promise<td_api::object_ptr<td_api::createdBasicGroupChat>> &&chat_promise,
+                            Promise<td_api::object_ptr<td_api::chat>> &&channel_promise);
 
   void on_get_channel_difference(DialogId dialog_id, int32 request_pts, int32 request_limit,
                                  tl_object_ptr<telegram_api::updates_ChannelDifference> &&difference_ptr,
@@ -1206,6 +1217,7 @@ class MessagesManager final : public Actor {
     MessageTtl message_ttl;
     unique_ptr<DraftMessage> draft_message;
     unique_ptr<DialogActionBar> action_bar;
+    unique_ptr<BusinessBotManageBar> business_bot_manage_bar;
     LogEventIdWithGeneration save_draft_message_log_event_id;
     LogEventIdWithGeneration save_notification_settings_log_event_id;
     LogEventIdWithGeneration set_folder_id_log_event_id;
@@ -1557,6 +1569,7 @@ class MessagesManager final : public Actor {
   class SendBotStartMessageLogEvent;
   class SendInlineQueryResultMessageLogEvent;
   class SendMessageLogEvent;
+  class SendQuickReplyShortcutMessagesLogEvent;
   class SendScreenshotTakenNotificationMessageLogEvent;
   class SetDialogFolderIdOnServerLogEvent;
   class ToggleDialogIsBlockedOnServerLogEvent;
@@ -1763,6 +1776,10 @@ class MessagesManager final : public Actor {
   void do_forward_messages(DialogId to_dialog_id, DialogId from_dialog_id, const vector<Message *> &messages,
                            const vector<MessageId> &message_ids, bool drop_author, bool drop_media_captions,
                            uint64 log_event_id);
+
+  uint64 save_send_quick_reply_shortcut_messages_log_event(DialogId dialog_id, QuickReplyShortcutId shortcut_id,
+                                                           const vector<Message *> &messages,
+                                                           const vector<MessageId> &message_ids);
 
   void do_send_quick_reply_shortcut_messages(DialogId dialog_id, QuickReplyShortcutId shortcut_id,
                                              const vector<Message *> &messages, const vector<MessageId> &message_ids,
@@ -2357,6 +2374,8 @@ class MessagesManager final : public Actor {
 
   void send_update_chat_action_bar(Dialog *d);
 
+  void send_update_chat_business_bot_manage_bar(Dialog *d);
+
   void send_update_chat_available_reactions(const Dialog *d);
 
   void send_update_secret_chats_with_user_background(const Dialog *d) const;
@@ -2602,7 +2621,11 @@ class MessagesManager final : public Actor {
 
   void fix_dialog_action_bar(const Dialog *d, DialogActionBar *action_bar);
 
+  void fix_dialog_business_bot_manage_bar(DialogId dialog_id, BusinessBotManageBar *business_bot_manage_bar);
+
   td_api::object_ptr<td_api::ChatActionBar> get_chat_action_bar_object(const Dialog *d) const;
+
+  td_api::object_ptr<td_api::businessBotManageBar> get_business_bot_manage_bar_object(const Dialog *d) const;
 
   td_api::object_ptr<td_api::chatBackground> get_chat_background_object(const Dialog *d) const;
 
@@ -2625,6 +2648,9 @@ class MessagesManager final : public Actor {
 
   void on_get_dialogs_from_database(FolderId folder_id, int32 limit, DialogDbGetDialogsResult &&dialogs,
                                     Promise<Unit> &&promise);
+
+  Result<Dialog *> check_dialog_access(DialogId dialog_id, bool allow_secret_chats, AccessRights access_rights,
+                                       const char *source);
 
   void send_get_dialog_query(DialogId dialog_id, Promise<Unit> &&promise, uint64 log_event_id, const char *source);
 
@@ -3198,7 +3224,9 @@ class MessagesManager final : public Actor {
   vector<ChannelId> created_public_broadcasts_;
 
   struct PendingCreatedDialog {
-    Promise<td_api::object_ptr<td_api::chat>> promise_;
+    td_api::object_ptr<td_api::failedToAddMembers> failed_to_add_members_;
+    Promise<td_api::object_ptr<td_api::createdBasicGroupChat>> chat_promise_;
+    Promise<td_api::object_ptr<td_api::chat>> channel_promise_;
   };
   FlatHashMap<DialogId, PendingCreatedDialog, DialogIdHash> pending_created_dialogs_;
 

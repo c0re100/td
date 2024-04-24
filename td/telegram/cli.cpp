@@ -2364,6 +2364,11 @@ class CliClient final : public Actor {
           std::move(input_message_content)));
       return;
     }
+    if (!quick_reply_shortcut_name_.empty()) {
+      send_request(td_api::make_object<td_api::addQuickReplyShortcutMessage>(
+          quick_reply_shortcut_name_, reply_message_id_, std::move(input_message_content)));
+      return;
+    }
     auto id = send_request(td_api::make_object<td_api::sendMessage>(
         chat_id, message_thread_id_, get_input_message_reply_to(),
         td_api::make_object<td_api::messageSendOptions>(disable_notification, from_background, true, true,
@@ -2421,7 +2426,7 @@ class CliClient final : public Actor {
     string args;
     std::tie(op, args) = split(cmd);
 
-    const int32 OP_BLOCK_COUNT = 10;
+    const int32 OP_BLOCK_COUNT = 19;
     int32 op_not_found_count = 0;
 
     if (op == "gas") {
@@ -2558,12 +2563,6 @@ class CliClient final : public Actor {
           td_api::make_object<td_api::sendPassportAuthorizationForm>(form_id, as_passport_element_types(types)));
     } else if (op == "gpcl") {
       send_request(td_api::make_object<td_api::getPreferredCountryLanguage>(args));
-    } else if (op == "spnvc" || op == "SendPhoneNumberVerificationCode") {
-      send_request(td_api::make_object<td_api::sendPhoneNumberVerificationCode>(args, nullptr));
-    } else if (op == "cpnvc" || op == "CheckPhoneNumberVerificationCode") {
-      send_request(td_api::make_object<td_api::checkPhoneNumberVerificationCode>(args));
-    } else if (op == "rpnvc" || op == "ResendPhoneNumberVerificationCode") {
-      send_request(td_api::make_object<td_api::resendPhoneNumberVerificationCode>());
     } else if (op == "seavc" || op == "SendEmailAddressVerificationCode") {
       send_request(td_api::make_object<td_api::sendEmailAddressVerificationCode>(args));
     } else if (op == "ceavc" || op == "CheckEmailAddressVerificationCode") {
@@ -2589,16 +2588,11 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::resendRecoveryEmailAddressCode>());
     } else if (op == "creav") {
       send_request(td_api::make_object<td_api::cancelRecoveryEmailAddressVerification>());
-    } else if (op == "spncc") {
-      string hash;
-      string phone_number;
-      get_args(args, hash, phone_number);
-      send_request(td_api::make_object<td_api::sendPhoneNumberConfirmationCode>(hash, phone_number, nullptr));
-    } else if (op == "cpncc") {
-      send_request(td_api::make_object<td_api::checkPhoneNumberConfirmationCode>(args));
-    } else if (op == "rpncc") {
-      send_request(td_api::make_object<td_api::resendPhoneNumberConfirmationCode>());
-    } else if (op == "rpr") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "rpr") {
       send_request(td_api::make_object<td_api::requestPasswordRecovery>());
     } else if (op == "cprc") {
       string recovery_code = args;
@@ -2725,12 +2719,24 @@ class CliClient final : public Actor {
       PrivacyRules rules;
       get_args(args, setting, rules);
       send_request(td_api::make_object<td_api::setUserPrivacySettingRules>(as_user_privacy_setting(setting), rules));
-    } else if (op == "cp" || op == "ChangePhone") {
-      send_request(td_api::make_object<td_api::changePhoneNumber>(args, nullptr));
-    } else if (op == "ccpc" || op == "CheckChangePhoneCode") {
-      send_request(td_api::make_object<td_api::checkChangePhoneNumberCode>(args));
-    } else if (op == "rcpc" || op == "ResendChangePhoneCode") {
-      send_request(td_api::make_object<td_api::resendChangePhoneNumberCode>());
+    } else if (op == "spncc") {
+      send_request(td_api::make_object<td_api::sendPhoneNumberCode>(
+          args, nullptr, td_api::make_object<td_api::phoneNumberCodeTypeChange>()));
+    } else if (op == "spncv") {
+      send_request(td_api::make_object<td_api::sendPhoneNumberCode>(
+          args, nullptr, td_api::make_object<td_api::phoneNumberCodeTypeVerify>()));
+    } else if (op == "spncco") {
+      string hash;
+      string phone_number;
+      get_args(args, hash, phone_number);
+      send_request(td_api::make_object<td_api::sendPhoneNumberCode>(
+          phone_number, nullptr, td_api::make_object<td_api::phoneNumberCodeTypeConfirmOwnership>(hash)));
+    } else if (op == "spnfs") {
+      send_request(td_api::make_object<td_api::sendPhoneNumberFirebaseSms>(args));
+    } else if (op == "rpnc") {
+      send_request(td_api::make_object<td_api::resendPhoneNumberCode>());
+    } else if (op == "cpnc") {
+      send_request(td_api::make_object<td_api::checkPhoneNumberCode>(args));
     } else if (op == "gco") {
       if (args.empty()) {
         send_request(td_api::make_object<td_api::getContacts>());
@@ -3127,7 +3133,11 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::setCustomLanguagePackString>(language_code, std::move(str)));
     } else if (op == "dlp") {
       send_request(td_api::make_object<td_api::deleteLanguagePack>(args));
-    } else if (op == "on" || op == "off") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "on" || op == "off") {
       send_request(td_api::make_object<td_api::setOption>("online",
                                                           td_api::make_object<td_api::optionValueBoolean>(op == "on")));
     } else if (op == "go") {
@@ -3377,6 +3387,8 @@ class CliClient final : public Actor {
       SearchQuery query;
       get_args(args, query);
       send_request(td_api::make_object<td_api::searchStickers>(as_sticker_type(op), query.query, query.limit));
+    } else if (op == "ggs") {
+      send_request(td_api::make_object<td_api::getGreetingStickers>());
     } else if (op == "gprst") {
       string limit;
       get_args(args, limit);
@@ -3403,7 +3415,11 @@ class CliClient final : public Actor {
       FileId file_id;
       get_args(args, file_id);
       send_request(td_api::make_object<td_api::getAttachedStickerSets>(file_id));
-    } else if (op == "storage") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "storage") {
       int32 chat_limit;
       get_args(args, chat_limit);
       send_request(td_api::make_object<td_api::getStorageStatistics>(chat_limit));
@@ -3913,9 +3929,14 @@ class CliClient final : public Actor {
       string quote;
       int32 quote_position;
       get_args(args, chat_id, message_ids, quote, quote_position);
-      send_request(td_api::make_object<td_api::resendMessages>(
-          chat_id, as_message_ids(message_ids),
-          td_api::make_object<td_api::inputTextQuote>(as_formatted_text(quote), quote_position)));
+      if (quick_reply_shortcut_name_.empty()) {
+        send_request(td_api::make_object<td_api::resendMessages>(
+            chat_id, as_message_ids(message_ids),
+            td_api::make_object<td_api::inputTextQuote>(as_formatted_text(quote), quote_position)));
+      } else {
+        send_request(td_api::make_object<td_api::readdQuickReplyShortcutMessages>(quick_reply_shortcut_name_,
+                                                                                  as_message_ids(message_ids)));
+      }
     } else if (op == "csc" || op == "CreateSecretChat") {
       send_request(td_api::make_object<td_api::createSecretChat>(as_secret_chat_id(args)));
     } else if (op == "cnsc" || op == "CreateNewSecretChat") {
@@ -4149,7 +4170,11 @@ class CliClient final : public Actor {
       GroupCallId group_call_id;
       get_args(args, group_call_id);
       send_request(td_api::make_object<td_api::endGroupCall>(group_call_id));
-    } else if (op == "rpcil") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "rpcil") {
       ChatId chat_id;
       get_args(args, chat_id);
       send_request(td_api::make_object<td_api::replacePrimaryChatInviteLink>(chat_id));
@@ -4641,7 +4666,11 @@ class CliClient final : public Actor {
       UserId user_id;
       get_args(args, chat_id, user_id);
       send_request(td_api::make_object<td_api::getUserChatBoosts>(chat_id, user_id));
-    } else if (op == "gamb") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "gamb") {
       UserId user_id;
       get_args(args, user_id);
       send_request(td_api::make_object<td_api::getAttachmentMenuBot>(user_id));
@@ -4752,6 +4781,8 @@ class CliClient final : public Actor {
                link_preview_force_large_media_, link_preview_show_above_text_);
     } else if (op == "ssmt") {
       saved_messages_topic_id_ = as_chat_id(args);
+    } else if (op == "sqrs") {
+      quick_reply_shortcut_name_ = args;
     } else if (op == "sm" || op == "sms" || op == "smf") {
       ChatId chat_id;
       string message;
@@ -4850,6 +4881,14 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::editMessageText>(
           chat_id, message_id, nullptr,
           td_api::make_object<td_api::inputMessageText>(as_formatted_text(message), get_link_preview_options(), true)));
+    } else if (op == "eqrm") {
+      ShortcutId shortcut_id;
+      MessageId message_id;
+      string message;
+      get_args(args, shortcut_id, message_id, message);
+      send_request(td_api::make_object<td_api::editQuickReplyMessage>(
+          shortcut_id, message_id,
+          td_api::make_object<td_api::inputMessageText>(as_formatted_text(message), get_link_preview_options(), true)));
     } else if (op == "eman") {
       ChatId chat_id;
       MessageId message_id;
@@ -4873,6 +4912,14 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::editMessageMedia>(
           chat_id, message_id, nullptr,
           td_api::make_object<td_api::inputMessageDocument>(as_input_file(document), nullptr, false, as_caption(""))));
+    } else if (op == "eqrmd") {
+      ShortcutId shortcut_id;
+      MessageId message_id;
+      string document;
+      get_args(args, shortcut_id, message_id, document);
+      send_request(td_api::make_object<td_api::editQuickReplyMessage>(
+          shortcut_id, message_id,
+          td_api::make_object<td_api::inputMessageDocument>(as_input_file(document), nullptr, false, as_caption(""))));
     } else if (op == "emp") {
       ChatId chat_id;
       MessageId message_id;
@@ -4883,6 +4930,15 @@ class CliClient final : public Actor {
           td_api::make_object<td_api::inputMessagePhoto>(as_input_file(photo), as_input_thumbnail(photo), Auto(), 0, 0,
                                                          as_caption(""), get_message_self_destruct_type(),
                                                          has_spoiler_)));
+    } else if (op == "eqrmp") {
+      ShortcutId shortcut_id;
+      MessageId message_id;
+      string photo;
+      get_args(args, shortcut_id, message_id, photo);
+      send_request(td_api::make_object<td_api::editQuickReplyMessage>(
+          shortcut_id, message_id,
+          td_api::make_object<td_api::inputMessagePhoto>(as_input_file(photo), as_input_thumbnail(photo), Auto(), 0, 0,
+                                                         as_caption(""), nullptr, has_spoiler_)));
     } else if (op == "emvt") {
       ChatId chat_id;
       MessageId message_id;
@@ -4912,7 +4968,11 @@ class CliClient final : public Actor {
       get_args(args, chat_id, message_id, date);
       send_request(td_api::make_object<td_api::editMessageSchedulingState>(chat_id, message_id,
                                                                            as_message_scheduling_state(date)));
-    } else if (op == "cqrsn") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "cqrsn") {
       execute(td_api::make_object<td_api::checkQuickReplyShortcutName>(args));
     } else if (op == "lqrs") {
       send_request(td_api::make_object<td_api::loadQuickReplyShortcuts>());
@@ -5036,8 +5096,13 @@ class CliClient final : public Actor {
       int64 query_id;
       string result_id;
       get_args(args, chat_id, query_id, result_id);
-      send_request(td_api::make_object<td_api::sendInlineQueryResultMessage>(
-          chat_id, message_thread_id_, nullptr, default_message_send_options(), query_id, result_id, op == "siqrh"));
+      if (quick_reply_shortcut_name_.empty()) {
+        send_request(td_api::make_object<td_api::sendInlineQueryResultMessage>(
+            chat_id, message_thread_id_, nullptr, default_message_send_options(), query_id, result_id, op == "siqrh"));
+      } else {
+        send_request(td_api::make_object<td_api::addQuickReplyShortcutInlineQueryResultMessage>(
+            quick_reply_shortcut_name_, reply_message_id_, query_id, result_id, op == "siqrh"));
+      }
     } else if (op == "gcqa") {
       ChatId chat_id;
       MessageId message_id;
@@ -5465,7 +5530,11 @@ class CliClient final : public Actor {
       bool force;
       get_args(args, supergroup_id, force);
       send_request(td_api::make_object<td_api::createSupergroupChat>(as_supergroup_id(supergroup_id), force));
-    } else if (op == "gcltac") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "gcltac") {
       ChatId chat_id;
       get_args(args, chat_id);
       send_request(td_api::make_object<td_api::getChatListsToAddChat>(chat_id));
@@ -5920,6 +5989,12 @@ class CliClient final : public Actor {
       get_args(args, supergroup_id, is_all_history_available);
       send_request(td_api::make_object<td_api::toggleSupergroupIsAllHistoryAvailable>(as_supergroup_id(supergroup_id),
                                                                                       is_all_history_available));
+    } else if (op == "tsgchsm") {
+      string supergroup_id;
+      bool can_have_sponsored_messages;
+      get_args(args, supergroup_id, can_have_sponsored_messages);
+      send_request(td_api::make_object<td_api::toggleSupergroupCanHaveSponsoredMessages>(
+          as_supergroup_id(supergroup_id), can_have_sponsored_messages));
     } else if (op == "tsghhm") {
       string supergroup_id;
       bool has_hidden_members;
@@ -5959,7 +6034,11 @@ class CliClient final : public Actor {
       get_args(args, supergroup_id, join_by_request);
       send_request(
           td_api::make_object<td_api::toggleSupergroupJoinByRequest>(as_supergroup_id(supergroup_id), join_by_request));
-    } else if (op == "scar") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "scar") {
       ChatId chat_id;
       string available_reactions;
       get_args(args, chat_id, available_reactions);
@@ -6099,30 +6178,58 @@ class CliClient final : public Actor {
             td_api::make_object<td_api::businessAwayMessageSettings>(shortcut_id, as_business_recipients(chat_ids),
                                                                      std::move(schedule_object), op == "sbamso")));
       }
-    } else if (op == "sbi") {
+    } else if (op == "sbsp") {
       string title;
       string message;
       string sticker;
       get_args(args, title, message, sticker);
       if (title.empty()) {
-        send_request(td_api::make_object<td_api::setBusinessIntro>(nullptr));
+        send_request(td_api::make_object<td_api::setBusinessStartPage>(nullptr));
       } else {
-        send_request(td_api::make_object<td_api::setBusinessIntro>(
-            td_api::make_object<td_api::inputBusinessIntro>(title, message, as_input_file(sticker))));
+        send_request(td_api::make_object<td_api::setBusinessStartPage>(
+            td_api::make_object<td_api::inputBusinessStartPage>(title, message, as_input_file(sticker))));
       }
     } else if (op == "gbcb") {
       send_request(td_api::make_object<td_api::getBusinessConnectedBot>());
     } else if (op == "sbcb") {
       UserId bot_user_id;
       string chat_ids;
-      bool can_reply = false;
+      bool can_reply;
       get_args(args, bot_user_id, chat_ids, can_reply);
       send_request(td_api::make_object<td_api::setBusinessConnectedBot>(
           td_api::make_object<td_api::businessConnectedBot>(bot_user_id, as_business_recipients(chat_ids), can_reply)));
+    } else if (op == "tbcbcip") {
+      ChatId chat_id;
+      bool is_paused;
+      get_args(args, chat_id, is_paused);
+      send_request(td_api::make_object<td_api::toggleBusinessConnectedBotChatIsPaused>(chat_id, is_paused));
+    } else if (op == "rbcbfc") {
+      ChatId chat_id;
+      get_args(args, chat_id);
+      send_request(td_api::make_object<td_api::removeBusinessConnectedBotFromChat>(chat_id));
     } else if (op == "dbcb") {
       UserId bot_user_id;
       get_args(args, bot_user_id);
       send_request(td_api::make_object<td_api::deleteBusinessConnectedBot>(bot_user_id));
+    } else if (op == "gbcl") {
+      send_request(td_api::make_object<td_api::getBusinessChatLinks>());
+    } else if (op == "cbcl") {
+      string text;
+      string title;
+      get_args(args, text, title);
+      send_request(td_api::make_object<td_api::createBusinessChatLink>(
+          td_api::make_object<td_api::inputBusinessChatLink>(as_formatted_text(text), title)));
+    } else if (op == "ebcl") {
+      string link;
+      string text;
+      string title;
+      get_args(args, link, text, title);
+      send_request(td_api::make_object<td_api::editBusinessChatLink>(
+          link, td_api::make_object<td_api::inputBusinessChatLink>(as_formatted_text(text), title)));
+    } else if (op == "dbcl") {
+      send_request(td_api::make_object<td_api::deleteBusinessChatLink>(args));
+    } else if (op == "gbcli") {
+      send_request(td_api::make_object<td_api::getBusinessChatLinkInfo>(args));
     } else if (op == "gbc") {
       send_request(td_api::make_object<td_api::getBusinessConnection>(args.empty() ? business_connection_id_ : args));
     } else if (op == "sco") {
@@ -6174,7 +6281,11 @@ class CliClient final : public Actor {
       UserId bot_user_id;
       get_args(args, bot_user_id);
       send_request(td_api::make_object<td_api::allowBotToSendMessages>(bot_user_id));
-    } else if (op == "swacr") {
+    } else {
+      op_not_found_count++;
+    }
+
+    if (op == "swacr") {
       UserId bot_user_id;
       string method;
       string parameters;
@@ -6423,6 +6534,22 @@ class CliClient final : public Actor {
       bool is_dark;
       get_args(args, chat_id, is_dark);
       send_request(td_api::make_object<td_api::getChatStatistics>(chat_id, is_dark));
+    } else if (op == "gcrst") {
+      ChatId chat_id;
+      bool is_dark;
+      get_args(args, chat_id, is_dark);
+      send_request(td_api::make_object<td_api::getChatRevenueStatistics>(chat_id, is_dark));
+    } else if (op == "gcrwu") {
+      ChatId chat_id;
+      string password;
+      get_args(args, chat_id, password);
+      send_request(td_api::make_object<td_api::getChatRevenueWithdrawalUrl>(chat_id, password));
+    } else if (op == "gcrt") {
+      ChatId chat_id;
+      int32 offset;
+      string limit;
+      get_args(args, chat_id, offset, limit);
+      send_request(td_api::make_object<td_api::getChatRevenueTransactions>(chat_id, offset, as_limit(limit)));
     } else {
       op_not_found_count++;
     }
@@ -6783,6 +6910,7 @@ class CliClient final : public Actor {
   bool link_preview_force_large_media_ = false;
   bool link_preview_show_above_text_ = false;
   int64 saved_messages_topic_id_ = 0;
+  string quick_reply_shortcut_name_;
 
   ConcurrentScheduler *scheduler_{nullptr};
 

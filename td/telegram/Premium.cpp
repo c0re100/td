@@ -10,7 +10,7 @@
 #include "td/telegram/AnimationsManager.h"
 #include "td/telegram/Application.h"
 #include "td/telegram/ChannelId.h"
-#include "td/telegram/ContactsManager.h"
+#include "td/telegram/ChatManager.h"
 #include "td/telegram/DialogId.h"
 #include "td/telegram/DialogManager.h"
 #include "td/telegram/Document.h"
@@ -29,6 +29,7 @@
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/UpdatesManager.h"
 #include "td/telegram/UserId.h"
+#include "td/telegram/UserManager.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
@@ -137,7 +138,7 @@ static td_api::object_ptr<td_api::BusinessFeature> get_business_feature_object(S
     return td_api::make_object<td_api::businessFeatureAccountLinks>();
   }
   if (business_feature == "business_intro") {
-    return td_api::make_object<td_api::businessFeatureIntro>();
+    return td_api::make_object<td_api::businessFeatureStartPage>();
   }
   if (business_feature == "business_bots") {
     return td_api::make_object<td_api::businessFeatureBots>();
@@ -168,7 +169,7 @@ Result<telegram_api::object_ptr<telegram_api::InputPeer>> get_boost_input_peer(T
   if (dialog_id.get_type() != DialogType::Channel) {
     return Status::Error(400, "Can't boost the chat");
   }
-  if (!td->contacts_manager_->get_channel_status(dialog_id.get_channel_id()).is_administrator()) {
+  if (!td->chat_manager_->get_channel_status(dialog_id.get_channel_id()).is_administrator()) {
     return Status::Error(400, "Not enough rights in the chat");
   }
   auto boost_input_peer = td->dialog_manager_->get_input_peer(dialog_id, AccessRights::Write);
@@ -198,7 +199,7 @@ static Result<tl_object_ptr<telegram_api::InputStorePaymentPurpose>> get_input_s
     case td_api::storePaymentPurposeGiftedPremium::ID: {
       auto p = static_cast<const td_api::storePaymentPurposeGiftedPremium *>(purpose.get());
       UserId user_id(p->user_id_);
-      TRY_RESULT(input_user, td->contacts_manager_->get_input_user(user_id));
+      TRY_RESULT(input_user, td->user_manager_->get_input_user(user_id));
       if (p->amount_ <= 0 || !check_currency_amount(p->amount_)) {
         return Status::Error(400, "Invalid amount of the currency specified");
       }
@@ -209,7 +210,7 @@ static Result<tl_object_ptr<telegram_api::InputStorePaymentPurpose>> get_input_s
       auto p = static_cast<const td_api::storePaymentPurposePremiumGiftCodes *>(purpose.get());
       vector<telegram_api::object_ptr<telegram_api::InputUser>> input_users;
       for (auto user_id : p->user_ids_) {
-        TRY_RESULT(input_user, td->contacts_manager_->get_input_user(UserId(user_id)));
+        TRY_RESULT(input_user, td->user_manager_->get_input_user(UserId(user_id)));
         input_users.push_back(std::move(input_user));
       }
       if (p->amount_ <= 0 || !check_currency_amount(p->amount_)) {
@@ -259,9 +260,9 @@ class GetPremiumPromoQuery final : public Td::ResultHandler {
     auto promo = result_ptr.move_as_ok();
     LOG(INFO) << "Receive result for GetPremiumPromoQuery: " << to_string(promo);
 
-    td_->contacts_manager_->on_get_users(std::move(promo->users_), "GetPremiumPromoQuery");
+    td_->user_manager_->on_get_users(std::move(promo->users_), "GetPremiumPromoQuery");
 
-    auto state = get_message_text(td_->contacts_manager_.get(), std::move(promo->status_text_),
+    auto state = get_message_text(td_->user_manager_.get(), std::move(promo->status_text_),
                                   std::move(promo->status_entities_), true, true, 0, false, "GetPremiumPromoQuery");
 
     if (promo->video_sections_.size() != promo->videos_.size()) {
@@ -391,8 +392,8 @@ class CheckGiftCodeQuery final : public Td::ResultHandler {
 
     auto result = result_ptr.move_as_ok();
     LOG(INFO) << "Receive result for CheckGiftCodeQuery: " << to_string(result);
-    td_->contacts_manager_->on_get_users(std::move(result->users_), "CheckGiftCodeQuery");
-    td_->contacts_manager_->on_get_chats(std::move(result->chats_), "CheckGiftCodeQuery");
+    td_->user_manager_->on_get_users(std::move(result->users_), "CheckGiftCodeQuery");
+    td_->chat_manager_->on_get_chats(std::move(result->chats_), "CheckGiftCodeQuery");
 
     if (result->date_ <= 0 || result->months_ <= 0 || result->used_date_ < 0) {
       LOG(ERROR) << "Receive " << to_string(result);
@@ -429,7 +430,7 @@ class CheckGiftCodeQuery final : public Td::ResultHandler {
         creator_dialog_id == DialogId() ? nullptr
                                         : get_message_sender_object(td_, creator_dialog_id, "premiumGiftCodeInfo"),
         result->date_, result->via_giveaway_, message_id.get(), result->months_,
-        td_->contacts_manager_->get_user_id_object(user_id, "premiumGiftCodeInfo"), result->used_date_));
+        td_->user_manager_->get_user_id_object(user_id, "premiumGiftCodeInfo"), result->used_date_));
   }
 
   void on_error(Status status) final {
@@ -532,8 +533,7 @@ class GetGiveawayInfoQuery final : public Td::ResultHandler {
           }
           if (info->admin_disallowed_chat_id_ > 0) {
             ChannelId channel_id(info->admin_disallowed_chat_id_);
-            if (!channel_id.is_valid() ||
-                !td_->contacts_manager_->have_channel_force(channel_id, "GetGiveawayInfoQuery")) {
+            if (!channel_id.is_valid() || !td_->chat_manager_->have_channel_force(channel_id, "GetGiveawayInfoQuery")) {
               LOG(ERROR) << "Receive " << to_string(info);
             } else {
               DialogId dialog_id(channel_id);
@@ -848,7 +848,7 @@ static string get_premium_source(const td_api::BusinessFeature *feature) {
       return "away_message";
     case td_api::businessFeatureAccountLinks::ID:
       return "business_links";
-    case td_api::businessFeatureIntro::ID:
+    case td_api::businessFeatureStartPage::ID:
       return "business_intro";
     case td_api::businessFeatureBots::ID:
       return "business_bots";

@@ -25,11 +25,14 @@
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 
+#include <memory>
+#include <tuple>
 #include <utility>
 
 namespace td {
 
 class Dependencies;
+struct InputMessageContent;
 class MessageContent;
 struct ReplyMarkup;
 class Td;
@@ -57,6 +60,23 @@ class QuickReplyManager final : public Actor {
   void delete_quick_reply_shortcut_messages(QuickReplyShortcutId shortcut_id, const vector<MessageId> &message_ids,
                                             Promise<Unit> &&promise);
 
+  Result<td_api::object_ptr<td_api::quickReplyMessage>> send_message(
+      const string &shortcut_name, MessageId reply_to_message_id,
+      td_api::object_ptr<td_api::InputMessageContent> &&input_message_content);
+
+  Result<td_api::object_ptr<td_api::quickReplyMessage>> send_inline_query_result_message(const string &shortcut_name,
+                                                                                         MessageId reply_to_message_id,
+                                                                                         int64 query_id,
+                                                                                         const string &result_id,
+                                                                                         bool hide_via_bot);
+
+  Result<td_api::object_ptr<td_api::quickReplyMessages>> resend_messages(const string &shortcut_name,
+                                                                         vector<MessageId> message_ids);
+
+  void edit_quick_reply_message(QuickReplyShortcutId shortcut_id, MessageId message_id,
+                                td_api::object_ptr<td_api::InputMessageContent> &&input_message_content,
+                                Promise<Unit> &&promise);
+
   void reload_quick_reply_shortcuts();
 
   void reload_quick_reply_messages(QuickReplyShortcutId shortcut_id, Promise<Unit> &&promise);
@@ -81,6 +101,8 @@ class QuickReplyManager final : public Actor {
   void get_current_state(vector<td_api::object_ptr<td_api::Update>> &updates) const;
 
  private:
+  static constexpr size_t MAX_GROUPED_MESSAGES = 10;  // server side limit
+
   struct QuickReplyMessage {
     QuickReplyMessage() = default;
     QuickReplyMessage(const QuickReplyMessage &) = delete;
@@ -91,7 +113,6 @@ class QuickReplyManager final : public Actor {
 
     MessageId message_id;
     QuickReplyShortcutId shortcut_id;
-    int32 sending_id = 0;  // for yet unsent messages
     int32 edit_date = 0;
 
     int64 random_id = 0;  // for send_message
@@ -99,6 +120,9 @@ class QuickReplyManager final : public Actor {
     MessageId reply_to_message_id;
 
     string send_emoji;  // for send_message
+
+    int64 inline_query_id = 0;  // for send_message
+    string inline_result_id;    // for send_message
 
     UserId via_bot_user_id;
 
@@ -109,6 +133,9 @@ class QuickReplyManager final : public Actor {
 
     bool from_background = false;  // for send_message
     bool hide_via_bot = false;     // for resend_message
+
+    bool edited_invert_media = false;
+    bool edited_disable_web_page_preview = false;
 
     int32 legacy_layer = 0;
 
@@ -121,7 +148,8 @@ class QuickReplyManager final : public Actor {
     unique_ptr<MessageContent> content;
     unique_ptr<ReplyMarkup> reply_markup;
 
-    mutable uint64 send_message_log_event_id = 0;
+    unique_ptr<MessageContent> edited_content;
+    int64 edit_generation = 0;
 
     template <class StorerT>
     void store(StorerT &storer) const;
@@ -143,6 +171,7 @@ class QuickReplyManager final : public Actor {
     int32 server_total_count_ = 0;
     int32 local_total_count_ = 0;
     vector<unique_ptr<QuickReplyMessage>> messages_;
+    MessageId last_assigned_message_id_;
 
     template <class StorerT>
     void store(StorerT &storer) const;
@@ -164,6 +193,17 @@ class QuickReplyManager final : public Actor {
     template <class ParserT>
     void parse(ParserT &parser);
   };
+
+  class SendQuickReplyMessageQuery;
+  class SendQuickReplyMediaQuery;
+  class SendQuickReplyInlineMessageQuery;
+  class EditQuickReplyMessageQuery;
+
+  class UploadMediaCallback;
+  class UploadThumbnailCallback;
+
+  std::shared_ptr<UploadMediaCallback> upload_media_callback_;
+  std::shared_ptr<UploadThumbnailCallback> upload_thumbnail_callback_;
 
   void tear_down() final;
 
@@ -230,6 +270,27 @@ class QuickReplyManager final : public Actor {
 
   vector<unique_ptr<QuickReplyMessage>>::iterator get_message_it(Shortcut *s, MessageId message_id);
 
+  QuickReplyMessage *get_message(QuickReplyMessageFullId message_full_id);
+
+  QuickReplyMessage *get_message(Shortcut *s, MessageId message_id);
+
+  Result<Shortcut *> create_new_local_shortcut(const string &name, int32 new_message_count);
+
+  static MessageId get_input_reply_to_message_id(const Shortcut *s, MessageId reply_to_message_id);
+
+  Result<InputMessageContent> process_input_message_content(
+      td_api::object_ptr<td_api::InputMessageContent> &&input_message_content);
+
+  MessageId get_next_message_id(Shortcut *s, MessageType type) const;
+
+  MessageId get_next_yet_unsent_message_id(Shortcut *s) const;
+
+  MessageId get_next_local_message_id(Shortcut *s) const;
+
+  QuickReplyMessage *add_local_message(Shortcut *s, MessageId reply_to_message_id, unique_ptr<MessageContent> &&content,
+                                       bool invert_media, UserId via_bot_user_id, bool hide_via_bot,
+                                       bool disable_web_page_preview, string &&send_emoji);
+
   bool is_shortcut_list_changed(const vector<unique_ptr<Shortcut>> &new_shortcuts) const;
 
   vector<QuickReplyShortcutId> get_shortcut_ids() const;
@@ -280,6 +341,52 @@ class QuickReplyManager final : public Actor {
   void delete_quick_reply_messages_on_server(QuickReplyShortcutId shortcut_id, const vector<MessageId> &message_ids,
                                              Promise<Unit> &&promise);
 
+  telegram_api::object_ptr<telegram_api::InputQuickReplyShortcut> get_input_quick_reply_shortcut(
+      QuickReplyShortcutId shortcut_id) const;
+
+  Status check_send_quick_reply_messages_response(QuickReplyShortcutId shortcut_id,
+                                                  const telegram_api::object_ptr<telegram_api::Updates> &updates_ptr,
+                                                  const vector<int64> &random_ids);
+
+  void process_send_quick_reply_updates(QuickReplyShortcutId shortcut_id,
+                                        telegram_api::object_ptr<telegram_api::Updates> updates_ptr,
+                                        vector<int64> random_ids);
+
+  void on_failed_send_quick_reply_messages(QuickReplyShortcutId shortcut_id, vector<int64> random_ids, Status error);
+
+  void update_message_content(QuickReplyMessage *old_message, QuickReplyMessage *new_message, bool is_edit);
+
+  void do_send_message(const QuickReplyMessage *m, vector<int> bad_parts = {});
+
+  void on_send_message_file_parts_missing(QuickReplyShortcutId shortcut_id, int64 random_id, vector<int> &&bad_parts);
+
+  void on_send_message_file_reference_error(QuickReplyShortcutId shortcut_id, int64 random_id);
+
+  void on_upload_media(FileId file_id, telegram_api::object_ptr<telegram_api::InputFile> input_file);
+
+  void do_send_media(QuickReplyMessage *m, FileId file_id, FileId thumbnail_file_id,
+                     telegram_api::object_ptr<telegram_api::InputFile> input_file,
+                     telegram_api::object_ptr<telegram_api::InputFile> input_thumbnail);
+
+  void on_upload_media_error(FileId file_id, Status status);
+
+  void on_upload_thumbnail(FileId thumbnail_file_id,
+                           telegram_api::object_ptr<telegram_api::InputFile> thumbnail_input_file);
+
+  void on_message_media_uploaded(const QuickReplyMessage *m,
+                                 telegram_api::object_ptr<telegram_api::InputMedia> &&input_media, FileId file_id,
+                                 FileId thumbnail_file_id);
+
+  static int64 generate_new_media_album_id();
+
+  void on_edit_quick_reply_message(QuickReplyShortcutId shortcut_id, MessageId message_id, int64 edit_generation,
+                                   FileId file_id, bool was_uploaded,
+                                   telegram_api::object_ptr<telegram_api::Updates> updates_ptr);
+
+  void fail_edit_quick_reply_message(QuickReplyShortcutId shortcut_id, MessageId message_id, int64 edit_generation,
+                                     FileId file_id, FileId thumbnail_file_id, string file_reference, bool was_uploaded,
+                                     bool was_thumbnail_uploaded, Status status);
+
   string get_quick_reply_shortcuts_database_key();
 
   void save_quick_reply_shortcuts();
@@ -295,6 +402,8 @@ class QuickReplyManager final : public Actor {
 
   Shortcuts shortcuts_;
 
+  int32 next_local_shortcut_id_ = QuickReplyShortcutId::MAX_SERVER_SHORTCUT_ID + 1;
+
   FlatHashSet<QuickReplyShortcutId, QuickReplyShortcutIdHash> deleted_shortcut_ids_;
 
   FlatHashMap<QuickReplyShortcutId, vector<Promise<Unit>>, QuickReplyShortcutIdHash> get_shortcut_messages_queries_;
@@ -302,6 +411,19 @@ class QuickReplyManager final : public Actor {
   FlatHashSet<QuickReplyMessageFullId, QuickReplyMessageFullIdHash> deleted_message_full_ids_;
 
   FlatHashMap<QuickReplyMessageFullId, FileSourceId, QuickReplyMessageFullIdHash> message_full_id_to_file_source_id_;
+
+  FlatHashMap<FileId, std::tuple<QuickReplyMessageFullId, FileId, int64>, FileIdHash>
+      being_uploaded_files_;  // file_id -> message, thumbnail_file_id
+
+  struct UploadedThumbnailInfo {
+    QuickReplyMessageFullId quick_reply_message_full_id;
+    FileId file_id;                                                // original file file_id
+    telegram_api::object_ptr<telegram_api::InputFile> input_file;  // original file InputFile
+    int64 edit_generation;
+  };
+  FlatHashMap<FileId, UploadedThumbnailInfo, FileIdHash> being_uploaded_thumbnails_;  // thumbnail_file_id -> ...
+
+  int64 current_message_edit_generation_ = 0;
 
   Td *td_;
   ActorShared<> parent_;

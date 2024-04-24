@@ -48,7 +48,7 @@ MessageInputReplyTo::MessageInputReplyTo(Td *td,
       DialogId dialog_id;
       if (reply_to->reply_to_peer_id_ != nullptr) {
         dialog_id = InputDialogId(reply_to->reply_to_peer_id_).get_dialog_id();
-        if (!dialog_id.is_valid() || !td->dialog_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
+        if (!dialog_id.is_valid() || !td->dialog_manager_->have_input_peer(dialog_id, false, AccessRights::Read)) {
           return;
         }
         td->dialog_manager_->force_create_dialog(dialog_id, "inputReplyToMessage");
@@ -57,16 +57,8 @@ MessageInputReplyTo::MessageInputReplyTo(Td *td,
       dialog_id_ = dialog_id;
 
       if (!reply_to->quote_text_.empty()) {
-        auto entities = get_message_entities(td->contacts_manager_.get(), std::move(reply_to->quote_entities_),
-                                             "inputReplyToMessage");
-        auto status = fix_formatted_text(reply_to->quote_text_, entities, true, true, true, true, false);
-        if (status.is_error()) {
-          if (!clean_input_string(reply_to->quote_text_)) {
-            reply_to->quote_text_.clear();
-          }
-          entities.clear();
-        }
-        quote_ = FormattedText{std::move(reply_to->quote_text_), std::move(entities)};
+        quote_ = get_formatted_text(td->user_manager_.get(), std::move(reply_to->quote_text_),
+                                    std::move(reply_to->quote_entities_), true, true, false, "inputReplyToMessage");
         remove_unallowed_quote_entities(quote_);
         quote_position_ = max(0, reply_to->quote_offset_);
       }
@@ -120,7 +112,7 @@ telegram_api::object_ptr<telegram_api::InputReplyTo> MessageInputReplyTo::get_in
   if (!quote_.text.empty()) {
     flags |= telegram_api::inputReplyToMessage::QUOTE_TEXT_MASK;
   }
-  auto quote_entities = get_input_message_entities(td->contacts_manager_.get(), quote_.entities, "get_input_reply_to");
+  auto quote_entities = get_input_message_entities(td->user_manager_.get(), quote_.entities, "get_input_reply_to");
   if (!quote_entities.empty()) {
     flags |= telegram_api::inputReplyToMessage::QUOTE_ENTITIES_MASK;
   }
