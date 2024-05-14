@@ -1482,6 +1482,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   string animation_search_provider;
   string animation_search_emojis;
   vector<SuggestedAction> suggested_actions;
+  vector<string> dismissed_suggestions;
   bool can_archive_and_mute_new_chats_from_unknown_users = false;
   int32 chat_read_mark_expire_period = 0;
   int32 chat_read_mark_size_threshold = 0;
@@ -1507,6 +1508,9 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   int32 transcribe_audio_trial_duration_max = 0;
   int32 transcribe_audio_trial_cooldown_until = 0;
   vector<string> business_features;
+  string premium_manage_subscription_url;
+  bool need_premium_for_new_chat_privacy = true;
+  bool channel_revenue_withdrawal_enabled = false;
   if (config->get_id() == telegram_api::jsonObject::ID) {
     for (auto &key_value : static_cast<telegram_api::jsonObject *>(config.get())->value_) {
       Slice key = key_value->key_;
@@ -1674,12 +1678,16 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         }
         continue;
       }
-      if (key == "pending_suggestions") {
+      if (key == "pending_suggestions" || key == "dismissed_suggestions") {
         if (value->get_id() == telegram_api::jsonArray::ID) {
           auto actions = std::move(static_cast<telegram_api::jsonArray *>(value)->value_);
           auto otherwise_relogin_days = G()->get_option_integer("otherwise_relogin_days");
           for (auto &action : actions) {
             auto action_str = get_json_value_string(std::move(action), key);
+            if (key == "dismissed_suggestions") {
+              dismissed_suggestions.push_back(action_str);
+              continue;
+            }
             SuggestedAction suggested_action(action_str);
             if (!suggested_action.is_empty()) {
               if (otherwise_relogin_days > 0 &&
@@ -2034,12 +2042,11 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
         continue;
       }
       if (key == "new_noncontact_peers_require_premium_without_ownpremium") {
-        G()->set_option_boolean("need_premium_for_new_chat_privacy",
-                                !get_json_value_bool(std::move(key_value->value_), key));
+        need_premium_for_new_chat_privacy = !get_json_value_bool(std::move(key_value->value_), key);
         continue;
       }
       if (key == "channel_revenue_withdrawal_enabled") {
-        G()->set_option_boolean("can_withdraw_chat_revenue", get_json_value_bool(std::move(key_value->value_), key));
+        channel_revenue_withdrawal_enabled = get_json_value_bool(std::move(key_value->value_), key);
         continue;
       }
       if (key == "upload_premium_speedup_download") {
@@ -2056,6 +2063,14 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       }
       if (key == "business_chat_links_limit") {
         G()->set_option_integer("business_chat_link_count_max", get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "premium_manage_subscription_url") {
+        premium_manage_subscription_url = get_json_value_string(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "stories_pinned_to_top_count_max") {
+        G()->set_option_integer("pinned_story_count_max", get_json_value_int(std::move(key_value->value_), key));
         continue;
       }
 
@@ -2156,6 +2171,11 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   if (dialog_filter_update_period > 0) {
     options.set_option_integer("chat_folder_new_chats_update_period", dialog_filter_update_period);
   }
+  if (td::contains(dismissed_suggestions, "BIRTHDAY_CONTACTS_TODAY")) {
+    options.set_option_boolean("dismiss_birthday_contact_today", true);
+  } else {
+    options.set_option_empty("dismiss_birthday_contact_today");
+  }
 
   if (!is_premium_available) {
     premium_bot_username.clear();  // just in case
@@ -2212,9 +2232,18 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
   options.set_option_integer("stickers_premium_by_emoji_num", stickers_premium_by_emoji_num);
   options.set_option_integer("stickers_normal_by_emoji_per_premium_num", stickers_normal_by_emoji_per_premium_num);
 
+  options.set_option_boolean("can_withdraw_chat_revenue", channel_revenue_withdrawal_enabled);
+  options.set_option_boolean("need_premium_for_new_chat_privacy", need_premium_for_new_chat_privacy);
+
   options.set_option_empty("default_ton_blockchain_config");
   options.set_option_empty("default_ton_blockchain_name");
   options.set_option_empty("story_viewers_expire_period");
+
+  if (premium_manage_subscription_url.empty()) {
+    G()->set_option_empty("premium_manage_subscription_url");
+  } else {
+    G()->set_option_string("premium_manage_subscription_url", premium_manage_subscription_url);
+  }
 
   // do not update suggested actions while changing content settings or dismissing an action
   if (!is_set_content_settings_request_sent_ && dismiss_suggested_action_request_count_ == 0) {

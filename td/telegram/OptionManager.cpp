@@ -149,6 +149,7 @@ OptionManager::OptionManager(Td *td)
   set_default_integer_option("premium_upload_speedup", 10);
   set_default_integer_option("upload_premium_speedup_notify_period", 3600);
   set_default_integer_option("business_chat_link_count_max", is_test_dc ? 5 : 100);
+  set_default_integer_option("pinned_story_count_max", 3);
 
   if (options.isset("my_phone_number") || !options.isset("my_id")) {
     update_premium_options();
@@ -385,6 +386,7 @@ bool OptionManager::is_internal_option(Slice name) {
                                                               "dialogs_pinned_limit_premium",
                                                               "dice_emojis",
                                                               "dice_success_values",
+                                                              "dismiss_birthday_contact_today",
                                                               "edit_time_limit",
                                                               "emoji_sounds",
                                                               "fragment_prefixes",
@@ -410,6 +412,7 @@ bool OptionManager::is_internal_option(Slice name) {
                                                               "premium_bot_username",
                                                               "premium_features",
                                                               "premium_invoice_slug",
+                                                              "premium_manage_subscription_url",
                                                               "rating_e_decay",
                                                               "reactions_uniq_max",
                                                               "reactions_user_max_default",
@@ -516,6 +519,9 @@ void OptionManager::on_option_updated(Slice name) {
       }
       if (name == "disable_top_chats") {
         send_closure(td_->top_dialog_manager_actor_, &TopDialogManager::update_is_enabled, !get_option_boolean(name));
+      }
+      if (name == "dismiss_birthday_contact_today") {
+        send_closure(td_->user_manager_actor_, &UserManager::reload_contact_birthdates, true);
       }
       break;
     case 'e':
@@ -695,7 +701,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.28");
+        return td_api::make_object<td_api::optionValueString>("1.8.29");
       }
       break;
   }

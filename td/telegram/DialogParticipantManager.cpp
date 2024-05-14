@@ -718,6 +718,7 @@ class LeaveChannelQuery final : public Td::ResultHandler {
       return td_->chat_manager_->reload_channel(channel_id_, std::move(promise_), "LeaveChannelQuery");
     }
     td_->chat_manager_->on_get_channel_error(channel_id_, status, "LeaveChannelQuery");
+    td_->chat_manager_->reload_channel_full(channel_id_, Promise<Unit>(), "LeaveChannelQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -1348,7 +1349,7 @@ void DialogParticipantManager::on_reload_dialog_administrators(
 }
 
 void DialogParticipantManager::send_update_chat_member(DialogId dialog_id, UserId agent_user_id, int32 date,
-                                                       const DialogInviteLink &invite_link,
+                                                       const DialogInviteLink &invite_link, bool via_join_request,
                                                        bool via_dialog_filter_invite_link,
                                                        const DialogParticipant &old_dialog_participant,
                                                        const DialogParticipant &new_dialog_participant) {
@@ -1358,7 +1359,8 @@ void DialogParticipantManager::send_update_chat_member(DialogId dialog_id, UserI
                td_api::make_object<td_api::updateChatMember>(
                    td_->dialog_manager_->get_chat_id_object(dialog_id, "updateChatMember"),
                    td_->user_manager_->get_user_id_object(agent_user_id, "updateChatMember"), date,
-                   invite_link.get_chat_invite_link_object(td_->user_manager_.get()), via_dialog_filter_invite_link,
+                   invite_link.get_chat_invite_link_object(td_->user_manager_.get()), via_join_request,
+                   via_dialog_filter_invite_link,
                    td_->chat_manager_->get_chat_member_object(old_dialog_participant, "updateChatMember old"),
                    td_->chat_manager_->get_chat_member_object(new_dialog_participant, "updateChatMember new")));
 }
@@ -1386,12 +1388,12 @@ void DialogParticipantManager::on_update_bot_stopped(UserId user_id, int32 date,
     std::swap(old_dialog_participant.status_, new_dialog_participant.status_);
   }
 
-  send_update_chat_member(DialogId(user_id), user_id, date, DialogInviteLink(), false, old_dialog_participant,
+  send_update_chat_member(DialogId(user_id), user_id, date, DialogInviteLink(), false, false, old_dialog_participant,
                           new_dialog_participant);
 }
 
 void DialogParticipantManager::on_update_chat_participant(
-    ChatId chat_id, UserId user_id, int32 date, DialogInviteLink invite_link,
+    ChatId chat_id, UserId user_id, int32 date, DialogInviteLink invite_link, bool via_join_request,
     telegram_api::object_ptr<telegram_api::ChatParticipant> old_participant,
     telegram_api::object_ptr<telegram_api::ChatParticipant> new_participant) {
   CHECK(td_->auth_manager_->is_bot());
@@ -1434,13 +1436,13 @@ void DialogParticipantManager::on_update_chat_participant(
                << user_id << " at " << date << " from " << old_dialog_participant << " to " << new_dialog_participant;
   }
 
-  send_update_chat_member(DialogId(chat_id), user_id, date, invite_link, false, old_dialog_participant,
-                          new_dialog_participant);
+  send_update_chat_member(DialogId(chat_id), user_id, date, invite_link, via_join_request, false,
+                          old_dialog_participant, new_dialog_participant);
 }
 
 void DialogParticipantManager::on_update_channel_participant(
-    ChannelId channel_id, UserId user_id, int32 date, DialogInviteLink invite_link, bool via_dialog_filter_invite_link,
-    telegram_api::object_ptr<telegram_api::ChannelParticipant> old_participant,
+    ChannelId channel_id, UserId user_id, int32 date, DialogInviteLink invite_link, bool via_join_request,
+    bool via_dialog_filter_invite_link, telegram_api::object_ptr<telegram_api::ChannelParticipant> old_participant,
     telegram_api::object_ptr<telegram_api::ChannelParticipant> new_participant) {
   CHECK(td_->auth_manager_->is_bot());
   if (!channel_id.is_valid() || !user_id.is_valid() || date <= 0 ||
@@ -1496,8 +1498,8 @@ void DialogParticipantManager::on_update_channel_participant(
                << new_dialog_participant;
   }
 
-  send_update_chat_member(DialogId(channel_id), user_id, date, invite_link, via_dialog_filter_invite_link,
-                          old_dialog_participant, new_dialog_participant);
+  send_update_chat_member(DialogId(channel_id), user_id, date, invite_link, via_join_request,
+                          via_dialog_filter_invite_link, old_dialog_participant, new_dialog_participant);
 }
 
 void DialogParticipantManager::on_update_chat_invite_requester(DialogId dialog_id, UserId user_id, string about,
@@ -1610,23 +1612,38 @@ void DialogParticipantManager::get_channel_participant(ChannelId channel_id, Dia
     }
   }
 
-  auto on_result_promise = PromiseCreator::lambda([actor_id = actor_id(this), channel_id, promise = std::move(promise)](
-                                                      Result<DialogParticipant> r_dialog_participant) mutable {
-    TRY_RESULT_PROMISE(promise, dialog_participant, std::move(r_dialog_participant));
-    send_closure(actor_id, &DialogParticipantManager::finish_get_channel_participant, channel_id,
-                 std::move(dialog_participant), std::move(promise));
-  });
+  if (td_->auth_manager_->is_bot() && participant_dialog_id == td_->dialog_manager_->get_my_dialog_id() &&
+      td_->chat_manager_->have_channel(channel_id)) {
+    // bots don't need inviter information
+    td_->chat_manager_->reload_channel(channel_id, Auto(), "get_channel_participant");
+    return promise.set_value(DialogParticipant{participant_dialog_id, participant_dialog_id.get_user_id(),
+                                               td_->chat_manager_->get_channel_date(channel_id),
+                                               td_->chat_manager_->get_channel_status(channel_id)});
+  }
+
+  auto on_result_promise =
+      PromiseCreator::lambda([actor_id = actor_id(this), channel_id, participant_dialog_id,
+                              promise = std::move(promise)](Result<DialogParticipant> r_dialog_participant) mutable {
+        TRY_RESULT_PROMISE(promise, dialog_participant, std::move(r_dialog_participant));
+        send_closure(actor_id, &DialogParticipantManager::finish_get_channel_participant, channel_id,
+                     participant_dialog_id, std::move(dialog_participant), std::move(promise));
+      });
 
   td_->create_handler<GetChannelParticipantQuery>(std::move(on_result_promise))
       ->send(channel_id, participant_dialog_id, std::move(input_peer));
 }
 
-void DialogParticipantManager::finish_get_channel_participant(ChannelId channel_id,
+void DialogParticipantManager::finish_get_channel_participant(ChannelId channel_id, DialogId participant_dialog_id,
                                                               DialogParticipant &&dialog_participant,
                                                               Promise<DialogParticipant> &&promise) {
   TRY_STATUS_PROMISE(promise, G()->close_status());
 
   CHECK(dialog_participant.is_valid());  // checked in GetChannelParticipantQuery
+  if (dialog_participant.dialog_id_ != participant_dialog_id) {
+    LOG(ERROR) << "Receive " << dialog_participant.dialog_id_ << " in " << channel_id << " instead of requested "
+               << participant_dialog_id;
+    return promise.set_error(Status::Error(500, "Data is unavailable"));
+  }
 
   LOG(INFO) << "Receive " << dialog_participant.dialog_id_ << " as a member of a channel " << channel_id;
 
@@ -2298,13 +2315,18 @@ void DialogParticipantManager::add_channel_participant(
     auto &queries = join_channel_queries_[channel_id];
     queries.push_back(std::move(promise));
     if (queries.size() == 1u) {
+      auto new_status = my_status;
+      bool was_speculatively_updated = false;
       if (!td_->chat_manager_->get_channel_join_request(channel_id)) {
-        auto new_status = my_status;
         new_status.set_is_member(true);
+        was_speculatively_updated = true;
         speculative_add_channel_user(channel_id, user_id, new_status, my_status);
       }
-      auto query_promise = PromiseCreator::lambda([actor_id = actor_id(this), channel_id](Result<Unit> result) {
-        send_closure(actor_id, &DialogParticipantManager::on_join_channel, channel_id, std::move(result));
+      auto query_promise = PromiseCreator::lambda([actor_id = actor_id(this), channel_id, was_speculatively_updated,
+                                                   old_status = std::move(my_status),
+                                                   new_status = std::move(new_status)](Result<Unit> result) mutable {
+        send_closure(actor_id, &DialogParticipantManager::on_join_channel, channel_id, was_speculatively_updated,
+                     std::move(old_status), std::move(new_status), std::move(result));
       });
       td_->create_handler<JoinChannelQuery>(std::move(query_promise))->send(channel_id);
     }
@@ -2321,7 +2343,9 @@ void DialogParticipantManager::add_channel_participant(
   td_->create_handler<InviteToChannelQuery>(std::move(promise))->send(channel_id, {user_id}, std::move(input_users));
 }
 
-void DialogParticipantManager::on_join_channel(ChannelId channel_id, Result<Unit> &&result) {
+void DialogParticipantManager::on_join_channel(ChannelId channel_id, bool was_speculatively_updated,
+                                               DialogParticipantStatus &&old_status,
+                                               DialogParticipantStatus &&new_status, Result<Unit> &&result) {
   G()->ignore_result_if_closing(result);
 
   auto it = join_channel_queries_.find(channel_id);
@@ -2335,6 +2359,9 @@ void DialogParticipantManager::on_join_channel(ChannelId channel_id, Result<Unit
       promise.set_value(MissingInvitees().get_failed_to_add_members_object(td_->user_manager_.get()));
     }
   } else {
+    if (was_speculatively_updated) {
+      speculative_add_channel_user(channel_id, td_->user_manager_->get_my_id(), old_status, new_status);
+    }
     fail_promises(promises, result.move_as_error());
   }
 }
@@ -2402,7 +2429,6 @@ void DialogParticipantManager::set_channel_participant_status(
   auto on_result_promise =
       PromiseCreator::lambda([actor_id = actor_id(this), channel_id, participant_dialog_id, new_status,
                               promise = std::move(promise)](Result<DialogParticipant> r_dialog_participant) mutable {
-        // ResultHandlers are cleared before managers, so it is safe to capture this
         if (r_dialog_participant.is_error()) {
           return promise.set_error(r_dialog_participant.move_as_error());
         }

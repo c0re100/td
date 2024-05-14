@@ -423,7 +423,7 @@ Result<tl_object_ptr<telegram_api::InputBotInlineMessage>> InlineQueriesManager:
                                                                    std::move(entities), std::move(input_reply_markup));
   }
   if (constructor_id == td_api::inputMessageContact::ID) {
-    TRY_RESULT(contact, process_input_message_contact(std::move(input_message_content)));
+    TRY_RESULT(contact, process_input_message_contact(td_, std::move(input_message_content)));
     return contact.get_input_bot_inline_message_media_contact(std::move(input_reply_markup));
   }
   if (constructor_id == td_api::inputMessageInvoice::ID) {
@@ -535,13 +535,13 @@ void InlineQueriesManager::answer_inline_query(
       case td_api::inlineQueryResultsButtonTypeStartBot::ID: {
         auto type = td_api::move_object_as<td_api::inlineQueryResultsButtonTypeStartBot>(button->type_);
         if (type->parameter_.empty()) {
-          return promise.set_error(Status::Error(400, "Can't use empty switch_pm_parameter"));
+          return promise.set_error(Status::Error(400, "Can't use empty start_parameter"));
         }
         if (type->parameter_.size() > 64) {
-          return promise.set_error(Status::Error(400, "Too long switch_pm_parameter specified"));
+          return promise.set_error(Status::Error(400, "Too long start_parameter specified"));
         }
         if (!is_base64url_characters(type->parameter_)) {
-          return promise.set_error(Status::Error(400, "Unallowed characters in switch_pm_parameter are used"));
+          return promise.set_error(Status::Error(400, "Unallowed characters in start_parameter are used"));
         }
         switch_pm = telegram_api::make_object<telegram_api::inlineBotSwitchPM>(button->text_, type->parameter_);
         break;
@@ -1797,10 +1797,10 @@ void InlineQueriesManager::on_get_inline_query_results(DialogId dialog_id, UserI
                 static_cast<const telegram_api::botInlineMessageMediaContact *>(result->send_message_.get());
             Contact c(inline_message_contact->phone_number_, inline_message_contact->first_name_,
                       inline_message_contact->last_name_, inline_message_contact->vcard_, UserId());
-            contact->contact_ = c.get_contact_object();
+            contact->contact_ = c.get_contact_object(td_);
           } else {
             Contact c(std::move(result->description_), std::move(result->title_), string(), string(), UserId());
-            contact->contact_ = c.get_contact_object();
+            contact->contact_ = c.get_contact_object(td_);
           }
           contact->thumbnail_ = register_thumbnail(std::move(result->thumb_));
 

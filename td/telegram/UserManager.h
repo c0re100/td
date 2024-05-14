@@ -355,6 +355,8 @@ class UserManager final : public Actor {
 
   void set_emoji_status(const EmojiStatus &emoji_status, Promise<Unit> &&promise);
 
+  void toggle_sponsored_messages(bool sponsored_enabled, Promise<Unit> &&promise);
+
   void get_support_user(Promise<td_api::object_ptr<td_api::user>> &&promise);
 
   void get_user_profile_photos(UserId user_id, int32 offset, int32 limit,
@@ -418,6 +420,8 @@ class UserManager final : public Actor {
   void reload_contact_birthdates(bool force);
 
   void on_get_contact_birthdates(telegram_api::object_ptr<telegram_api::contacts_contactBirthdays> &&birthdays);
+
+  void hide_contact_birthdays(Promise<Unit> &&promise);
 
   vector<UserId> get_close_friends(Promise<Unit> &&promise);
 
@@ -598,6 +602,7 @@ class UserManager final : public Actor {
     bool has_pinned_stories = false;
     bool read_dates_private = false;
     bool contact_require_premium = false;
+    bool sponsored_enabled = false;
 
     bool is_common_chat_count_changed = true;
     bool is_being_updated = false;
@@ -865,6 +870,8 @@ class UserManager final : public Actor {
 
   void on_set_emoji_status(EmojiStatus emoji_status, Promise<Unit> &&promise);
 
+  void on_toggle_sponsored_messages(bool sponsored_enabled, Promise<Unit> &&promise);
+
   void on_get_support_user(UserId user_id, Promise<td_api::object_ptr<td_api::user>> &&promise);
 
   void send_get_user_photos_query(UserId user_id, const UserPhotos *user_photos);
@@ -1094,6 +1101,7 @@ class UserManager final : public Actor {
     vector<std::pair<UserId, Birthdate>> users_;
     double next_sync_time_ = 0.0;
     bool is_being_synced_ = false;
+    bool need_drop_ = false;
   };
   ContactBirthdates contact_birthdates_;
 

@@ -2472,7 +2472,7 @@ InlineMessageContent create_inline_message_content(Td *td, FileId file_id,
     case telegram_api::botInlineMessageText::ID: {
       auto inline_message = move_tl_object_as<telegram_api::botInlineMessageText>(bot_inline_message);
       auto text = get_formatted_text(td->user_manager_.get(), std::move(inline_message->message_),
-                                     std::move(inline_message->entities_), false, false, false, "botInlineMessageText");
+                                     std::move(inline_message->entities_), false, false, "botInlineMessageText");
       result.disable_web_page_preview = inline_message->no_webpage_;
       result.invert_media = inline_message->invert_media_;
       WebPageId web_page_id;
@@ -2490,9 +2490,9 @@ InlineMessageContent create_inline_message_content(Td *td, FileId file_id,
       if (inline_message->manual_) {
         web_page_url = std::move(inline_message->url_);
       }
-      auto text = get_formatted_text(td->user_manager_.get(), std::move(inline_message->message_),
-                                     std::move(inline_message->entities_), !web_page_url.empty(), false, false,
-                                     "botInlineMessageMediaWebPage");
+      auto text =
+          get_formatted_text(td->user_manager_.get(), std::move(inline_message->message_),
+                             std::move(inline_message->entities_), false, false, "botInlineMessageMediaWebPage");
       auto web_page_id =
           td->web_pages_manager_->get_web_page_by_url(web_page_url.empty() ? get_first_url(text).str() : web_page_url);
       result.message_content = td::make_unique<MessageText>(
@@ -2772,7 +2772,7 @@ static Result<InputMessageContent> create_input_message_content(
       break;
     }
     case td_api::inputMessageContact::ID: {
-      TRY_RESULT(contact, process_input_message_contact(std::move(input_message_content)));
+      TRY_RESULT(contact, process_input_message_contact(td, std::move(input_message_content)));
       content = make_unique<MessageContact>(std::move(contact));
       break;
     }
@@ -2801,13 +2801,9 @@ static Result<InputMessageContent> create_input_message_content(
       constexpr size_t MAX_POLL_OPTION_LENGTH = 100;               // server-side limit
       constexpr size_t MAX_POLL_OPTIONS = 10;                      // server-side limit
       auto input_poll = static_cast<td_api::inputMessagePoll *>(input_message_content.get());
-      if (!clean_input_string(input_poll->question_)) {
-        return Status::Error(400, "Poll question must be encoded in UTF-8");
-      }
-      if (input_poll->question_.empty()) {
-        return Status::Error(400, "Poll question must be non-empty");
-      }
-      if (utf8_length(input_poll->question_) > MAX_POLL_QUESTION_LENGTH) {
+      TRY_RESULT(question,
+                 get_formatted_text(td, dialog_id, std::move(input_poll->question_), is_bot, false, true, false));
+      if (utf8_length(question.text) > MAX_POLL_QUESTION_LENGTH) {
         return Status::Error(400, PSLICE() << "Poll question length must not exceed " << MAX_POLL_QUESTION_LENGTH);
       }
       if (input_poll->options_.size() <= 1) {
@@ -2816,16 +2812,13 @@ static Result<InputMessageContent> create_input_message_content(
       if (input_poll->options_.size() > MAX_POLL_OPTIONS) {
         return Status::Error(400, PSLICE() << "Poll can't have more than " << MAX_POLL_OPTIONS << " options");
       }
-      for (auto &option : input_poll->options_) {
-        if (!clean_input_string(option)) {
-          return Status::Error(400, "Poll options must be encoded in UTF-8");
-        }
-        if (option.empty()) {
-          return Status::Error(400, "Poll options must be non-empty");
-        }
-        if (utf8_length(option) > MAX_POLL_OPTION_LENGTH) {
+      vector<FormattedText> options;
+      for (auto &input_option : input_poll->options_) {
+        TRY_RESULT(option, get_formatted_text(td, dialog_id, std::move(input_option), is_bot, false, true, false));
+        if (utf8_length(option.text) > MAX_POLL_OPTION_LENGTH) {
           return Status::Error(400, PSLICE() << "Poll options length must not exceed " << MAX_POLL_OPTION_LENGTH);
         }
+        options.push_back(std::move(option));
       }
 
       bool allow_multiple_answers = false;
@@ -2862,10 +2855,9 @@ static Result<InputMessageContent> create_input_message_content(
         close_date = 0;
       }
       bool is_closed = is_bot ? input_poll->is_closed_ : false;
-      content = make_unique<MessagePoll>(
-          td->poll_manager_->create_poll(std::move(input_poll->question_), std::move(input_poll->options_),
-                                         input_poll->is_anonymous_, allow_multiple_answers, is_quiz, correct_option_id,
-                                         std::move(explanation), open_period, close_date, is_closed));
+      content = make_unique<MessagePoll>(td->poll_manager_->create_poll(
+          std::move(question), std::move(options), input_poll->is_anonymous_, allow_multiple_answers, is_quiz,
+          correct_option_id, std::move(explanation), open_period, close_date, is_closed));
       break;
     }
     case td_api::inputMessageStory::ID: {
@@ -6367,7 +6359,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::Poll:
       if (type == MessageContentDupType::Copy || type == MessageContentDupType::ServerCopy) {
         return make_unique<MessagePoll>(
-            td->poll_manager_->dup_poll(static_cast<const MessagePoll *>(content)->poll_id));
+            td->poll_manager_->dup_poll(dialog_id, static_cast<const MessagePoll *>(content)->poll_id));
       } else {
         return make_unique<MessagePoll>(*static_cast<const MessagePoll *>(content));
       }
@@ -6929,7 +6921,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     }
     case MessageContentType::Contact: {
       const auto *m = static_cast<const MessageContact *>(content);
-      return make_tl_object<td_api::messageContact>(m->contact.get_contact_object());
+      return make_tl_object<td_api::messageContact>(m->contact.get_contact_object(td));
     }
     case MessageContentType::Document: {
       const auto *m = static_cast<const MessageDocument *>(content);
@@ -6948,7 +6940,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::LiveLocation: {
       const auto *m = static_cast<const MessageLiveLocation *>(content);
       auto passed = max(G()->unix_time() - message_date, 0);
-      auto expires_in = max(0, m->period - passed);
+      auto expires_in = m->period == std::numeric_limits<int32>::max() ? m->period : max(0, m->period - passed);
       auto heading = expires_in == 0 ? 0 : m->heading;
       auto proximity_alert_radius = expires_in == 0 ? 0 : m->proximity_alert_radius;
       return make_tl_object<td_api::messageLocation>(m->location.get_location_object(), m->period, expires_in, heading,

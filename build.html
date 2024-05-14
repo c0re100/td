@@ -248,6 +248,7 @@
       <option>Ubuntu 18</option>
       <option>Ubuntu 20</option>
       <option>Ubuntu 22</option>
+      <option>Ubuntu 24</option>
       <option>Other</option>
     </select>
     <p></p>
@@ -496,7 +497,7 @@ function getTargetName(target) {
     case 'iOS':
       return '<a href="https://github.com/tdlib/td#using-json">JSON</a>';
     case 'tdclient':
-      return '<a href="https://github.com/tdlib/td#using-cxx">a simple and convenient C++11-interface</a>';
+      return '<a href="https://github.com/tdlib/td#using-cxx">simple and convenient C++11</a>';
     case 'JNI':
     case 'Android':
       return '<a href="https://github.com/tdlib/td#using-java">native ' + target + '</a>';
@@ -641,7 +642,7 @@ function onOptionsChanged() {
   var use_vcpkg = os_windows;
 
   var use_lto = false;
-  if (!use_msvc && language !== 'Go' && language !== 'Java' && language !== 'Kotlin' && (os_mac || (os_linux && (linux_distro === 'Ubuntu 18' || linux_distro === 'Ubuntu 20' || linux_distro === 'Ubuntu 22' || linux_distro === 'Other')))) {
+  if (!use_msvc && language !== 'Go' && language !== 'Java' && language !== 'Kotlin' && (os_mac || (os_linux && (linux_distro === 'Ubuntu 18' || linux_distro === 'Ubuntu 20' || linux_distro === 'Ubuntu 22' || linux_distro === 'Ubuntu 24' || linux_distro === 'Other')))) {
     document.getElementById('buildLtoDiv').style.display = 'block';
     use_lto = document.getElementById('buildLtoCheckbox').checked;
   } else {
@@ -802,6 +803,19 @@ function onOptionsChanged() {
         return '-10';
       case 'Ubuntu 22':
         return '-14';
+      case 'Ubuntu 24':
+        return '-18';
+      default:
+        return ''; // use default version
+    }
+  }
+
+  function getLibcplusplusVersionSuffix() {
+    switch (linux_distro) {
+      case 'Ubuntu 20':
+      case 'Ubuntu 22':
+      case 'Ubuntu 24':
+        return getClangVersionSuffix();
       default:
         return ''; // use default version
     }
@@ -855,6 +869,7 @@ function onOptionsChanged() {
       case 'Ubuntu 18':
       case 'Ubuntu 20':
       case 'Ubuntu 22':
+      case 'Ubuntu 24':
         if (linux_distro.includes('Debian') && !use_root) {
           commands.push('su -');
         }
@@ -878,9 +893,9 @@ function onOptionsChanged() {
           packages += ' default-jdk';
         }
         if (use_clang) {
-          packages += ' clang' + getClangVersionSuffix() + ' libc++-dev';
-          if (linux_distro === 'Debian 10+' || linux_distro === 'Ubuntu 18' || linux_distro === 'Ubuntu 20' || linux_distro === 'Ubuntu 22') {
-            packages += ' libc++abi-dev';
+          packages += ' clang' + getClangVersionSuffix() + ' libc++' + getLibcplusplusVersionSuffix() + '-dev';
+          if (linux_distro === 'Debian 10+' || linux_distro === 'Ubuntu 18' || linux_distro === 'Ubuntu 20' || linux_distro === 'Ubuntu 22' || linux_distro === 'Ubuntu 24') {
+            packages += ' libc++abi' + getLibcplusplusVersionSuffix() + '-dev';
           }
         } else {
           packages += ' g++';

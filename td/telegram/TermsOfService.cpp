@@ -7,7 +7,6 @@
 #include "td/telegram/TermsOfService.h"
 
 #include "td/telegram/Global.h"
-#include "td/telegram/misc.h"
 #include "td/telegram/net/NetQueryCreator.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/telegram_api.h"
@@ -95,8 +94,8 @@ TermsOfService::TermsOfService(telegram_api::object_ptr<telegram_api::help_terms
   }
 
   id_ = std::move(terms->id_->data_);
-  text_ = get_formatted_text(nullptr, std::move(terms->text_), std::move(terms->entities_), true, true, false,
-                             "TermsOfService");
+  text_ =
+      get_formatted_text(nullptr, std::move(terms->text_), std::move(terms->entities_), true, false, "TermsOfService");
   if (text_.text.empty()) {
     id_.clear();
   }

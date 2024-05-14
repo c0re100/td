@@ -1416,24 +1416,6 @@ void remove_empty_entities(vector<MessageEntity> &entities) {
   });
 }
 
-static bool is_allowed_quote_entity(const MessageEntity &entity) {
-  switch (entity.type) {
-    case MessageEntity::Type::Bold:
-    case MessageEntity::Type::Italic:
-    case MessageEntity::Type::Underline:
-    case MessageEntity::Type::Strikethrough:
-    case MessageEntity::Type::Spoiler:
-    case MessageEntity::Type::CustomEmoji:
-      return true;
-    default:
-      return false;
-  }
-}
-
-void remove_unallowed_quote_entities(FormattedText &text) {
-  td::remove_if(text.entities, [](const auto &entity) { return !is_allowed_quote_entity(entity); });
-}
-
 static int32 text_length(Slice text) {
   return narrow_cast<int32>(utf8_utf16_length(text));
 }
@@ -3951,11 +3933,12 @@ telegram_api::object_ptr<telegram_api::textWithEntities> get_input_text_with_ent
 
 FormattedText get_formatted_text(const UserManager *user_manager, string &&text,
                                  vector<telegram_api::object_ptr<telegram_api::MessageEntity>> &&server_entities,
-                                 bool allow_empty, bool skip_media_timestamps, bool skip_trim, const char *source) {
+                                 bool skip_media_timestamps, bool skip_trim, const char *source) {
   auto entities = get_message_entities(user_manager, std::move(server_entities), source);
-  auto status = fix_formatted_text(text, entities, allow_empty, true, true, skip_media_timestamps, skip_trim);
+  auto status = fix_formatted_text(text, entities, true, true, true, skip_media_timestamps, skip_trim);
   if (status.is_error()) {
-    LOG(ERROR) << "Receive error " << status << " from " << source << " while parsing " << text;
+    LOG(ERROR) << "Receive error " << status << " from " << source << " while parsing \"" << text << "\"("
+               << hex_encode(text) << ')';
     if (!clean_input_string(text)) {
       text.clear();
     }
@@ -3966,11 +3949,10 @@ FormattedText get_formatted_text(const UserManager *user_manager, string &&text,
 
 FormattedText get_formatted_text(const UserManager *user_manager,
                                  telegram_api::object_ptr<telegram_api::textWithEntities> text_with_entities,
-                                 bool allow_empty, bool skip_media_timestamps, bool skip_trim, const char *source) {
+                                 bool skip_media_timestamps, bool skip_trim, const char *source) {
   CHECK(text_with_entities != nullptr);
   return get_formatted_text(user_manager, std::move(text_with_entities->text_),
-                            std::move(text_with_entities->entities_), allow_empty, skip_media_timestamps, skip_trim,
-                            source);
+                            std::move(text_with_entities->entities_), skip_media_timestamps, skip_trim, source);
 }
 
 // like clean_input_string but also fixes entities
@@ -4254,7 +4236,7 @@ static vector<MessageEntity> resplit_entities(vector<MessageEntity> &&splittable
   return std::move(entities);
 }
 
-static void fix_entities(vector<MessageEntity> &entities) {
+void fix_entities(vector<MessageEntity> &entities) {
   sort_entities(entities);
 
   if (are_entities_valid(entities)) {
@@ -4369,7 +4351,7 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
       entities.clear();
       return Status::OK();
     }
-    return Status::Error(400, "Message must be non-empty");
+    return Status::Error(400, "Text must be non-empty");
   }
 
   // re-fix entities if needed after removal of some characters
@@ -4425,7 +4407,7 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
   LOG_CHECK(check_utf8(text)) << text;
 
   if (!allow_empty && is_empty_string(text)) {
-    return Status::Error(400, "Message must be non-empty");
+    return Status::Error(400, "Text must be non-empty");
   }
 
   constexpr size_t LENGTH_LIMIT = 35000;  // server side limit
@@ -4658,6 +4640,7 @@ vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(co
             make_tl_object<telegram_api::messageEntityTextUrl>(entity.offset, entity.length, entity.argument));
         break;
       case MessageEntity::Type::MentionName: {
+        CHECK(user_manager != nullptr);
         auto input_user = user_manager->get_input_user_force(entity.user_id);
         result.push_back(make_tl_object<telegram_api::inputMessageEntityMentionName>(entity.offset, entity.length,
                                                                                      std::move(input_user)));
@@ -4740,67 +4723,8 @@ void remove_unallowed_entities(const Td *td, FormattedText &text, DialogId dialo
     }
   }
   if (!td->dialog_manager_->can_use_premium_custom_emoji_in_dialog(dialog_id)) {
-    remove_premium_custom_emoji_entities(td, text.entities, false);
+    remove_premium_custom_emoji_entities(td, text.entities, true);
   }
-}
-
-int32 search_quote(FormattedText &&text, FormattedText &&quote, int32 quote_position) {
-  auto process_quote_entities = [](FormattedText &text, int32 length) {
-    remove_unallowed_quote_entities(text);
-    td::remove_if(text.entities, [length](const MessageEntity &entity) {
-      if (entity.offset < 0 || entity.offset >= length) {
-        return true;
-      }
-      if (entity.length <= 0 || entity.length > length - entity.offset) {
-        return true;
-      }
-      return false;
-    });
-    remove_empty_entities(text.entities);
-    fix_entities(text.entities);
-    remove_empty_entities(text.entities);
-  };
-  int32 length = text_length(text.text);
-  int32 quote_length = text_length(quote.text);
-  if (quote_length == 0 || quote_length > length) {
-    return -1;
-  }
-  process_quote_entities(text, length);
-  process_quote_entities(quote, quote_length);
-
-  quote_position = clamp(quote_position, 0, length - 1);
-  vector<size_t> byte_positions;
-  byte_positions.reserve(length);
-  for (size_t i = 0; i < text.text.size(); i++) {
-    auto c = static_cast<unsigned char>(text.text[i]);
-    if (is_utf8_character_first_code_unit(c)) {
-      byte_positions.push_back(i);
-      if (c >= 0xf0) {  // >= 4 bytes in symbol => surrogate pair
-        byte_positions.push_back(string::npos);
-      }
-    }
-  }
-  CHECK(byte_positions.size() == static_cast<size_t>(length));
-  auto check_position = [&text, &quote, &byte_positions, length, quote_length](int32 position) {
-    if (position < 0 || position > length - quote_length) {
-      return false;
-    }
-    auto byte_position = byte_positions[position];
-    if (byte_position == string::npos || text.text[byte_position] != quote.text[0] ||
-        Slice(text.text).substr(byte_position, quote.text.size()) != quote.text) {
-      return false;
-    }
-    return true;
-  };
-  for (int32 i = 0; quote_position - i >= 0 || quote_position + i + 1 <= length - quote_length; i++) {
-    if (check_position(quote_position - i)) {
-      return quote_position - i;
-    }
-    if (check_position(quote_position + i + 1)) {
-      return quote_position + i + 1;
-    }
-  }
-  return -1;
 }
 
 }  // namespace td

@@ -8,7 +8,9 @@
 
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
+#include "td/utils/logging.h"
 #include "td/utils/Time.h"
+#include "td/utils/utf8.h"
 
 namespace td {
 
@@ -62,6 +64,9 @@ telegram_api::object_ptr<telegram_api::codeSettings> SendCodeHelper::get_input_c
     if (settings->is_current_phone_number_) {
       flags |= telegram_api::codeSettings::CURRENT_NUMBER_MASK;
     }
+    if (settings->has_unknown_phone_number_) {
+      flags |= telegram_api::codeSettings::UNKNOWN_NUMBER_MASK;
+    }
     if (settings->allow_sms_retriever_api_) {
       flags |= telegram_api::codeSettings::ALLOW_APP_HASH_MASK;
     }
@@ -89,9 +94,9 @@ telegram_api::object_ptr<telegram_api::codeSettings> SendCodeHelper::get_input_c
       flags |= telegram_api::codeSettings::LOGOUT_TOKENS_MASK;
     }
   }
-  return telegram_api::make_object<telegram_api::codeSettings>(flags, false /*ignored*/, false /*ignored*/,
-                                                               false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                                               std::move(logout_tokens), device_token, is_app_sandbox);
+  return telegram_api::make_object<telegram_api::codeSettings>(
+      flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+      false /*ignored*/, std::move(logout_tokens), device_token, is_app_sandbox);
 }
 
 telegram_api::auth_sendCode SendCodeHelper::send_code(string phone_number, const Settings &settings, int32 api_id,
@@ -113,6 +118,10 @@ telegram_api::auth_requestFirebaseSms SendCodeHelper::request_firebase_sms(const
 #endif
   return telegram_api::auth_requestFirebaseSms(flags, phone_number_, phone_code_hash_, safety_net_token,
                                                ios_push_secret);
+}
+
+telegram_api::auth_reportMissingCode SendCodeHelper::report_missing_code(const string &mobile_network_code) {
+  return telegram_api::auth_reportMissingCode(phone_number_, phone_code_hash_, mobile_network_code);
 }
 
 telegram_api::account_sendVerifyEmailCode SendCodeHelper::send_verify_email_code(const string &email_address) {
@@ -203,6 +212,18 @@ SendCodeHelper::AuthenticationCodeInfo SendCodeHelper::get_sent_authentication_c
       }
       return AuthenticationCodeInfo{AuthenticationCodeInfo::Type::Sms, code_type->length_, ""};
     }
+    case telegram_api::auth_sentCodeTypeSmsWord::ID: {
+      auto code_type = move_tl_object_as<telegram_api::auth_sentCodeTypeSmsWord>(sent_code_type_ptr);
+      if (utf8_length(code_type->beginning_) > 1u) {
+        LOG(ERROR) << "Receive \"" << code_type->beginning_ << "\" as word first letter";
+        code_type->beginning_ = string();
+      }
+      return AuthenticationCodeInfo{AuthenticationCodeInfo::Type::SmsWord, 0, code_type->beginning_};
+    }
+    case telegram_api::auth_sentCodeTypeSmsPhrase::ID: {
+      auto code_type = move_tl_object_as<telegram_api::auth_sentCodeTypeSmsPhrase>(sent_code_type_ptr);
+      return AuthenticationCodeInfo{AuthenticationCodeInfo::Type::SmsPhrase, 0, code_type->beginning_};
+    }
     case telegram_api::auth_sentCodeTypeEmailCode::ID:
     case telegram_api::auth_sentCodeTypeSetUpEmailRequired::ID:
     default:
@@ -236,6 +257,10 @@ td_api::object_ptr<td_api::AuthenticationCodeType> SendCodeHelper::get_authentic
     case AuthenticationCodeInfo::Type::FirebaseIos:
       return td_api::make_object<td_api::authenticationCodeTypeFirebaseIos>(
           authentication_code_info.pattern, authentication_code_info.push_timeout, authentication_code_info.length);
+    case AuthenticationCodeInfo::Type::SmsWord:
+      return td_api::make_object<td_api::authenticationCodeTypeSmsWord>(authentication_code_info.pattern);
+    case AuthenticationCodeInfo::Type::SmsPhrase:
+      return td_api::make_object<td_api::authenticationCodeTypeSmsPhrase>(authentication_code_info.pattern);
     default:
       UNREACHABLE();
       return nullptr;

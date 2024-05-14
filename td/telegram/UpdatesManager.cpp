@@ -67,6 +67,7 @@
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/SpecialStickerSetType.h"
 #include "td/telegram/StateManager.h"
+#include "td/telegram/StatisticsManager.h"
 #include "td/telegram/StickerListType.h"
 #include "td/telegram/StickerSetId.h"
 #include "td/telegram/StickersManager.h"
@@ -394,11 +395,10 @@ void UpdatesManager::fill_pts_gap(void *td) {
     }
     max_pts = max(max_pts, updates_manager->postponed_pts_updates_.rbegin()->pts);
   }
-  string source = PSTRING() << "PTS from " << updates_manager->get_pts() << " to " << min_pts << "(-" << min_pts_count
-                            << ")-" << max_pts << ' '
-                            << (first_update == nullptr ? string() : oneline(to_string(*first_update)));
   updates_manager->pts_gap_++;
-  fill_gap(td, source.c_str());
+  fill_gap(td, PSTRING() << "PTS from " << updates_manager->get_pts() << " to " << min_pts << "(-" << min_pts_count
+                         << ")-" << max_pts << ' '
+                         << (first_update == nullptr ? string() : oneline(to_string(*first_update))));
 }
 
 void UpdatesManager::fill_seq_gap(void *td) {
@@ -414,8 +414,7 @@ void UpdatesManager::fill_seq_gap(void *td) {
     min_seq = updates_manager->pending_seq_updates_.begin()->seq_begin;
     max_seq = updates_manager->pending_seq_updates_.rbegin()->seq_end;
   }
-  string source = PSTRING() << "seq from " << updates_manager->seq_ << " to " << min_seq << '-' << max_seq;
-  fill_gap(td, source.c_str());
+  fill_gap(td, PSTRING() << "seq from " << updates_manager->seq_ << " to " << min_seq << '-' << max_seq);
 }
 
 void UpdatesManager::fill_qts_gap(void *td) {
@@ -431,16 +430,15 @@ void UpdatesManager::fill_qts_gap(void *td) {
     min_qts = updates_manager->pending_qts_updates_.begin()->first;
     max_qts = updates_manager->pending_qts_updates_.rbegin()->first;
   }
-  string source = PSTRING() << "QTS from " << updates_manager->get_qts() << " to " << min_qts << '-' << max_qts;
   updates_manager->qts_gap_++;
-  fill_gap(td, source.c_str());
+  fill_gap(td, PSTRING() << "QTS from " << updates_manager->get_qts() << " to " << min_qts << '-' << max_qts);
 }
 
 void UpdatesManager::fill_get_difference_gap(void *td) {
-  fill_gap(td, nullptr);
+  fill_gap(td, string());
 }
 
-void UpdatesManager::fill_gap(void *td, const char *source) {
+void UpdatesManager::fill_gap(void *td, const string &source) {
   if (G()->close_flag()) {
     return;
   }
@@ -450,7 +448,7 @@ void UpdatesManager::fill_gap(void *td, const char *source) {
   }
   auto updates_manager = static_cast<Td *>(td)->updates_manager_.get();
 
-  if (source != nullptr && !updates_manager->running_get_difference_) {
+  if (!source.empty() && !updates_manager->running_get_difference_) {
     auto auth_key_id = updates_manager->get_most_unused_auth_key_id();
     uint64 update_count = 0;
     double active_time = 0.0;
@@ -2252,6 +2250,7 @@ void UpdatesManager::try_reload_data() {
   get_default_emoji_statuses(td_, Auto());
   get_default_channel_emoji_statuses(td_, Auto());
   td_->notification_settings_manager_->reload_saved_ringtones(Auto());
+  td_->notification_settings_manager_->send_get_reaction_notification_settings_query(Auto());
   td_->notification_settings_manager_->send_get_scope_notification_settings_query(NotificationSettingsScope::Private,
                                                                                   Auto());
   td_->notification_settings_manager_->send_get_scope_notification_settings_query(NotificationSettingsScope::Group,
@@ -2993,18 +2992,22 @@ void UpdatesManager::process_qts_update(tl_object_ptr<telegram_api::Update> &&up
       }
       case telegram_api::updateChatParticipant::ID: {
         auto update = move_tl_object_as<telegram_api::updateChatParticipant>(update_ptr);
+        bool via_join_request =
+            update->invite_ != nullptr && update->invite_->get_id() == telegram_api::chatInvitePublicJoinRequests::ID;
         td_->dialog_participant_manager_->on_update_chat_participant(
             ChatId(update->chat_id_), UserId(update->actor_id_), update->date_,
-            DialogInviteLink(std::move(update->invite_), true, "updateChatParticipant"),
+            DialogInviteLink(std::move(update->invite_), true, "updateChatParticipant"), via_join_request,
             std::move(update->prev_participant_), std::move(update->new_participant_));
         break;
       }
       case telegram_api::updateChannelParticipant::ID: {
         auto update = move_tl_object_as<telegram_api::updateChannelParticipant>(update_ptr);
+        bool via_join_request =
+            update->invite_ != nullptr && update->invite_->get_id() == telegram_api::chatInvitePublicJoinRequests::ID;
         td_->dialog_participant_manager_->on_update_channel_participant(
             ChannelId(update->channel_id_), UserId(update->actor_id_), update->date_,
-            DialogInviteLink(std::move(update->invite_), true, "updateChannelParticipant"), update->via_chatlist_,
-            std::move(update->prev_participant_), std::move(update->new_participant_));
+            DialogInviteLink(std::move(update->invite_), true, "updateChannelParticipant"), via_join_request,
+            update->via_chatlist_, std::move(update->prev_participant_), std::move(update->new_participant_));
         break;
       }
       case telegram_api::updateBotChatInviteRequester::ID: {
@@ -4548,6 +4551,16 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateBotDeleteBusine
   add_pending_qts_update(std::move(update), qts, std::move(promise));
 }
 
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateBroadcastRevenueTransactions> update,
+                               Promise<Unit> &&promise) {
+  td_->statistics_manager_->on_update_dialog_revenue_transactions(std::move(update->balances_));
+  promise.set_value(Unit());
+}
+
 // unsupported updates
+
+void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateNewStoryReaction> update, Promise<Unit> &&promise) {
+  promise.set_value(Unit());
+}
 
 }  // namespace td

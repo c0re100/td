@@ -85,11 +85,12 @@ class DialogParticipantManager final : public Actor {
   void on_update_bot_stopped(UserId user_id, int32 date, bool is_stopped, bool force = false);
 
   void on_update_chat_participant(ChatId chat_id, UserId user_id, int32 date, DialogInviteLink invite_link,
+                                  bool via_join_request,
                                   telegram_api::object_ptr<telegram_api::ChatParticipant> old_participant,
                                   telegram_api::object_ptr<telegram_api::ChatParticipant> new_participant);
 
   void on_update_channel_participant(ChannelId channel_id, UserId user_id, int32 date, DialogInviteLink invite_link,
-                                     bool via_dialog_filter_invite_link,
+                                     bool via_join_request, bool via_dialog_filter_invite_link,
                                      telegram_api::object_ptr<telegram_api::ChannelParticipant> old_participant,
                                      telegram_api::object_ptr<telegram_api::ChannelParticipant> new_participant);
 
@@ -190,8 +191,8 @@ class DialogParticipantManager final : public Actor {
                                        Promise<td_api::object_ptr<td_api::chatAdministrators>> &&promise);
 
   void send_update_chat_member(DialogId dialog_id, UserId agent_user_id, int32 date,
-                               const DialogInviteLink &invite_link, bool via_dialog_filter_invite_link,
-                               const DialogParticipant &old_dialog_participant,
+                               const DialogInviteLink &invite_link, bool via_join_request,
+                               bool via_dialog_filter_invite_link, const DialogParticipant &old_dialog_participant,
                                const DialogParticipant &new_dialog_participant);
 
   void do_get_dialog_participant(DialogId dialog_id, DialogId participant_dialog_id,
@@ -200,8 +201,8 @@ class DialogParticipantManager final : public Actor {
   void finish_get_dialog_participant(DialogParticipant &&dialog_participant,
                                      Promise<td_api::object_ptr<td_api::chatMember>> &&promise);
 
-  void finish_get_channel_participant(ChannelId channel_id, DialogParticipant &&dialog_participant,
-                                      Promise<DialogParticipant> &&promise);
+  void finish_get_channel_participant(ChannelId channel_id, DialogId participant_dialog_id,
+                                      DialogParticipant &&dialog_participant, Promise<DialogParticipant> &&promise);
 
   std::pair<int32, vector<DialogId>> search_among_dialogs(const vector<DialogId> &dialog_ids, const string &query,
                                                           int32 limit) const;
@@ -234,7 +235,8 @@ class DialogParticipantManager final : public Actor {
   void add_channel_participant(ChannelId channel_id, UserId user_id, const DialogParticipantStatus &old_status,
                                Promise<td_api::object_ptr<td_api::failedToAddMembers>> &&promise);
 
-  void on_join_channel(ChannelId channel_id, Result<Unit> &&result);
+  void on_join_channel(ChannelId channel_id, bool was_speculatively_updated, DialogParticipantStatus &&old_status,
+                       DialogParticipantStatus &&new_status, Result<Unit> &&result);
 
   void add_channel_participants(ChannelId channel_id, const vector<UserId> &user_ids,
                                 Promise<td_api::object_ptr<td_api::failedToAddMembers>> &&promise);

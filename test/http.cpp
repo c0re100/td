@@ -147,7 +147,8 @@ TEST(Http, reader) {
 #endif
 #if TD_GCC
 #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wself-move"
 #endif
     a = std::move(a);
     b = std::move(b);

@@ -137,6 +137,32 @@ class GetContactsBirthdaysQuery final : public Td::ResultHandler {
   }
 };
 
+class DismissContactBirthdaysSuggestionQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit DismissContactBirthdaysSuggestionQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send() {
+    send_query(G()->net_query_creator().create(telegram_api::help_dismissSuggestion(
+        telegram_api::make_object<telegram_api::inputPeerEmpty>(), "BIRTHDAY_CONTACTS_TODAY")));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::help_dismissSuggestion>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
 class GetContactsStatusesQuery final : public Td::ResultHandler {
  public:
   void send() {
@@ -1119,6 +1145,33 @@ class UpdateEmojiStatusQuery final : public Td::ResultHandler {
   }
 };
 
+class ToggleSponsoredMessagesQuery final : public Td::ResultHandler {
+  Promise<Unit> promise_;
+
+ public:
+  explicit ToggleSponsoredMessagesQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
+  }
+
+  void send(bool sponsored_enabled) {
+    send_query(
+        G()->net_query_creator().create(telegram_api::account_toggleSponsoredMessages(sponsored_enabled), {{"me"}}));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::account_toggleSponsoredMessages>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    LOG(DEBUG) << "Receive result for ToggleSponsoredMessagesQuery: " << result_ptr.ok();
+    promise_.set_value(Unit());
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
 class GetUsersQuery final : public Td::ResultHandler {
   Promise<Unit> promise_;
 
@@ -1612,36 +1665,43 @@ void UserManager::UserFull::store(StorerT &storer) const {
   bool has_business_info = business_info != nullptr && !business_info->is_empty();
   bool has_birthdate = !birthdate.is_empty();
   bool has_personal_channel_id = personal_channel_id.is_valid();
+  bool has_flags2 = true;
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_about);
   STORE_FLAG(is_blocked);
   STORE_FLAG(can_be_called);
   STORE_FLAG(has_private_calls);
   STORE_FLAG(can_pin_messages);
-  STORE_FLAG(need_phone_number_privacy_exception);  // 5
+  STORE_FLAG(need_phone_number_privacy_exception);
   STORE_FLAG(has_photo);
   STORE_FLAG(supports_video_calls);
   STORE_FLAG(has_description);
   STORE_FLAG(has_commands);
-  STORE_FLAG(has_private_forward_name);  // 10
+  STORE_FLAG(has_private_forward_name);
   STORE_FLAG(has_group_administrator_rights);
   STORE_FLAG(has_broadcast_administrator_rights);
   STORE_FLAG(has_menu_button);
   STORE_FLAG(has_description_photo);
-  STORE_FLAG(has_description_animation);  // 15
+  STORE_FLAG(has_description_animation);
   STORE_FLAG(has_premium_gift_options);
   STORE_FLAG(voice_messages_forbidden);
   STORE_FLAG(has_personal_photo);
   STORE_FLAG(has_fallback_photo);
-  STORE_FLAG(has_pinned_stories);  // 20
+  STORE_FLAG(has_pinned_stories);
   STORE_FLAG(is_blocked_for_stories);
   STORE_FLAG(wallpaper_overridden);
   STORE_FLAG(read_dates_private);
   STORE_FLAG(contact_require_premium);
-  STORE_FLAG(has_business_info);  // 25
+  STORE_FLAG(has_business_info);
   STORE_FLAG(has_birthdate);
   STORE_FLAG(has_personal_channel_id);
+  STORE_FLAG(sponsored_enabled);
+  STORE_FLAG(has_flags2);
   END_STORE_FLAGS();
+  if (has_flags2) {
+    BEGIN_STORE_FLAGS();
+    END_STORE_FLAGS();
+  }
   if (has_about) {
     store(about, storer);
   }
@@ -1714,6 +1774,7 @@ void UserManager::UserFull::parse(ParserT &parser) {
   bool has_business_info;
   bool has_birthdate;
   bool has_personal_channel_id;
+  bool has_flags2;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_about);
   PARSE_FLAG(is_blocked);
@@ -1743,7 +1804,13 @@ void UserManager::UserFull::parse(ParserT &parser) {
   PARSE_FLAG(has_business_info);
   PARSE_FLAG(has_birthdate);
   PARSE_FLAG(has_personal_channel_id);
+  PARSE_FLAG(sponsored_enabled);
+  PARSE_FLAG(has_flags2);
   END_PARSE_FLAGS();
+  if (has_flags2) {
+    BEGIN_PARSE_FLAGS();
+    END_PARSE_FLAGS();
+  }
   if (has_about) {
     parse(about, parser);
   }
@@ -5129,11 +5196,13 @@ void UserManager::on_set_birthdate(Birthdate birthdate, Promise<Unit> &&promise)
 
 void UserManager::set_personal_channel(DialogId dialog_id, Promise<Unit> &&promise) {
   ChannelId channel_id;
-  if (dialog_id != DialogId() && !td_->dialog_manager_->have_dialog_force(dialog_id, "set_personal_channel")) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (dialog_id != DialogId() && dialog_id.get_type() != DialogType::Channel) {
-    return promise.set_error(Status::Error(400, "Chat can't be set as a personal chat"));
+  if (dialog_id != DialogId()) {
+    if (!td_->dialog_manager_->have_dialog_force(dialog_id, "set_personal_channel")) {
+      return promise.set_error(Status::Error(400, "Chat not found"));
+    }
+    if (!td_->dialog_manager_->is_broadcast_channel(dialog_id)) {
+      return promise.set_error(Status::Error(400, "Chat can't be set as a personal chat"));
+    }
   }
   auto query_promise = PromiseCreator::lambda(
       [actor_id = actor_id(this), channel_id, promise = std::move(promise)](Result<Unit> result) mutable {
@@ -5179,6 +5248,29 @@ void UserManager::on_set_emoji_status(EmojiStatus emoji_status, Promise<Unit> &&
   if (u != nullptr) {
     on_update_user_emoji_status(u, user_id, emoji_status);
     update_user(u, user_id);
+  }
+  promise.set_value(Unit());
+}
+
+void UserManager::toggle_sponsored_messages(bool sponsored_enabled, Promise<Unit> &&promise) {
+  auto query_promise = PromiseCreator::lambda(
+      [actor_id = actor_id(this), sponsored_enabled, promise = std::move(promise)](Result<Unit> result) mutable {
+        if (result.is_ok()) {
+          send_closure(actor_id, &UserManager::on_toggle_sponsored_messages, sponsored_enabled, std::move(promise));
+        } else {
+          promise.set_error(result.move_as_error());
+        }
+      });
+  td_->create_handler<ToggleSponsoredMessagesQuery>(std::move(query_promise))->send(sponsored_enabled);
+}
+
+void UserManager::on_toggle_sponsored_messages(bool sponsored_enabled, Promise<Unit> &&promise) {
+  auto my_user_id = get_my_id();
+  UserFull *user_full = get_user_full_force(my_user_id, "on_toggle_sponsored_messages");
+  if (user_full != nullptr && user_full->sponsored_enabled != sponsored_enabled) {
+    user_full->sponsored_enabled = sponsored_enabled;
+    user_full->is_changed = true;
+    update_user_full(user_full, my_user_id, "on_toggle_sponsored_messages");
   }
   promise.set_value(Unit());
 }
@@ -6448,6 +6540,14 @@ std::pair<int32, vector<UserId>> UserManager::search_contacts(const string &quer
 }
 
 void UserManager::reload_contact_birthdates(bool force) {
+  if (td_->option_manager_->get_option_boolean("dismiss_birthday_contact_today")) {
+    contact_birthdates_.need_drop_ = true;
+    if (!contact_birthdates_.is_being_synced_) {
+      contact_birthdates_.is_being_synced_ = true;
+      on_get_contact_birthdates(nullptr);
+    }
+    return;
+  }
   if (!G()->close_flag() && !td_->auth_manager_->is_bot() && !contact_birthdates_.is_being_synced_ &&
       (contact_birthdates_.next_sync_time_ < Time::now() || force)) {
     contact_birthdates_.is_being_synced_ = true;
@@ -6459,6 +6559,10 @@ void UserManager::on_get_contact_birthdates(
     telegram_api::object_ptr<telegram_api::contacts_contactBirthdays> &&birthdays) {
   CHECK(contact_birthdates_.is_being_synced_);
   contact_birthdates_.is_being_synced_ = false;
+  if (contact_birthdates_.need_drop_) {
+    birthdays = telegram_api::make_object<telegram_api::contacts_contactBirthdays>(Auto(), Auto());
+    contact_birthdates_.need_drop_ = false;
+  }
   if (birthdays == nullptr) {
     contact_birthdates_.next_sync_time_ = Time::now() + Random::fast(120, 180);
     return;
@@ -6487,6 +6591,10 @@ void UserManager::on_get_contact_birthdates(
     send_closure(G()->td(), &Td::send_update, get_update_contact_close_birthdays());
   }
   // there is no need to save them between restarts
+}
+
+void UserManager::hide_contact_birthdays(Promise<Unit> &&promise) {
+  td_->create_handler<DismissContactBirthdaysSuggestionQuery>(std::move(promise))->send();
 }
 
 vector<UserId> UserManager::get_close_friends(Promise<Unit> &&promise) {
@@ -6729,13 +6837,15 @@ void UserManager::on_get_user_full(telegram_api::object_ptr<telegram_api::userFu
   bool has_pinned_stories = user->stories_pinned_available_;
   auto birthdate = Birthdate(std::move(user->birthday_));
   auto personal_channel_id = ChannelId(user->personal_channel_id_);
+  auto sponsored_enabled = user->sponsored_enabled_;
   if (user_full->can_be_called != can_be_called || user_full->supports_video_calls != supports_video_calls ||
       user_full->has_private_calls != has_private_calls ||
       user_full->group_administrator_rights != group_administrator_rights ||
       user_full->broadcast_administrator_rights != broadcast_administrator_rights ||
       user_full->premium_gift_options != premium_gift_options ||
       user_full->voice_messages_forbidden != voice_messages_forbidden ||
-      user_full->can_pin_messages != can_pin_messages || user_full->has_pinned_stories != has_pinned_stories) {
+      user_full->can_pin_messages != can_pin_messages || user_full->has_pinned_stories != has_pinned_stories ||
+      user_full->sponsored_enabled != sponsored_enabled) {
     user_full->can_be_called = can_be_called;
     user_full->supports_video_calls = supports_video_calls;
     user_full->has_private_calls = has_private_calls;
@@ -6745,6 +6855,7 @@ void UserManager::on_get_user_full(telegram_api::object_ptr<telegram_api::userFu
     user_full->voice_messages_forbidden = voice_messages_forbidden;
     user_full->can_pin_messages = can_pin_messages;
     user_full->has_pinned_stories = has_pinned_stories;
+    user_full->sponsored_enabled = sponsored_enabled;
 
     user_full->is_changed = true;
   }
@@ -6808,8 +6919,10 @@ void UserManager::on_get_user_full(telegram_api::object_ptr<telegram_api::userFu
     user_full->description_animation_file_id = description_animation_file_id;
     user_full->is_changed = true;
   }
-  if (personal_channel_id != ChannelId() && !personal_channel_id.is_valid()) {
-    LOG(ERROR) << "Receive personal " << personal_channel_id;
+  if (personal_channel_id != ChannelId() &&
+      td_->chat_manager_->get_channel_type(personal_channel_id) != ChannelType::Broadcast) {
+    LOG(ERROR) << "Receive personal " << personal_channel_id << " of the type "
+               << static_cast<uint8>(td_->chat_manager_->get_channel_type(personal_channel_id));
     personal_channel_id = ChannelId();
   }
   if (user_full->personal_channel_id != personal_channel_id) {
@@ -7071,6 +7184,7 @@ void UserManager::drop_user_full(UserId user_id) {
   user_full->read_dates_private = false;
   user_full->contact_require_premium = false;
   user_full->birthdate = {};
+  user_full->sponsored_enabled = false;
   user_full->is_changed = true;
 
   update_user_full(user_full, user_id, "drop_user_full");
@@ -7751,13 +7865,12 @@ td_api::object_ptr<td_api::user> UserManager::get_user_object(UserId user_id, co
 
   auto emoji_status = u->last_sent_emoji_status.get_emoji_status_object();
   auto have_access = user_id == get_my_id() || have_input_peer_user(u, user_id, AccessRights::Know);
-  auto accent_color_id = u->accent_color_id.is_valid() ? u->accent_color_id : AccentColorId(user_id);
   auto restricts_new_chats = u->contact_require_premium && !u->is_mutual_contact;
   return td_api::make_object<td_api::user>(
       user_id.get(), -1, u->first_name, u->last_name, u->usernames.get_usernames_object(), u->phone_number,
       get_user_status_object(user_id, u, G()->unix_time()),
       get_profile_photo_object(td_->file_manager_.get(), u->photo),
-      td_->theme_manager_->get_accent_color_id_object(accent_color_id, AccentColorId(user_id)),
+      td_->theme_manager_->get_accent_color_id_object(u->accent_color_id, AccentColorId(user_id)),
       u->background_custom_emoji_id.get(),
       td_->theme_manager_->get_profile_accent_color_id_object(u->profile_accent_color_id),
       u->profile_background_custom_emoji_id.get(), std::move(emoji_status), u->is_contact, u->is_mutual_contact,
@@ -7853,8 +7966,8 @@ td_api::object_ptr<td_api::userFullInfo> UserManager::get_user_full_info_object(
       get_chat_photo_object(td_->file_manager_.get(), user_full->fallback_photo), block_list_id.get_block_list_object(),
       user_full->can_be_called, user_full->supports_video_calls, user_full->has_private_calls,
       !user_full->private_forward_name.empty(), voice_messages_forbidden, user_full->has_pinned_stories,
-      user_full->need_phone_number_privacy_exception, user_full->wallpaper_overridden, std::move(bio_object),
-      user_full->birthdate.get_birthdate_object(), personal_chat_id,
+      user_full->sponsored_enabled, user_full->need_phone_number_privacy_exception, user_full->wallpaper_overridden,
+      std::move(bio_object), user_full->birthdate.get_birthdate_object(), personal_chat_id,
       get_premium_payment_options_object(user_full->premium_gift_options), user_full->common_chat_count,
       std::move(business_info), std::move(bot_info));
 }

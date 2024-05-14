@@ -1931,27 +1931,27 @@ void ChatManager::Channel::store(StorerT &storer) const {
   STORE_FLAG(false);
   STORE_FLAG(sign_messages);
   STORE_FLAG(false);
-  STORE_FLAG(false);  // 5
+  STORE_FLAG(false);
   STORE_FLAG(false);
   STORE_FLAG(is_megagroup);
   STORE_FLAG(is_verified);
   STORE_FLAG(has_photo);
-  STORE_FLAG(legacy_has_username);  // 10
+  STORE_FLAG(legacy_has_username);
   STORE_FLAG(false);
   STORE_FLAG(use_new_rights);
   STORE_FLAG(has_participant_count);
   STORE_FLAG(have_default_permissions);
-  STORE_FLAG(is_scam);  // 15
+  STORE_FLAG(is_scam);
   STORE_FLAG(has_cache_version);
   STORE_FLAG(has_linked_channel);
   STORE_FLAG(has_location);
   STORE_FLAG(is_slow_mode_enabled);
-  STORE_FLAG(has_restriction_reasons);  // 20
+  STORE_FLAG(has_restriction_reasons);
   STORE_FLAG(legacy_has_active_group_call);
   STORE_FLAG(is_fake);
   STORE_FLAG(is_gigagroup);
   STORE_FLAG(noforwards);
-  STORE_FLAG(can_be_deleted);  // 25
+  STORE_FLAG(can_be_deleted);
   STORE_FLAG(join_to_send);
   STORE_FLAG(join_request);
   STORE_FLAG(has_usernames);
@@ -2230,27 +2230,27 @@ void ChatManager::ChannelFull::store(StorerT &storer) const {
   STORE_FLAG(has_restricted_count);
   STORE_FLAG(has_banned_count);
   STORE_FLAG(legacy_has_invite_link);
-  STORE_FLAG(has_sticker_set);  // 5
+  STORE_FLAG(has_sticker_set);
   STORE_FLAG(has_linked_channel_id);
   STORE_FLAG(has_migrated_from_max_message_id);
   STORE_FLAG(has_migrated_from_chat_id);
   STORE_FLAG(can_get_participants);
-  STORE_FLAG(can_set_username);  // 10
+  STORE_FLAG(can_set_username);
   STORE_FLAG(can_set_sticker_set);
   STORE_FLAG(false);  // legacy_can_view_statistics
   STORE_FLAG(is_all_history_available);
   STORE_FLAG(can_set_location);
-  STORE_FLAG(has_location);  // 15
+  STORE_FLAG(has_location);
   STORE_FLAG(has_bot_user_ids);
   STORE_FLAG(is_slow_mode_enabled);
   STORE_FLAG(is_slow_mode_delay_active);
   STORE_FLAG(has_stats_dc_id);
-  STORE_FLAG(has_photo);  // 20
+  STORE_FLAG(has_photo);
   STORE_FLAG(is_can_view_statistics_inited);
   STORE_FLAG(can_view_statistics);
   STORE_FLAG(legacy_has_active_group_call_id);
   STORE_FLAG(has_invite_link);
-  STORE_FLAG(has_bot_commands);  // 25
+  STORE_FLAG(has_bot_commands);
   STORE_FLAG(can_be_deleted);
   STORE_FLAG(has_aggressive_anti_spam_enabled);
   STORE_FLAG(has_hidden_participants);
@@ -3721,10 +3721,6 @@ void ChatManager::get_created_public_dialogs(PublicDialogType type,
           }
           created_public_channels_inited_[index] = true;
 
-          if (type == PublicDialogType::ForPersonalDialog) {
-            update_created_public_broadcasts();
-          }
-
           if (from_binlog) {
             return_created_public_dialogs(std::move(promise), created_public_channels_[index]);
             promise = {};
@@ -3782,10 +3778,6 @@ void ChatManager::update_created_public_channels(Channel *c, ChannelId channel_i
       }
     }
     if (was_changed) {
-      if (type == PublicDialogType::ForPersonalDialog) {
-        update_created_public_broadcasts();
-      }
-
       save_created_public_channels(type);
 
       reload_created_public_dialogs(type, Promise<td_api::object_ptr<td_api::chats>>());
@@ -3809,10 +3801,6 @@ void ChatManager::on_get_created_public_channels(PublicDialogType type,
   }
   created_public_channels_inited_[index] = true;
 
-  if (type == PublicDialogType::ForPersonalDialog) {
-    update_created_public_broadcasts();
-  }
-
   save_created_public_channels(type);
 }
 
@@ -3828,13 +3816,16 @@ void ChatManager::save_created_public_channels(PublicDialogType type) {
   }
 }
 
-void ChatManager::update_created_public_broadcasts() {
-  send_closure_later(G()->messages_manager(), &MessagesManager::on_update_created_public_broadcasts,
-                     created_public_channels_[2]);
-}
-
 void ChatManager::check_created_public_dialogs_limit(PublicDialogType type, Promise<Unit> &&promise) {
   td_->create_handler<GetCreatedPublicChannelsQuery>(std::move(promise))->send(type, true);
+}
+
+bool ChatManager::are_created_public_broadcasts_inited() const {
+  return created_public_channels_inited_[2];
+}
+
+const vector<ChannelId> &ChatManager::get_created_public_broadcasts() const {
+  return created_public_channels_[2];
 }
 
 vector<DialogId> ChatManager::get_dialogs_for_discussion(Promise<Unit> &&promise) {
@@ -5278,8 +5269,8 @@ void ChatManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&chat_
     td_->messages_manager_->on_update_dialog_notify_settings(DialogId(chat_id), std::move(chat->notify_settings_),
                                                              "on_get_chat_full");
 
-    td_->messages_manager_->on_update_dialog_available_reactions(DialogId(chat_id),
-                                                                 std::move(chat->available_reactions_));
+    td_->messages_manager_->on_update_dialog_available_reactions(
+        DialogId(chat_id), std::move(chat->available_reactions_), chat->reactions_limit_);
 
     td_->messages_manager_->on_update_dialog_theme_name(DialogId(chat_id), std::move(chat->theme_emoticon_));
 
@@ -5335,8 +5326,8 @@ void ChatManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&chat_
 
     td_->messages_manager_->on_update_dialog_background(DialogId(channel_id), std::move(channel->wallpaper_));
 
-    td_->messages_manager_->on_update_dialog_available_reactions(DialogId(channel_id),
-                                                                 std::move(channel->available_reactions_));
+    td_->messages_manager_->on_update_dialog_available_reactions(
+        DialogId(channel_id), std::move(channel->available_reactions_), channel->reactions_limit_);
 
     td_->messages_manager_->on_update_dialog_theme_name(DialogId(channel_id), std::move(channel->theme_emoticon_));
 
@@ -8122,6 +8113,12 @@ void ChatManager::get_chat_participant(ChatId chat_id, UserId user_id, Promise<D
   auto c = get_chat(chat_id);
   if (c == nullptr) {
     return promise.set_error(Status::Error(400, "Group not found"));
+  }
+
+  if (td_->auth_manager_->is_bot() && user_id == td_->user_manager_->get_my_id()) {
+    // bots don't need inviter information
+    reload_chat(chat_id, Auto(), "get_chat_participant");
+    return promise.set_value(DialogParticipant{DialogId(user_id), user_id, c->date, c->status});
   }
 
   auto chat_full = get_chat_full_force(chat_id, "get_chat_participant");

@@ -479,6 +479,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::sendAuthenticationFirebaseSms &request);
 
+  void on_request(uint64 id, td_api::reportAuthenticationCodeMissing &request);
+
   void on_request(uint64 id, td_api::setAuthenticationEmailAddress &request);
 
   void on_request(uint64 id, const td_api::resendAuthenticationCode &request);
@@ -570,6 +572,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::sendPhoneNumberCode &request);
 
   void on_request(uint64 id, td_api::sendPhoneNumberFirebaseSms &request);
+
+  void on_request(uint64 id, td_api::reportPhoneNumberCodeMissing &request);
 
   void on_request(uint64 id, const td_api::resendPhoneNumberCode &request);
 
@@ -684,6 +688,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::setAutosaveSettings &request);
 
   void on_request(uint64 id, const td_api::clearAutosaveSettingsExceptions &request);
+
+  void on_request(uint64 id, const td_api::getRecommendedChats &request);
 
   void on_request(uint64 id, const td_api::getChatSimilarChats &request);
 
@@ -903,6 +909,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::addQuickReplyShortcutInlineQueryResultMessage &request);
 
+  void on_request(uint64 id, td_api::addQuickReplyShortcutMessageAlbum &request);
+
   void on_request(uint64 id, td_api::readdQuickReplyShortcutMessages &request);
 
   void on_request(uint64 id, td_api::editQuickReplyMessage &request);
@@ -919,7 +927,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::setStoryPrivacySettings &request);
 
-  void on_request(uint64 id, const td_api::toggleStoryIsPinned &request);
+  void on_request(uint64 id, const td_api::toggleStoryIsPostedToChatPage &request);
 
   void on_request(uint64 id, const td_api::deleteStory &request);
 
@@ -1161,9 +1169,11 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getChatActiveStories &request);
 
-  void on_request(uint64 id, const td_api::getChatPinnedStories &request);
+  void on_request(uint64 id, const td_api::getChatPostedToChatPageStories &request);
 
   void on_request(uint64 id, const td_api::getChatArchivedStories &request);
+
+  void on_request(uint64 id, const td_api::setChatPinnedStories &request);
 
   void on_request(uint64 id, const td_api::openStory &request);
 
@@ -1370,6 +1380,8 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::setPersonalChat &request);
 
   void on_request(uint64 id, const td_api::setEmojiStatus &request);
+
+  void on_request(uint64 id, const td_api::toggleHasSponsoredMessagesEnabled &request);
 
   void on_request(uint64 id, const td_api::getThemedEmojiStatuses &request);
 
@@ -1627,6 +1639,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::setScopeNotificationSettings &request);
 
+  void on_request(uint64 id, td_api::setReactionNotificationSettings &request);
+
   void on_request(uint64 id, const td_api::resetAllNotificationSettings &request);
 
   void on_request(uint64 id, const td_api::removeChatActionBar &request);
@@ -1682,6 +1696,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::stopPoll &request);
 
   void on_request(uint64 id, const td_api::hideSuggestedAction &request);
+
+  void on_request(uint64 id, const td_api::hideContactCloseBirthdays &request);
 
   void on_request(uint64 id, td_api::getBusinessConnection &request);
 

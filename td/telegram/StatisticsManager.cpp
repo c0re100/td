@@ -274,12 +274,19 @@ static int64 get_amount(int64 amount, bool allow_negative = false) {
   return amount;
 }
 
+static td_api::object_ptr<td_api::chatRevenueAmount> convert_broadcast_revenue_balances(
+    telegram_api::object_ptr<telegram_api::broadcastRevenueBalances> obj) {
+  CHECK(obj != nullptr);
+  return td_api::make_object<td_api::chatRevenueAmount>(
+      "TON", get_amount(obj->overall_revenue_), get_amount(obj->current_balance_), get_amount(obj->available_balance_));
+}
+
 static td_api::object_ptr<td_api::chatRevenueStatistics> convert_broadcast_revenue_stats(
     telegram_api::object_ptr<telegram_api::stats_broadcastRevenueStats> obj) {
   CHECK(obj != nullptr);
   return td_api::make_object<td_api::chatRevenueStatistics>(
-      convert_stats_graph(std::move(obj->top_hours_graph_)), convert_stats_graph(std::move(obj->revenue_graph_)), "TON",
-      get_amount(obj->overall_revenue_), get_amount(obj->current_balance_), get_amount(obj->available_balance_),
+      convert_stats_graph(std::move(obj->top_hours_graph_)), convert_stats_graph(std::move(obj->revenue_graph_)),
+      convert_broadcast_revenue_balances(std::move(obj->balances_)),
       obj->usd_rate_ > 0 ? clamp(obj->usd_rate_ * 1e-7, 1e-18, 1e18) : 1.0);
 }
 
@@ -688,6 +695,11 @@ void StatisticsManager::get_channel_revenue_statistics(
     return promise.set_error(Status::Error(400, "Chat is not a channel"));
   }
   td_->create_handler<GetBroadcastRevenueStatsQuery>(std::move(promise))->send(dialog_id.get_channel_id(), is_dark);
+}
+
+void StatisticsManager::on_update_dialog_revenue_transactions(
+    telegram_api::object_ptr<telegram_api::broadcastRevenueBalances> balances) {
+  send_closure(G()->td(), &Td::send_update, td_api::make_object<td_api::updateChatRevenueAmount>());
 }
 
 void StatisticsManager::get_channel_revenue_withdrawal_url(DialogId dialog_id, const string &password,
