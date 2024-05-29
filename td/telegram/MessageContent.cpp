@@ -115,6 +115,7 @@
 #include "td/utils/utf8.h"
 
 #include <limits>
+#include <unordered_set>
 #include <utility>
 
 namespace td {
@@ -2595,6 +2596,57 @@ unique_ptr<MessageContent> create_chat_set_ttl_message_content(int32 ttl, UserId
   return make_unique<MessageChatSetTtl>(ttl, from_user_id);
 }
 
+td_api::object_ptr<td_api::formattedText> extract_input_caption(
+    td_api::object_ptr<td_api::InputMessageContent> &input_message_content) {
+  switch (input_message_content->get_id()) {
+    case td_api::inputMessageAnimation::ID: {
+      auto input_animation = static_cast<td_api::inputMessageAnimation *>(input_message_content.get());
+      return std::move(input_animation->caption_);
+    }
+    case td_api::inputMessageAudio::ID: {
+      auto input_audio = static_cast<td_api::inputMessageAudio *>(input_message_content.get());
+      return std::move(input_audio->caption_);
+    }
+    case td_api::inputMessageDocument::ID: {
+      auto input_document = static_cast<td_api::inputMessageDocument *>(input_message_content.get());
+      return std::move(input_document->caption_);
+    }
+    case td_api::inputMessagePhoto::ID: {
+      auto input_photo = static_cast<td_api::inputMessagePhoto *>(input_message_content.get());
+      return std::move(input_photo->caption_);
+    }
+    case td_api::inputMessageVideo::ID: {
+      auto input_video = static_cast<td_api::inputMessageVideo *>(input_message_content.get());
+      return std::move(input_video->caption_);
+    }
+    case td_api::inputMessageVoiceNote::ID: {
+      auto input_voice_note = static_cast<td_api::inputMessageVoiceNote *>(input_message_content.get());
+      return std::move(input_voice_note->caption_);
+    }
+    default:
+      return nullptr;
+  }
+}
+
+bool extract_input_invert_media(const td_api::object_ptr<td_api::InputMessageContent> &input_message_content) {
+  switch (input_message_content->get_id()) {
+    case td_api::inputMessageAnimation::ID: {
+      auto input_animation = static_cast<const td_api::inputMessageAnimation *>(input_message_content.get());
+      return input_animation->show_caption_above_media_;
+    }
+    case td_api::inputMessagePhoto::ID: {
+      auto input_photo = static_cast<const td_api::inputMessagePhoto *>(input_message_content.get());
+      return input_photo->show_caption_above_media_;
+    }
+    case td_api::inputMessageVideo::ID: {
+      auto input_video = static_cast<const td_api::inputMessageVideo *>(input_message_content.get());
+      return input_video->show_caption_above_media_;
+    }
+    default:
+      return false;
+  }
+}
+
 static Result<InputMessageContent> create_input_message_content(
     DialogId dialog_id, tl_object_ptr<td_api::InputMessageContent> &&input_message_content, Td *td,
     FormattedText caption, FileId file_id, PhotoSize thumbnail, vector<FileId> sticker_file_ids, bool is_premium) {
@@ -2651,6 +2703,8 @@ static Result<InputMessageContent> create_input_message_content(
     case td_api::inputMessageAnimation::ID: {
       auto input_animation = static_cast<td_api::inputMessageAnimation *>(input_message_content.get());
 
+      invert_media = input_animation->show_caption_above_media_ && !is_secret;
+
       bool has_stickers = !sticker_file_ids.empty();
       td->animations_manager_->create_animation(
           file_id, string(), thumbnail, AnimationSize(), has_stickers, std::move(sticker_file_ids),
@@ -2695,6 +2749,7 @@ static Result<InputMessageContent> create_input_message_content(
     case td_api::inputMessagePhoto::ID: {
       auto input_photo = static_cast<td_api::inputMessagePhoto *>(input_message_content.get());
 
+      invert_media = input_photo->show_caption_above_media_ && !is_secret;
       self_destruct_type = std::move(input_photo->self_destruct_type_);
 
       TRY_RESULT(photo, create_photo(td->file_manager_.get(), file_id, std::move(thumbnail), input_photo->width_,
@@ -2719,6 +2774,7 @@ static Result<InputMessageContent> create_input_message_content(
     case td_api::inputMessageVideo::ID: {
       auto input_video = static_cast<td_api::inputMessageVideo *>(input_message_content.get());
 
+      invert_media = input_video->show_caption_above_media_ && !is_secret;
       self_destruct_type = std::move(input_video->self_destruct_type_);
 
       bool has_stickers = !sticker_file_ids.empty();
@@ -2993,6 +3049,36 @@ Result<InputMessageContent> get_input_message_content(
       dialog_id, std::move(input_message_content), td, std::move(caption), file_id,
       get_input_thumbnail_photo_size(td->file_manager_.get(), input_thumbnail.get(), dialog_id, is_secret),
       std::move(sticker_file_ids), is_premium);
+}
+
+Status check_message_group_message_contents(const vector<InputMessageContent> &message_contents) {
+  static constexpr size_t MAX_GROUPED_MESSAGES = 10;  // server side limit
+  if (message_contents.size() > MAX_GROUPED_MESSAGES) {
+    return Status::Error(400, "Too many messages to send as an album");
+  }
+  if (message_contents.empty()) {
+    return Status::Error(400, "There are no messages to send");
+  }
+
+  std::unordered_set<MessageContentType, MessageContentTypeHash> message_content_types;
+  for (const auto &message_content : message_contents) {
+    auto message_content_type = message_content.content->get_type();
+    if (!is_allowed_media_group_content(message_content_type)) {
+      return Status::Error(400, "Invalid message content type");
+    }
+    if (message_content.invert_media != message_contents[0].invert_media) {
+      return Status::Error(400, "Parameter show_caption_above_media must be the same for all messages");
+    }
+    message_content_types.insert(message_content_type);
+  }
+  if (message_content_types.size() > 1) {
+    for (auto message_content_type : message_content_types) {
+      if (is_homogenous_media_group_content(message_content_type)) {
+        return Status::Error(400, PSLICE() << message_content_type << " can't be mixed with other media types");
+      }
+    }
+  }
+  return Status::OK();
 }
 
 bool can_have_input_media(const Td *td, const MessageContent *content, bool is_server) {
@@ -6910,7 +6996,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       const auto *m = static_cast<const MessageAnimation *>(content);
       return make_tl_object<td_api::messageAnimation>(
           td->animations_manager_->get_animation_object(m->file_id),
-          get_formatted_text_object(m->caption, skip_bot_commands, max_media_timestamp), m->has_spoiler,
+          get_formatted_text_object(m->caption, skip_bot_commands, max_media_timestamp), invert_media, m->has_spoiler,
           is_content_secret);
     }
     case MessageContentType::Audio: {
@@ -6958,7 +7044,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
         return make_tl_object<td_api::messageExpiredPhoto>();
       }
       auto caption = get_formatted_text_object(m->caption, skip_bot_commands, max_media_timestamp);
-      return make_tl_object<td_api::messagePhoto>(std::move(photo), std::move(caption), m->has_spoiler,
+      return make_tl_object<td_api::messagePhoto>(std::move(photo), std::move(caption), invert_media, m->has_spoiler,
                                                   is_content_secret);
     }
     case MessageContentType::Sticker: {
@@ -7010,7 +7096,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       const auto *m = static_cast<const MessageVideo *>(content);
       return make_tl_object<td_api::messageVideo>(
           td->videos_manager_->get_video_object(m->file_id),
-          get_formatted_text_object(m->caption, skip_bot_commands, max_media_timestamp), m->has_spoiler,
+          get_formatted_text_object(m->caption, skip_bot_commands, max_media_timestamp), invert_media, m->has_spoiler,
           is_content_secret);
     }
     case MessageContentType::VideoNote: {

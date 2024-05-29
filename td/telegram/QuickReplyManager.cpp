@@ -44,7 +44,6 @@
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/Random.h"
-#include "td/utils/SliceBuilder.h"
 #include "td/utils/Time.h"
 #include "td/utils/tl_helpers.h"
 #include "td/utils/unicode.h"
@@ -53,7 +52,6 @@
 #include <algorithm>
 #include <limits>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace td {
 
@@ -268,7 +266,7 @@ class QuickReplyManager::SendQuickReplyMessageQuery final : public Td::ResultHan
             flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
             false /*ignored*/, false /*ignored*/, telegram_api::make_object<telegram_api::inputPeerSelf>(),
             std::move(reply_to), message_text->text, m->random_id, nullptr, std::move(entities), 0, nullptr,
-            td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id)),
+            td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id), 0),
         {{"me"}}));
   }
 
@@ -386,7 +384,8 @@ class QuickReplyManager::SendQuickReplyMediaQuery final : public Td::ResultHandl
             flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
             false /*ignored*/, telegram_api::make_object<telegram_api::inputPeerSelf>(), std::move(reply_to),
             std::move(input_media), message_text == nullptr ? string() : message_text->text, m->random_id, nullptr,
-            std::move(entities), 0, nullptr, td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id)),
+            std::move(entities), 0, nullptr, td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id),
+            0),
         {{"me"}}));
   }
 
@@ -547,11 +546,11 @@ class QuickReplyManager::SendQuickReplyMultiMediaQuery final : public Td::Result
     }
 
     send_query(G()->net_query_creator().create(
-        telegram_api::messages_sendMultiMedia(flags, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                              false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                              telegram_api::make_object<telegram_api::inputPeerSelf>(),
-                                              std::move(reply_to), std::move(input_single_media), 0, nullptr,
-                                              td_->quick_reply_manager_->get_input_quick_reply_shortcut(shortcut_id_)),
+        telegram_api::messages_sendMultiMedia(
+            flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+            false /*ignored*/, telegram_api::make_object<telegram_api::inputPeerSelf>(), std::move(reply_to),
+            std::move(input_single_media), 0, nullptr,
+            td_->quick_reply_manager_->get_input_quick_reply_shortcut(shortcut_id_), 0),
         {{"me"}}));
   }
 
@@ -1047,7 +1046,7 @@ unique_ptr<QuickReplyManager::QuickReplyMessage> QuickReplyManager::create_messa
           message->replies_ != nullptr || message->reactions_ != nullptr || message->ttl_period_ != 0 ||
           !message->out_ || message->post_ || message->from_scheduled_ || message->pinned_ || message->noforwards_ ||
           message->mentioned_ || !message->restriction_reason_.empty() || !message->post_author_.empty() ||
-          message->from_boosts_applied_ != 0) {
+          message->from_boosts_applied_ != 0 || message->effect_ != 0) {
         LOG(ERROR) << "Receive an invalid quick reply from " << source << ": " << to_string(message);
       }
       if (message->saved_peer_id_ != nullptr) {
@@ -2067,32 +2066,12 @@ Result<td_api::object_ptr<td_api::quickReplyMessage>> QuickReplyManager::send_in
 Result<td_api::object_ptr<td_api::quickReplyMessages>> QuickReplyManager::send_message_group(
     const string &shortcut_name, MessageId reply_to_message_id,
     vector<td_api::object_ptr<td_api::InputMessageContent>> &&input_message_contents) {
-  if (input_message_contents.size() > MAX_GROUPED_MESSAGES) {
-    return Status::Error(400, "Too many messages to send as an album");
-  }
-  if (input_message_contents.empty()) {
-    return Status::Error(400, "There are no messages to send");
-  }
-
   vector<InputMessageContent> message_contents;
-  std::unordered_set<MessageContentType, MessageContentTypeHash> message_content_types;
   for (auto &input_message_content : input_message_contents) {
     TRY_RESULT(message_content, process_input_message_content(std::move(input_message_content)));
-    auto message_content_type = message_content.content->get_type();
-    if (!is_allowed_media_group_content(message_content_type)) {
-      return Status::Error(400, "Invalid message content type");
-    }
-    message_content_types.insert(message_content_type);
-
     message_contents.push_back(std::move(message_content));
   }
-  if (message_content_types.size() > 1) {
-    for (auto message_content_type : message_content_types) {
-      if (is_homogenous_media_group_content(message_content_type)) {
-        return Status::Error(400, PSLICE() << message_content_type << " can't be mixed with other media types");
-      }
-    }
-  }
+  TRY_STATUS(check_message_group_message_contents(message_contents));
 
   TRY_RESULT(s, create_new_local_shortcut(shortcut_name, static_cast<int32>(message_contents.size())));
   bool is_new = s->messages_.empty();
@@ -3501,12 +3480,15 @@ void QuickReplyManager::load_quick_reply_shortcuts() {
   CHECK(shortcuts_.load_queries_.empty());
 
   auto shortcuts_str = G()->td_db()->get_binlog_pmc()->get(get_quick_reply_shortcuts_database_key());
+  if (shortcuts_str.empty()) {
+    return reload_quick_reply_shortcuts();
+  }
   auto status = log_event_parse(shortcuts_, shortcuts_str);
   if (status.is_error()) {
     LOG(ERROR) << "Can't load quick replies: " << status;
     G()->td_db()->get_binlog_pmc()->erase(get_quick_reply_shortcuts_database_key());
     shortcuts_.shortcuts_.clear();
-    return;
+    return reload_quick_reply_shortcuts();
   }
 
   Dependencies dependencies;
@@ -3517,7 +3499,7 @@ void QuickReplyManager::load_quick_reply_shortcuts() {
   }
   if (!dependencies.resolve_force(td_, "load_quick_reply_shortcuts")) {
     shortcuts_.shortcuts_.clear();
-    return;
+    return reload_quick_reply_shortcuts();
   }
 
   shortcuts_.are_inited_ = true;

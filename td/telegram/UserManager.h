@@ -429,7 +429,7 @@ class UserManager final : public Actor {
 
   void on_set_close_friends(const vector<UserId> &user_ids, Promise<Unit> &&promise);
 
-  UserId search_user_by_phone_number(string phone_number, Promise<Unit> &&promise);
+  UserId search_user_by_phone_number(string phone_number, bool only_local, Promise<Unit> &&promise);
 
   void on_resolved_phone_number(const string &phone_number, UserId user_id);
 
@@ -450,6 +450,8 @@ class UserManager final : public Actor {
   void create_new_secret_chat(UserId user_id, Promise<td_api::object_ptr<td_api::chat>> &&promise);
 
   int64 get_user_id_object(UserId user_id, const char *source) const;
+
+  void get_user_id_object_async(UserId user_id, Promise<int64> &&promise);
 
   td_api::object_ptr<td_api::user> get_user_object(UserId user_id) const;
 

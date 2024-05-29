@@ -17,11 +17,13 @@
 #include "td/telegram/DocumentsManager.h"
 #include "td/telegram/GiveawayParameters.h"
 #include "td/telegram/Global.h"
+#include "td/telegram/InputInvoice.h"
 #include "td/telegram/MessageEntity.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessageSender.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
+#include "td/telegram/Photo.h"
 #include "td/telegram/PremiumGiftOption.h"
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/SuggestedAction.h"
@@ -178,14 +180,14 @@ Result<telegram_api::object_ptr<telegram_api::InputPeer>> get_boost_input_peer(T
 }
 
 static Result<tl_object_ptr<telegram_api::InputStorePaymentPurpose>> get_input_store_payment_purpose(
-    Td *td, const td_api::object_ptr<td_api::StorePaymentPurpose> &purpose) {
+    Td *td, td_api::object_ptr<td_api::StorePaymentPurpose> &purpose) {
   if (purpose == nullptr) {
     return Status::Error(400, "Purchase purpose must be non-empty");
   }
 
   switch (purpose->get_id()) {
     case td_api::storePaymentPurposePremiumSubscription::ID: {
-      auto p = static_cast<const td_api::storePaymentPurposePremiumSubscription *>(purpose.get());
+      auto p = static_cast<td_api::storePaymentPurposePremiumSubscription *>(purpose.get());
       int32 flags = 0;
       if (p->is_restore_) {
         flags |= telegram_api::inputStorePaymentPremiumSubscription::RESTORE_MASK;
@@ -197,17 +199,20 @@ static Result<tl_object_ptr<telegram_api::InputStorePaymentPurpose>> get_input_s
                                                                                 false /*ignored*/);
     }
     case td_api::storePaymentPurposeGiftedPremium::ID: {
-      auto p = static_cast<const td_api::storePaymentPurposeGiftedPremium *>(purpose.get());
+      auto p = static_cast<td_api::storePaymentPurposeGiftedPremium *>(purpose.get());
       UserId user_id(p->user_id_);
       TRY_RESULT(input_user, td->user_manager_->get_input_user(user_id));
       if (p->amount_ <= 0 || !check_currency_amount(p->amount_)) {
         return Status::Error(400, "Invalid amount of the currency specified");
       }
+      if (!clean_input_string(p->currency_)) {
+        return Status::Error(400, "Strings must be encoded in UTF-8");
+      }
       return make_tl_object<telegram_api::inputStorePaymentGiftPremium>(std::move(input_user), p->currency_,
                                                                         p->amount_);
     }
     case td_api::storePaymentPurposePremiumGiftCodes::ID: {
-      auto p = static_cast<const td_api::storePaymentPurposePremiumGiftCodes *>(purpose.get());
+      auto p = static_cast<td_api::storePaymentPurposePremiumGiftCodes *>(purpose.get());
       vector<telegram_api::object_ptr<telegram_api::InputUser>> input_users;
       for (auto user_id : p->user_ids_) {
         TRY_RESULT(input_user, td->user_manager_->get_input_user(UserId(user_id)));
@@ -215,6 +220,9 @@ static Result<tl_object_ptr<telegram_api::InputStorePaymentPurpose>> get_input_s
       }
       if (p->amount_ <= 0 || !check_currency_amount(p->amount_)) {
         return Status::Error(400, "Invalid amount of the currency specified");
+      }
+      if (!clean_input_string(p->currency_)) {
+        return Status::Error(400, "Strings must be encoded in UTF-8");
       }
       DialogId boosted_dialog_id(p->boosted_chat_id_);
       TRY_RESULT(boost_input_peer, get_boost_input_peer(td, boosted_dialog_id));
@@ -226,12 +234,26 @@ static Result<tl_object_ptr<telegram_api::InputStorePaymentPurpose>> get_input_s
           flags, std::move(input_users), std::move(boost_input_peer), p->currency_, p->amount_);
     }
     case td_api::storePaymentPurposePremiumGiveaway::ID: {
-      auto p = static_cast<const td_api::storePaymentPurposePremiumGiveaway *>(purpose.get());
+      auto p = static_cast<td_api::storePaymentPurposePremiumGiveaway *>(purpose.get());
       if (p->amount_ <= 0 || !check_currency_amount(p->amount_)) {
         return Status::Error(400, "Invalid amount of the currency specified");
       }
+      if (!clean_input_string(p->currency_)) {
+        return Status::Error(400, "Strings must be encoded in UTF-8");
+      }
       TRY_RESULT(parameters, GiveawayParameters::get_giveaway_parameters(td, p->parameters_.get()));
       return parameters.get_input_store_payment_premium_giveaway(td, p->currency_, p->amount_);
+    }
+    case td_api::storePaymentPurposeStars::ID: {
+      auto p = static_cast<td_api::storePaymentPurposeStars *>(purpose.get());
+      if (p->amount_ <= 0 || !check_currency_amount(p->amount_)) {
+        return Status::Error(400, "Invalid amount of the currency specified");
+      }
+      if (!clean_input_string(p->currency_)) {
+        return Status::Error(400, "Strings must be encoded in UTF-8");
+      }
+      return telegram_api::make_object<telegram_api::inputStorePaymentStars>(0, p->star_count_, p->currency_,
+                                                                             p->amount_);
     }
     default:
       UNREACHABLE();
@@ -583,6 +605,122 @@ class GetGiveawayInfoQuery final : public Td::ResultHandler {
 
   void on_error(Status status) final {
     td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "GetGiveawayInfoQuery");
+    promise_.set_error(std::move(status));
+  }
+};
+
+class GetStarsTopupOptionsQuery final : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::starPaymentOptions>> promise_;
+
+ public:
+  explicit GetStarsTopupOptionsQuery(Promise<td_api::object_ptr<td_api::starPaymentOptions>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send() {
+    send_query(G()->net_query_creator().create(telegram_api::payments_getStarsTopupOptions()));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::payments_getStarsTopupOptions>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto results = result_ptr.move_as_ok();
+    vector<td_api::object_ptr<td_api::starPaymentOption>> options;
+    for (auto &result : results) {
+      options.push_back(td_api::make_object<td_api::starPaymentOption>(
+          result->currency_, result->amount_, result->stars_, result->store_product_, result->extended_));
+    }
+
+    promise_.set_value(td_api::make_object<td_api::starPaymentOptions>(std::move(options)));
+  }
+
+  void on_error(Status status) final {
+    promise_.set_error(std::move(status));
+  }
+};
+
+class GetStarsTransactionsQuery final : public Td::ResultHandler {
+  Promise<td_api::object_ptr<td_api::starTransactions>> promise_;
+
+ public:
+  explicit GetStarsTransactionsQuery(Promise<td_api::object_ptr<td_api::starTransactions>> &&promise)
+      : promise_(std::move(promise)) {
+  }
+
+  void send(const string &offset, td_api::object_ptr<td_api::StarTransactionDirection> &&direction) {
+    int32 flags = 0;
+    if (direction != nullptr) {
+      switch (direction->get_id()) {
+        case td_api::starTransactionDirectionIncoming::ID:
+          flags |= telegram_api::payments_getStarsTransactions::INBOUND_MASK;
+          break;
+        case td_api::starTransactionDirectionOutgoing::ID:
+          flags |= telegram_api::payments_getStarsTransactions::OUTBOUND_MASK;
+          break;
+        default:
+          UNREACHABLE();
+      }
+    }
+    send_query(G()->net_query_creator().create(
+        telegram_api::payments_getStarsTransactions(flags, false /*ignored*/, false /*ignored*/,
+                                                    telegram_api::make_object<telegram_api::inputPeerSelf>(), offset)));
+  }
+
+  void on_result(BufferSlice packet) final {
+    auto result_ptr = fetch_result<telegram_api::payments_getStarsTransactions>(packet);
+    if (result_ptr.is_error()) {
+      return on_error(result_ptr.move_as_error());
+    }
+
+    auto result = result_ptr.move_as_ok();
+    td_->user_manager_->on_get_users(std::move(result->users_), "GetStarsTransactionsQuery");
+    td_->chat_manager_->on_get_chats(std::move(result->chats_), "GetStarsTransactionsQuery");
+
+    vector<td_api::object_ptr<td_api::starTransaction>> transactions;
+    for (auto &transaction : result->history_) {
+      td_api::object_ptr<td_api::productInfo> product_info;
+      if (!transaction->title_.empty() || !transaction->description_.empty() || transaction->photo_ != nullptr) {
+        auto photo = get_web_document_photo(td_->file_manager_.get(), std::move(transaction->photo_), DialogId());
+        product_info = get_product_info_object(td_, transaction->title_, transaction->description_, photo);
+      }
+      auto source = [&]() -> td_api::object_ptr<td_api::StarTransactionSource> {
+        switch (transaction->peer_->get_id()) {
+          case telegram_api::starsTransactionPeerUnsupported::ID:
+            return td_api::make_object<td_api::starTransactionSourceUnsupported>();
+          case telegram_api::starsTransactionPeerPremiumBot::ID:
+            return td_api::make_object<td_api::starTransactionSourceTelegram>();
+          case telegram_api::starsTransactionPeerAppStore::ID:
+            return td_api::make_object<td_api::starTransactionSourceAppStore>();
+          case telegram_api::starsTransactionPeerPlayMarket::ID:
+            return td_api::make_object<td_api::starTransactionSourceGooglePlay>();
+          case telegram_api::starsTransactionPeerFragment::ID:
+            return td_api::make_object<td_api::starTransactionSourceFragment>();
+          case telegram_api::starsTransactionPeer::ID: {
+            DialogId dialog_id(
+                static_cast<const telegram_api::starsTransactionPeer *>(transaction->peer_.get())->peer_);
+            if (dialog_id.get_type() == DialogType::User) {
+              return td_api::make_object<td_api::starTransactionSourceUser>(
+                  td_->user_manager_->get_user_id_object(dialog_id.get_user_id(), "starTransactionSourceUser"),
+                  std::move(product_info));
+            }
+            return td_api::make_object<td_api::starTransactionSourceUnsupported>();
+          }
+          default:
+            UNREACHABLE();
+        }
+      }();
+      transactions.push_back(td_api::make_object<td_api::starTransaction>(
+          transaction->id_, transaction->stars_, transaction->refund_, transaction->date_, std::move(source)));
+    }
+
+    promise_.set_value(
+        td_api::make_object<td_api::starTransactions>(result->balance_, std::move(transactions), result->next_offset_));
+  }
+
+  void on_error(Status status) final {
     promise_.set_error(std::move(status));
   }
 };
@@ -1137,6 +1275,16 @@ void get_premium_giveaway_info(Td *td, MessageFullId message_full_id,
   TRY_RESULT_PROMISE(promise, server_message_id, td->messages_manager_->get_giveaway_message_id(message_full_id));
   td->create_handler<GetGiveawayInfoQuery>(std::move(promise))
       ->send(message_full_id.get_dialog_id(), server_message_id);
+}
+
+void get_star_payment_options(Td *td, Promise<td_api::object_ptr<td_api::starPaymentOptions>> &&promise) {
+  td->create_handler<GetStarsTopupOptionsQuery>(std::move(promise))->send();
+}
+
+void get_star_transactions(Td *td, const string &offset,
+                           td_api::object_ptr<td_api::StarTransactionDirection> &&direction,
+                           Promise<td_api::object_ptr<td_api::starTransactions>> &&promise) {
+  td->create_handler<GetStarsTransactionsQuery>(std::move(promise))->send(offset, std::move(direction));
 }
 
 void can_purchase_premium(Td *td, td_api::object_ptr<td_api::StorePaymentPurpose> &&purpose, Promise<Unit> &&promise) {
