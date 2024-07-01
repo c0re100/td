@@ -51,6 +51,7 @@
 #include "td/telegram/Location.h"
 #include "td/telegram/MessageEntity.h"
 #include "td/telegram/MessageEntity.hpp"
+#include "td/telegram/MessageExtendedMedia.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessageSearchFilter.h"
 #include "td/telegram/MessageSender.h"
@@ -72,6 +73,7 @@
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/SharedDialog.h"
 #include "td/telegram/SharedDialog.hpp"
+#include "td/telegram/StarManager.h"
 #include "td/telegram/StickerFormat.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StickersManager.hpp"
@@ -502,7 +504,7 @@ class MessageChatSetTtl final : public MessageContent {
 
 class MessageUnsupported final : public MessageContent {
  public:
-  static constexpr int32 CURRENT_VERSION = 31;
+  static constexpr int32 CURRENT_VERSION = 32;
   int32 version = CURRENT_VERSION;
 
   MessageUnsupported() = default;
@@ -1120,6 +1122,22 @@ class MessageDialogShared final : public MessageContent {
   }
 };
 
+class MessagePaidMedia final : public MessageContent {
+ public:
+  vector<MessageExtendedMedia> media;
+  FormattedText caption;
+  int64 star_count = 0;
+
+  MessagePaidMedia() = default;
+  MessagePaidMedia(vector<MessageExtendedMedia> &&media, FormattedText &&caption, int64 star_count)
+      : media(std::move(media)), caption(std::move(caption)), star_count(star_count) {
+  }
+
+  MessageContentType get_type() const final {
+    return MessageContentType::PaidMedia;
+  }
+};
+
 template <class StorerT>
 static void store(const MessageContent *content, StorerT &storer) {
   CHECK(content != nullptr);
@@ -1682,6 +1700,19 @@ static void store(const MessageContent *content, StorerT &storer) {
       END_STORE_FLAGS();
       store(m->shared_dialogs, storer);
       store(m->button_id, storer);
+      break;
+    }
+    case MessageContentType::PaidMedia: {
+      const auto *m = static_cast<const MessagePaidMedia *>(content);
+      bool has_caption = !m->caption.text.empty();
+      BEGIN_STORE_FLAGS();
+      STORE_FLAG(has_caption);
+      END_STORE_FLAGS();
+      store(m->media, storer);
+      if (has_caption) {
+        store(m->caption, storer);
+      }
+      store(m->star_count, storer);
       break;
     }
     default:
@@ -2433,6 +2464,26 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       content = std::move(m);
       break;
     }
+    case MessageContentType::PaidMedia: {
+      auto m = make_unique<MessagePaidMedia>();
+      bool has_caption;
+      BEGIN_PARSE_FLAGS();
+      PARSE_FLAG(has_caption);
+      END_PARSE_FLAGS();
+      parse(m->media, parser);
+      if (has_caption) {
+        parse(m->caption, parser);
+      }
+      parse(m->star_count, parser);
+
+      for (auto &media : m->media) {
+        if (media.is_empty()) {
+          is_bad = true;
+        }
+      }
+      content = std::move(m);
+      break;
+    }
 
     default:
       is_bad = true;
@@ -2611,6 +2662,10 @@ td_api::object_ptr<td_api::formattedText> extract_input_caption(
       auto input_document = static_cast<td_api::inputMessageDocument *>(input_message_content.get());
       return std::move(input_document->caption_);
     }
+    case td_api::inputMessagePaidMedia::ID: {
+      auto input_paid_media = static_cast<td_api::inputMessagePaidMedia *>(input_message_content.get());
+      return std::move(input_paid_media->caption_);
+    }
     case td_api::inputMessagePhoto::ID: {
       auto input_photo = static_cast<td_api::inputMessagePhoto *>(input_message_content.get());
       return std::move(input_photo->caption_);
@@ -2633,6 +2688,10 @@ bool extract_input_invert_media(const td_api::object_ptr<td_api::InputMessageCon
     case td_api::inputMessageAnimation::ID: {
       auto input_animation = static_cast<const td_api::inputMessageAnimation *>(input_message_content.get());
       return input_animation->show_caption_above_media_;
+    }
+    case td_api::inputMessagePaidMedia::ID: {
+      auto input_paid_media = static_cast<const td_api::inputMessagePaidMedia *>(input_message_content.get());
+      return input_paid_media->show_caption_above_media_;
     }
     case td_api::inputMessagePhoto::ID: {
       auto input_photo = static_cast<const td_api::inputMessagePhoto *>(input_message_content.get());
@@ -2707,7 +2766,7 @@ static Result<InputMessageContent> create_input_message_content(
 
       bool has_stickers = !sticker_file_ids.empty();
       td->animations_manager_->create_animation(
-          file_id, string(), thumbnail, AnimationSize(), has_stickers, std::move(sticker_file_ids),
+          file_id, string(), std::move(thumbnail), AnimationSize(), has_stickers, std::move(sticker_file_ids),
           std::move(file_name), std::move(mime_type), input_animation->duration_,
           get_dimensions(input_animation->width_, input_animation->height_, nullptr), false);
 
@@ -2724,8 +2783,8 @@ static Result<InputMessageContent> create_input_message_content(
         return Status::Error(400, "Audio performer must be encoded in UTF-8");
       }
 
-      td->audios_manager_->create_audio(file_id, string(), thumbnail, std::move(file_name), std::move(mime_type),
-                                        input_audio->duration_, std::move(input_audio->title_),
+      td->audios_manager_->create_audio(file_id, string(), std::move(thumbnail), std::move(file_name),
+                                        std::move(mime_type), input_audio->duration_, std::move(input_audio->title_),
                                         std::move(input_audio->performer_), 0, false);
 
       content = make_unique<MessageAudio>(file_id, std::move(caption));
@@ -2741,11 +2800,38 @@ static Result<InputMessageContent> create_input_message_content(
       break;
     }
     case td_api::inputMessageDocument::ID:
-      td->documents_manager_->create_document(file_id, string(), thumbnail, std::move(file_name), std::move(mime_type),
-                                              false);
+      td->documents_manager_->create_document(file_id, string(), std::move(thumbnail), std::move(file_name),
+                                              std::move(mime_type), false);
 
       content = make_unique<MessageDocument>(file_id, std::move(caption));
       break;
+    case td_api::inputMessagePaidMedia::ID: {
+      auto input_paid_media = static_cast<td_api::inputMessagePaidMedia *>(input_message_content.get());
+
+      invert_media = input_paid_media->show_caption_above_media_ && !is_secret;
+
+      if (input_paid_media->star_count_ <= 0 ||
+          input_paid_media->star_count_ >
+              td->option_manager_->get_option_integer("paid_media_message_star_count_max")) {
+        return Status::Error(400, "Invalid media price specified");
+      }
+      vector<MessageExtendedMedia> extended_media;
+      for (auto &paid_media : input_paid_media->paid_media_) {
+        TRY_RESULT(media, MessageExtendedMedia::get_message_extended_media(td, std::move(paid_media), dialog_id));
+        if (media.is_empty()) {
+          return Status::Error(400, "Paid media must be non-empty");
+        }
+        extended_media.push_back(std::move(media));
+      }
+      static constexpr size_t MAX_PAID_MEDIA = 10;  // server side limit
+      if (extended_media.empty() || extended_media.size() > MAX_PAID_MEDIA) {
+        return Status::Error(400, "Invalid number of paid media specified");
+      }
+
+      content = td::make_unique<MessagePaidMedia>(std::move(extended_media), std::move(caption),
+                                                  input_paid_media->star_count_);
+      break;
+    }
     case td_api::inputMessagePhoto::ID: {
       auto input_photo = static_cast<td_api::inputMessagePhoto *>(input_message_content.get());
 
@@ -2764,7 +2850,7 @@ static Result<InputMessageContent> create_input_message_content(
 
       emoji = std::move(input_sticker->emoji_);
 
-      td->stickers_manager_->create_sticker(file_id, FileId(), string(), thumbnail,
+      td->stickers_manager_->create_sticker(file_id, FileId(), string(), std::move(thumbnail),
                                             get_dimensions(input_sticker->width_, input_sticker->height_, nullptr),
                                             nullptr, nullptr, StickerFormat::Unknown, nullptr);
 
@@ -2778,7 +2864,7 @@ static Result<InputMessageContent> create_input_message_content(
       self_destruct_type = std::move(input_video->self_destruct_type_);
 
       bool has_stickers = !sticker_file_ids.empty();
-      td->videos_manager_->create_video(file_id, string(), thumbnail, AnimationSize(), has_stickers,
+      td->videos_manager_->create_video(file_id, string(), std::move(thumbnail), AnimationSize(), has_stickers,
                                         std::move(sticker_file_ids), std::move(file_name), std::move(mime_type),
                                         input_video->duration_, input_video->duration_,
                                         get_dimensions(input_video->width_, input_video->height_, nullptr),
@@ -2796,7 +2882,7 @@ static Result<InputMessageContent> create_input_message_content(
         return Status::Error(400, "Wrong video note length");
       }
 
-      td->video_notes_manager_->create_video_note(file_id, string(), thumbnail, input_video_note->duration_,
+      td->video_notes_manager_->create_video_note(file_id, string(), std::move(thumbnail), input_video_note->duration_,
                                                   get_dimensions(length, length, nullptr), string(), false);
 
       content = make_unique<MessageVideoNote>(file_id, false);
@@ -2847,8 +2933,8 @@ static Result<InputMessageContent> create_input_message_content(
         return Status::Error(400, "Invoices can be sent only by bots");
       }
 
-      TRY_RESULT(input_invoice, InputInvoice::process_input_message_invoice(std::move(input_message_content), td,
-                                                                            dialog_id, is_premium));
+      TRY_RESULT(input_invoice,
+                 InputInvoice::process_input_message_invoice(std::move(input_message_content), td, dialog_id));
       content = make_unique<MessageInvoice>(std::move(input_invoice));
       break;
     }
@@ -3081,7 +3167,7 @@ Status check_message_group_message_contents(const vector<InputMessageContent> &m
   return Status::OK();
 }
 
-bool can_have_input_media(const Td *td, const MessageContent *content, bool is_server) {
+bool can_message_content_have_input_media(const Td *td, const MessageContent *content, bool is_server) {
   switch (content->get_type()) {
     case MessageContentType::Game:
       return is_server || static_cast<const MessageGame *>(content)->game.has_input_media();
@@ -3095,6 +3181,16 @@ bool can_have_input_media(const Td *td, const MessageContent *content, bool is_s
     case MessageContentType::Giveaway:
     case MessageContentType::GiveawayWinners:
       return is_server;
+    case MessageContentType::PaidMedia:
+      if (is_server) {
+        return true;
+      }
+      for (const auto &media : static_cast<const MessagePaidMedia *>(content)->media) {
+        if (!media.has_input_media()) {
+          return false;
+        }
+      }
+      return true;
     case MessageContentType::Unsupported:
     case MessageContentType::ChatCreate:
     case MessageContentType::ChatChangeTitle:
@@ -3164,9 +3260,9 @@ bool can_have_input_media(const Td *td, const MessageContent *content, bool is_s
   }
 }
 
-SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
-                                        tl_object_ptr<telegram_api::InputEncryptedFile> input_file,
-                                        BufferSlice thumbnail, int32 layer) {
+SecretInputMedia get_message_content_secret_input_media(
+    const MessageContent *content, Td *td, telegram_api::object_ptr<telegram_api::InputEncryptedFile> input_file,
+    BufferSlice thumbnail, int32 layer) {
   switch (content->get_type()) {
     case MessageContentType::Animation: {
       const auto *m = static_cast<const MessageAnimation *>(content);
@@ -3284,6 +3380,7 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaidMedia:
       break;
     default:
       UNREACHABLE();
@@ -3291,11 +3388,16 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
   return SecretInputMedia{};
 }
 
-static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
-    const MessageContent *content, Td *td, tl_object_ptr<telegram_api::InputFile> input_file,
-    tl_object_ptr<telegram_api::InputFile> input_thumbnail, MessageSelfDestructType ttl, const string &emoji) {
-  if (!can_have_input_media(td, content, false)) {
+static telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media_impl(
+    const MessageContent *content, int32 media_pos, Td *td,
+    telegram_api::object_ptr<telegram_api::InputFile> input_file,
+    telegram_api::object_ptr<telegram_api::InputFile> input_thumbnail, MessageSelfDestructType ttl,
+    const string &emoji) {
+  if (!can_message_content_have_input_media(td, content, false)) {
     return nullptr;
+  }
+  if (media_pos >= 0) {
+    CHECK(content->get_type() == MessageContentType::PaidMedia);
   }
   switch (content->get_type()) {
     case MessageContentType::Animation: {
@@ -3341,6 +3443,23 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     case MessageContentType::Location: {
       const auto *m = static_cast<const MessageLocation *>(content);
       return m->location.get_input_media_geo_point();
+    }
+    case MessageContentType::PaidMedia: {
+      const auto *m = static_cast<const MessagePaidMedia *>(content);
+      if (media_pos >= 0) {
+        CHECK(static_cast<size_t>(media_pos) < m->media.size());
+        return m->media[media_pos].get_input_media(td, std::move(input_file), std::move(input_thumbnail));
+      }
+      CHECK(m->media.size() == 1u || (input_file == nullptr && input_thumbnail == nullptr));
+      vector<telegram_api::object_ptr<telegram_api::InputMedia>> input_media;
+      for (auto &extended_media : m->media) {
+        auto media = extended_media.get_input_media(td, std::move(input_file), std::move(input_thumbnail));
+        if (media == nullptr) {
+          return nullptr;
+        }
+        input_media.push_back(std::move(media));
+      }
+      return telegram_api::make_object<telegram_api::inputMediaPaidMedia>(m->star_count, std::move(input_media));
     }
     case MessageContentType::Photo: {
       const auto *m = static_cast<const MessagePhoto *>(content);
@@ -3435,14 +3554,15 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
   return nullptr;
 }
 
-tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td,
-                                                        tl_object_ptr<telegram_api::InputFile> input_file,
-                                                        tl_object_ptr<telegram_api::InputFile> input_thumbnail,
-                                                        FileId file_id, FileId thumbnail_file_id,
-                                                        MessageSelfDestructType ttl, const string &emoji, bool force) {
+telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media(
+    const MessageContent *content, int32 media_pos, Td *td,
+    telegram_api::object_ptr<telegram_api::InputFile> input_file,
+    telegram_api::object_ptr<telegram_api::InputFile> input_thumbnail, FileId file_id, FileId thumbnail_file_id,
+    MessageSelfDestructType ttl, const string &emoji, bool force) {
   bool had_input_file = input_file != nullptr;
   bool had_input_thumbnail = input_thumbnail != nullptr;
-  auto input_media = get_input_media_impl(content, td, std::move(input_file), std::move(input_thumbnail), ttl, emoji);
+  auto input_media = get_message_content_input_media_impl(content, media_pos, td, std::move(input_file),
+                                                          std::move(input_thumbnail), ttl, emoji);
   auto was_uploaded = FileManager::extract_was_uploaded(input_media);
   if (had_input_file) {
     if (!was_uploaded) {
@@ -3459,44 +3579,52 @@ tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *co
     CHECK(!had_input_thumbnail);
   }
   if (!was_uploaded) {
-    auto file_reference = FileManager::extract_file_reference(input_media);
-    if (file_reference == FileReferenceView::invalid_file_reference()) {
+    auto file_references = FileManager::extract_file_references(input_media);
+    for (auto &file_reference : file_references) {
+      if (file_reference == FileReferenceView::invalid_file_reference()) {
+        if (!force) {
+          LOG(INFO) << "File " << file_id << " has invalid file reference";
+          return nullptr;
+        }
+        LOG(ERROR) << "File " << file_id << " has invalid file reference, but we are forced to use it";
+      }
+    }
+  }
+  return input_media;
+}
+
+telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media(const MessageContent *content,
+                                                                                   Td *td, MessageSelfDestructType ttl,
+                                                                                   const string &emoji, bool force,
+                                                                                   int32 media_pos) {
+  auto input_media = get_message_content_input_media_impl(content, media_pos, td, nullptr, nullptr, ttl, emoji);
+  auto file_references = FileManager::extract_file_references(input_media);
+  for (size_t i = 0; i < file_references.size(); i++) {
+    if (file_references[i] == FileReferenceView::invalid_file_reference()) {
+      auto file_ids = get_message_content_any_file_ids(content);
+      CHECK(file_ids.size() == file_references.size());
+      auto file_id = file_ids[i];
       if (!force) {
         LOG(INFO) << "File " << file_id << " has invalid file reference";
         return nullptr;
       }
-      LOG(ERROR) << "File " << file_id << " has invalid file reference, but we forced to use it";
+      LOG(ERROR) << "File " << file_id << " has invalid file reference, but we are forced to use it";
     }
   }
   return input_media;
 }
 
-tl_object_ptr<telegram_api::InputMedia> get_input_media(const MessageContent *content, Td *td,
-                                                        MessageSelfDestructType ttl, const string &emoji, bool force) {
-  auto input_media = get_input_media_impl(content, td, nullptr, nullptr, ttl, emoji);
-  auto file_reference = FileManager::extract_file_reference(input_media);
-  if (file_reference == FileReferenceView::invalid_file_reference()) {
-    auto file_id = get_message_content_any_file_id(content);
-    if (!force) {
-      LOG(INFO) << "File " << file_id << " has invalid file reference";
-      return nullptr;
-    }
-    LOG(ERROR) << "File " << file_id << " has invalid file reference, but we forced to use it";
-  }
-  return input_media;
-}
-
-tl_object_ptr<telegram_api::InputMedia> get_fake_input_media(Td *td, tl_object_ptr<telegram_api::InputFile> input_file,
-                                                             FileId file_id) {
+telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_fake_input_media(
+    Td *td, telegram_api::object_ptr<telegram_api::InputFile> input_file, FileId file_id) {
   FileView file_view = td->file_manager_->get_file_view(file_id);
   auto file_type = file_view.get_type();
   if (is_document_file_type(file_type)) {
-    vector<tl_object_ptr<telegram_api::DocumentAttribute>> attributes;
+    vector<telegram_api::object_ptr<telegram_api::DocumentAttribute>> attributes;
     auto file_path = file_view.suggested_path();
     const PathView path_view(file_path);
     Slice file_name = path_view.file_name();
     if (!file_name.empty()) {
-      attributes.push_back(make_tl_object<telegram_api::documentAttributeFilename>(file_name.str()));
+      attributes.push_back(telegram_api::make_object<telegram_api::documentAttributeFilename>(file_name.str()));
     }
     string mime_type = MimeType::from_extension(path_view.extension());
     int32 flags = 0;
@@ -3506,19 +3634,20 @@ tl_object_ptr<telegram_api::InputMedia> get_fake_input_media(Td *td, tl_object_p
     if (file_type == FileType::DocumentAsFile) {
       flags |= telegram_api::inputMediaUploadedDocument::FORCE_FILE_MASK;
     }
-    return make_tl_object<telegram_api::inputMediaUploadedDocument>(
+    return telegram_api::make_object<telegram_api::inputMediaUploadedDocument>(
         flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, std::move(input_file), nullptr, mime_type,
-        std::move(attributes), vector<tl_object_ptr<telegram_api::InputDocument>>(), 0);
+        std::move(attributes), vector<telegram_api::object_ptr<telegram_api::InputDocument>>(), 0);
   } else {
     CHECK(file_type == FileType::Photo || file_type == FileType::PhotoStory);
     int32 flags = 0;
-    return make_tl_object<telegram_api::inputMediaUploadedPhoto>(
-        flags, false /*ignored*/, std::move(input_file), vector<tl_object_ptr<telegram_api::InputDocument>>(), 0);
+    return telegram_api::make_object<telegram_api::inputMediaUploadedPhoto>(
+        flags, false /*ignored*/, std::move(input_file),
+        vector<telegram_api::object_ptr<telegram_api::InputDocument>>(), 0);
   }
 }
 
-tl_object_ptr<telegram_api::InputMedia> get_message_content_input_media_web_page(const Td *td,
-                                                                                 const MessageContent *content) {
+telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media_web_page(
+    const Td *td, const MessageContent *content) {
   CHECK(content != nullptr);
   if (content->get_type() != MessageContentType::Text) {
     return nullptr;
@@ -3541,7 +3670,31 @@ tl_object_ptr<telegram_api::InputMedia> get_message_content_input_media_web_page
                                                                     false /*ignored*/, text->web_page_url);
 }
 
-void delete_message_content_thumbnail(MessageContent *content, Td *td) {
+bool is_uploaded_input_media(telegram_api::object_ptr<telegram_api::InputMedia> &input_media) {
+  CHECK(input_media != nullptr);
+  LOG(DEBUG) << "Have " << to_string(input_media);
+  switch (input_media->get_id()) {
+    case telegram_api::inputMediaUploadedDocument::ID:
+      static_cast<telegram_api::inputMediaUploadedDocument *>(input_media.get())->flags_ |=
+          telegram_api::inputMediaUploadedDocument::NOSOUND_VIDEO_MASK;
+    // fallthrough
+    case telegram_api::inputMediaUploadedPhoto::ID:
+    case telegram_api::inputMediaDocumentExternal::ID:
+    case telegram_api::inputMediaPhotoExternal::ID:
+      return false;
+    case telegram_api::inputMediaDocument::ID:
+    case telegram_api::inputMediaPhoto::ID:
+      return true;
+    default:
+      UNREACHABLE();
+      return false;
+  }
+}
+
+void delete_message_content_thumbnail(MessageContent *content, Td *td, int32 media_pos) {
+  if (media_pos != -1) {
+    CHECK(content->get_type() == MessageContentType::PaidMedia);
+  }
   switch (content->get_type()) {
     case MessageContentType::Animation: {
       auto *m = static_cast<MessageAnimation *>(content);
@@ -3558,6 +3711,17 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td) {
     case MessageContentType::Invoice: {
       auto *m = static_cast<MessageInvoice *>(content);
       return m->input_invoice.delete_thumbnail(td);
+    }
+    case MessageContentType::PaidMedia: {
+      auto *m = static_cast<MessagePaidMedia *>(content);
+      if (media_pos == -1) {
+        CHECK(m->media.size() == 1u);
+        media_pos = 0;
+      } else {
+        CHECK(static_cast<size_t>(media_pos) < m->media.size());
+      }
+      m->media[media_pos].delete_thumbnail(td);
+      break;
     }
     case MessageContentType::Photo: {
       auto *m = static_cast<MessagePhoto *>(content);
@@ -3737,6 +3901,21 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
     case MessageContentType::Location:
       if (!permissions.can_send_messages()) {
         return Status::Error(400, "Not enough rights to send locations to the chat");
+      }
+      break;
+    case MessageContentType::PaidMedia:
+      if (is_forward) {
+        if (!permissions.can_send_photos() || !permissions.can_send_videos()) {
+          return Status::Error(400, "Not enough rights to send paid media to the chat");
+        }
+        if (dialog_type == DialogType::SecretChat) {
+          return Status::Error(400, "Paid media can't be sent to secret chats");
+        }
+      } else {
+        if (dialog_type != DialogType::Channel ||
+            !td->chat_manager_->is_broadcast_channel(dialog_id.get_channel_id())) {
+          return Status::Error(400, "Paid media can be sent only in channel chats");
+        }
       }
       break;
     case MessageContentType::Photo:
@@ -4005,6 +4184,7 @@ static int32 get_message_content_media_index_mask(const MessageContent *content,
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaidMedia:
       return 0;
     default:
       UNREACHABLE();
@@ -4289,6 +4469,8 @@ vector<UserId> get_message_content_min_user_ids(const Td *td, const MessageConte
     case MessageContentType::BoostApply:
       break;
     case MessageContentType::DialogShared:
+      break;
+    case MessageContentType::PaidMedia:
       break;
     default:
       UNREACHABLE();
@@ -4598,6 +4780,18 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
       }
       break;
     }
+    case MessageContentType::PaidMedia: {
+      const auto *old_ = static_cast<const MessagePaidMedia *>(old_content);
+      auto *new_ = static_cast<MessagePaidMedia *>(new_content);
+      if (old_->media.size() != new_->media.size()) {
+        LOG(ERROR) << "Had " << old_->media.size() << " paid media, but now have " << new_->media.size();
+      } else {
+        for (size_t i = 0; i < old_->media.size(); i++) {
+          old_->media[i].merge_files(td, new_->media[i], dialog_id, need_merge_files, is_content_changed, need_update);
+        }
+      }
+      break;
+    }
     case MessageContentType::Photo: {
       const auto *old_ = static_cast<const MessagePhoto *>(old_content);
       auto *new_ = static_cast<MessagePhoto *>(new_content);
@@ -4795,6 +4989,7 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
     case MessageContentType::Invoice:
     case MessageContentType::LiveLocation:
     case MessageContentType::Location:
+    case MessageContentType::PaidMedia:
     case MessageContentType::Story:
     case MessageContentType::Text:
     case MessageContentType::Venue:
@@ -5388,6 +5583,23 @@ void compare_message_contents(Td *td, const MessageContent *old_content, const M
       const auto *rhs = static_cast<const MessageDialogShared *>(new_content);
       if (lhs->shared_dialogs != rhs->shared_dialogs || lhs->button_id != rhs->button_id) {
         need_update = true;
+      }
+      break;
+    }
+    case MessageContentType::PaidMedia: {
+      const auto *lhs = static_cast<const MessagePaidMedia *>(old_content);
+      const auto *rhs = static_cast<const MessagePaidMedia *>(new_content);
+      if (lhs->caption != rhs->caption || lhs->star_count != rhs->star_count ||
+          lhs->media.size() != rhs->media.size()) {
+        need_update = true;
+      } else {
+        for (size_t i = 0; i < lhs->media.size(); i++) {
+          if (lhs->media[i] != rhs->media[i]) {
+            need_update = true;
+          } else if (lhs->media[i].is_equal_but_different(rhs->media[i])) {
+            is_content_changed = true;
+          }
+        }
       }
       break;
     }
@@ -6313,6 +6525,14 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
           std::move(media->prize_description_), media->until_date_, media->only_new_subscribers_, media->refunded_,
           media->winners_count_, media->unclaimed_count_, std::move(winner_user_ids));
     }
+    case telegram_api::messageMediaPaidMedia::ID: {
+      auto media = telegram_api::move_object_as<telegram_api::messageMediaPaidMedia>(media_ptr);
+      auto extended_media = transform(std::move(media->extended_media_), [&](auto &&extended_media) {
+        return MessageExtendedMedia(td, std::move(extended_media), owner_dialog_id);
+      });
+      return td::make_unique<MessagePaidMedia>(std::move(extended_media), std::move(message),
+                                               StarManager::get_star_count(media->stars_amount_));
+    }
     case telegram_api::messageMediaUnsupported::ID:
       return make_unique<MessageUnsupported>();
     default:
@@ -6333,7 +6553,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     CHECK(type == MessageContentDupType::Copy || type == MessageContentDupType::ServerCopy);
   }
   if (type != MessageContentDupType::Forward && type != MessageContentDupType::SendViaBot &&
-      !can_have_input_media(td, content, type == MessageContentDupType::ServerCopy)) {
+      !can_message_content_have_input_media(td, content, type == MessageContentDupType::ServerCopy)) {
     return nullptr;
   }
 
@@ -6423,6 +6643,23 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       }
     case MessageContentType::Location:
       return make_unique<MessageLocation>(*static_cast<const MessageLocation *>(content));
+    case MessageContentType::PaidMedia: {
+      if (type == MessageContentDupType::Copy || type == MessageContentDupType::ServerCopy) {
+        return nullptr;
+      }
+      CHECK(!to_secret);
+      auto result = make_unique<MessagePaidMedia>(*static_cast<const MessagePaidMedia *>(content));
+      if (replace_caption) {
+        result->caption = std::move(copy_options.new_caption);
+      }
+      if (type != MessageContentDupType::Forward) {
+        for (auto &media : result->media) {
+          media = media.dup_to_send(td, result->media.size() > 1u);
+          CHECK(!media.is_empty());
+        }
+      }
+      return result;
+    }
     case MessageContentType::Photo: {
       auto result = make_unique<MessagePhoto>(*static_cast<const MessagePhoto *>(content));
       if (replace_caption) {
@@ -6435,60 +6672,20 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
         // having remote location is not enough to have InputMedia, because the file may not have valid file_reference
         // also file_id needs to be duped, because upload can be called to repair the file_reference and every upload
         // request must have unique file_id
-        if (!td->auth_manager_->is_bot()) {
+        if (!td->auth_manager_->is_bot() && type != MessageContentDupType::Forward) {
           result->photo.photos.back().file_id = fix_file_id(result->photo.photos.back().file_id);
         }
         return std::move(result);
       }
 
-      // Find 'i' or largest
-      PhotoSize photo;
-      for (const auto &size : result->photo.photos) {
-        if (size.type == 'i') {
-          photo = size;
-        }
-      }
-      if (photo.type == 0) {
-        for (const auto &size : result->photo.photos) {
-          if (photo.type == 0 || photo < size) {
-            photo = size;
-          }
-        }
-      }
-
-      // Find 't' or smallest
-      PhotoSize thumbnail;
-      for (const auto &size : result->photo.photos) {
-        if (size.type == 't') {
-          thumbnail = size;
-        }
-      }
-      if (thumbnail.type == 0) {
-        for (const auto &size : result->photo.photos) {
-          if (size.type != photo.type && (thumbnail.type == 0 || size < thumbnail)) {
-            thumbnail = size;
-          }
-        }
-      }
-
-      result->photo.photos.clear();
-      result->photo.animations.clear();
-      result->photo.sticker_photo_size = nullptr;
-
-      bool has_thumbnail = thumbnail.type != 0;
-      if (has_thumbnail) {
-        thumbnail.type = 't';
-        result->photo.photos.push_back(std::move(thumbnail));
-      }
-      photo.type = 'i';
-      result->photo.photos.push_back(std::move(photo));
+      result->photo = dup_photo(result->photo);
 
       if (photo_has_input_media(td->file_manager_.get(), result->photo, to_secret, td->auth_manager_->is_bot())) {
         return std::move(result);
       }
 
       result->photo.photos.back().file_id = fix_file_id(result->photo.photos.back().file_id);
-      if (has_thumbnail) {
+      if (result->photo.photos.size() > 1) {
         result->photo.photos[0].file_id =
             td->file_manager_->dup_file_id(result->photo.photos[0].file_id, "dup_message_content photo");
       }
@@ -6614,9 +6811,62 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
 
 unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<telegram_api::MessageAction> &&action_ptr,
                                                       DialogId owner_dialog_id, int32 message_date,
-                                                      const RepliedMessageInfo &replied_message_info) {
+                                                      const RepliedMessageInfo &replied_message_info,
+                                                      bool is_business_message) {
   CHECK(action_ptr != nullptr);
-
+  if (is_business_message) {
+    switch (action_ptr->get_id()) {
+      case telegram_api::messageActionEmpty::ID:
+      case telegram_api::messageActionChatCreate::ID:
+      case telegram_api::messageActionChatEditTitle::ID:
+      case telegram_api::messageActionChatEditPhoto::ID:
+      case telegram_api::messageActionChatDeletePhoto::ID:
+      case telegram_api::messageActionChatAddUser::ID:
+      case telegram_api::messageActionChatJoinedByLink::ID:
+      case telegram_api::messageActionChatDeleteUser::ID:
+      case telegram_api::messageActionChatMigrateTo::ID:
+      case telegram_api::messageActionChannelCreate::ID:
+      case telegram_api::messageActionChannelMigrateFrom::ID:
+      case telegram_api::messageActionPaymentSent::ID:
+      case telegram_api::messageActionPaymentSentMe::ID:
+      case telegram_api::messageActionBotAllowed::ID:
+      case telegram_api::messageActionSecureValuesSent::ID:
+      case telegram_api::messageActionSecureValuesSentMe::ID:
+      case telegram_api::messageActionGroupCall::ID:
+      case telegram_api::messageActionInviteToGroupCall::ID:
+      case telegram_api::messageActionGroupCallScheduled::ID:
+      case telegram_api::messageActionChatJoinedByRequest::ID:
+      case telegram_api::messageActionWebViewDataSent::ID:
+      case telegram_api::messageActionWebViewDataSentMe::ID:
+      case telegram_api::messageActionTopicCreate::ID:
+      case telegram_api::messageActionTopicEdit::ID:
+      case telegram_api::messageActionRequestedPeer::ID:
+      case telegram_api::messageActionGiveawayLaunch::ID:
+      case telegram_api::messageActionGiveawayResults::ID:
+      case telegram_api::messageActionBoostApply::ID:
+        LOG(ERROR) << "Receive business " << to_string(action_ptr);
+        break;
+      case telegram_api::messageActionHistoryClear::ID:
+      case telegram_api::messageActionPinMessage::ID:
+      case telegram_api::messageActionGameScore::ID:
+      case telegram_api::messageActionPhoneCall::ID:
+      case telegram_api::messageActionScreenshotTaken::ID:
+      case telegram_api::messageActionCustomAction::ID:
+      case telegram_api::messageActionContactSignUp::ID:
+      case telegram_api::messageActionGeoProximityReached::ID:
+      case telegram_api::messageActionSetMessagesTTL::ID:
+      case telegram_api::messageActionSetChatTheme::ID:
+      case telegram_api::messageActionGiftPremium::ID:
+      case telegram_api::messageActionSuggestProfilePhoto::ID:
+      case telegram_api::messageActionSetChatWallPaper::ID:
+      case telegram_api::messageActionGiftCode::ID:
+      case telegram_api::messageActionRequestedPeerSentMe::ID:
+        // ok
+        break;
+      default:
+        UNREACHABLE();
+    }
+  }
   switch (action_ptr->get_id()) {
     case telegram_api::messageActionEmpty::ID:
       LOG(ERROR) << "Receive empty message action in " << owner_dialog_id;
@@ -6649,12 +6899,10 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       }
       return make_unique<MessageChatChangePhoto>(std::move(photo));
     }
-    case telegram_api::messageActionChatDeletePhoto::ID: {
+    case telegram_api::messageActionChatDeletePhoto::ID:
       return make_unique<MessageChatDeletePhoto>();
-    }
-    case telegram_api::messageActionHistoryClear::ID: {
+    case telegram_api::messageActionHistoryClear::ID:
       return make_unique<MessageChatDeleteHistory>();
-    }
     case telegram_api::messageActionChatAddUser::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionChatAddUser>(action_ptr);
 
@@ -6777,9 +7025,8 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       result->provider_payment_charge_id = std::move(action->charge_->provider_charge_id_);
       return std::move(result);
     }
-    case telegram_api::messageActionScreenshotTaken::ID: {
+    case telegram_api::messageActionScreenshotTaken::ID:
       return make_unique<MessageScreenshotTaken>();
-    }
     case telegram_api::messageActionCustomAction::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionCustomAction>(action_ptr);
       return td::make_unique<MessageCustomServiceAction>(std::move(action->message_));
@@ -6813,10 +7060,11 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
           get_encrypted_secure_values(td->file_manager_.get(), std::move(action->values_)),
           get_encrypted_secure_credentials(std::move(action->credentials_)));
     }
-    case telegram_api::messageActionContactSignUp::ID: {
-      LOG_IF(ERROR, td->auth_manager_->is_bot()) << "Receive ContactRegistered in " << owner_dialog_id;
+    case telegram_api::messageActionContactSignUp::ID:
+      if (!is_business_message && td->auth_manager_->is_bot()) {
+        LOG(ERROR) << "Receive ContactRegistered in " << owner_dialog_id;
+      }
       return td::make_unique<MessageContactRegistered>();
-    }
     case telegram_api::messageActionGeoProximityReached::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionGeoProximityReached>(action_ptr);
       DialogId traveler_id(action->from_id_);
@@ -7446,6 +7694,13 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       return td_api::make_object<td_api::messageChatShared>(m->shared_dialogs[0].get_shared_chat_object(td),
                                                             m->button_id);
     }
+    case MessageContentType::PaidMedia: {
+      const auto *m = static_cast<const MessagePaidMedia *>(content);
+      return td_api::make_object<td_api::messagePaidMedia>(
+          m->star_count,
+          transform(m->media, [&](const auto &media) { return media.get_message_extended_media_object(td); }),
+          get_formatted_text_object(m->caption, skip_bot_commands, max_media_timestamp), invert_media);
+    }
     default:
       UNREACHABLE();
       return nullptr;
@@ -7479,6 +7734,8 @@ const FormattedText *get_message_content_caption(const MessageContent *content) 
       return &static_cast<const MessageDocument *>(content)->caption;
     case MessageContentType::Invoice:
       return static_cast<const MessageInvoice *>(content)->input_invoice.get_caption();
+    case MessageContentType::PaidMedia:
+      return &static_cast<const MessagePaidMedia *>(content)->caption;
     case MessageContentType::Photo:
       return &static_cast<const MessagePhoto *>(content)->caption;
     case MessageContentType::Video:
@@ -7490,7 +7747,7 @@ const FormattedText *get_message_content_caption(const MessageContent *content) 
   }
 }
 
-bool get_message_content_has_spoiler(const MessageContent *content) {
+static bool get_message_content_has_spoiler(const MessageContent *content) {
   switch (content->get_type()) {
     case MessageContentType::Animation:
       return static_cast<const MessageAnimation *>(content)->has_spoiler;
@@ -7503,7 +7760,7 @@ bool get_message_content_has_spoiler(const MessageContent *content) {
   }
 }
 
-void set_message_content_has_spoiler(MessageContent *content, bool has_spoiler) {
+static void set_message_content_has_spoiler(MessageContent *content, bool has_spoiler) {
   switch (content->get_type()) {
     case MessageContentType::Animation:
       static_cast<MessageAnimation *>(content)->has_spoiler = has_spoiler;
@@ -7519,6 +7776,33 @@ void set_message_content_has_spoiler(MessageContent *content, bool has_spoiler) 
   }
 }
 
+unique_ptr<MessageContent> get_uploaded_message_content(
+    Td *td, const MessageContent *old_content, int32 media_pos,
+    telegram_api::object_ptr<telegram_api::MessageMedia> &&media_ptr, DialogId owner_dialog_id, int32 message_date,
+    const char *source) {
+  if (media_pos >= 0) {
+    CHECK(old_content->get_type() == MessageContentType::PaidMedia);
+    auto paid_media = static_cast<const MessagePaidMedia *>(old_content);
+    CHECK(static_cast<size_t>(media_pos) < paid_media->media.size());
+    auto content = make_unique<MessagePaidMedia>(*paid_media);
+    auto media = MessageExtendedMedia(td, std::move(media_ptr), owner_dialog_id);
+    if (!media.has_input_media()) {
+      LOG(ERROR) << "Receive invalid uploaded paid media";
+    } else {
+      bool is_content_changed = false;
+      bool need_update = false;
+      content->media[media_pos].merge_files(td, media, owner_dialog_id, true, is_content_changed, need_update);
+    }
+    return content;
+  }
+  auto caption = get_message_content_caption(old_content);
+  auto has_spoiler = get_message_content_has_spoiler(old_content);
+  auto content = get_message_content(td, caption == nullptr ? FormattedText() : *caption, std::move(media_ptr),
+                                     owner_dialog_id, message_date, false, UserId(), nullptr, nullptr, source);
+  set_message_content_has_spoiler(content.get(), has_spoiler);
+  return content;
+}
+
 int32 get_message_content_duration(const MessageContent *content, const Td *td) {
   CHECK(content != nullptr);
   switch (content->get_type()) {
@@ -7532,6 +7816,13 @@ int32 get_message_content_duration(const MessageContent *content, const Td *td) 
     }
     case MessageContentType::Invoice:
       return static_cast<const MessageInvoice *>(content)->input_invoice.get_duration(td);
+    case MessageContentType::PaidMedia: {
+      int32 result = -1;
+      for (auto &media : static_cast<const MessagePaidMedia *>(content)->media) {
+        result = max(result, media.get_duration(td));
+      }
+      return result;
+    }
     case MessageContentType::Video: {
       auto video_file_id = static_cast<const MessageVideo *>(content)->file_id;
       return td->videos_manager_->get_video_duration(video_file_id);
@@ -7558,6 +7849,13 @@ int32 get_message_content_media_duration(const MessageContent *content, const Td
     }
     case MessageContentType::Invoice:
       return static_cast<const MessageInvoice *>(content)->input_invoice.get_duration(td);
+    case MessageContentType::PaidMedia: {
+      int32 result = -1;
+      for (const auto &media : static_cast<const MessagePaidMedia *>(content)->media) {
+        result = max(result, media.get_duration(td));
+      }
+      return result;
+    }
     case MessageContentType::Story: {
       auto story_full_id = static_cast<const MessageStory *>(content)->story_full_id;
       return td->story_manager_->get_story_duration(story_full_id);
@@ -7613,10 +7911,25 @@ FileId get_message_content_upload_file_id(const MessageContent *content) {
       return static_cast<const MessageVideoNote *>(content)->file_id;
     case MessageContentType::VoiceNote:
       return static_cast<const MessageVoiceNote *>(content)->file_id;
+    case MessageContentType::PaidMedia:
+      UNREACHABLE();
+      break;
     default:
       break;
   }
   return FileId();
+}
+
+vector<FileId> get_message_content_upload_file_ids(const MessageContent *content) {
+  if (content->get_type() == MessageContentType::PaidMedia) {
+    return transform(static_cast<const MessagePaidMedia *>(content)->media,
+                     [](const MessageExtendedMedia &media) { return media.get_upload_file_id(); });
+  }
+  auto file_id = get_message_content_upload_file_id(content);
+  if (file_id.is_valid()) {
+    return {file_id};
+  }
+  return {};
 }
 
 FileId get_message_content_any_file_id(const MessageContent *content) {
@@ -7629,6 +7942,18 @@ FileId get_message_content_any_file_id(const MessageContent *content) {
     }
   }
   return result;
+}
+
+vector<FileId> get_message_content_any_file_ids(const MessageContent *content) {
+  if (content->get_type() == MessageContentType::PaidMedia) {
+    return transform(static_cast<const MessagePaidMedia *>(content)->media,
+                     [](const MessageExtendedMedia &media) { return media.get_any_file_id(); });
+  }
+  auto file_id = get_message_content_any_file_id(content);
+  if (file_id.is_valid()) {
+    return {file_id};
+  }
+  return {};
 }
 
 void update_message_content_file_id_remote(MessageContent *content, FileId file_id) {
@@ -7651,6 +7976,9 @@ void update_message_content_file_id_remote(MessageContent *content, FileId file_
         return &static_cast<MessageVideoNote *>(content)->file_id;
       case MessageContentType::VoiceNote:
         return &static_cast<MessageVoiceNote *>(content)->file_id;
+      case MessageContentType::PaidMedia:
+        UNREACHABLE();
+        return static_cast<FileId *>(nullptr);
       default:
         return static_cast<FileId *>(nullptr);
     }
@@ -7658,6 +7986,23 @@ void update_message_content_file_id_remote(MessageContent *content, FileId file_
   if (old_file_id != nullptr && *old_file_id == file_id && old_file_id->get_remote() == 0) {
     *old_file_id = file_id;
   }
+}
+
+void update_message_content_file_id_remotes(MessageContent *content, const vector<FileId> &file_ids) {
+  if (content->get_type() == MessageContentType::PaidMedia) {
+    auto &media = static_cast<MessagePaidMedia *>(content)->media;
+    if (file_ids.size() != media.size()) {
+      return;
+    }
+    for (size_t i = 0; i < file_ids.size(); i++) {
+      media[i].update_file_id_remote(file_ids[i]);
+    }
+    return;
+  }
+  if (file_ids.size() != 1) {
+    return;
+  }
+  update_message_content_file_id_remote(content, file_ids[0]);
 }
 
 FileId get_message_content_thumbnail_file_id(const MessageContent *content, const Td *td) {
@@ -7684,10 +8029,25 @@ FileId get_message_content_thumbnail_file_id(const MessageContent *content, cons
           static_cast<const MessageVideoNote *>(content)->file_id);
     case MessageContentType::VoiceNote:
       return FileId();
+    case MessageContentType::PaidMedia:
+      UNREACHABLE();
+      return FileId();
     default:
       break;
   }
   return FileId();
+}
+
+vector<FileId> get_message_content_thumbnail_file_ids(const MessageContent *content, const Td *td) {
+  if (content->get_type() == MessageContentType::PaidMedia) {
+    return transform(static_cast<const MessagePaidMedia *>(content)->media,
+                     [&](const MessageExtendedMedia &media) { return media.get_thumbnail_file_id(td); });
+  }
+  auto file_id = get_message_content_thumbnail_file_id(content, td);
+  if (file_id.is_valid()) {
+    return {file_id};
+  }
+  return {};
 }
 
 vector<FileId> get_message_content_file_ids(const MessageContent *content, const Td *td) {
@@ -7761,6 +8121,13 @@ vector<FileId> get_message_content_file_ids(const MessageContent *content, const
     case MessageContentType::Story:
       // story file references are repaired independently
       return {};
+    case MessageContentType::PaidMedia: {
+      vector<FileId> result;
+      for (const auto &media : static_cast<const MessagePaidMedia *>(content)->media) {
+        media.append_file_ids(td, result);
+      }
+      return result;
+    }
     default:
       return {};
   }
@@ -7804,6 +8171,10 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::Invoice: {
       const auto *invoice = static_cast<const MessageInvoice *>(content);
       return invoice->input_invoice.get_caption()->text;
+    }
+    case MessageContentType::PaidMedia: {
+      const auto *paid_media = static_cast<const MessagePaidMedia *>(content);
+      return paid_media->caption.text;
     }
     case MessageContentType::Photo: {
       const auto *photo = static_cast<const MessagePhoto *>(content);
@@ -7889,21 +8260,59 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
   }
 }
 
-bool update_message_content_extended_media(MessageContent *content,
-                                           telegram_api::object_ptr<telegram_api::MessageExtendedMedia> extended_media,
-                                           DialogId owner_dialog_id, Td *td) {
+bool update_message_content_extended_media(
+    MessageContent *content, vector<telegram_api::object_ptr<telegram_api::MessageExtendedMedia>> extended_media,
+    DialogId owner_dialog_id, Td *td) {
   CHECK(content != nullptr);
-  CHECK(content->get_type() == MessageContentType::Invoice);
-  return static_cast<MessageInvoice *>(content)->input_invoice.update_extended_media(std::move(extended_media),
-                                                                                     owner_dialog_id, td);
+  switch (content->get_type()) {
+    case MessageContentType::Invoice:
+      if (extended_media.size() != 1) {
+        LOG(ERROR) << "Receive " << extended_media.size() << " extended media in " << owner_dialog_id;
+        return false;
+      }
+      return static_cast<MessageInvoice *>(content)->input_invoice.update_extended_media(std::move(extended_media[0]),
+                                                                                         owner_dialog_id, td);
+    case MessageContentType::PaidMedia: {
+      auto &media = static_cast<MessagePaidMedia *>(content)->media;
+      if (extended_media.size() != media.size()) {
+        LOG(ERROR) << "Receive " << extended_media.size() << " paid media instead of " << media.size() << " in "
+                   << owner_dialog_id;
+        return false;
+      }
+      bool result = false;
+      for (size_t i = 0; i < media.size(); i++) {
+        if (media[i].update_to(td, std::move(extended_media[i]), owner_dialog_id)) {
+          result = true;
+        }
+      }
+      return result;
+    }
+    case MessageContentType::Unsupported:
+      return false;
+    default:
+      LOG(ERROR) << "Receive updateMessageExtendedMedia for a message of type " << content->get_type() << " in "
+                 << owner_dialog_id;
+      return false;
+  }
 }
 
 bool need_poll_message_content_extended_media(const MessageContent *content) {
   CHECK(content != nullptr);
-  if (content->get_type() != MessageContentType::Invoice) {
-    return false;
+  switch (content->get_type()) {
+    case MessageContentType::Invoice:
+      return static_cast<const MessageInvoice *>(content)->input_invoice.need_poll_extended_media();
+    case MessageContentType::PaidMedia: {
+      const auto &media = static_cast<const MessagePaidMedia *>(content)->media;
+      for (auto &extended_media : media) {
+        if (extended_media.need_poll()) {
+          return true;
+        }
+      }
+      return false;
+    }
+    default:
+      return false;
   }
-  return static_cast<const MessageInvoice *>(content)->input_invoice.need_poll_extended_media();
 }
 
 void get_message_content_animated_emoji_click_sticker(const MessageContent *content, MessageFullId message_full_id,
@@ -7946,6 +8355,15 @@ bool need_reget_message_content(const MessageContent *content) {
     case MessageContentType::Invoice: {
       const auto *m = static_cast<const MessageInvoice *>(content);
       return m->input_invoice.need_reget();
+    }
+    case MessageContentType::PaidMedia: {
+      const auto *m = static_cast<const MessagePaidMedia *>(content);
+      for (const auto &media : m->media) {
+        if (media.need_reget()) {
+          return true;
+        }
+      }
+      return false;
     }
     default:
       return false;
@@ -8227,6 +8645,8 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
     case MessageContentType::BoostApply:
       break;
     case MessageContentType::DialogShared:
+      break;
+    case MessageContentType::PaidMedia:
       break;
     default:
       UNREACHABLE();

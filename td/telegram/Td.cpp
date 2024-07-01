@@ -3836,6 +3836,7 @@ void Td::init_managers() {
   G()->set_sponsored_message_manager(sponsored_message_manager_actor_.get());
   star_manager_ = make_unique<StarManager>(this, create_reference());
   star_manager_actor_ = register_actor("StarManager", star_manager_.get());
+  G()->set_star_manager(star_manager_actor_.get());
   statistics_manager_ = make_unique<StatisticsManager>(this, create_reference());
   statistics_manager_actor_ = register_actor("StatisticsManager", statistics_manager_.get());
   stickers_manager_ = make_unique<StickersManager>(this, create_reference());
@@ -8764,6 +8765,19 @@ void Td::on_request(uint64 id, const td_api::getStarWithdrawalUrl &request) {
                                          std::move(query_promise));
 }
 
+void Td::on_request(uint64 id, const td_api::getStarAdAccountUrl &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  auto query_promise = PromiseCreator::lambda([promise = std::move(promise)](Result<string> result) mutable {
+    if (result.is_error()) {
+      promise.set_error(result.move_as_error());
+    } else {
+      promise.set_value(td_api::make_object<td_api::httpUrl>(result.move_as_ok()));
+    }
+  });
+  star_manager_->get_star_ad_account_url(request.owner_id_, std::move(query_promise));
+}
+
 void Td::on_request(uint64 id, const td_api::getMessageStatistics &request) {
   CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
@@ -10026,7 +10040,7 @@ td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getJsonSt
 }
 
 td_api::object_ptr<td_api::Object> Td::do_static_request(const td_api::getThemeParametersJsonString &request) {
-  return td_api::make_object<td_api::text>(ThemeManager::get_theme_parameters_json_string(request.theme_, true));
+  return td_api::make_object<td_api::text>(ThemeManager::get_theme_parameters_json_string(request.theme_));
 }
 
 td_api::object_ptr<td_api::Object> Td::do_static_request(td_api::setLogStream &request) {
