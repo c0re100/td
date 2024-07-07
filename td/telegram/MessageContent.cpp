@@ -1138,6 +1138,31 @@ class MessagePaidMedia final : public MessageContent {
   }
 };
 
+class MessagePaymentRefunded final : public MessageContent {
+ public:
+  DialogId dialog_id;
+  string currency;
+  int64 total_amount = 0;
+  string invoice_payload;
+  string telegram_payment_charge_id;
+  string provider_payment_charge_id;
+
+  MessagePaymentRefunded() = default;
+  MessagePaymentRefunded(DialogId dialog_id, string currency, int64 total_amount, string invoice_payload,
+                         string telegram_payment_charge_id, string provider_payment_charge_id)
+      : dialog_id(dialog_id)
+      , currency(std::move(currency))
+      , total_amount(total_amount)
+      , invoice_payload(std::move(invoice_payload))
+      , telegram_payment_charge_id(std::move(telegram_payment_charge_id))
+      , provider_payment_charge_id(std::move(provider_payment_charge_id)) {
+  }
+
+  MessageContentType get_type() const final {
+    return MessageContentType::PaymentRefunded;
+  }
+};
+
 template <class StorerT>
 static void store(const MessageContent *content, StorerT &storer) {
   CHECK(content != nullptr);
@@ -1713,6 +1738,22 @@ static void store(const MessageContent *content, StorerT &storer) {
         store(m->caption, storer);
       }
       store(m->star_count, storer);
+      break;
+    }
+    case MessageContentType::PaymentRefunded: {
+      const auto *m = static_cast<const MessagePaymentRefunded *>(content);
+      bool has_invoice_payload = !m->invoice_payload.empty();
+      BEGIN_STORE_FLAGS();
+      STORE_FLAG(has_invoice_payload);
+      END_STORE_FLAGS();
+      store(m->dialog_id, storer);
+      store(m->currency, storer);
+      store(m->total_amount, storer);
+      if (has_invoice_payload) {
+        store(m->invoice_payload, storer);
+      }
+      store(m->telegram_payment_charge_id, storer);
+      store(m->provider_payment_charge_id, storer);
       break;
     }
     default:
@@ -2484,6 +2525,23 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       content = std::move(m);
       break;
     }
+    case MessageContentType::PaymentRefunded: {
+      auto m = make_unique<MessagePaymentRefunded>();
+      bool has_invoice_payload;
+      BEGIN_PARSE_FLAGS();
+      PARSE_FLAG(has_invoice_payload);
+      END_PARSE_FLAGS();
+      parse(m->dialog_id, parser);
+      parse(m->currency, parser);
+      parse(m->total_amount, parser);
+      if (has_invoice_payload) {
+        parse(m->invoice_payload, parser);
+      }
+      parse(m->telegram_payment_charge_id, parser);
+      parse(m->provider_payment_charge_id, parser);
+      content = std::move(m);
+      break;
+    }
 
     default:
       is_bad = true;
@@ -3238,6 +3296,7 @@ bool can_message_content_have_input_media(const Td *td, const MessageContent *co
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       return false;
     case MessageContentType::Animation:
     case MessageContentType::Audio:
@@ -3381,6 +3440,7 @@ SecretInputMedia get_message_content_secret_input_media(
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
     case MessageContentType::PaidMedia:
+    case MessageContentType::PaymentRefunded:
       break;
     default:
       UNREACHABLE();
@@ -3547,6 +3607,7 @@ static telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_in
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       break;
     default:
       UNREACHABLE();
@@ -3798,6 +3859,7 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td, int32 med
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       break;
     default:
       UNREACHABLE();
@@ -4036,6 +4098,7 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       UNREACHABLE();
   }
   return Status::OK();
@@ -4185,6 +4248,7 @@ static int32 get_message_content_media_index_mask(const MessageContent *content,
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
     case MessageContentType::PaidMedia:
+    case MessageContentType::PaymentRefunded:
       return 0;
     default:
       UNREACHABLE();
@@ -4471,6 +4535,9 @@ vector<UserId> get_message_content_min_user_ids(const Td *td, const MessageConte
     case MessageContentType::DialogShared:
       break;
     case MessageContentType::PaidMedia:
+      break;
+    case MessageContentType::PaymentRefunded:
+      // private chats only
       break;
     default:
       UNREACHABLE();
@@ -4892,6 +4959,7 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       break;
     default:
       UNREACHABLE();
@@ -5044,6 +5112,7 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       LOG(ERROR) << "Receive new file " << new_file_id << " in a sent message of the type " << content_type;
       break;
     default:
@@ -5600,6 +5669,17 @@ void compare_message_contents(Td *td, const MessageContent *old_content, const M
             is_content_changed = true;
           }
         }
+      }
+      break;
+    }
+    case MessageContentType::PaymentRefunded: {
+      const auto *lhs = static_cast<const MessagePaymentRefunded *>(old_content);
+      const auto *rhs = static_cast<const MessagePaymentRefunded *>(new_content);
+      if (lhs->dialog_id != rhs->dialog_id || lhs->currency != rhs->currency ||
+          lhs->total_amount != rhs->total_amount || lhs->invoice_payload != rhs->invoice_payload ||
+          lhs->telegram_payment_charge_id != rhs->telegram_payment_charge_id ||
+          lhs->provider_payment_charge_id != rhs->provider_payment_charge_id) {
+        need_update = true;
       }
       break;
     }
@@ -6558,7 +6638,10 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
   }
 
   bool to_secret = dialog_id.get_type() == DialogType::SecretChat;
-  auto fix_file_id = [dialog_id, to_secret, file_manager = td->file_manager_.get()](FileId file_id) {
+  bool need_dup = type != MessageContentDupType::ServerCopy && type != MessageContentDupType::Forward;
+  CHECK(!to_secret || need_dup);
+  auto fix_file_id = [dialog_id, to_secret, need_dup, file_manager = td->file_manager_.get()](FileId file_id) {
+    CHECK(need_dup);
     auto file_view = file_manager->get_file_view(file_id);
     if (to_secret && !file_view.is_encrypted_secret()) {
       file_id = file_manager->copy_file_id(file_id, FileType::Encrypted, dialog_id, "copy message content to secret");
@@ -6578,7 +6661,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       if (replace_caption) {
         result->caption = std::move(copy_options.new_caption);
       }
-      if (td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
+      if (!need_dup || td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
         return std::move(result);
       }
       result->file_id = td->animations_manager_->dup_animation(fix_file_id(result->file_id), result->file_id);
@@ -6590,7 +6673,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       if (replace_caption) {
         result->caption = std::move(copy_options.new_caption);
       }
-      if (td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
+      if (!need_dup || td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
         return std::move(result);
       }
       result->file_id = td->audios_manager_->dup_audio(fix_file_id(result->file_id), result->file_id);
@@ -6611,7 +6694,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       if (replace_caption) {
         result->caption = std::move(copy_options.new_caption);
       }
-      if (td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
+      if (!need_dup || td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
         return std::move(result);
       }
       result->file_id = td->documents_manager_->dup_document(fix_file_id(result->file_id), result->file_id);
@@ -6667,12 +6750,12 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       }
 
       CHECK(!result->photo.photos.empty());
-      if ((result->photo.photos.size() > 2 || result->photo.photos.back().type != 'i') && !to_secret) {
+      if ((!need_dup || result->photo.photos.size() > 2 || result->photo.photos.back().type != 'i') && !to_secret) {
         // already sent photo
         // having remote location is not enough to have InputMedia, because the file may not have valid file_reference
         // also file_id needs to be duped, because upload can be called to repair the file_reference and every upload
         // request must have unique file_id
-        if (!td->auth_manager_->is_bot() && type != MessageContentDupType::Forward) {
+        if (!td->auth_manager_->is_bot() && need_dup) {
           result->photo.photos.back().file_id = fix_file_id(result->photo.photos.back().file_id);
         }
         return std::move(result);
@@ -6701,7 +6784,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::Sticker: {
       auto result = make_unique<MessageSticker>(*static_cast<const MessageSticker *>(content));
       result->is_premium = td->option_manager_->get_option_boolean("is_premium");
-      if (td->stickers_manager_->has_input_media(result->file_id, to_secret)) {
+      if (!need_dup || td->stickers_manager_->has_input_media(result->file_id, to_secret)) {
         return std::move(result);
       }
       result->file_id = td->stickers_manager_->dup_sticker(fix_file_id(result->file_id), result->file_id);
@@ -6724,7 +6807,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
       if (replace_caption) {
         result->caption = std::move(copy_options.new_caption);
       }
-      if (td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
+      if (!need_dup || td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
         return std::move(result);
       }
       result->file_id = td->videos_manager_->dup_video(fix_file_id(result->file_id), result->file_id);
@@ -6734,7 +6817,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::VideoNote: {
       auto result = make_unique<MessageVideoNote>(*static_cast<const MessageVideoNote *>(content));
       result->is_viewed = false;
-      if (td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
+      if (!need_dup || td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
         return std::move(result);
       }
       result->file_id = td->video_notes_manager_->dup_video_note(fix_file_id(result->file_id), result->file_id);
@@ -6747,7 +6830,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
         result->caption = std::move(copy_options.new_caption);
       }
       result->is_listened = false;
-      if (td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
+      if (!need_dup || td->documents_manager_->has_input_media(result->file_id, thumbnail_file_id, to_secret)) {
         return std::move(result);
       }
       result->file_id = td->voice_notes_manager_->dup_voice_note(fix_file_id(result->file_id), result->file_id);
@@ -6801,6 +6884,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       return nullptr;
     default:
       UNREACHABLE();
@@ -6844,6 +6928,7 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       case telegram_api::messageActionGiveawayLaunch::ID:
       case telegram_api::messageActionGiveawayResults::ID:
       case telegram_api::messageActionBoostApply::ID:
+      case telegram_api::messageActionPaymentRefunded::ID:
         LOG(ERROR) << "Receive business " << to_string(action_ptr);
         break;
       case telegram_api::messageActionHistoryClear::ID:
@@ -7278,6 +7363,17 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
 
       return td::make_unique<MessageDialogShared>(std::move(shared_dialogs), action->button_id_);
     }
+    case telegram_api::messageActionPaymentRefunded::ID: {
+      auto action = move_tl_object_as<telegram_api::messageActionPaymentRefunded>(action_ptr);
+      if (action->total_amount_ <= 0 || !check_currency_amount(action->total_amount_)) {
+        LOG(ERROR) << "Receive invalid refunded payment amount " << action->total_amount_;
+        action->total_amount_ = 0;
+      }
+      return td::make_unique<MessagePaymentRefunded>(DialogId(action->peer_), std::move(action->currency_),
+                                                     action->total_amount_, action->payload_.as_slice().str(),
+                                                     std::move(action->charge_->id_),
+                                                     std::move(action->charge_->provider_charge_id_));
+    }
     default:
       UNREACHABLE();
   }
@@ -7365,7 +7461,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
           return td_api::make_object<td_api::messageAnimatedEmoji>(std::move(animated_emoji), m->text.text);
         }
       }
-      auto web_page = td->web_pages_manager_->get_web_page_object(
+      auto web_page = td->web_pages_manager_->get_link_preview_object(
           m->web_page_id, m->force_small_media, m->force_large_media, m->skip_web_page_confirmation, invert_media);
       if (web_page != nullptr && !web_page->skip_confirmation_ && is_visible_url(m->text, web_page->url_)) {
         web_page->skip_confirmation_ = true;
@@ -7700,6 +7796,12 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
           m->star_count,
           transform(m->media, [&](const auto &media) { return media.get_message_extended_media_object(td); }),
           get_formatted_text_object(m->caption, skip_bot_commands, max_media_timestamp), invert_media);
+    }
+    case MessageContentType::PaymentRefunded: {
+      const auto *m = static_cast<const MessagePaymentRefunded *>(content);
+      return td_api::make_object<td_api::messagePaymentRefunded>(
+          get_message_sender_object(td, m->dialog_id, "messagePaymentRefunded"), m->currency, m->total_amount,
+          m->invoice_payload, m->telegram_payment_charge_id, m->provider_payment_charge_id);
     }
     default:
       UNREACHABLE();
@@ -8253,6 +8355,7 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
     case MessageContentType::DialogShared:
+    case MessageContentType::PaymentRefunded:
       return string();
     default:
       UNREACHABLE();
@@ -8648,6 +8751,11 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
       break;
     case MessageContentType::PaidMedia:
       break;
+    case MessageContentType::PaymentRefunded: {
+      const auto *content = static_cast<const MessagePaymentRefunded *>(message_content);
+      dependencies.add_message_sender_dependencies(content->dialog_id);
+      break;
+    }
     default:
       UNREACHABLE();
       break;

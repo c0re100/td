@@ -528,6 +528,8 @@ void UpdatesManager::before_get_difference(bool is_initial) {
   // may be called many times before after_get_difference is called
   send_closure(G()->state_manager(), &StateManager::on_synchronized, false);
 
+  td_->messages_manager_->before_get_difference();
+
   vector<Promise<Unit>> promises;
   if (can_postpone_updates()) {
     for (auto &update : pending_pts_updates_) {
@@ -1078,6 +1080,13 @@ bool UpdatesManager::is_acceptable_message(const telegram_api::Message *message_
         case telegram_api::messageActionGiftCode::ID: {
           auto gift_code = static_cast<const telegram_api::messageActionGiftCode *>(action);
           if (!is_acceptable_peer(gift_code->boost_peer_)) {
+            return false;
+          }
+          break;
+        }
+        case telegram_api::messageActionPaymentRefunded::ID: {
+          auto payment_refunded = static_cast<const telegram_api::messageActionPaymentRefunded *>(action);
+          if (!is_acceptable_peer(payment_refunded->peer_)) {
             return false;
           }
           break;
