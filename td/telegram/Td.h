@@ -343,7 +343,9 @@ class Td final : public Actor {
 
   void on_connection_state_changed(ConnectionState new_state);
 
-  void run_request(uint64 id, tl_object_ptr<td_api::Function> function);
+  void run_request(uint64 id, td_api::object_ptr<td_api::Function> function);
+
+  void do_run_request(uint64 id, td_api::object_ptr<td_api::Function> &&function);
 
   void send_result(uint64 id, tl_object_ptr<td_api::Object> object);
   void send_error(uint64 id, Status error);
@@ -470,8 +472,6 @@ class Td final : public Actor {
 
   static bool is_authentication_request(int32 id);
 
-  static bool is_synchronous_request(const td_api::Function *function);
-
   static bool is_preinitialization_request(int32 id);
 
   static bool is_preauthentication_request(int32 id);
@@ -525,7 +525,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getCurrentState &request);
 
-  void on_request(uint64 id, td_api::getPasswordState &request);
+  void on_request(uint64 id, const td_api::getPasswordState &request);
 
   void on_request(uint64 id, td_api::setPassword &request);
 
@@ -647,6 +647,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getMessages &request);
 
+  void on_request(uint64 id, const td_api::getMessageProperties &request);
+
   void on_request(uint64 id, const td_api::getChatSponsoredMessages &request);
 
   void on_request(uint64 id, const td_api::clickChatSponsoredMessage &request);
@@ -675,7 +677,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::getStorageStatisticsFast &request);
 
-  void on_request(uint64 id, td_api::getDatabaseStatistics &request);
+  void on_request(uint64 id, const td_api::getDatabaseStatistics &request);
 
   void on_request(uint64 id, td_api::optimizeStorage &request);
 
@@ -931,6 +933,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::stopBusinessPoll &request);
 
+  void on_request(uint64 id, td_api::setBusinessMessageIsPinned &request);
+
   void on_request(uint64 id, const td_api::loadQuickReplyShortcuts &request);
 
   void on_request(uint64 id, const td_api::setQuickReplyShortcutName &request);
@@ -953,6 +957,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::editQuickReplyMessage &request);
 
+  void on_request(uint64 id, const td_api::getCurrentWeather &request);
+
   void on_request(uint64 id, const td_api::getStory &request);
 
   void on_request(uint64 id, const td_api::getChatsToSendStories &request);
@@ -962,6 +968,8 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::sendStory &request);
 
   void on_request(uint64 id, td_api::editStory &request);
+
+  void on_request(uint64 id, const td_api::editStoryCover &request);
 
   void on_request(uint64 id, td_api::setStoryPrivacySettings &request);
 
@@ -1237,7 +1245,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getChatBoostStatus &request);
 
-  void on_request(uint64 id, const td_api::boostChat &request);
+  void on_request(uint64 id, td_api::boostChat &request);
 
   void on_request(uint64 id, const td_api::getChatBoostLink &request);
 
@@ -1337,7 +1345,7 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getSuggestedFileName &request);
 
-  void on_request(uint64 id, td_api::preliminaryUploadFile &request);
+  void on_request(uint64 id, const td_api::preliminaryUploadFile &request);
 
   void on_request(uint64 id, const td_api::cancelPreliminaryUploadFile &request);
 
@@ -1454,6 +1462,18 @@ class Td final : public Actor {
   void on_request(uint64 id, const td_api::allowBotToSendMessages &request);
 
   void on_request(uint64 id, td_api::sendWebAppCustomRequest &request);
+
+  void on_request(uint64 id, const td_api::getBotMediaPreviews &request);
+
+  void on_request(uint64 id, const td_api::getBotMediaPreviewInfo &request);
+
+  void on_request(uint64 id, td_api::addBotMediaPreview &request);
+
+  void on_request(uint64 id, td_api::editBotMediaPreview &request);
+
+  void on_request(uint64 id, const td_api::reorderBotMediaPreviews &request);
+
+  void on_request(uint64 id, const td_api::deleteBotMediaPreviews &request);
 
   void on_request(uint64 id, td_api::setBotName &request);
 
@@ -1759,9 +1779,13 @@ class Td final : public Actor {
 
   void on_request(uint64 id, td_api::answerInlineQuery &request);
 
+  void on_request(uint64 id, td_api::getPopularWebAppBots &request);
+
   void on_request(uint64 id, td_api::searchWebApp &request);
 
   void on_request(uint64 id, td_api::getWebAppLinkUrl &request);
+
+  void on_request(uint64 id, td_api::getMainWebApp &request);
 
   void on_request(uint64 id, td_api::getWebAppUrl &request);
 
@@ -1879,6 +1903,8 @@ class Td final : public Actor {
 
   void on_request(uint64 id, const td_api::getStarPaymentOptions &request);
 
+  void on_request(uint64 id, const td_api::getStarGiftPaymentOptions &request);
+
   void on_request(uint64 id, td_api::getStarTransactions &request);
 
   void on_request(uint64 id, td_api::canPurchaseFromStore &request);
@@ -1995,39 +2021,6 @@ class Td final : public Actor {
   void on_request(uint64 id, td_api::testCallVectorIntObject &request);
   void on_request(uint64 id, td_api::testCallVectorString &request);
   void on_request(uint64 id, td_api::testCallVectorStringObject &request);
-
-  template <class T>
-  static td_api::object_ptr<td_api::Object> do_static_request(const T &request) {
-    return td_api::make_object<td_api::error>(400, "The method can't be executed synchronously");
-  }
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getOption &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::searchQuote &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getTextEntities &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::parseTextEntities &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::parseMarkdown &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::getMarkdownText &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::searchStringsByPrefix &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::checkQuickReplyShortcutName &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getCountryFlagEmoji &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getFileMimeType &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getFileExtension &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::cleanFileName &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getLanguagePackString &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::getPhoneNumberInfoSync &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getPushReceiverId &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getChatFolderDefaultIconName &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::getJsonValue &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getJsonString &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getThemeParametersJsonString &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::setLogStream &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getLogStream &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::setLogVerbosityLevel &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getLogVerbosityLevel &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getLogTags &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::setLogTagVerbosityLevel &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::getLogTagVerbosityLevel &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(const td_api::addLogMessage &request);
-  static td_api::object_ptr<td_api::Object> do_static_request(td_api::testReturnError &request);
 
   static DbKey as_db_key(string key);
 
