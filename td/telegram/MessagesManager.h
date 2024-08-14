@@ -78,6 +78,7 @@
 #include "td/actor/MultiPromise.h"
 #include "td/actor/MultiTimeout.h"
 #include "td/actor/SignalSlot.h"
+#include "td/actor/Timeout.h"
 
 #include "td/utils/buffer.h"
 #include "td/utils/ChangesProcessor.h"
@@ -756,7 +757,7 @@ class MessagesManager final : public Actor {
   void search_dialog_recent_location_messages(DialogId dialog_id, int32 limit,
                                               Promise<td_api::object_ptr<td_api::messages>> &&promise);
 
-  vector<MessageFullId> get_active_live_location_messages(Promise<Unit> &&promise);
+  void load_active_live_location_messages(Promise<Unit> &&promise);
 
   void get_dialog_message_by_date(DialogId dialog_id, int32 date,
                                   Promise<td_api::object_ptr<td_api::message>> &&promise);
@@ -796,6 +797,14 @@ class MessagesManager final : public Actor {
                             Promise<Unit> &&promise);
 
   void remove_message_reaction(MessageFullId message_full_id, ReactionType reaction_type, Promise<Unit> &&promise);
+
+  void add_paid_message_reaction(MessageFullId message_full_id, int64 star_count, bool is_anonymous,
+                                 Promise<Unit> &&promise);
+
+  void remove_paid_message_reactions(MessageFullId message_full_id, Promise<Unit> &&promise);
+
+  void toggle_paid_message_reaction_is_anonymous(MessageFullId message_full_id, bool is_anonymous,
+                                                 Promise<Unit> &&promise);
 
   td_api::object_ptr<td_api::message> get_dialog_event_log_message_object(
       DialogId dialog_id, tl_object_ptr<telegram_api::Message> &&message, DialogId &sender_dialog_id);
@@ -851,7 +860,7 @@ class MessagesManager final : public Actor {
 
   void on_update_dialog_available_reactions(DialogId dialog_id,
                                             telegram_api::object_ptr<telegram_api::ChatReactions> &&available_reactions,
-                                            int32 reactions_limit);
+                                            int32 reactions_limit, bool paid_reactions_available);
 
   void hide_dialog_action_bar(DialogId dialog_id);
 
@@ -963,7 +972,11 @@ class MessagesManager final : public Actor {
 
   Result<string> get_login_button_url(MessageFullId message_full_id, int64 button_id);
 
-  Result<ServerMessageId> get_invoice_message_id(MessageFullId message_full_id);
+  struct InvoiceMessageInfo {
+    ServerMessageId server_message_id_;
+    int64 star_count_ = 0;
+  };
+  Result<InvoiceMessageInfo> get_invoice_message_info(MessageFullId message_full_id);
 
   Result<ServerMessageId> get_payment_successful_message_id(MessageFullId message_full_id);
 
@@ -2121,6 +2134,8 @@ class MessagesManager final : public Actor {
 
   void on_send_update_chat_read_inbox_timeout(DialogId dialog_id);
 
+  void on_send_paid_reactions_timeout(int64 task_id);
+
   bool delete_newer_server_messages_at_the_end(Dialog *d, MessageId max_message_id);
 
   template <class T, class It>
@@ -2371,6 +2386,8 @@ class MessagesManager final : public Actor {
 
   void send_update_message_live_location_viewed(MessageFullId message_full_id);
 
+  void send_update_active_live_location_messages();
+
   void send_update_delete_messages(DialogId dialog_id, vector<int64> &&message_ids, bool is_permanent) const;
 
   void send_update_new_chat(Dialog *d, const char *source);
@@ -2444,6 +2461,11 @@ class MessagesManager final : public Actor {
   td_api::object_ptr<td_api::MessageContent> get_message_message_content_object(DialogId dialog_id,
                                                                                 const Message *m) const;
 
+  td_api::object_ptr<td_api::message> get_message_object(Dialog *d, MessageId message_id, const char *source);
+
+  td_api::object_ptr<td_api::message> get_message_object(const Dialog *d, MessageId message_id,
+                                                         const char *source) const;
+
   td_api::object_ptr<td_api::message> get_message_object(DialogId dialog_id, const Message *m,
                                                          const char *source) const;
 
@@ -2453,6 +2475,8 @@ class MessagesManager final : public Actor {
 
   td_api::object_ptr<td_api::message> get_business_message_message_object(
       telegram_api::object_ptr<telegram_api::Message> &&message);
+
+  td_api::object_ptr<td_api::updateActiveLiveLocationMessages> get_update_active_live_location_messages_object() const;
 
   vector<DialogId> sort_dialogs_by_order(const vector<DialogId> &dialog_ids, int32 limit) const;
 
@@ -2872,15 +2896,17 @@ class MessagesManager final : public Actor {
                                   MessageId offset_message_id, int32 limit, MessageSearchFilter filter,
                                   Promise<td_api::object_ptr<td_api::foundMessages>> &&promise);
 
+  void process_viewed_message(Dialog *d, const vector<MessageId> &viewed_message_ids, bool is_first);
+
   void on_load_active_live_location_message_full_ids_from_database(string value);
 
-  void on_load_active_live_location_messages_finished();
+  bool try_add_active_live_location(DialogId dialog_id, const Message *m);
 
-  void try_add_active_live_location(DialogId dialog_id, const Message *m);
+  bool add_active_live_location(MessageFullId message_full_id);
 
-  void add_active_live_location(MessageFullId message_full_id);
+  bool delete_active_live_location(MessageFullId message_full_id);
 
-  bool delete_active_live_location(DialogId dialog_id, const Message *m);
+  void schedule_active_live_location_expiration();
 
   void save_active_live_locations();
 
@@ -3041,6 +3067,12 @@ class MessagesManager final : public Actor {
   static void on_update_viewed_messages_timeout_callback(void *messages_manager_ptr, int64 dialog_id_int);
 
   static void on_send_update_chat_read_inbox_timeout_callback(void *messages_manager_ptr, int64 dialog_id_int);
+
+  static void on_send_paid_reactions_timeout_callback(void *messages_manager_ptr, int64 task_id);
+
+  static void on_live_location_expire_timeout_callback(void *messages_manager_ptr);
+
+  void on_live_location_expire_timeout();
 
   void load_secret_thumbnail(FileId thumbnail_file_id);
 
@@ -3373,6 +3405,9 @@ class MessagesManager final : public Actor {
   MultiTimeout preload_folder_dialog_list_timeout_{"PreloadFolderDialogListTimeout"};
   MultiTimeout update_viewed_messages_timeout_{"UpdateViewedMessagesTimeout"};
   MultiTimeout send_update_chat_read_inbox_timeout_{"SendUpdateChatReadInboxTimeout"};
+  MultiTimeout send_paid_reactions_timeout_{"SendPaidReactionsTimeout"};
+
+  Timeout live_location_expire_timeout_;
 
   Hints dialogs_hints_;  // search dialogs by title and usernames
 
@@ -3506,6 +3541,10 @@ class MessagesManager final : public Actor {
     bool was_updated = false;
   };
   FlatHashMap<MessageFullId, PendingReaction, MessageFullIdHash> pending_reactions_;
+
+  int64 paid_reaction_task_id_ = 0;
+  FlatHashMap<MessageFullId, int64, MessageFullIdHash> paid_reaction_task_ids_;
+  FlatHashMap<int64, MessageFullId> paid_reaction_tasks_;
 
   FlatHashMap<MessageFullId, int32, MessageFullIdHash> pending_read_reactions_;
 
