@@ -100,7 +100,7 @@ class StickersManager final : public Actor {
                                                              const vector<StickerSetId> &sticker_set_ids,
                                                              size_t covers_limit) const;
 
-  td_api::object_ptr<td_api::sticker> get_premium_gift_sticker_object(int32 month_count);
+  td_api::object_ptr<td_api::sticker> get_premium_gift_sticker_object(int32 month_count, int64 star_count);
 
   td_api::object_ptr<td_api::animatedEmoji> get_animated_emoji_object(const string &emoji,
                                                                       CustomEmojiId custom_emoji_id);
@@ -109,9 +109,9 @@ class StickersManager final : public Actor {
 
   void load_premium_gift_sticker_set(Promise<Unit> &&promise);
 
-  void register_premium_gift(int32 months, MessageFullId message_full_id, const char *source);
+  void register_premium_gift(int32 months, int64 star_count, MessageFullId message_full_id, const char *source);
 
-  void unregister_premium_gift(int32 months, MessageFullId message_full_id, const char *source);
+  void unregister_premium_gift(int32 months, int64 star_count, MessageFullId message_full_id, const char *source);
 
   void register_dice(const string &emoji, int32 value, MessageFullId message_full_id,
                      QuickReplyMessageFullId quick_reply_message_full_id, const char *source);
@@ -194,6 +194,8 @@ class StickersManager final : public Actor {
 
   StickerSetId get_sticker_set(StickerSetId set_id, Promise<Unit> &&promise);
 
+  void get_sticker_set_name(StickerSetId set_id, Promise<string> &&promise);
+
   StickerSetId search_sticker_set(const string &short_name_to_search, Promise<Unit> &&promise);
 
   std::pair<int32, vector<StickerSetId>> search_installed_sticker_sets(StickerType sticker_type, const string &query,
@@ -223,6 +225,9 @@ class StickersManager final : public Actor {
 
   StickerSetId on_get_sticker_set_covered(tl_object_ptr<telegram_api::StickerSetCovered> &&set_ptr, bool is_changed,
                                           const char *source);
+
+  void on_get_sticker_set_name(StickerSetId sticker_set_id,
+                               telegram_api::object_ptr<telegram_api::messages_StickerSet> &&set_ptr);
 
   void on_get_special_sticker_set(const SpecialStickerSetType &type, StickerSetId sticker_set_id);
 
@@ -282,8 +287,9 @@ class StickersManager final : public Actor {
 
   void move_sticker_set_to_top_by_custom_emoji_ids(const vector<CustomEmojiId> &custom_emoji_ids);
 
-  FileId upload_sticker_file(UserId user_id, StickerFormat sticker_format,
-                             const td_api::object_ptr<td_api::InputFile> &input_file, Promise<Unit> &&promise);
+  void upload_sticker_file(UserId user_id, StickerFormat sticker_format,
+                           const td_api::object_ptr<td_api::InputFile> &input_file,
+                           Promise<td_api::object_ptr<td_api::file>> &&promise);
 
   void get_suggested_sticker_set_name(string title, Promise<string> &&promise);
 
@@ -385,11 +391,9 @@ class StickersManager final : public Actor {
   vector<string> get_keyword_emojis(const string &text, const vector<string> &input_language_codes, bool force,
                                     Promise<Unit> &&promise);
 
-  int64 get_emoji_suggestions_url(const string &language_code, Promise<Unit> &&promise);
+  void get_emoji_suggestions_url(const string &language_code, Promise<string> &&promise);
 
   void get_emoji_groups(EmojiGroupType group_type, Promise<td_api::object_ptr<td_api::emojiCategories>> &&promise);
-
-  td_api::object_ptr<td_api::httpUrl> get_emoji_suggestions_url_result(int64 random_id);
 
   void reload_sticker_set(StickerSetId sticker_set_id, int64 access_hash, Promise<Unit> &&promise);
 
@@ -806,12 +810,14 @@ class StickersManager final : public Actor {
 
   Result<std::tuple<FileId, bool, bool>> prepare_input_sticker(td_api::inputSticker *sticker, StickerType sticker_type);
 
-  tl_object_ptr<telegram_api::inputStickerSetItem> get_input_sticker(const td_api::inputSticker *sticker,
-                                                                     FileId file_id) const;
+  void finish_upload_sticker_file(FileId file_id, Promise<td_api::object_ptr<td_api::file>> &&promise);
+
+  telegram_api::object_ptr<telegram_api::inputStickerSetItem> get_input_sticker(const td_api::inputSticker *sticker,
+                                                                                FileId file_id) const;
 
   void upload_sticker_file(UserId user_id, FileId file_id, Promise<Unit> &&promise);
 
-  void on_upload_sticker_file(FileId file_id, tl_object_ptr<telegram_api::InputFile> input_file);
+  void on_upload_sticker_file(FileId file_id, telegram_api::object_ptr<telegram_api::InputFile> input_file);
 
   void on_upload_sticker_file_error(FileId file_id, Status status);
 
@@ -979,9 +985,6 @@ class StickersManager final : public Actor {
 
   void finish_get_emoji_keywords_difference(string language_code, int32 version);
 
-  void on_get_emoji_suggestions_url(int64 random_id, Promise<Unit> &&promise,
-                                    Result<telegram_api::object_ptr<telegram_api::emojiURL>> &&r_emoji_url);
-
   void on_load_emoji_groups_from_database(EmojiGroupType group_type, string used_language_codes, string value);
 
   void on_load_emoji_group_icons(EmojiGroupType group_type, EmojiGroupList group_list);
@@ -1000,6 +1003,7 @@ class StickersManager final : public Actor {
   WaitFreeHashMap<StickerSetId, unique_ptr<StickerSet>, StickerSetIdHash>
       sticker_sets_;  // sticker_set_id -> StickerSet
   WaitFreeHashMap<string, StickerSetId> short_name_to_sticker_set_id_;
+  FlatHashMap<StickerSetId, vector<Promise<string>>, StickerSetIdHash> sticker_set_name_load_queries_;
 
   vector<StickerSetId> installed_sticker_set_ids_[MAX_STICKER_TYPE];
   vector<StickerSetId> featured_sticker_set_ids_[MAX_STICKER_TYPE];
@@ -1125,7 +1129,6 @@ class StickersManager final : public Actor {
   FlatHashSet<string> reloaded_emoji_keywords_;
   FlatHashMap<string, vector<Promise<Unit>>> load_emoji_keywords_queries_;
   FlatHashMap<string, vector<Promise<Unit>>> load_language_codes_queries_;
-  FlatHashMap<int64, string> emoji_suggestions_urls_;
 
   struct GiftPremiumMessages {
     FlatHashSet<MessageFullId, MessageFullIdHash> message_full_ids_;

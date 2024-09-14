@@ -798,8 +798,10 @@ class MessagesManager final : public Actor {
 
   void remove_message_reaction(MessageFullId message_full_id, ReactionType reaction_type, Promise<Unit> &&promise);
 
-  void add_paid_message_reaction(MessageFullId message_full_id, int64 star_count, bool is_anonymous,
-                                 Promise<Unit> &&promise);
+  void add_paid_message_reaction(MessageFullId message_full_id, int64 star_count, bool use_default_is_anonymous,
+                                 bool is_anonymous, Promise<Unit> &&promise);
+
+  void commit_paid_message_reactions(MessageFullId message_full_id, Promise<Unit> &&promise);
 
   void remove_paid_message_reactions(MessageFullId message_full_id, Promise<Unit> &&promise);
 
@@ -1070,6 +1072,7 @@ class MessagesManager final : public Actor {
     MessageId linked_top_thread_message_id;
     vector<MessageId> local_thread_message_ids;
 
+    DialogId initial_sender_dialog_id;        // for send_message
     MessageId initial_top_thread_message_id;  // for send_message
     MessageInputReplyTo input_reply_to;       // for send_message
     int64 reply_to_random_id = 0;             // for send_message
@@ -2134,8 +2137,6 @@ class MessagesManager final : public Actor {
 
   void on_send_update_chat_read_inbox_timeout(DialogId dialog_id);
 
-  void on_send_paid_reactions_timeout(int64 task_id);
-
   bool delete_newer_server_messages_at_the_end(Dialog *d, MessageId max_message_id);
 
   template <class T, class It>
@@ -2624,6 +2625,8 @@ class MessagesManager final : public Actor {
 
   DialogId get_my_reaction_dialog_id(const Dialog *d) const;
 
+  void drop_message_pending_paid_reactions(const Dialog *d, Message *m);
+
   void set_message_reactions(Dialog *d, Message *m, bool is_big, bool add_to_recent, Promise<Unit> &&promise);
 
   void on_set_message_reactions(MessageFullId message_full_id, Result<Unit> result, Promise<Unit> promise);
@@ -3068,8 +3071,6 @@ class MessagesManager final : public Actor {
 
   static void on_send_update_chat_read_inbox_timeout_callback(void *messages_manager_ptr, int64 dialog_id_int);
 
-  static void on_send_paid_reactions_timeout_callback(void *messages_manager_ptr, int64 task_id);
-
   static void on_live_location_expire_timeout_callback(void *messages_manager_ptr);
 
   void on_live_location_expire_timeout();
@@ -3405,7 +3406,6 @@ class MessagesManager final : public Actor {
   MultiTimeout preload_folder_dialog_list_timeout_{"PreloadFolderDialogListTimeout"};
   MultiTimeout update_viewed_messages_timeout_{"UpdateViewedMessagesTimeout"};
   MultiTimeout send_update_chat_read_inbox_timeout_{"SendUpdateChatReadInboxTimeout"};
-  MultiTimeout send_paid_reactions_timeout_{"SendPaidReactionsTimeout"};
 
   Timeout live_location_expire_timeout_;
 
@@ -3541,10 +3541,6 @@ class MessagesManager final : public Actor {
     bool was_updated = false;
   };
   FlatHashMap<MessageFullId, PendingReaction, MessageFullIdHash> pending_reactions_;
-
-  int64 paid_reaction_task_id_ = 0;
-  FlatHashMap<MessageFullId, int64, MessageFullIdHash> paid_reaction_task_ids_;
-  FlatHashMap<int64, MessageFullId> paid_reaction_tasks_;
 
   FlatHashMap<MessageFullId, int32, MessageFullIdHash> pending_read_reactions_;
 
