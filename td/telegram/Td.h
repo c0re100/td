@@ -407,8 +407,6 @@ class Td final : public Actor {
 
   static bool is_preauthentication_request(int32 id);
 
-  void on_request(uint64 id, td_api::sendChatScreenshotTakenNotification &request);
-
   struct Parameters {
     int32 api_id_ = 0;
     string api_hash_;

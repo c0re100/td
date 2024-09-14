@@ -1419,11 +1419,6 @@ Result<std::pair<Td::Parameters, TdDb::Parameters>> Td::get_parameters(
   return std::move(result);
 }
 
-}
-
-void Td::on_request(uint64 id, td_api::sendChatScreenshotTakenNotification &request) {
-  CHECK_IS_USER();
-  answer_ok_query(id, messages_manager_->send_screenshot_taken_notification_message(DialogId(request.chat_id_)));
 void Td::on_file_download_finished(FileId file_id) {
   requests_->on_file_download_finished(file_id);
 }
