@@ -24,7 +24,6 @@
 #include "td/telegram/FolderId.h"
 #include "td/telegram/MessageFullId.h"
 #include "td/telegram/Photo.h"
-#include "td/telegram/PremiumGiftOption.h"
 #include "td/telegram/QueryCombiner.h"
 #include "td/telegram/QueryMerger.h"
 #include "td/telegram/RestrictionReason.h"
@@ -590,8 +589,6 @@ class UserManager final : public Actor {
     vector<FileId> registered_file_ids;
     FileSourceId file_source_id;
 
-    vector<PremiumGiftOption> premium_gift_options;
-
     unique_ptr<BotMenuButton> menu_button;
     vector<BotCommand> commands;
     string privacy_policy_url;
@@ -620,6 +617,7 @@ class UserManager final : public Actor {
     bool contact_require_premium = false;
     bool sponsored_enabled = false;
     bool has_preview_medias = false;
+    bool can_view_revenue = false;
 
     bool is_common_chat_count_changed = true;
     bool is_being_updated = false;
@@ -902,7 +900,7 @@ class UserManager final : public Actor {
 
   UserPhotos *add_user_photos(UserId user_id);
 
-  void apply_pending_user_photo(User *u, UserId user_id);
+  void apply_pending_user_photo(User *u, UserId user_id, const char *source);
 
   void load_contacts(Promise<Unit> &&promise);
 

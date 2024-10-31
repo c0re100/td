@@ -1381,9 +1381,9 @@ class CliClient final : public Actor {
         if (area.empty()) {
           continue;
         }
-        auto position = td_api::make_object<td_api::storyAreaPosition>(
-            Random::fast(1, 99) * 0.01, Random::fast(1, 99) * 0.01, Random::fast(1, 99) * 0.01,
-            Random::fast(1, 99) * 0.01, Random::fast(0, 360), Random::fast(1, 19) * 0.01);
+        auto position = td_api::make_object<td_api::storyAreaPosition>(Random::fast(1, 99), Random::fast(1, 99),
+                                                                       Random::fast(1, 99), Random::fast(1, 99),
+                                                                       Random::fast(0, 360), Random::fast(1, 19));
         td_api::object_ptr<td_api::InputStoryAreaType> type;
         if (area == "l") {
           type = td_api::make_object<td_api::inputStoryAreaTypeLocation>(
@@ -1410,6 +1410,8 @@ class CliClient final : public Actor {
                                                                         as_message_id(message_id));
         } else if (area[0] == 'u') {
           type = td_api::make_object<td_api::inputStoryAreaTypeLink>(area.substr(1));
+        } else if (area[0] == 'w') {
+          type = td_api::make_object<td_api::inputStoryAreaTypeWeather>(20.1, "☀️", to_integer<int32>(area.substr(1)));
         }
         result->areas_.push_back(td_api::make_object<td_api::inputStoryArea>(std::move(position), std::move(type)));
       }
@@ -2449,9 +2451,9 @@ class CliClient final : public Actor {
     }
     auto id = send_request(td_api::make_object<td_api::sendMessage>(
         chat_id, message_thread_id_, get_input_message_reply_to(),
-        td_api::make_object<td_api::messageSendOptions>(disable_notification, from_background, false, false,
-                                                        as_message_scheduling_state(schedule_date_), message_effect_id_,
-                                                        Random::fast(1, 1000), only_preview_),
+        td_api::make_object<td_api::messageSendOptions>(disable_notification, from_background, false, use_test_dc_,
+                                                        false, as_message_scheduling_state(schedule_date_),
+                                                        message_effect_id_, Random::fast(1, 1000), only_preview_),
         nullptr, std::move(input_message_content)));
     if (id != 0) {
       query_id_to_send_message_info_[id].start_time = Time::now();
@@ -2459,7 +2461,7 @@ class CliClient final : public Actor {
   }
 
   td_api::object_ptr<td_api::messageSendOptions> default_message_send_options() const {
-    return td_api::make_object<td_api::messageSendOptions>(false, false, false, true,
+    return td_api::make_object<td_api::messageSendOptions>(false, false, false, use_test_dc_, true,
                                                            as_message_scheduling_state(schedule_date_),
                                                            message_effect_id_, Random::fast(1, 1000), only_preview_);
   }
@@ -3149,11 +3151,12 @@ class CliClient final : public Actor {
       get_args(args, tag, limit, offset);
       send_request(td_api::make_object<td_api::searchPublicMessagesByTag>(tag, offset, as_limit(limit)));
     } else if (op == "spsbt") {
+      ChatId chat_id;
       string tag;
       string limit;
       string offset;
-      get_args(args, tag, limit, offset);
-      send_request(td_api::make_object<td_api::searchPublicStoriesByTag>(tag, offset, as_limit(limit)));
+      get_args(args, chat_id, tag, limit, offset);
+      send_request(td_api::make_object<td_api::searchPublicStoriesByTag>(chat_id, tag, offset, as_limit(limit)));
     } else if (op == "spsbl") {
       string country_code;
       string state;
@@ -3562,13 +3565,10 @@ class CliClient final : public Actor {
       if (currency.empty()) {
         send_request(td_api::make_object<td_api::canPurchaseFromStore>(
             td_api::make_object<td_api::storePaymentPurposePremiumSubscription>(false, false)));
-      } else if (op == "cpfs") {
-        send_request(td_api::make_object<td_api::canPurchaseFromStore>(
-            td_api::make_object<td_api::storePaymentPurposeGiftedPremium>(user_id, currency, amount)));
       } else {
         send_request(td_api::make_object<td_api::canPurchaseFromStore>(
             td_api::make_object<td_api::storePaymentPurposePremiumGiftCodes>(boosted_chat_id, currency, amount,
-                                                                             vector<int64>{user_id})));
+                                                                             vector<int64>{user_id}, nullptr)));
       }
     } else if (op == "cpfsg") {
       GiveawayParameters parameters;
@@ -3806,8 +3806,8 @@ class CliClient final : public Actor {
       string limit;
       get_args(args, sticker_set_id, limit);
       send_request(td_api::make_object<td_api::getOwnedStickerSets>(sticker_set_id, as_limit(limit)));
-    } else if (op == "sss") {
-      send_request(td_api::make_object<td_api::searchStickerSet>(args));
+    } else if (op == "sss" || op == "sssf") {
+      send_request(td_api::make_object<td_api::searchStickerSet>(args, op == "sssf"));
     } else if (op == "siss") {
       send_request(td_api::make_object<td_api::searchInstalledStickerSets>(nullptr, args, 2));
     } else if (op == "ssss" || op == "ssssm" || op == "sssse") {
@@ -5279,10 +5279,12 @@ class CliClient final : public Actor {
       ShortcutId shortcut_id;
       MessageId message_id;
       string document;
-      get_args(args, shortcut_id, message_id, document);
+      string thumbnail;
+      get_args(args, shortcut_id, message_id, document, thumbnail);
       send_request(td_api::make_object<td_api::editQuickReplyMessage>(
           shortcut_id, message_id,
-          td_api::make_object<td_api::inputMessageDocument>(as_input_file(document), nullptr, false, as_caption(""))));
+          td_api::make_object<td_api::inputMessageDocument>(as_input_file(document), as_input_thumbnail(thumbnail),
+                                                            false, as_caption(""))));
     } else if (op == "emp") {
       ChatId chat_id;
       MessageId message_id;
@@ -6523,16 +6525,6 @@ class CliClient final : public Actor {
       SearchQuery query;
       get_args(args, query);
       send_request(td_api::make_object<td_api::searchChatsOnServer>(query.query, query.limit));
-    } else if (op == "scn") {
-      string latitude;
-      string longitude;
-      get_args(args, latitude, longitude);
-      send_request(td_api::make_object<td_api::searchChatsNearby>(as_location(latitude, longitude, string())));
-    } else if (op == "sloc") {
-      string latitude;
-      string longitude;
-      get_args(args, latitude, longitude);
-      send_request(td_api::make_object<td_api::setLocation>(as_location(latitude, longitude, string())));
     } else if (op == "sbl") {
       string latitude;
       string longitude;

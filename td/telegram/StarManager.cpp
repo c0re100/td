@@ -297,9 +297,6 @@ class GetStarsTransactionsQuery final : public Td::ResultHandler {
                 };
                 return td_api::make_object<td_api::revenueWithdrawalStateFailed>();
               }
-              if (!transaction->refund_) {
-                LOG(ERROR) << "Receive " << to_string(transaction);
-              }
               return nullptr;
             }();
             return td_api::make_object<td_api::starTransactionPartnerFragment>(std::move(state));
@@ -414,6 +411,12 @@ class GetStarsTransactionsQuery final : public Td::ResultHandler {
           }
           case telegram_api::starsTransactionPeerAds::ID:
             return td_api::make_object<td_api::starTransactionPartnerTelegramAds>();
+          case telegram_api::starsTransactionPeerAPI::ID: {
+            SCOPE_EXIT {
+              transaction->floodskip_number_ = 0;
+            };
+            return td_api::make_object<td_api::starTransactionPartnerTelegramApi>(transaction->floodskip_number_);
+          }
           default:
             UNREACHABLE();
         }
@@ -451,6 +454,9 @@ class GetStarsTransactionsQuery final : public Td::ResultHandler {
         }
         if (transaction->stargift_ != nullptr) {
           LOG(ERROR) << "Receive gift with " << to_string(star_transaction);
+        }
+        if (transaction->floodskip_number_ != 0) {
+          LOG(ERROR) << "Receive API payment with " << to_string(star_transaction);
         }
       }
       if (!file_ids.empty()) {

@@ -513,7 +513,7 @@ class MessageChatSetTtl final : public MessageContent {
 
 class MessageUnsupported final : public MessageContent {
  public:
-  static constexpr int32 CURRENT_VERSION = 37;
+  static constexpr int32 CURRENT_VERSION = 38;
   int32 version = CURRENT_VERSION;
 
   MessageUnsupported() = default;
@@ -844,6 +844,7 @@ class MessageWebViewDataReceived final : public MessageContent {
 
 class MessageGiftPremium final : public MessageContent {
  public:
+  FormattedText text;
   string currency;
   int64 amount = 0;
   string crypto_currency;
@@ -851,8 +852,10 @@ class MessageGiftPremium final : public MessageContent {
   int32 months = 0;
 
   MessageGiftPremium() = default;
-  MessageGiftPremium(string &&currency, int64 amount, string &&crypto_currency, int64 crypto_amount, int32 months)
-      : currency(std::move(currency))
+  MessageGiftPremium(FormattedText &&text, string &&currency, int64 amount, string &&crypto_currency,
+                     int64 crypto_amount, int32 months)
+      : text(std::move(text))
+      , currency(std::move(currency))
       , amount(amount)
       , crypto_currency(std::move(crypto_currency))
       , crypto_amount(crypto_amount)
@@ -979,6 +982,7 @@ class MessageWriteAccessAllowedByRequest final : public MessageContent {
 class MessageGiftCode final : public MessageContent {
  public:
   DialogId creator_dialog_id;
+  FormattedText text;
   int32 months = 0;
   string currency;
   int64 amount = 0;
@@ -989,9 +993,10 @@ class MessageGiftCode final : public MessageContent {
   string code;
 
   MessageGiftCode() = default;
-  MessageGiftCode(DialogId creator_dialog_id, int32 months, string &&currency, int64 amount, string &&crypto_currency,
-                  int64 crypto_amount, bool via_giveaway, bool is_unclaimed, string &&code)
+  MessageGiftCode(DialogId creator_dialog_id, FormattedText &&text, int32 months, string &&currency, int64 amount,
+                  string &&crypto_currency, int64 crypto_amount, bool via_giveaway, bool is_unclaimed, string &&code)
       : creator_dialog_id(creator_dialog_id)
+      , text(std::move(text))
       , months(months)
       , currency(std::move(currency))
       , amount(amount)
@@ -1630,8 +1635,10 @@ static void store(const MessageContent *content, StorerT &storer) {
     case MessageContentType::GiftPremium: {
       const auto *m = static_cast<const MessageGiftPremium *>(content);
       bool has_crypto_amount = !m->crypto_currency.empty();
+      bool has_text = !m->text.text.empty();
       BEGIN_STORE_FLAGS();
       STORE_FLAG(has_crypto_amount);
+      STORE_FLAG(has_text);
       END_STORE_FLAGS();
       store(m->currency, storer);
       store(m->amount, storer);
@@ -1639,6 +1646,9 @@ static void store(const MessageContent *content, StorerT &storer) {
       if (has_crypto_amount) {
         store(m->crypto_currency, storer);
         store(m->crypto_amount, storer);
+      }
+      if (has_text) {
+        store(m->text, storer);
       }
       break;
     }
@@ -1709,6 +1719,7 @@ static void store(const MessageContent *content, StorerT &storer) {
       bool has_amount = m->amount > 0;
       bool has_crypto_currency = !m->crypto_currency.empty();
       bool has_crypto_amount = m->crypto_amount > 0;
+      bool has_text = !m->text.text.empty();
       BEGIN_STORE_FLAGS();
       STORE_FLAG(m->via_giveaway);
       STORE_FLAG(has_creator_dialog_id);
@@ -1717,6 +1728,7 @@ static void store(const MessageContent *content, StorerT &storer) {
       STORE_FLAG(has_amount);
       STORE_FLAG(has_crypto_currency);
       STORE_FLAG(has_crypto_amount);
+      STORE_FLAG(has_text);
       END_STORE_FLAGS();
       if (has_creator_dialog_id) {
         store(m->creator_dialog_id, storer);
@@ -1734,6 +1746,9 @@ static void store(const MessageContent *content, StorerT &storer) {
       }
       if (has_crypto_amount) {
         store(m->crypto_amount, storer);
+      }
+      if (has_text) {
+        store(m->text, storer);
       }
       break;
     }
@@ -2456,8 +2471,10 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
     case MessageContentType::GiftPremium: {
       auto m = make_unique<MessageGiftPremium>();
       bool has_crypto_amount;
+      bool has_text;
       BEGIN_PARSE_FLAGS();
       PARSE_FLAG(has_crypto_amount);
+      PARSE_FLAG(has_text);
       END_PARSE_FLAGS();
       parse(m->currency, parser);
       parse(m->amount, parser);
@@ -2465,6 +2482,9 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       if (has_crypto_amount) {
         parse(m->crypto_currency, parser);
         parse(m->crypto_amount, parser);
+      }
+      if (has_text) {
+        parse(m->text, parser);
       }
       content = std::move(m);
       break;
@@ -2565,6 +2585,7 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       bool has_amount;
       bool has_crypto_currency;
       bool has_crypto_amount;
+      bool has_text;
       BEGIN_PARSE_FLAGS();
       PARSE_FLAG(m->via_giveaway);
       PARSE_FLAG(has_creator_dialog_id);
@@ -2573,6 +2594,7 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       PARSE_FLAG(has_amount);
       PARSE_FLAG(has_crypto_currency);
       PARSE_FLAG(has_crypto_amount);
+      PARSE_FLAG(has_text);
       END_PARSE_FLAGS();
       if (has_creator_dialog_id) {
         parse(m->creator_dialog_id, parser);
@@ -2590,6 +2612,9 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       }
       if (has_crypto_amount) {
         parse(m->crypto_amount, parser);
+      }
+      if (has_text) {
+        parse(m->text, parser);
       }
       content = std::move(m);
       break;
@@ -3400,7 +3425,6 @@ static Result<InputMessageContent> create_input_message_content(
 
 Result<InputMessageContent> get_input_message_content(
     DialogId dialog_id, tl_object_ptr<td_api::InputMessageContent> &&input_message_content, Td *td, bool is_premium) {
-  LOG(INFO) << "Get input message content from " << to_string(input_message_content);
   if (input_message_content == nullptr) {
     return Status::Error(400, "Input message content must be non-empty");
   }
@@ -5851,7 +5875,7 @@ void compare_message_contents(Td *td, const MessageContent *old_content, const M
     case MessageContentType::GiftPremium: {
       const auto *lhs = static_cast<const MessageGiftPremium *>(old_content);
       const auto *rhs = static_cast<const MessageGiftPremium *>(new_content);
-      if (lhs->currency != rhs->currency || lhs->amount != rhs->amount ||
+      if (lhs->text != rhs->text || lhs->currency != rhs->currency || lhs->amount != rhs->amount ||
           lhs->crypto_currency != rhs->crypto_currency || lhs->crypto_amount != rhs->crypto_amount ||
           lhs->months != rhs->months) {
         need_update = true;
@@ -5930,7 +5954,7 @@ void compare_message_contents(Td *td, const MessageContent *old_content, const M
     case MessageContentType::GiftCode: {
       const auto *lhs = static_cast<const MessageGiftCode *>(old_content);
       const auto *rhs = static_cast<const MessageGiftCode *>(new_content);
-      if (lhs->creator_dialog_id != rhs->creator_dialog_id || lhs->months != rhs->months ||
+      if (lhs->creator_dialog_id != rhs->creator_dialog_id || lhs->text != rhs->text || lhs->months != rhs->months ||
           lhs->currency != rhs->currency || lhs->amount != rhs->amount ||
           lhs->crypto_currency != rhs->crypto_currency || lhs->crypto_amount != rhs->crypto_amount ||
           lhs->via_giveaway != rhs->via_giveaway || lhs->is_unclaimed != rhs->is_unclaimed || lhs->code != rhs->code) {
@@ -7664,7 +7688,9 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
         LOG(ERROR) << "Receive invalid premium gift crypto amount " << action->crypto_amount_;
         action->crypto_amount_ = 0;
       }
-      return td::make_unique<MessageGiftPremium>(std::move(action->currency_), action->amount_,
+      auto text = get_formatted_text(td->user_manager_.get(), std::move(action->message_), true, false,
+                                     "messageActionGiftPremium");
+      return td::make_unique<MessageGiftPremium>(std::move(text), std::move(action->currency_), action->amount_,
                                                  std::move(action->crypto_currency_), action->crypto_amount_,
                                                  action->months_);
     }
@@ -7743,9 +7769,12 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
           td->dialog_manager_->force_create_dialog(dialog_id, "messageActionGiftCode", true);
         }
       }
-      return td::make_unique<MessageGiftCode>(dialog_id, action->months_, std::move(action->currency_), action->amount_,
-                                              std::move(action->crypto_currency_), action->crypto_amount_,
-                                              action->via_giveaway_, action->unclaimed_, std::move(action->slug_));
+      auto text = get_formatted_text(td->user_manager_.get(), std::move(action->message_), true, false,
+                                     "messageActionGiftCode");
+      return td::make_unique<MessageGiftCode>(dialog_id, std::move(text), action->months_, std::move(action->currency_),
+                                              action->amount_, std::move(action->crypto_currency_),
+                                              action->crypto_amount_, action->via_giveaway_, action->unclaimed_,
+                                              std::move(action->slug_));
     }
     case telegram_api::messageActionGiveawayResults::ID: {
       auto action = move_tl_object_as<telegram_api::messageActionGiveawayResults>(action_ptr);
@@ -8158,8 +8187,8 @@ td_api::object_ptr<td_api::MessageContent> get_message_content_object(const Mess
         LOG(ERROR) << "Receive gifted premium in " << dialog_id;
       }
       return td_api::make_object<td_api::messageGiftedPremium>(
-          gifter_user_id, receiver_user_id, m->currency, m->amount, m->crypto_currency, m->crypto_amount, m->months,
-          td->stickers_manager_->get_premium_gift_sticker_object(m->months, 0));
+          gifter_user_id, receiver_user_id, get_text_object(m->text), m->currency, m->amount, m->crypto_currency,
+          m->crypto_amount, m->months, td->stickers_manager_->get_premium_gift_sticker_object(m->months, 0));
     }
     case MessageContentType::TopicCreate: {
       const auto *m = static_cast<const MessageTopicCreate *>(content);
@@ -8220,8 +8249,8 @@ td_api::object_ptr<td_api::MessageContent> get_message_content_object(const Mess
           m->creator_dialog_id.is_valid()
               ? get_message_sender_object(td, m->creator_dialog_id, "messagePremiumGiftCode")
               : nullptr,
-          m->via_giveaway, m->is_unclaimed, m->currency, m->amount, m->crypto_currency, m->crypto_amount, m->months,
-          td->stickers_manager_->get_premium_gift_sticker_object(m->months, 0), m->code);
+          get_text_object(m->text), m->via_giveaway, m->is_unclaimed, m->currency, m->amount, m->crypto_currency,
+          m->crypto_amount, m->months, td->stickers_manager_->get_premium_gift_sticker_object(m->months, 0), m->code);
     }
     case MessageContentType::Giveaway: {
       const auto *m = static_cast<const MessageGiveaway *>(content);
@@ -8345,6 +8374,10 @@ const FormattedText *get_message_content_text(const MessageContent *content) {
       return &static_cast<const MessageText *>(content)->text;
     case MessageContentType::Game:
       return &static_cast<const MessageGame *>(content)->game.get_text();
+    case MessageContentType::GiftPremium:
+      return &static_cast<const MessageGiftPremium *>(content)->text;
+    case MessageContentType::GiftCode:
+      return &static_cast<const MessageGiftCode *>(content)->text;
     case MessageContentType::StarGift:
       return &static_cast<const MessageStarGift *>(content)->text;
     default:
@@ -8818,6 +8851,14 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
       const auto *topic_edit = static_cast<const MessageTopicEdit *>(content);
       return topic_edit->edited_data.get_title();
     }
+    case MessageContentType::GiftPremium: {
+      const auto *m = static_cast<const MessageGiftPremium *>(content);
+      return m->text.text;
+    }
+    case MessageContentType::GiftCode: {
+      const auto *m = static_cast<const MessageGiftCode *>(content);
+      return m->text.text;
+    }
     case MessageContentType::StarGift: {
       const auto *m = static_cast<const MessageStarGift *>(content);
       return m->text.text;
@@ -8863,14 +8904,12 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::ChatSetTheme:
     case MessageContentType::WebViewDataSent:
     case MessageContentType::WebViewDataReceived:
-    case MessageContentType::GiftPremium:
     case MessageContentType::SuggestProfilePhoto:
     case MessageContentType::WriteAccessAllowed:
     case MessageContentType::RequestedDialog:
     case MessageContentType::WebViewWriteAccessAllowed:
     case MessageContentType::SetBackground:
     case MessageContentType::WriteAccessAllowedByRequest:
-    case MessageContentType::GiftCode:
     case MessageContentType::Giveaway:
     case MessageContentType::GiveawayLaunch:
     case MessageContentType::GiveawayResults:

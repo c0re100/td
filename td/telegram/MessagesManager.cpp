@@ -2921,12 +2921,16 @@ class SendMessageQuery final : public Td::ResultHandler {
     if (as_input_peer != nullptr) {
       flags |= MessagesManager::SEND_MESSAGE_FLAG_HAS_SEND_AS;
     }
+    if (false) {
+      flags |= MessagesManager::SEND_MESSAGE_FLAG_HAS_SCHEDULE_DATE;
+      schedule_date = G()->unix_time() + 35;
+    }
 
     auto query = G()->net_query_creator().create(
         telegram_api::messages_sendMessage(flags, false /*ignored*/, false /*ignored*/, false /*ignored*/,
                                            false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                           std::move(input_peer), std::move(reply_to), text, random_id,
-                                           std::move(reply_markup), std::move(entities), schedule_date,
+                                           false /*ignored*/, std::move(input_peer), std::move(reply_to), text,
+                                           random_id, std::move(reply_markup), std::move(entities), schedule_date,
                                            std::move(as_input_peer), nullptr, effect_id.get()),
         {{dialog_id, MessageContentType::Text},
          {dialog_id, is_copy ? MessageContentType::Photo : MessageContentType::Text}});
@@ -3127,10 +3131,10 @@ class SendMultiMediaQuery final : public Td::ResultHandler {
 
     // no quick ack, because file reference errors are very likely to happen
     send_query(G()->net_query_creator().create(
-        telegram_api::messages_sendMultiMedia(flags, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                              false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                              std::move(input_peer), std::move(reply_to), std::move(input_single_media),
-                                              schedule_date, std::move(as_input_peer), nullptr, effect_id.get()),
+        telegram_api::messages_sendMultiMedia(
+            flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+            false /*ignored*/, false /*ignored*/, std::move(input_peer), std::move(reply_to),
+            std::move(input_single_media), schedule_date, std::move(as_input_peer), nullptr, effect_id.get()),
         {{dialog_id, is_copy ? MessageContentType::Text : MessageContentType::Photo},
          {dialog_id, MessageContentType::Photo}}));
   }
@@ -3250,9 +3254,9 @@ class SendMediaQuery final : public Td::ResultHandler {
 
     auto query = G()->net_query_creator().create(
         telegram_api::messages_sendMedia(flags, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                         false /*ignored*/, false /*ignored*/, false /*ignored*/, std::move(input_peer),
-                                         std::move(reply_to), std::move(input_media), text, random_id,
-                                         std::move(reply_markup), std::move(entities), schedule_date,
+                                         false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+                                         std::move(input_peer), std::move(reply_to), std::move(input_media), text,
+                                         random_id, std::move(reply_markup), std::move(entities), schedule_date,
                                          std::move(as_input_peer), nullptr, effect_id.get()),
         {{dialog_id, content_type}, {dialog_id, is_copy ? MessageContentType::Text : content_type}});
     if (td_->option_manager_->get_option_boolean("use_quick_ack") && was_uploaded_) {
@@ -3586,9 +3590,9 @@ class ForwardMessagesQuery final : public Td::ResultHandler {
     auto query = G()->net_query_creator().create(
         telegram_api::messages_forwardMessages(
             flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-            false /*ignored*/, std::move(from_input_peer), MessageId::get_server_message_ids(message_ids),
-            std::move(random_ids), std::move(to_input_peer), top_thread_message_id.get_server_message_id().get(),
-            schedule_date, std::move(as_input_peer), nullptr),
+            false /*ignored*/, false /*ignored*/, std::move(from_input_peer),
+            MessageId::get_server_message_ids(message_ids), std::move(random_ids), std::move(to_input_peer),
+            top_thread_message_id.get_server_message_id().get(), schedule_date, std::move(as_input_peer), nullptr),
         {{to_dialog_id, MessageContentType::Text}, {to_dialog_id, MessageContentType::Photo}});
     if (td_->option_manager_->get_option_boolean("use_quick_ack")) {
       query->quick_ack_promise_ = PromiseCreator::lambda([random_ids = random_ids_](Result<Unit> result) {
@@ -4343,22 +4347,24 @@ void MessagesManager::Message::store(StorerT &storer) const {
     STORE_FLAG(has_reactions);
     STORE_FLAG(has_available_reactions_generation);
     STORE_FLAG(update_stickersets_order);
-    STORE_FLAG(is_topic_message);
+    STORE_FLAG(is_topic_message);  // 5
     STORE_FLAG(has_history_generation);
     STORE_FLAG(is_reply_to_story);
     STORE_FLAG(false);
     STORE_FLAG(invert_media);
-    STORE_FLAG(has_input_reply_to);
+    STORE_FLAG(has_input_reply_to);  // 10
     STORE_FLAG(has_replied_message_info);
     STORE_FLAG(has_forward_info);
     STORE_FLAG(has_saved_messages_topic_id);
     STORE_FLAG(has_initial_top_thread_message_id);
-    STORE_FLAG(has_sender_boost_count);
+    STORE_FLAG(has_sender_boost_count);  // 15
     STORE_FLAG(has_via_business_bot_user_id);
     STORE_FLAG(is_from_offline);
     STORE_FLAG(has_effect_id);
     STORE_FLAG(has_fact_check);
-    STORE_FLAG(has_initial_sender_dialog_id);
+    STORE_FLAG(has_initial_sender_dialog_id);  // 20
+    STORE_FLAG(allow_paid);
+    STORE_FLAG(video_processing_pending);
     END_STORE_FLAGS();
   }
 
@@ -4643,6 +4649,8 @@ void MessagesManager::Message::parse(ParserT &parser) {
     PARSE_FLAG(has_effect_id);
     PARSE_FLAG(has_fact_check);
     PARSE_FLAG(has_initial_sender_dialog_id);
+    PARSE_FLAG(allow_paid);
+    PARSE_FLAG(video_processing_pending);
     END_PARSE_FLAGS();
   }
 
@@ -8364,7 +8372,7 @@ void MessagesManager::on_upload_media(FileUploadId file_upload_id,
     return;
   }
 
-  auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(m, media_pos);
+  auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(dialog_id, m, media_pos);
   switch (dialog_id.get_type()) {
     case DialogType::User:
     case DialogType::Chat:
@@ -8418,7 +8426,7 @@ void MessagesManager::do_send_media(DialogId dialog_id, const Message *m, int32 
   const MessageContent *content = nullptr;
   if (m->message_id.is_any_server()) {
     CHECK(media_pos == -1);
-    content = m->edited_content.get();
+    content = get_edited_message_content({dialog_id, m->message_id});
     if (content == nullptr) {
       LOG(ERROR) << "Message has no edited content";
       return;
@@ -8427,8 +8435,8 @@ void MessagesManager::do_send_media(DialogId dialog_id, const Message *m, int32 
     content = m->content.get();
   }
 
-  auto file_upload_id = get_message_send_file_upload_id(m, media_pos);
-  auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(m, media_pos);
+  auto file_upload_id = get_message_send_file_upload_id(dialog_id, m, media_pos);
+  auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(dialog_id, m, media_pos);
   auto input_media =
       get_message_content_input_media(content, media_pos, td_, std::move(input_file), std::move(input_thumbnail),
                                       file_upload_id, thumbnail_file_upload_id, m->ttl, m->send_emoji, true);
@@ -8511,12 +8519,12 @@ void MessagesManager::on_load_secret_thumbnail(FileUploadId thumbnail_file_uploa
   }
   CHECK(m->message_id.is_yet_unsent());
 
+  auto dialog_id = message_full_id.get_dialog_id();
   if (thumbnail.empty()) {
     delete_message_content_thumbnail(m->content.get(), td_);
-    delete_message_send_thumbnail_file_upload_id(m, -1);
+    delete_message_send_thumbnail_file_upload_id(dialog_id, m, -1);
   }
 
-  auto dialog_id = message_full_id.get_dialog_id();
   auto can_send_status = can_send_message(dialog_id);
   if (can_send_status.is_error()) {
     // secret chat was closed during load of the file
@@ -8560,12 +8568,13 @@ void MessagesManager::on_upload_thumbnail(FileUploadId thumbnail_file_upload_id,
 
   bool is_edit = m->message_id.is_any_server();
 
+  auto dialog_id = message_full_id.get_dialog_id();
   if (thumbnail_input_file == nullptr) {
-    delete_message_content_thumbnail(is_edit ? m->edited_content.get() : m->content.get(), td_, media_pos);
-    delete_message_send_thumbnail_file_upload_id(m, media_pos);
+    delete_message_content_thumbnail(is_edit ? get_edited_message_content(message_full_id) : m->content.get(), td_,
+                                     media_pos);
+    delete_message_send_thumbnail_file_upload_id(dialog_id, m, media_pos);
   }
 
-  auto dialog_id = message_full_id.get_dialog_id();
   auto can_send_status = can_send_message(dialog_id);
   if (!is_edit && can_send_status.is_error()) {
     // user has left the chat during upload of the thumbnail or lost their privileges
@@ -8659,7 +8668,7 @@ void MessagesManager::after_get_difference() {
           LOG(ERROR) << "Receive updateMessageId from " << old_message_id << " to " << message_full_id
                      << " but not receive corresponding message, last_new_message_id = " << d->last_new_message_id;
         }
-        if (message_id <= d->last_new_message_id) {
+        if (message_id <= d->last_new_message_id || td_->auth_manager_->is_bot()) {
           get_message_from_server(
               message_full_id,
               PromiseCreator::lambda([actor_id = actor_id(this), message_full_id, old_message_id](Result<Unit> result) {
@@ -10931,6 +10940,7 @@ void MessagesManager::unload_dialog(DialogId dialog_id, int32 delay) {
 }
 
 void MessagesManager::clear_dialog_message_list(Dialog *d, bool remove_from_dialog_list, int32 last_message_date) {
+  CHECK(!td_->auth_manager_->is_bot());
   if (d->server_unread_count + d->local_unread_count > 0) {
     MessageId max_message_id =
         d->last_database_message_id.is_valid() ? d->last_database_message_id : d->last_new_message_id;
@@ -12507,9 +12517,11 @@ void MessagesManager::hangup() {
   fail_promise_map(get_history_queries_);
   while (!pending_channel_on_get_dialogs_.empty()) {
     auto it = pending_channel_on_get_dialogs_.begin();
-    auto promise = std::move(it->second.promise);
+    auto queries = std::move(it->second);
     pending_channel_on_get_dialogs_.erase(it);
-    promise.set_error(Global::request_aborted_error());
+    for (auto &query : queries) {
+      query.promise.set_error(Global::request_aborted_error());
+    }
   }
   while (!get_dialogs_tasks_.empty()) {
     auto it = get_dialogs_tasks_.begin();
@@ -12835,7 +12847,7 @@ void MessagesManager::on_send_secret_message_error(int64 random_id, Status error
     auto message_full_id = it->second;
     auto *m = get_message(message_full_id);
     if (m != nullptr) {
-      auto file_upload_id = get_message_send_file_upload_id(m, -1);
+      auto file_upload_id = get_message_send_file_upload_id(message_full_id.get_dialog_id(), m, -1);
       if (file_upload_id.is_valid()) {
         if (G()->close_flag() && G()->use_message_database()) {
           // do not send error, message will be re-sent after restart
@@ -13363,6 +13375,7 @@ MessagesManager::MessageInfo MessagesManager::parse_telegram_api_message(
       message_info.has_mention = message->mentioned_;
       message_info.has_unread_content = message->media_unread_;
       message_info.invert_media = message->invert_media_;
+      message_info.video_processing_pending = message->video_processing_pending_;
       message_info.effect_id = MessageEffectId(message->effect_);
 
       bool is_content_read = true;
@@ -13692,6 +13705,7 @@ std::pair<DialogId, unique_ptr<MessagesManager::Message>> MessagesManager::creat
   message->is_from_offline = message_info.is_from_offline;
   message->is_pinned = is_pinned;
   message->noforwards = noforwards;
+  message->video_processing_pending = message_info.video_processing_pending;
   message->interaction_info_update_date = G()->unix_time();
   message->view_count = view_count;
   message->forward_count = forward_count;
@@ -13814,7 +13828,6 @@ MessageFullId MessagesManager::on_get_message(MessageInfo &&message_info, const 
   MessageId old_message_id = find_old_message_id(dialog_id, message_id);
   bool is_sent_message = false;
   if (old_message_id.is_valid() || old_message_id.is_valid_scheduled()) {
-    LOG(INFO) << "Found temporary " << old_message_id << " for " << MessageFullId{dialog_id, message_id};
     CHECK(d != nullptr);
 
     if (!from_update && !message_id.is_scheduled()) {
@@ -13854,8 +13867,7 @@ MessageFullId MessagesManager::on_get_message(MessageInfo &&message_info, const 
     update_reply_to_message_id(dialog_id, old_message_id, message_id, true, "on_get_message");
 
     being_readded_message_id_ = {dialog_id, old_message_id};
-    unique_ptr<Message> old_message =
-        delete_message(d, old_message_id, false, &need_update_dialog_pos, "add sent message");
+    auto old_message = delete_message(d, old_message_id, false, &need_update_dialog_pos, "add sent message");
     if (old_message == nullptr) {
       delete_sent_message_on_server(dialog_id, message_id, old_message_id);
       being_readded_message_id_ = MessageFullId();
@@ -13906,6 +13918,10 @@ MessageFullId MessagesManager::on_get_message(MessageInfo &&message_info, const 
 
   if (need_update) {
     send_update_new_message(d, m);
+  }
+  if (!td_->auth_manager_->is_bot() && !message_id.is_scheduled() &&
+      published_video_message_full_ids_.erase({dialog_id, message_id}) != 0) {
+    send_update_video_published({dialog_id, message_id});
   }
 
   if (is_sent_message) {
@@ -14094,6 +14110,7 @@ void MessagesManager::set_dialog_last_new_message_id(Dialog *d, MessageId last_n
 
 void MessagesManager::set_dialog_last_clear_history_date(Dialog *d, int32 date, MessageId last_clear_history_message_id,
                                                          const char *source, bool is_loaded_from_database) {
+  CHECK(!td_->auth_manager_->is_bot());
   CHECK(!last_clear_history_message_id.is_scheduled());
 
   if (d->last_clear_history_message_id == last_clear_history_message_id && d->last_clear_history_date == date) {
@@ -14158,6 +14175,7 @@ void MessagesManager::set_dialog_unread_reaction_count(Dialog *d, int32 unread_r
 }
 
 void MessagesManager::set_dialog_is_empty(Dialog *d, const char *source) {
+  CHECK(!td_->auth_manager_->is_bot());
   LOG(INFO) << "Set " << d->dialog_id << " is_empty to true from " << source;
   CHECK(d->have_full_history);
   if (!d->is_empty && d->order != DEFAULT_ORDER) {
@@ -14578,9 +14596,8 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
     DialogId dialog_id(static_cast<const telegram_api::dialog *>(dialog_folders[0].get())->peer_);
     if (dialog_id.is_valid() && running_get_channel_difference(dialog_id)) {
       LOG(INFO) << "Postpone result of channels getDialogs for " << dialog_id;
-      pending_channel_on_get_dialogs_.emplace(
-          dialog_id, PendingOnGetDialogs{folder_id, std::move(dialog_folders), total_count, std::move(messages),
-                                         std::move(promise)});
+      pending_channel_on_get_dialogs_[dialog_id].push_back(PendingOnGetDialogs{
+          folder_id, std::move(dialog_folders), total_count, std::move(messages), std::move(promise)});
       return;
     }
   }
@@ -15017,7 +15034,7 @@ bool MessagesManager::can_unload_message(const Dialog *d, const Message *m) cons
   MessageFullId message_full_id{d->dialog_id, m->message_id};
   if (td_->auth_manager_->is_bot() && !G()->use_message_database()) {
     return !m->message_id.is_yet_unsent() && replied_by_yet_unsent_messages_.count(message_full_id) == 0 &&
-           m->edited_content == nullptr && m->message_id != d->last_pinned_message_id &&
+           get_edited_message_content(message_full_id) == nullptr && m->message_id != d->last_pinned_message_id &&
            m->message_id != d->last_edited_message_id;
   }
   // don't want to unload messages from opened dialogs
@@ -15036,9 +15053,9 @@ bool MessagesManager::can_unload_message(const Dialog *d, const Message *m) cons
   }
   return d->open_count == 0 && m->message_id != d->last_message_id && m->message_id != d->last_database_message_id &&
          !m->message_id.is_yet_unsent() && active_live_location_message_full_ids_.count(message_full_id) == 0 &&
-         replied_by_yet_unsent_messages_.count(message_full_id) == 0 && m->edited_content == nullptr &&
-         m->message_id != d->reply_markup_message_id && m->message_id != d->last_pinned_message_id &&
-         m->message_id != d->last_edited_message_id &&
+         replied_by_yet_unsent_messages_.count(message_full_id) == 0 &&
+         get_edited_message_content(message_full_id) == nullptr && m->message_id != d->reply_markup_message_id &&
+         m->message_id != d->last_pinned_message_id && m->message_id != d->last_edited_message_id &&
          (m->media_album_id != d->last_media_album_id || m->media_album_id == 0);
 }
 
@@ -15062,7 +15079,6 @@ void MessagesManager::add_random_id_to_message_id_correspondence(Dialog *d, int6
   CHECK(d->dialog_id.get_type() == DialogType::SecretChat || message_id.is_yet_unsent());
   auto it = d->random_id_to_message_id.find(random_id);
   if (it == d->random_id_to_message_id.end() || it->second.get() < message_id.get()) {
-    LOG(INFO) << "Add correspondence from random_id " << random_id << " to " << message_id << " in " << d->dialog_id;
     if (random_id != 0) {
       d->random_id_to_message_id[random_id] = message_id;
     }
@@ -15074,7 +15090,6 @@ void MessagesManager::delete_random_id_to_message_id_correspondence(Dialog *d, i
   CHECK(d->dialog_id.get_type() == DialogType::SecretChat || message_id.is_yet_unsent());
   auto it = d->random_id_to_message_id.find(random_id);
   if (it != d->random_id_to_message_id.end() && it->second == message_id) {
-    LOG(INFO) << "Delete correspondence from random_id " << random_id << " to " << message_id << " in " << d->dialog_id;
     d->random_id_to_message_id.erase(it);
   }
 }
@@ -16602,6 +16617,70 @@ void MessagesManager::on_get_blocked_dialogs(int32 offset, int32 limit, int32 to
   promise.set_value(td_api::make_object<td_api::messageSenders>(total_count, std::move(senders)));
 }
 
+void MessagesManager::add_edited_message(DialogId dialog_id, MessageId message_id,
+                                         unique_ptr<EditedMessage> edited_message) {
+  if (message_id.is_scheduled()) {
+    edited_scheduled_messages_[dialog_id][message_id.get_scheduled_server_message_id()] = std::move(edited_message);
+  } else {
+    edited_messages_[{dialog_id, message_id}] = std::move(edited_message);
+  }
+}
+
+MessagesManager::EditedMessage *MessagesManager::get_edited_message(DialogId dialog_id, MessageId message_id) {
+  return const_cast<EditedMessage *>(
+      static_cast<const MessagesManager *>(this)->get_edited_message(dialog_id, message_id));
+}
+
+const MessagesManager::EditedMessage *MessagesManager::get_edited_message(DialogId dialog_id,
+                                                                          MessageId message_id) const {
+  if (message_id.is_scheduled()) {
+    if (!message_id.is_scheduled_server()) {
+      return nullptr;
+    }
+    auto it = edited_scheduled_messages_.find(dialog_id);
+    if (it == edited_scheduled_messages_.end()) {
+      return nullptr;
+    }
+    auto message_it = it->second.find(message_id.get_scheduled_server_message_id());
+    if (message_it == it->second.end()) {
+      return nullptr;
+    }
+    return message_it->second.get();
+  } else {
+    auto message_it = edited_messages_.find({dialog_id, message_id});
+    if (message_it == edited_messages_.end()) {
+      return nullptr;
+    }
+    return message_it->second.get();
+  }
+}
+
+MessageContent *MessagesManager::get_edited_message_content(MessageFullId message_full_id) {
+  auto edited_message = get_edited_message(message_full_id.get_dialog_id(), message_full_id.get_message_id());
+  if (edited_message == nullptr) {
+    return nullptr;
+  }
+  return edited_message->content_.get();
+}
+
+const MessageContent *MessagesManager::get_edited_message_content(MessageFullId message_full_id) const {
+  auto edited_message = get_edited_message(message_full_id.get_dialog_id(), message_full_id.get_message_id());
+  if (edited_message == nullptr) {
+    return nullptr;
+  }
+  return edited_message->content_.get();
+}
+
+void MessagesManager::delete_edited_message(DialogId dialog_id, MessageId message_id) {
+  if (message_id.is_scheduled()) {
+    auto it = edited_scheduled_messages_.find(dialog_id);
+    CHECK(it != edited_scheduled_messages_.end());
+    it->second.erase(message_id.get_scheduled_server_message_id());
+  } else {
+    edited_messages_.erase({dialog_id, message_id});
+  }
+}
+
 DialogId MessagesManager::get_dialog_message_sender(MessageFullId message_full_id) {
   const auto *m = get_message_force(message_full_id, "get_dialog_message_sender");
   if (m == nullptr) {
@@ -17461,7 +17540,8 @@ void MessagesManager::get_message_properties(DialogId dialog_id, MessageId messa
       can_send_message(dialog_id).is_ok();
   auto can_be_replied_in_another_chat = can_be_forwarded && m->message_id.is_server();
   auto can_be_shared_in_story = can_share_message_in_story(dialog_id, m);
-  auto can_edit_scheduling_state = m->message_id.is_valid_scheduled() && m->message_id.is_scheduled_server();
+  auto can_edit_media = can_edit_message_media(dialog_id, m, false);
+  auto can_edit_scheduling_state = can_edit_message_scheduling_state(m);
   auto can_get_statistics = can_get_message_statistics(dialog_id, m);
   auto can_get_message_thread = get_top_thread_message_full_id(dialog_id, m, false).is_ok();
   auto can_get_read_date = can_get_message_read_date(dialog_id, m).is_ok();
@@ -17483,7 +17563,7 @@ void MessagesManager::get_message_properties(DialogId dialog_id, MessageId messa
   promise.set_value(td_api::make_object<td_api::messageProperties>(
       can_be_copied_to_secret_chat, can_delete_for_self, can_delete_for_all_users, can_be_edited, can_be_forwarded,
       can_be_paid, can_be_pinned, can_be_replied, can_be_replied_in_another_chat, can_be_saved, can_be_shared_in_story,
-      can_edit_scheduling_state, can_get_embedding_code, can_get_link, can_get_media_timestamp_links,
+      can_edit_media, can_edit_scheduling_state, can_get_embedding_code, can_get_link, can_get_media_timestamp_links,
       can_get_message_thread, can_get_read_date, can_get_statistics, can_get_viewers, can_recognize_speech,
       can_report_chat, can_report_reactions, can_report_supergroup_spam, can_set_fact_check, need_show_statistics));
 }
@@ -22956,6 +23036,8 @@ Result<int32> MessagesManager::get_message_schedule_date(
   }
 
   switch (scheduling_state->get_id()) {
+    case td_api::messageSchedulingStateSendWhenVideoProcessed::ID:
+      return Status::Error(400, "Can't force video processing");
     case td_api::messageSchedulingStateSendWhenOnline::ID: {
       auto send_date = SCHEDULE_WHEN_ONLINE_DATE;
       return send_date;
@@ -23001,7 +23083,11 @@ tl_object_ptr<td_api::MessageSendingState> MessagesManager::get_message_sending_
   return nullptr;
 }
 
-tl_object_ptr<td_api::MessageSchedulingState> MessagesManager::get_message_scheduling_state_object(int32 send_date) {
+tl_object_ptr<td_api::MessageSchedulingState> MessagesManager::get_message_scheduling_state_object(
+    int32 send_date, bool video_processing_pending) {
+  if (video_processing_pending) {
+    return td_api::make_object<td_api::messageSchedulingStateSendWhenVideoProcessed>(send_date);
+  }
   if (send_date == SCHEDULE_WHEN_ONLINE_DATE) {
     return td_api::make_object<td_api::messageSchedulingStateSendWhenOnline>();
   }
@@ -23159,13 +23245,17 @@ td_api::object_ptr<td_api::message> MessagesManager::get_message_object(DialogId
         is_scheduled || m->forward_info == nullptr ||
         (!m->forward_info->get_last_dialog_id().is_valid() && !m->forward_info->get_origin().is_sender_hidden());
   }
+  if (m->is_from_scheduled && is_outgoing && is_bot) {
+    is_outgoing = false;
+  }
 
   double ttl_expires_in =
       m->ttl_expires_at != 0 ? clamp(m->ttl_expires_at - Time::now(), 1e-3, m->ttl.get_input_ttl() - 1e-3) : 0.0;
   double auto_delete_in =
       m->ttl_period == 0 ? 0.0 : clamp(m->date + m->ttl_period - G()->server_time(), 1e-3, m->ttl_period - 1e-3);
   auto sender = get_message_sender_object_const(td_, m->sender_user_id, m->sender_dialog_id, source);
-  auto scheduling_state = is_scheduled ? get_message_scheduling_state_object(m->date) : nullptr;
+  auto scheduling_state =
+      is_scheduled ? get_message_scheduling_state_object(m->date, m->video_processing_pending) : nullptr;
   auto forward_info = m->forward_info == nullptr
                           ? nullptr
                           : m->forward_info->get_message_forward_info_object(td_, is_from_saved_messages);
@@ -23195,7 +23285,7 @@ td_api::object_ptr<td_api::message> MessagesManager::get_message_object(DialogId
   }();
   auto top_thread_message_id = m->top_thread_message_id.get();
   auto date = is_scheduled ? 0 : m->date;
-  auto edit_date = m->hide_edit_date ? 0 : m->edit_date;
+  auto edit_date = m->hide_edit_date || is_scheduled ? 0 : m->edit_date;
   auto has_timestamped_media = reply_to == nullptr || m->max_own_media_timestamp >= 0;
   auto reply_markup = get_reply_markup_object(td_->user_manager_.get(), m->reply_markup);
   auto content = get_message_message_content_object(dialog_id, m);
@@ -23384,6 +23474,7 @@ unique_ptr<MessagesManager::Message> MessagesManager::create_message_to_send(
   m->from_background = options.from_background;
   m->update_stickersets_order = options.update_stickersets_order;
   m->noforwards = options.protect_content;
+  m->allow_paid = options.allow_paid;
   m->view_count = is_channel_post && !is_scheduled ? 1 : 0;
   m->forward_count = 0;
   if ([&] {
@@ -23684,7 +23775,7 @@ void MessagesManager::cancel_send_message_query(DialogId dialog_id, Message *m) 
 
   cancel_upload_message_content_files(m->file_upload_ids, m->thumbnail_file_upload_ids);
 
-  CHECK(m->edited_content == nullptr);
+  CHECK(get_edited_message_content({dialog_id, m->message_id}) == nullptr);
 
   if (!m->send_query_ref.empty()) {
     LOG(INFO) << "Cancel send query for " << m->message_id;
@@ -23781,7 +23872,7 @@ bool MessagesManager::is_message_auto_read(DialogId dialog_id, bool is_outgoing)
   }
 }
 
-void MessagesManager::add_message_dependencies(Dependencies &dependencies, const Message *m) {
+void MessagesManager::add_message_dependencies(Dependencies &dependencies, const Message *m) const {
   auto is_bot = td_->auth_manager_->is_bot();
   dependencies.add(m->sender_user_id);
   dependencies.add_dialog_and_dependencies(m->sender_dialog_id);
@@ -23951,25 +24042,47 @@ FileUploadId MessagesManager::get_media_file_upload_id(const vector<FileUploadId
   return file_upload_ids[media_pos];
 }
 
-FileUploadId MessagesManager::get_message_send_file_upload_id(const Message *m, int32 media_pos) {
-  return get_media_file_upload_id(m->message_id.is_any_server() ? m->edited_file_upload_ids : m->file_upload_ids,
-                                  media_pos);
+FileUploadId MessagesManager::get_message_send_file_upload_id(DialogId dialog_id, const Message *m,
+                                                              int32 media_pos) const {
+  if (m->message_id.is_any_server()) {
+    auto edited_message = get_edited_message(dialog_id, m->message_id);
+    if (edited_message == nullptr) {
+      return {};
+    }
+    return get_media_file_upload_id(edited_message->file_upload_ids_, media_pos);
+  }
+  return get_media_file_upload_id(m->file_upload_ids, media_pos);
 }
 
-FileUploadId MessagesManager::get_message_send_thumbnail_file_upload_id(const Message *m, int32 media_pos) {
-  return get_media_file_upload_id(
-      m->message_id.is_any_server() ? m->edited_thumbnail_file_upload_ids : m->thumbnail_file_upload_ids, media_pos);
+FileUploadId MessagesManager::get_message_send_thumbnail_file_upload_id(DialogId dialog_id, const Message *m,
+                                                                        int32 media_pos) const {
+  if (m->message_id.is_any_server()) {
+    auto edited_message = get_edited_message(dialog_id, m->message_id);
+    if (edited_message == nullptr) {
+      return {};
+    }
+    return get_media_file_upload_id(edited_message->thumbnail_file_upload_ids_, media_pos);
+  }
+  return get_media_file_upload_id(m->thumbnail_file_upload_ids, media_pos);
 }
 
-void MessagesManager::delete_message_send_thumbnail_file_upload_id(Message *m, int32 media_pos) {
-  auto &file_upload_ids =
-      m->message_id.is_any_server() ? m->edited_thumbnail_file_upload_ids : m->thumbnail_file_upload_ids;
-  if (file_upload_ids.size() <= 1u) {
-    file_upload_ids.clear();
+void MessagesManager::delete_message_send_thumbnail_file_upload_id(DialogId dialog_id, Message *m, int32 media_pos) {
+  vector<FileUploadId> *file_upload_ids;
+  if (m->message_id.is_any_server()) {
+    auto edited_message = get_edited_message(dialog_id, m->message_id);
+    if (edited_message == nullptr) {
+      return;
+    }
+    file_upload_ids = &edited_message->thumbnail_file_upload_ids_;
+  } else {
+    file_upload_ids = &m->thumbnail_file_upload_ids;
+  }
+  if (file_upload_ids->size() <= 1u) {
+    file_upload_ids->clear();
     return;
   }
-  CHECK(static_cast<size_t>(media_pos) < file_upload_ids.size());
-  file_upload_ids[media_pos] = FileUploadId();
+  CHECK(static_cast<size_t>(media_pos) < file_upload_ids->size());
+  (*file_upload_ids)[media_pos] = FileUploadId();
 }
 
 class MessagesManager::SendMessageLogEvent {
@@ -24008,7 +24121,15 @@ Result<td_api::object_ptr<td_api::message>> MessagesManager::send_message(
 
   Dialog *d = get_dialog_force(dialog_id, "send_message");
   if (d == nullptr) {
-    return Status::Error(400, "Chat not found");
+    if (td_->auth_manager_->is_bot() && options != nullptr && options->allow_paid_broadcast_ &&
+        dialog_id.get_type() == DialogType::User) {
+      td_->user_manager_->get_user_id_object(dialog_id.get_user_id(), nullptr);
+      force_create_dialog(dialog_id, "send_message");
+      d = get_dialog_force(dialog_id, "send_message");
+    }
+    if (d == nullptr) {
+      return Status::Error(400, "Chat not found");
+    }
   }
 
   auto input_reply_to = create_message_input_reply_to(d, top_thread_message_id, std::move(reply_to), false);
@@ -24025,8 +24146,9 @@ Result<td_api::object_ptr<td_api::message>> MessagesManager::send_message(
 
   TRY_STATUS(can_send_message(dialog_id));
   TRY_RESULT(message_reply_markup, get_dialog_reply_markup(dialog_id, std::move(reply_markup)));
-  TRY_RESULT(message_content, process_input_message_content(dialog_id, std::move(input_message_content)));
   TRY_RESULT(message_send_options, process_message_send_options(dialog_id, std::move(options), true, true));
+  TRY_RESULT(message_content, process_input_message_content(dialog_id, std::move(input_message_content),
+                                                            !message_send_options.allow_paid));
   TRY_STATUS(can_use_message_send_options(message_send_options, message_content));
   TRY_STATUS(can_use_top_thread_message_id(d, top_thread_message_id, input_reply_to));
 
@@ -24160,6 +24282,7 @@ Result<MessagesManager::MessageSendOptions> MessagesManager::process_message_sen
   }
   if (td_->auth_manager_->is_bot()) {
     result.protect_content = options->protect_content_;
+    result.allow_paid = options->allow_paid_broadcast_;
   }
   result.only_preview = options->only_preview_;
   TRY_RESULT_ASSIGN(result.schedule_date, get_message_schedule_date(std::move(options->scheduling_state_)));
@@ -24266,7 +24389,15 @@ Result<td_api::object_ptr<td_api::messages>> MessagesManager::send_message_group
     vector<tl_object_ptr<td_api::InputMessageContent>> &&input_message_contents) {
   Dialog *d = get_dialog_force(dialog_id, "send_message_group");
   if (d == nullptr) {
-    return Status::Error(400, "Chat not found");
+    if (td_->auth_manager_->is_bot() && options != nullptr && options->allow_paid_broadcast_ &&
+        dialog_id.get_type() == DialogType::User) {
+      td_->user_manager_->get_user_id_object(dialog_id.get_user_id(), nullptr);
+      force_create_dialog(dialog_id, "send_message_group");
+      d = get_dialog_force(dialog_id, "send_message_group");
+    }
+    if (d == nullptr) {
+      return Status::Error(400, "Chat not found");
+    }
   }
 
   TRY_STATUS(can_send_message(dialog_id));
@@ -24274,7 +24405,8 @@ Result<td_api::object_ptr<td_api::messages>> MessagesManager::send_message_group
 
   vector<InputMessageContent> message_contents;
   for (auto &input_message_content : input_message_contents) {
-    TRY_RESULT(message_content, process_input_message_content(dialog_id, std::move(input_message_content)));
+    TRY_RESULT(message_content, process_input_message_content(dialog_id, std::move(input_message_content),
+                                                              !message_send_options.allow_paid));
     TRY_STATUS(can_use_message_send_options(message_send_options, message_content));
     message_contents.push_back(std::move(message_content));
   }
@@ -24362,7 +24494,13 @@ void MessagesManager::do_send_message(DialogId dialog_id, const Message *m, int3
     request.results.push_back(Status::OK());
   }
 
-  auto content = is_edit ? m->edited_content.get() : m->content.get();
+  const EditedMessage *edited_message = nullptr;
+  if (is_edit) {
+    edited_message = get_edited_message(dialog_id, m->message_id);
+    CHECK(edited_message != nullptr);
+  }
+
+  auto content = is_edit ? edited_message->content_.get() : m->content.get();
   CHECK(content != nullptr);
   auto content_type = content->get_type();
   if (content_type == MessageContentType::Text) {
@@ -24392,14 +24530,14 @@ void MessagesManager::do_send_message(DialogId dialog_id, const Message *m, int3
       return file_id.is_valid() ? FileUploadId(file_id, FileManager::get_internal_upload_id()) : FileUploadId();
     });
     if (is_edit) {
-      m->edited_file_upload_ids = std::move(file_upload_ids);
-      m->edited_thumbnail_file_upload_ids = std::move(thumbnail_file_upload_ids);
+      edited_message->file_upload_ids_ = std::move(file_upload_ids);
+      edited_message->thumbnail_file_upload_ids_ = std::move(thumbnail_file_upload_ids);
     } else {
       m->file_upload_ids = std::move(file_upload_ids);
       m->thumbnail_file_upload_ids = std::move(thumbnail_file_upload_ids);
     }
   }
-  const auto &file_upload_ids = is_edit ? m->edited_file_upload_ids : m->file_upload_ids;
+  const auto &file_upload_ids = is_edit ? edited_message->file_upload_ids_ : m->file_upload_ids;
   LOG(DEBUG) << "Need to send files " << file_upload_ids;
   if (!bad_parts.empty()) {
     CHECK(file_upload_ids.size() <= 1u || media_pos >= 0);
@@ -24493,11 +24631,13 @@ void MessagesManager::on_message_media_uploaded(DialogId dialog_id, const Messag
   auto message_id = m->message_id;
   if (message_id.is_any_server()) {
     CHECK(media_pos == -1);
-    CHECK(m->edited_file_upload_ids.size() == 1u);
-    auto file_upload_id = get_message_send_file_upload_id(m, media_pos);
-    auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(m, media_pos);
-    const FormattedText *caption = get_message_content_caption(m->edited_content.get());
-    auto input_reply_markup = get_input_reply_markup(td_->user_manager_.get(), m->edited_reply_markup);
+    const auto *edited_message = get_edited_message(dialog_id, m->message_id);
+    CHECK(edited_message != nullptr);
+    CHECK(edited_message->file_upload_ids_.size() == 1u);
+    auto file_upload_id = get_message_send_file_upload_id(dialog_id, m, media_pos);
+    auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(dialog_id, m, media_pos);
+    const FormattedText *caption = get_message_content_caption(edited_message->content_.get());
+    auto input_reply_markup = get_input_reply_markup(td_->user_manager_.get(), edited_message->reply_markup_);
     bool was_uploaded = FileManager::extract_was_uploaded(input_media);
     bool was_thumbnail_uploaded = FileManager::extract_was_thumbnail_uploaded(input_media);
 
@@ -24514,7 +24654,8 @@ void MessagesManager::on_message_media_uploaded(DialogId dialog_id, const Messag
     td_->create_handler<EditMessageQuery>(std::move(promise))
         ->send(1 << 11, dialog_id, message_id, caption == nullptr ? "" : caption->text,
                get_input_message_entities(td_->user_manager_.get(), caption, "edit_message_media"),
-               std::move(input_media), m->edited_invert_media, std::move(input_reply_markup), schedule_date, true);
+               std::move(input_media), edited_message->invert_media_, std::move(input_reply_markup), schedule_date,
+               true);
     return;
   }
 
@@ -24544,8 +24685,8 @@ void MessagesManager::on_message_media_uploaded(DialogId dialog_id, const Messag
                        }));
   } else {
     if (!is_uploaded_input_media(input_media)) {
-      auto file_upload_id = get_message_send_file_upload_id(m, media_pos);
-      auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(m, media_pos);
+      auto file_upload_id = get_message_send_file_upload_id(dialog_id, m, media_pos);
+      auto thumbnail_file_upload_id = get_message_send_thumbnail_file_upload_id(dialog_id, m, media_pos);
       td_->create_handler<UploadMediaQuery>()->send(dialog_id, message_id, media_pos, file_upload_id,
                                                     thumbnail_file_upload_id, std::move(input_media));
     } else {
@@ -24677,7 +24818,7 @@ void MessagesManager::on_upload_message_media_success(DialogId dialog_id, Messag
   if (is_content_changed || need_update || media_pos >= 0) {
     on_message_changed(d, m, need_update, "on_upload_message_media_success");
   }
-  cancel_upload_file(get_message_send_file_upload_id(m, media_pos), "on_upload_message_media_success");
+  cancel_upload_file(get_message_send_file_upload_id(dialog_id, m, media_pos), "on_upload_message_media_success");
 
   auto input_media = get_message_content_input_media(m->content.get(), td_, m->ttl, m->send_emoji, true, media_pos);
   Status result;
@@ -24881,7 +25022,7 @@ void MessagesManager::do_send_message_group(int64 media_album_id) {
     is_copy = m->is_copy;
     as_input_peer = get_send_message_as_input_peer(m);
 
-    file_upload_ids.push_back(get_message_send_file_upload_id(m, -1));
+    file_upload_ids.push_back(get_message_send_file_upload_id(dialog_id, m, -1));
     random_ids.push_back(begin_send_message(dialog_id, m));
 
     LOG(INFO) << "Have " << file_upload_ids.back() << " in " << m->message_id << " with result " << request.results[i]
@@ -24896,7 +25037,7 @@ void MessagesManager::do_send_message_group(int64 media_album_id) {
     auto input_media = get_message_content_input_media(m->content.get(), td_, m->ttl, m->send_emoji, true);
     if (input_media == nullptr) {
       // TODO return CHECK
-      auto file_upload_id = get_message_send_file_upload_id(m, -1);
+      auto file_upload_id = get_message_send_file_upload_id(dialog_id, m, -1);
       auto file_view = td_->file_manager_->get_file_view(file_upload_id.get_file_id());
       const auto *full_remote_location = file_view.get_full_remote_location();
       bool has_remote = full_remote_location != nullptr;
@@ -25559,6 +25700,37 @@ bool MessagesManager::can_edit_message(DialogId dialog_id, const Message *m, boo
   }
 }
 
+bool MessagesManager::can_edit_message_media(DialogId dialog_id, const Message *m, bool is_editing) const {
+  if (!can_edit_message(dialog_id, m, is_editing)) {
+    return false;
+  }
+  if (m->video_processing_pending) {
+    return false;
+  }
+  switch (m->content->get_type()) {
+    case MessageContentType::Text:
+    case MessageContentType::Animation:
+    case MessageContentType::Audio:
+    case MessageContentType::Document:
+    case MessageContentType::Photo:
+    case MessageContentType::Video:
+      break;
+    default:
+      return false;
+  }
+  if (!m->ttl.is_empty()) {
+    return false;
+  }
+  return true;
+}
+
+bool MessagesManager::can_edit_message_scheduling_state(const Message *m) const {
+  if (!m->message_id.is_valid_scheduled() || !m->message_id.is_scheduled_server()) {
+    return false;
+  }
+  return true;
+}
+
 Status MessagesManager::can_pin_message(DialogId dialog_id, const Message *m) const {
   if (m == nullptr) {
     return Status::Error(400, "Message not found");
@@ -25768,19 +25940,16 @@ void MessagesManager::edit_message_live_location(MessageFullId message_full_id,
 }
 
 void MessagesManager::cancel_edit_message_media(DialogId dialog_id, Message *m, Slice error_message) {
-  if (m->edited_content == nullptr) {
+  auto *edited_message = get_edited_message(dialog_id, m->message_id);
+  if (edited_message == nullptr) {
     return;
   }
 
-  cancel_upload_message_content_files(m->edited_file_upload_ids, m->edited_thumbnail_file_upload_ids);
-
-  m->edited_content = nullptr;
-  m->edited_file_upload_ids = {};
-  m->edited_thumbnail_file_upload_ids = {};
-  m->edited_invert_media = false;
-  m->edited_reply_markup = nullptr;
+  cancel_upload_message_content_files(edited_message->file_upload_ids_, edited_message->thumbnail_file_upload_ids_);
+  auto promise = std::move(edited_message->promise_);
+  delete_edited_message(dialog_id, m->message_id);
   m->edit_generation = 0;
-  m->edit_promise.set_error(Status::Error(400, error_message));
+  promise.set_error(Status::Error(400, error_message));
 }
 
 void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId message_id, FileUploadId file_upload_id,
@@ -25806,7 +25975,8 @@ void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId mess
     return;
   }
 
-  CHECK(m->edited_content != nullptr);
+  auto edited_message = get_edited_message(dialog_id, message_id);
+  CHECK(edited_message->content_ != nullptr);
   if (result.is_ok()) {
     // message content has already been replaced from updateEdit{Channel,}Message
     // need only merge files from edited_content with their uploaded counterparts
@@ -25815,13 +25985,13 @@ void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId mess
     auto pts = result.ok();
     LOG(INFO) << "Successfully edited " << message_id << " in " << dialog_id << " with PTS = " << pts
               << " and last edit PTS = " << m->last_edit_pts;
-    std::swap(m->content, m->edited_content);
-    bool need_send_update_message_content = m->edited_content->get_type() == MessageContentType::Photo &&
+    std::swap(m->content, edited_message->content_);
+    bool need_send_update_message_content = edited_message->content_->get_type() == MessageContentType::Photo &&
                                             m->content->get_type() == MessageContentType::Photo;
     bool need_merge_files = pts != 0 && pts == m->last_edit_pts;
     bool is_content_changed = false;
-    bool need_update =
-        update_message_content(dialog_id, m, std::move(m->edited_content), need_merge_files, true, is_content_changed);
+    bool need_update = update_message_content(dialog_id, m, std::move(edited_message->content_), need_merge_files, true,
+                                              is_content_changed);
     if (need_send_update_message_content) {
       if (need_update) {
         send_update_message_content(d, m, true, "on_message_media_edited");
@@ -25831,7 +26001,7 @@ void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId mess
       }
     }
   } else {
-    auto error = result.move_as_error();
+    const auto &error = result.error();
     LOG(INFO) << "Failed to edit " << message_id << " in " << dialog_id << ": " << error;
     if (was_uploaded) {
       CHECK(file_upload_id.is_valid());
@@ -25856,7 +26026,7 @@ void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId mess
     if (error.code() != 403 && !(error.code() == 500 && G()->close_flag())) {
       LOG(WARNING) << "Failed to edit " << MessageFullId{dialog_id, m->message_id} << " with the error " << error;
     }
-    cancel_upload_message_content_files(m->edited_file_upload_ids, m->edited_thumbnail_file_upload_ids);
+    cancel_upload_message_content_files(edited_message->file_upload_ids_, edited_message->thumbnail_file_upload_ids_);
 
     if (dialog_id.get_type() != DialogType::SecretChat) {
       get_message_from_server({dialog_id, m->message_id}, Auto(), "on_message_media_edited");
@@ -25869,16 +26039,13 @@ void MessagesManager::on_message_media_edited(DialogId dialog_id, MessageId mess
   if (m->edited_schedule_date == schedule_date) {
     m->edited_schedule_date = 0;
   }
-  m->edited_content = nullptr;
-  m->edited_file_upload_ids = {};
-  m->edited_thumbnail_file_upload_ids = {};
-  m->edited_invert_media = false;
-  m->edited_reply_markup = nullptr;
+  auto promise = std::move(edited_message->promise_);
+  delete_edited_message(dialog_id, message_id);
   m->edit_generation = 0;
   if (result.is_ok()) {
-    m->edit_promise.set_value(Unit());
+    promise.set_value(Unit());
   } else {
-    m->edit_promise.set_error(result.move_as_error());
+    promise.set_error(result.move_as_error());
   }
 }
 
@@ -25905,21 +26072,10 @@ void MessagesManager::edit_message_media(MessageFullId message_full_id,
   if (m == nullptr) {
     return promise.set_error(Status::Error(400, "Message not found"));
   }
-  if (!can_edit_message(dialog_id, m, true)) {
-    return promise.set_error(Status::Error(400, "Message can't be edited"));
+  if (!can_edit_message_media(dialog_id, m, true)) {
+    return promise.set_error(Status::Error(400, "Message media can't be edited"));
   }
   CHECK(m->message_id.is_any_server());
-
-  MessageContentType old_message_content_type = m->content->get_type();
-  if (old_message_content_type != MessageContentType::Animation &&
-      old_message_content_type != MessageContentType::Audio &&
-      old_message_content_type != MessageContentType::Document &&
-      old_message_content_type != MessageContentType::Photo && old_message_content_type != MessageContentType::Video) {
-    return promise.set_error(Status::Error(400, "There is no media in the message to edit"));
-  }
-  if (!m->ttl.is_empty()) {
-    return promise.set_error(Status::Error(400, "Can't edit media in self-destructing message"));
-  }
 
   TRY_RESULT_PROMISE(promise, content, process_input_message_content(dialog_id, std::move(input_message_content)));
   if (!content.ttl.is_empty()) {
@@ -25927,6 +26083,7 @@ void MessagesManager::edit_message_media(MessageFullId message_full_id,
   }
 
   if (m->media_album_id != 0) {
+    auto old_message_content_type = m->content->get_type();
     auto new_content_type = content.content->get_type();
     if (old_message_content_type != new_content_type) {
       if (!is_allowed_media_group_content(new_content_type)) {
@@ -25945,13 +26102,15 @@ void MessagesManager::edit_message_media(MessageFullId message_full_id,
 
   cancel_edit_message_media(dialog_id, m, "Canceled by new editMessageMedia request");
 
-  m->edited_content =
+  auto edited_message = make_unique<EditedMessage>();
+  edited_message->content_ =
       dup_message_content(td_, dialog_id, content.content.get(), MessageContentDupType::Send, MessageCopyOptions());
-  CHECK(m->edited_content != nullptr);
-  m->edited_invert_media = content.invert_media;
-  m->edited_reply_markup = std::move(new_reply_markup);
+  CHECK(edited_message->content_ != nullptr);
+  edited_message->invert_media_ = content.invert_media;
+  edited_message->reply_markup_ = std::move(new_reply_markup);
+  edited_message->promise_ = std::move(promise);
+  add_edited_message(dialog_id, m->message_id, std::move(edited_message));
   m->edit_generation = ++current_message_edit_generation_;
-  m->edit_promise = std::move(promise);
 
   do_send_message(dialog_id, m);
 }
@@ -26030,11 +26189,7 @@ void MessagesManager::edit_message_scheduling_state(
   if (m == nullptr) {
     return promise.set_error(Status::Error(400, "Message not found"));
   }
-
-  if (!m->message_id.is_scheduled()) {
-    return promise.set_error(Status::Error(400, "Message is not scheduled"));
-  }
-  if (!m->message_id.is_valid_scheduled() || !m->message_id.is_scheduled_server()) {
+  if (!can_edit_message_scheduling_state(m) || (m->video_processing_pending && schedule_date > 0)) {
     return promise.set_error(Status::Error(400, "Can't reschedule the message"));
   }
 
@@ -26381,6 +26536,9 @@ int32 MessagesManager::get_message_flags(const Message *m) {
   if (m->effect_id.is_valid()) {
     flags |= SEND_MESSAGE_FLAG_EFFECT;
   }
+  if (m->allow_paid) {
+    flags |= SEND_MESSAGE_FLAG_ALLOW_PAID;
+  }
   return flags;
 }
 
@@ -26559,6 +26717,9 @@ void MessagesManager::do_forward_messages(DialogId to_dialog_id, DialogId from_d
   }
   if (messages[0]->noforwards) {
     flags |= SEND_MESSAGE_FLAG_NOFORWARDS;
+  }
+  if (messages[0]->allow_paid) {
+    flags |= SEND_MESSAGE_FLAG_ALLOW_PAID;
   }
   if (drop_author) {
     flags |= telegram_api::messages_forwardMessages::DROP_AUTHOR_MASK;
@@ -26849,7 +27010,8 @@ Result<MessagesManager::ForwardedMessages> MessagesManager::get_forwarded_messag
       continue;
     }
 
-    auto can_send_status = can_send_message_content(to_dialog_id, content.get(), !is_local_copy, true, td_);
+    auto can_send_status = can_send_message_content(to_dialog_id, content.get(), !is_local_copy,
+                                                    !need_copy || !message_send_options.allow_paid, td_);
     if (can_send_status.is_error()) {
       LOG(INFO) << "Can't forward " << message_id << ": " << can_send_status.message();
       continue;
@@ -27116,7 +27278,7 @@ Result<td_api::object_ptr<td_api::messages>> MessagesManager::send_quick_reply_s
   auto *d = get_dialog(dialog_id);
   CHECK(d != nullptr);
 
-  MessageSendOptions message_send_options(false, false, false, false, false, 0, sending_id, MessageEffectId());
+  MessageSendOptions message_send_options(false, false, false, false, false, false, 0, sending_id, MessageEffectId());
   FlatHashMap<MessageId, MessageId, MessageIdHash> original_message_id_to_new_message_id;
   vector<td_api::object_ptr<td_api::message>> result;
   vector<Message *> sent_messages;
@@ -27327,7 +27489,7 @@ Result<vector<MessageId>> MessagesManager::resend_messages(DialogId dialog_id, v
       message->input_reply_to = {};
     }
     MessageSendOptions options(message->disable_notification, message->from_background,
-                               message->update_stickersets_order, message->noforwards, false,
+                               message->update_stickersets_order, message->noforwards, message->allow_paid, false,
                                get_message_schedule_date(message.get()), message->sending_id, message->effect_id);
     Message *m = get_message_to_send(d, message->top_thread_message_id, std::move(message->input_reply_to), options,
                                      std::move(new_contents[i]), message->invert_media, &need_update_dialog_pos, false,
@@ -27665,6 +27827,21 @@ bool MessagesManager::on_update_message_id(int64 random_id, MessageId new_messag
     update_message_ids_[MessageFullId(dialog_id, new_message_id)] = old_message_id;
   }
   return true;
+}
+
+void MessagesManager::on_update_message_video_published(MessageFullId message_full_id) {
+  Dialog *d = get_dialog_force(message_full_id.get_dialog_id());
+  if (d == nullptr) {
+    return;
+  }
+  auto message_id = message_full_id.get_message_id();
+  if (have_message_force(d, message_id, "on_update_message_video_published")) {
+    return send_update_video_published(message_full_id);
+  }
+  if (is_deleted_message(d, message_id)) {
+    return;
+  }
+  published_video_message_full_ids_.insert(message_full_id);
 }
 
 bool MessagesManager::on_get_message_error(DialogId dialog_id, MessageId message_id, const Status &status,
@@ -28980,6 +29157,13 @@ void MessagesManager::send_update_message_send_succeeded(Dialog *d, MessageId ol
                    get_message_object(d->dialog_id, m, "send_update_message_send_succeeded"), old_message_id.get()));
 }
 
+void MessagesManager::send_update_video_published(MessageFullId message_full_id) {
+  send_closure(G()->td(), &Td::send_update,
+               td_api::make_object<td_api::updateVideoPublished>(
+                   get_chat_id_object(message_full_id.get_dialog_id(), "updateVideoPublished"),
+                   message_full_id.get_message_id().get()));
+}
+
 void MessagesManager::send_update_message_content(const Dialog *d, Message *m, bool is_message_in_dialog,
                                                   const char *source) {
   CHECK(d != nullptr);
@@ -29064,8 +29248,9 @@ void MessagesManager::send_update_message_fact_check(DialogId dialog_id, const M
 void MessagesManager::send_update_message_live_location_viewed(MessageFullId message_full_id) {
   CHECK(get_message(message_full_id) != nullptr);
   send_closure(G()->td(), &Td::send_update,
-               td_api::make_object<td_api::updateMessageLiveLocationViewed>(message_full_id.get_dialog_id().get(),
-                                                                            message_full_id.get_message_id().get()));
+               td_api::make_object<td_api::updateMessageLiveLocationViewed>(
+                   get_chat_id_object(message_full_id.get_dialog_id(), "updateMessageLiveLocationViewed"),
+                   message_full_id.get_message_id().get()));
 }
 
 td_api::object_ptr<td_api::updateActiveLiveLocationMessages>
@@ -29660,8 +29845,8 @@ void MessagesManager::check_send_message_result(int64 random_id, DialogId dialog
 
 void MessagesManager::update_reply_to_message_id(DialogId dialog_id, MessageId old_message_id, MessageId new_message_id,
                                                  bool have_new_message, const char *source) {
-  LOG(INFO) << "Update replies of " << MessageFullId{dialog_id, old_message_id} << " to " << new_message_id << " from "
-            << source;
+  LOG(DEBUG) << "Update replies of " << MessageFullId{dialog_id, old_message_id} << " to " << new_message_id << " from "
+             << source;
   MessageFullId old_message_full_id(dialog_id, old_message_id);
   auto it = replied_yet_unsent_messages_.find(old_message_full_id);
   if (it == replied_yet_unsent_messages_.end()) {
@@ -29875,6 +30060,7 @@ void MessagesManager::on_send_message_file_reference_error(int64 random_id, size
     LOG(INFO) << "Don't need to send already deleted by the user or sent to an inaccessible chat " << message_full_id;
     return;
   }
+  CHECK(m->message_id.is_yet_unsent());
 
   auto dialog_id = message_full_id.get_dialog_id();
   if (dialog_id.get_type() == DialogType::SecretChat) {
@@ -29897,18 +30083,17 @@ void MessagesManager::on_send_message_file_reference_error(int64 random_id, size
   }
 
   int32 media_pos = -1;
-  const auto &file_upload_ids = m->message_id.is_any_server() ? m->edited_file_upload_ids : m->file_upload_ids;
   if (m->content->get_type() == MessageContentType::PaidMedia) {
     media_pos = static_cast<int32>(pos);
 
     LOG(INFO) << "Add paid media group send for " << message_full_id;
     auto &request = pending_paid_media_group_sends_[message_full_id];
     CHECK(request.is_finished.empty());
-    CHECK(static_cast<size_t>(media_pos) < file_upload_ids.size());
-    request.is_finished.resize(file_upload_ids.size(), true);
+    CHECK(static_cast<size_t>(media_pos) < m->file_upload_ids.size());
+    request.is_finished.resize(m->file_upload_ids.size(), true);
     request.is_finished[media_pos] = false;
-    request.finished_count = file_upload_ids.size() - 1;
-    request.results.resize(file_upload_ids.size());
+    request.finished_count = m->file_upload_ids.size() - 1;
+    request.results.resize(m->file_upload_ids.size());
   } else {
     CHECK(pos == 0);
   }
@@ -30291,8 +30476,12 @@ void MessagesManager::fail_edit_message_media(MessageFullId message_full_id, Sta
     // message has already been deleted by the user or sent to inaccessible channel
     return;
   }
-  CHECK(m->edited_content != nullptr);
-  m->edit_promise.set_error(std::move(error));
+  auto edited_message = get_edited_message(dialog_id, message_id);
+  if (edited_message == nullptr) {
+    return;
+  }
+  CHECK(edited_message->content_ != nullptr);
+  edited_message->promise_.set_error(std::move(error));
   cancel_edit_message_media(dialog_id, m, "Failed to edit message. MUST BE IGNORED");
 }
 
@@ -31764,7 +31953,7 @@ void MessagesManager::on_send_dialog_action_timeout(DialogId dialog_id) {
     return;
   }
 
-  auto file_upload_id = get_message_send_file_upload_id(m, 0);
+  auto file_upload_id = get_message_send_file_upload_id(dialog_id, m, 0);
   if (!file_upload_id.is_valid()) {
     LOG(ERROR) << "Have no file in " << to_string(get_message_message_content_object(dialog_id, m));
     return;
@@ -32499,7 +32688,7 @@ const MessagesManager::Message *MessagesManager::get_message(const Dialog *d, Me
       }
     }
   }
-  LOG(INFO) << "Search for " << message_id << " in " << d->dialog_id << " found " << result;
+  LOG(DEBUG) << "Search for " << message_id << " in " << d->dialog_id << " found " << result;
   return result;
 }
 
@@ -33051,23 +33240,23 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
 
   auto message_content_type = message->content->get_type();
   if (message_content_type == MessageContentType::ChatDeleteHistory) {
-    {
+    if (!td_->auth_manager_->is_bot()) {
       auto old_message = delete_message(d, message_id, true, need_update_dialog_pos, "message chat delete history");
       if (old_message != nullptr) {
         send_update_delete_messages(dialog_id, {old_message->message_id.get()}, true);
       }
-    }
-    int32 last_message_date = 0;
-    if (d->last_message_id != MessageId()) {
-      auto last_message = get_message(d, d->last_message_id);
-      CHECK(last_message != nullptr);
-      last_message_date = last_message->date - 1;
-    } else {
-      last_message_date = d->last_clear_history_date;
-    }
-    if (message->date > last_message_date) {
-      set_dialog_last_clear_history_date(d, message->date, message_id, "update_last_clear_history_date");
-      *need_update_dialog_pos = true;
+      int32 last_message_date = 0;
+      if (d->last_message_id != MessageId()) {
+        auto last_message = get_message(d, d->last_message_id);
+        CHECK(last_message != nullptr);
+        last_message_date = last_message->date - 1;
+      } else {
+        last_message_date = d->last_clear_history_date;
+      }
+      if (message->date > last_message_date) {
+        set_dialog_last_clear_history_date(d, message->date, message_id, "update_last_clear_history_date");
+        *need_update_dialog_pos = true;
+      }
     }
     LOG(INFO) << "Process MessageChatDeleteHistory in " << message_id << " in " << dialog_id << " with date "
               << message->date << " from " << source;
@@ -33536,11 +33725,6 @@ MessagesManager::Message *MessagesManager::add_scheduled_message_to_dialog(Dialo
     LOG(ERROR) << "Tried to add " << message_id << " with auto-delete timer " << message->ttl_period << " to "
                << dialog_id << " from " << source;
     debug_add_message_to_dialog_fail_reason_ = "skip adding auto-deleting scheduled message";
-    return nullptr;
-  }
-  if (td_->auth_manager_->is_bot()) {
-    LOG(ERROR) << "Bot tried to add " << message_id << " to " << dialog_id << " from " << source;
-    debug_add_message_to_dialog_fail_reason_ = "skip adding scheduled message by bot";
     return nullptr;
   }
 
@@ -34139,7 +34323,9 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
   }
   if (old_message->sender_dialog_id != new_message->sender_dialog_id) {
     // there can be race for changed anonymous flag
-    LOG_IF(ERROR, old_message->sender_dialog_id != DialogId() && new_message->sender_dialog_id != DialogId())
+    // yet unsent messages scheduled by the server can lost chosen sender
+    LOG_IF(ERROR, old_message->sender_dialog_id != DialogId() && new_message->sender_dialog_id != DialogId() &&
+                      (!message_id.is_yet_unsent() || new_message->sender_dialog_id != d->dialog_id))
         << message_id << " in " << dialog_id << " has changed sender from " << old_message->sender_dialog_id << " to "
         << new_message->sender_dialog_id << ", message content type is " << old_content_type << '/' << new_content_type;
 
@@ -34419,6 +34605,10 @@ bool MessagesManager::update_message(Dialog *d, Message *old_message, unique_ptr
   if (old_message->is_from_offline != new_message->is_from_offline) {
     old_message->is_from_offline = new_message->is_from_offline;
   }
+  if (old_message->video_processing_pending != new_message->video_processing_pending) {
+    old_message->video_processing_pending = new_message->video_processing_pending;
+    need_send_update = true;
+  }
 
   if (old_message->edit_date > 0) {
     // inline keyboard can be edited
@@ -34579,8 +34769,15 @@ bool MessagesManager::update_message_content(DialogId dialog_id, Message *old_me
   MessageContentType old_content_type = old_content->get_type();
   MessageContentType new_content_type = new_content->get_type();
 
-  auto old_file_upload_ids =
-      old_message->message_id.is_any_server() ? old_message->edited_file_upload_ids : old_message->file_upload_ids;
+  vector<FileUploadId> old_file_upload_ids;
+  if (old_message->message_id.is_any_server()) {
+    const auto *edited_message = get_edited_message(dialog_id, old_message->message_id);
+    if (edited_message != nullptr) {
+      old_file_upload_ids = edited_message->file_upload_ids_;
+    }
+  } else {
+    old_file_upload_ids = old_message->file_upload_ids;
+  }
   if (old_content_type != new_content_type) {
     if (old_message->ttl.is_valid() && old_message->ttl_expires_at > 0 &&
         is_expired_message_content(new_content_type) &&
@@ -35200,7 +35397,7 @@ void MessagesManager::fix_new_dialog(Dialog *d, unique_ptr<DraftMessage> &&draft
     }
   }
 
-  if (dialog_id != being_added_dialog_id_) {
+  if (!td_->auth_manager_->is_bot() && dialog_id != being_added_dialog_id_) {
     set_dialog_last_clear_history_date(d, last_clear_history_date, last_clear_history_message_id, "fix_new_dialog 8",
                                        is_loaded_from_database);
 
@@ -37325,11 +37522,13 @@ void MessagesManager::after_get_channel_difference(DialogId dialog_id, bool succ
   auto on_get_dialogs_it = pending_channel_on_get_dialogs_.find(dialog_id);
   if (on_get_dialogs_it != pending_channel_on_get_dialogs_.end()) {
     LOG(INFO) << "Apply postponed results of channel getDialogs for " << dialog_id;
-    PendingOnGetDialogs res = std::move(on_get_dialogs_it->second);
+    vector<PendingOnGetDialogs> queries = std::move(on_get_dialogs_it->second);
     pending_channel_on_get_dialogs_.erase(on_get_dialogs_it);
 
-    on_get_dialogs(res.folder_id, std::move(res.dialogs), res.total_count, std::move(res.messages),
-                   std::move(res.promise));
+    for (auto &query : queries) {
+      on_get_dialogs(query.folder_id, std::move(query.dialogs), query.total_count, std::move(query.messages),
+                     std::move(query.promise));
+    }
   }
 
   if (d != nullptr && !td_->auth_manager_->is_bot() && have_access && !d->last_message_id.is_valid() && !d->is_empty &&
