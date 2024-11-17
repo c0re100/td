@@ -1871,6 +1871,12 @@ class CliClient final : public Actor {
     if (setting == "find") {
       return td_api::make_object<td_api::userPrivacySettingAllowFindingByPhoneNumber>();
     }
+    if (setting == "birth") {
+      return td_api::make_object<td_api::userPrivacySettingShowBirthdate>();
+    }
+    if (setting == "gift") {
+      return td_api::make_object<td_api::userPrivacySettingAutosaveGifts>();
+    }
     return nullptr;
   }
 
@@ -2345,6 +2351,11 @@ class CliClient final : public Actor {
   static td_api::object_ptr<td_api::themeParameters> as_theme_parameters() {
     return td_api::make_object<td_api::themeParameters>(0, 1, -1, 123, 256, 65536, 123456789, 65535, 5, 55, 555, 5555,
                                                         55555, 555555, 123);
+  }
+
+  static td_api::object_ptr<td_api::webAppOpenParameters> as_web_app_open_parameters() {
+    return td_api::make_object<td_api::webAppOpenParameters>(as_theme_parameters(), "android",
+                                                             td_api::make_object<td_api::webAppOpenModeFullScreen>());
   }
 
   static td_api::object_ptr<td_api::BackgroundFill> as_background_fill(int32 color) {
@@ -3623,6 +3634,10 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::getUser>(user_id));
     } else if (op == "gsu") {
       send_request(td_api::make_object<td_api::getSupportUser>());
+    } else if (op == "gso" || op == "gsoa" || op == "gsoc") {
+      int32 sticker_file_id;
+      get_args(args, sticker_file_id);
+      send_request(td_api::make_object<td_api::getStickerOutline>(sticker_file_id, op == "gsoa", op == "gsoc"));
     } else if (op == "gs" || op == "gsmm" || op == "gsee" || op == "gseeme") {
       SearchQuery query;
       get_args(args, query);
@@ -4995,6 +5010,10 @@ class CliClient final : public Actor {
       string short_name;
       get_args(args, bot_user_id, short_name);
       send_request(td_api::make_object<td_api::searchWebApp>(bot_user_id, short_name));
+    } else if (op == "gwap") {
+      UserId bot_user_id;
+      get_args(args, bot_user_id);
+      send_request(td_api::make_object<td_api::getWebAppPlaceholder>(bot_user_id));
     } else if (op == "gwalu") {
       ChatId chat_id;
       UserId bot_user_id;
@@ -5002,19 +5021,19 @@ class CliClient final : public Actor {
       string start_parameter;
       get_args(args, chat_id, bot_user_id, short_name, start_parameter);
       send_request(td_api::make_object<td_api::getWebAppLinkUrl>(chat_id, bot_user_id, short_name, start_parameter,
-                                                                 as_theme_parameters(), "android", true));
+                                                                 true, as_web_app_open_parameters()));
     } else if (op == "gmwa") {
       ChatId chat_id;
       UserId bot_user_id;
       string start_parameter;
       get_args(args, chat_id, bot_user_id, start_parameter);
       send_request(td_api::make_object<td_api::getMainWebApp>(chat_id, bot_user_id, start_parameter,
-                                                              as_theme_parameters(), "android"));
+                                                              as_web_app_open_parameters()));
     } else if (op == "gwau") {
       UserId bot_user_id;
       string url;
       get_args(args, bot_user_id, url);
-      send_request(td_api::make_object<td_api::getWebAppUrl>(bot_user_id, url, as_theme_parameters(), "android"));
+      send_request(td_api::make_object<td_api::getWebAppUrl>(bot_user_id, url, as_web_app_open_parameters()));
     } else if (op == "swad") {
       UserId bot_user_id;
       string button_text;
@@ -5026,12 +5045,18 @@ class CliClient final : public Actor {
       UserId bot_user_id;
       string url;
       get_args(args, chat_id, bot_user_id, url);
-      send_request(td_api::make_object<td_api::openWebApp>(chat_id, bot_user_id, url, as_theme_parameters(), "android",
-                                                           message_thread_id_, get_input_message_reply_to()));
+      send_request(td_api::make_object<td_api::openWebApp>(chat_id, bot_user_id, url, message_thread_id_,
+                                                           get_input_message_reply_to(), as_web_app_open_parameters()));
     } else if (op == "cwa") {
       int64 launch_id;
       get_args(args, launch_id);
       send_request(td_api::make_object<td_api::closeWebApp>(launch_id));
+    } else if (op == "cwafd") {
+      UserId bot_user_id;
+      string file_name;
+      string url;
+      get_args(args, bot_user_id, file_name, url);
+      send_request(td_api::make_object<td_api::checkWebAppFileDownload>(bot_user_id, file_name, url));
     } else if (op == "sca") {
       ChatId chat_id;
       string action;
@@ -5473,6 +5498,11 @@ class CliClient final : public Actor {
       get_args(args, bot_user_id, query);
       send_request(
           td_api::make_object<td_api::getInlineQueryResults>(bot_user_id, 0, as_location("1.1", "2.2", ""), query, ""));
+    } else if (op == "gpim") {
+      UserId bot_user_id;
+      string prepared_message_id;
+      get_args(args, bot_user_id, prepared_message_id);
+      send_request(td_api::make_object<td_api::getPreparedInlineMessage>(bot_user_id, prepared_message_id));
     } else if (op == "siqr" || op == "siqrh") {
       ChatId chat_id;
       int64 query_id;
@@ -6682,6 +6712,11 @@ class CliClient final : public Actor {
       InputChatPhoto input_chat_photo;
       get_args(args, user_id, input_chat_photo);
       send_request(td_api::make_object<td_api::suggestUserProfilePhoto>(user_id, input_chat_photo));
+    } else if (op == "tbcmes") {
+      UserId user_id;
+      bool can_manage_emoji_status;
+      get_args(args, user_id, can_manage_emoji_status);
+      send_request(td_api::make_object<td_api::toggleBotCanManageEmojiStatus>(user_id, can_manage_emoji_status));
     } else if (op == "cbsm") {
       UserId bot_user_id;
       get_args(args, bot_user_id);

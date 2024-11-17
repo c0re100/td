@@ -85,6 +85,7 @@
 #include "td/telegram/TranscriptionManager.h"
 #include "td/telegram/UserManager.h"
 #include "td/telegram/Usernames.h"
+#include "td/telegram/WebAppManager.h"
 #include "td/telegram/WebPagesManager.h"
 
 #include "td/actor/MultiPromise.h"
@@ -2939,6 +2940,10 @@ void UpdatesManager::add_pending_pts_update(tl_object_ptr<telegram_api::Update> 
   process_all_pending_pts_updates();
 }
 
+size_t UpdatesManager::get_pending_pts_update_count() {
+  return postponed_pts_updates_.size() + pending_pts_updates_.size();
+}
+
 void UpdatesManager::postpone_pts_update(tl_object_ptr<telegram_api::Update> &&update, int32 pts, int32 pts_count,
                                          double receive_time, Promise<Unit> &&promise) {
   if (!can_postpone_updates() || (pts_count > 1 && td_->option_manager_->get_option_integer("session_count") <= 1)) {
@@ -3131,6 +3136,7 @@ void UpdatesManager::process_qts_update(tl_object_ptr<telegram_api::Update> &&up
   } else {
     add_qts(qts).set_value(Unit());
     LOG(ERROR) << "Receive " << to_string(update_ptr);
+    update_ptr = nullptr;
   }
   promise.set_value(Unit());
 }
@@ -3188,7 +3194,7 @@ void UpdatesManager::process_postponed_pts_updates() {
       continue;
     }
 
-    if (Time::now() - begin_time >= 0.1) {
+    if (Time::now() - begin_time >= UPDATE_APPLY_WARNING_TIME) {
       // the updates will be applied or skipped later; reget the remaining updates through getDifference
       break;
     }
@@ -3779,7 +3785,7 @@ void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateAttachMenuBots>
 }
 
 void UpdatesManager::on_update(tl_object_ptr<telegram_api::updateWebViewResultSent> update, Promise<Unit> &&promise) {
-  td_->attach_menu_manager_->close_web_view(update->query_id_, std::move(promise));
+  td_->web_app_manager_->close_web_view(update->query_id_, std::move(promise));
   send_closure(G()->td(), &Td::send_update, td_api::make_object<td_api::updateWebAppMessageSent>(update->query_id_));
 }
 

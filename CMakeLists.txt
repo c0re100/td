@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.39 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.40 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -534,6 +534,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/OptionManager.cpp
   td/telegram/OrderedMessage.cpp
   td/telegram/OrderInfo.cpp
+  td/telegram/Outline.cpp
   td/telegram/PasswordManager.cpp
   td/telegram/Payments.cpp
   td/telegram/PeerColor.cpp
@@ -604,6 +605,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/SuggestedAction.cpp
   td/telegram/Support.cpp
   td/telegram/SynchronousRequests.cpp
+  td/telegram/TargetDialogTypes.cpp
   td/telegram/Td.cpp
   td/telegram/TdDb.cpp
   td/telegram/TermsOfService.cpp
@@ -626,6 +628,8 @@ set(TDLIB_SOURCE_PART2
   td/telegram/VideosManager.cpp
   td/telegram/VoiceNotesManager.cpp
   td/telegram/WebApp.cpp
+  td/telegram/WebAppManager.cpp
+  td/telegram/WebAppOpenParameters.cpp
   td/telegram/WebPageBlock.cpp
   td/telegram/WebPagesManager.cpp
 
@@ -873,6 +877,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/OptionManager.h
   td/telegram/OrderedMessage.h
   td/telegram/OrderInfo.h
+  td/telegram/Outline.h
   td/telegram/PasswordManager.h
   td/telegram/Payments.h
   td/telegram/PeerColor.h
@@ -961,6 +966,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/SuggestedAction.h
   td/telegram/Support.h
   td/telegram/SynchronousRequests.h
+  td/telegram/TargetDialogTypes.h
   td/telegram/Td.h
   td/telegram/TdCallback.h
   td/telegram/TdDb.h
@@ -987,6 +993,8 @@ set(TDLIB_SOURCE_PART2
   td/telegram/VideosManager.h
   td/telegram/VoiceNotesManager.h
   td/telegram/WebApp.h
+  td/telegram/WebAppManager.h
+  td/telegram/WebAppOpenParameters.h
   td/telegram/WebPageBlock.h
   td/telegram/WebPageId.h
   td/telegram/WebPagesManager.h
