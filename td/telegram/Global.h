@@ -71,6 +71,7 @@ class PeopleNearbyManager;
 class PromoDataManager;
 class QuickReplyManager;
 class ReactionManager;
+class ReferralProgramManager;
 class SavedMessagesManager;
 class SecretChatsManager;
 class SponsoredMessageManager;
@@ -79,6 +80,7 @@ class StateManager;
 class StickersManager;
 class StorageManager;
 class StoryManager;
+class SuggestedActionManager;
 class Td;
 class TdDb;
 class TempAuthKeyWatchdog;
@@ -457,6 +459,13 @@ class Global final : public ActorContext {
     reaction_manager_ = reaction_manager;
   }
 
+  ActorId<ReferralProgramManager> referral_program_manager() const {
+    return referral_program_manager_;
+  }
+  void set_referral_program_manager(ActorId<ReferralProgramManager> referral_program_manager) {
+    referral_program_manager_ = referral_program_manager;
+  }
+
   ActorId<SavedMessagesManager> saved_messages_manager() const {
     return saved_messages_manager_;
   }
@@ -504,6 +513,13 @@ class Global final : public ActorContext {
   }
   void set_story_manager(ActorId<StoryManager> story_manager) {
     story_manager_ = story_manager;
+  }
+
+  ActorId<SuggestedActionManager> suggested_action_manager() const {
+    return suggested_action_manager_;
+  }
+  void set_suggested_action_manager(ActorId<SuggestedActionManager> suggested_action_manager) {
+    suggested_action_manager_ = suggested_action_manager;
   }
 
   ActorId<ThemeManager> theme_manager() const {
@@ -592,6 +608,10 @@ class Global final : public ActorContext {
 
   int32 get_gc_scheduler_id() const {
     return gc_scheduler_id_;
+  }
+
+  int32 get_main_session_scheduler_id() const {
+    return use_sqlite_pmc() ? -1 : database_scheduler_id_;
   }
 
   int32 get_slow_net_scheduler_id() const {
@@ -720,6 +740,7 @@ class Global final : public ActorContext {
   ActorId<PromoDataManager> promo_data_manager_;
   ActorId<QuickReplyManager> quick_reply_manager_;
   ActorId<ReactionManager> reaction_manager_;
+  ActorId<ReferralProgramManager> referral_program_manager_;
   ActorId<SavedMessagesManager> saved_messages_manager_;
   ActorId<SecretChatsManager> secret_chats_manager_;
   ActorId<SponsoredMessageManager> sponsored_message_manager_;
@@ -727,6 +748,7 @@ class Global final : public ActorContext {
   ActorId<StickersManager> stickers_manager_;
   ActorId<StorageManager> storage_manager_;
   ActorId<StoryManager> story_manager_;
+  ActorId<SuggestedActionManager> suggested_action_manager_;
   ActorId<ThemeManager> theme_manager_;
   ActorId<TimeZoneManager> time_zone_manager_;
   ActorId<TopDialogManager> top_dialog_manager_;

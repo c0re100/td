@@ -364,6 +364,10 @@ class SendWebViewResultMessageQuery final : public Td::ResultHandler {
 InlineQueriesManager::InlineQueriesManager(Td *td, ActorShared<> parent) : td_(td), parent_(std::move(parent)) {
   drop_inline_query_result_timeout_.set_callback(on_drop_inline_query_result_timeout_callback);
   drop_inline_query_result_timeout_.set_callback_data(static_cast<void *>(this));
+
+  drop_inline_query_message_timeout_.set_callback(on_drop_inline_query_message_timeout_callback);
+  drop_inline_query_message_timeout_.set_callback_data(static_cast<void *>(this));
+
   next_inline_query_time_ = Time::now();
 }
 
@@ -393,11 +397,32 @@ void InlineQueriesManager::on_drop_inline_query_result_timeout(int64 query_hash)
   if (it->second.pending_request_count == 0) {
     if (it->second.results != nullptr) {
       auto query_id = it->second.results->inline_query_id_;
-      inline_message_contents_.erase(query_id);
-      query_id_to_bot_user_id_.erase(query_id);
+      if (query_id) {
+        drop_inline_query_message_timeout_.set_timeout_in(query_id, 3600);
+      }
     }
     inline_query_results_.erase(it);
   }
+}
+
+void InlineQueriesManager::on_drop_inline_query_message_timeout_callback(void *inline_queries_manager_ptr,
+                                                                         int64 query_id) {
+  if (G()->close_flag()) {
+    return;
+  }
+
+  auto inline_queries_manager = static_cast<InlineQueriesManager *>(inline_queries_manager_ptr);
+  send_closure_later(inline_queries_manager->actor_id(inline_queries_manager),
+                     &InlineQueriesManager::on_drop_inline_query_message_timeout, query_id);
+}
+
+void InlineQueriesManager::on_drop_inline_query_message_timeout(int64 query_id) {
+  if (G()->close_flag()) {
+    return;
+  }
+
+  inline_message_contents_.erase(query_id);
+  query_id_to_bot_user_id_.erase(query_id);
 }
 
 void InlineQueriesManager::after_get_difference() {
@@ -1744,7 +1769,7 @@ td_api::object_ptr<td_api::InlineQueryResult> InlineQueriesManager::get_inline_q
         CHECK(document_id == telegram_api::document::ID);
 
         auto parsed_document = td_->documents_manager_->on_get_document(
-            telegram_api::move_object_as<telegram_api::document>(document_ptr), DialogId());
+            telegram_api::move_object_as<telegram_api::document>(document_ptr), DialogId(), false);
         switch (parsed_document.type) {
           case Document::Type::Animation: {
             LOG_IF(WARNING, result->type_ != "gif") << "Wrong result type " << result->type_;
@@ -2041,7 +2066,7 @@ td_api::object_ptr<td_api::InlineQueryResult> InlineQueriesManager::get_inline_q
            get_web_document_photo_size(td_->file_manager_.get(), FileType::Thumbnail, DialogId(),
                                        std::move(result->thumb_)),
            std::move(attributes)},
-          DialogId(), nullptr, default_document_type);
+          DialogId(), false, nullptr, default_document_type);
       auto file_id = parsed_document.file_id;
       if (!file_id.is_valid()) {
         break;

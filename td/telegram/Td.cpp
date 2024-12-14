@@ -72,6 +72,7 @@
 #include "td/telegram/PromoDataManager.h"
 #include "td/telegram/QuickReplyManager.h"
 #include "td/telegram/ReactionManager.h"
+#include "td/telegram/ReferralProgramManager.h"
 #include "td/telegram/RequestActor.h"
 #include "td/telegram/Requests.h"
 #include "td/telegram/SavedMessagesManager.h"
@@ -85,6 +86,7 @@
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StorageManager.h"
 #include "td/telegram/StoryManager.h"
+#include "td/telegram/SuggestedActionManager.h"
 #include "td/telegram/SynchronousRequests.h"
 #include "td/telegram/TdDb.h"
 #include "td/telegram/TermsOfServiceManager.h"
@@ -539,6 +541,7 @@ void Td::dec_actor_refcnt() {
       reset_manager(promo_data_manager_, "PromoDataManager");
       reset_manager(quick_reply_manager_, "QuickReplyManager");
       reset_manager(reaction_manager_, "ReactionManager");
+      reset_manager(referral_program_manager_, "ReferralProgramManager");
       reset_manager(saved_messages_manager_, "SavedMessagesManager");
       reset_manager(sponsored_message_manager_, "SponsoredMessageManager");
       reset_manager(star_gift_manager_, "StarGiftManager");
@@ -546,6 +549,7 @@ void Td::dec_actor_refcnt() {
       reset_manager(statistics_manager_, "StatisticsManager");
       reset_manager(stickers_manager_, "StickersManager");
       reset_manager(story_manager_, "StoryManager");
+      reset_manager(suggested_action_manager_, "SuggestedActionManager");
       reset_manager(terms_of_service_manager_, "TermsOfServiceManager");
       reset_manager(theme_manager_, "ThemeManager");
       reset_manager(time_zone_manager_, "TimeZoneManager");
@@ -711,6 +715,7 @@ void Td::clear() {
   reset_actor(ActorOwn<Actor>(std::move(promo_data_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(quick_reply_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(reaction_manager_actor_)));
+  reset_actor(ActorOwn<Actor>(std::move(referral_program_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(saved_messages_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(sponsored_message_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(star_gift_manager_actor_)));
@@ -718,6 +723,7 @@ void Td::clear() {
   reset_actor(ActorOwn<Actor>(std::move(statistics_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(stickers_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(story_manager_actor_)));
+  reset_actor(ActorOwn<Actor>(std::move(suggested_action_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(terms_of_service_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(theme_manager_actor_)));
   reset_actor(ActorOwn<Actor>(std::move(time_zone_manager_actor_)));
@@ -833,7 +839,7 @@ void Td::init(Parameters parameters, Result<TdDb::OpenedDatabase> r_opened_datab
 
   // we need to process td_api::getOption along with td_api::setOption for consistency
   // we need to process td_api::setOption before managers and MTProto header are created,
-  // because their initialiation may be affected by the options
+  // because their initialization may be affected by the options
   complete_pending_preauthentication_requests([](int32 id) {
     switch (id) {
       case td_api::getOption::ID:
@@ -1221,6 +1227,9 @@ void Td::init_managers() {
   reaction_manager_ = make_unique<ReactionManager>(this, create_reference());
   reaction_manager_actor_ = register_actor("ReactionManager", reaction_manager_.get());
   G()->set_reaction_manager(reaction_manager_actor_.get());
+  referral_program_manager_ = make_unique<ReferralProgramManager>(this, create_reference());
+  referral_program_manager_actor_ = register_actor("ReferralProgramManager", referral_program_manager_.get());
+  G()->set_referral_program_manager(referral_program_manager_actor_.get());
   saved_messages_manager_ = make_unique<SavedMessagesManager>(this, create_reference());
   saved_messages_manager_actor_ = register_actor("SavedMessagesManager", saved_messages_manager_.get());
   G()->set_saved_messages_manager(saved_messages_manager_actor_.get());
@@ -1240,6 +1249,9 @@ void Td::init_managers() {
   story_manager_ = make_unique<StoryManager>(this, create_reference());
   story_manager_actor_ = register_actor("StoryManager", story_manager_.get());
   G()->set_story_manager(story_manager_actor_.get());
+  suggested_action_manager_ = make_unique<SuggestedActionManager>(this, create_reference());
+  suggested_action_manager_actor_ = register_actor("SuggestedActionManager", suggested_action_manager_.get());
+  G()->set_suggested_action_manager(suggested_action_manager_actor_.get());
   terms_of_service_manager_ = make_unique<TermsOfServiceManager>(this, create_reference());
   terms_of_service_manager_actor_ = register_actor("TermsOfServiceManager", terms_of_service_manager_.get());
   theme_manager_ = make_unique<ThemeManager>(this, create_reference());

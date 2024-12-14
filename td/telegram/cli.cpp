@@ -3567,6 +3567,53 @@ class CliClient final : public Actor {
       string subscription_id;
       get_args(args, subscription_id);
       send_request(td_api::make_object<td_api::reuseStarSubscription>(subscription_id));
+    } else if (op == "scap" || op == "scapd") {
+      ChatId chat_id;
+      int32 commission;
+      int32 month_count;
+      get_args(args, chat_id, commission, month_count);
+      send_request(td_api::make_object<td_api::setChatAffiliateProgram>(
+          chat_id,
+          op == "scapd" ? nullptr : td_api::make_object<td_api::affiliateProgramParameters>(commission, month_count)));
+    } else if (op == "scapr") {
+      string username;
+      string referrer;
+      get_args(args, username, referrer);
+      send_request(td_api::make_object<td_api::searchChatAffiliateProgram>(username, referrer));
+    } else if (op == "sapc" || op == "sapd" || op == "sapr") {
+      ChatId chat_id;
+      string limit;
+      string offset;
+      get_args(args, chat_id, limit, offset);
+      td_api::object_ptr<td_api::AffiliateProgramSortOrder> sort_order;
+      if (op == "sapd") {
+        sort_order = td_api::make_object<td_api::affiliateProgramSortOrderCreationDate>();
+      } else if (op == "sapr") {
+        sort_order = td_api::make_object<td_api::affiliateProgramSortOrderRevenue>();
+      }
+      send_request(td_api::make_object<td_api::searchAffiliatePrograms>(chat_id, std::move(sort_order), offset,
+                                                                        as_limit(limit)));
+    } else if (op == "ccap") {
+      ChatId chat_id;
+      UserId bot_user_id;
+      get_args(args, chat_id, bot_user_id);
+      send_request(td_api::make_object<td_api::connectChatAffiliateProgram>(chat_id, bot_user_id));
+    } else if (op == "dcap") {
+      ChatId chat_id;
+      string url;
+      get_args(args, chat_id, url);
+      send_request(td_api::make_object<td_api::disconnectChatAffiliateProgram>(chat_id, url));
+    } else if (op == "gcap") {
+      ChatId chat_id;
+      UserId bot_user_id;
+      get_args(args, chat_id, bot_user_id);
+      send_request(td_api::make_object<td_api::getChatAffiliateProgram>(chat_id, bot_user_id));
+    } else if (op == "gcaps") {
+      ChatId chat_id;
+      string limit;
+      string offset;
+      get_args(args, chat_id, limit, offset);
+      send_request(td_api::make_object<td_api::getChatAffiliatePrograms>(chat_id, offset, as_limit(limit)));
     } else if (op == "cpfs" || op == "cpfsb") {
       UserId user_id;
       string currency;
@@ -3650,9 +3697,14 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::getAllStickerEmojis>(
           as_sticker_type(op), query, op == "gaseme" ? my_id_ : 0, return_only_main_emoji));
     } else if (op == "sst" || op == "sstm" || op == "sste") {
-      SearchQuery query;
-      get_args(args, query);
-      send_request(td_api::make_object<td_api::searchStickers>(as_sticker_type(op), query.query, query.limit));
+      string limit;
+      string emoji;
+      string query;
+      string input_language_codes;
+      int32 offset;
+      get_args(args, limit, emoji, query, input_language_codes, offset);
+      send_request(td_api::make_object<td_api::searchStickers>(
+          as_sticker_type(op), emoji, query, autosplit_str(input_language_codes), offset, as_limit(limit)));
     } else if (op == "ggs") {
       send_request(td_api::make_object<td_api::getGreetingStickers>());
     } else if (op == "gprst") {
@@ -6543,6 +6595,8 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::unpinAllMessageThreadMessages>(chat_id, message_thread_id));
     } else if (op == "grib") {
       send_request(td_api::make_object<td_api::getRecentInlineBots>());
+    } else if (op == "gob") {
+      send_request(td_api::make_object<td_api::getOwnedBots>());
     } else if (op == "spc" || op == "su") {
       send_request(td_api::make_object<td_api::searchPublicChat>(args));
     } else if (op == "spcs") {

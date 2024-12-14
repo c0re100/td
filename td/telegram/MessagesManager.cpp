@@ -6009,7 +6009,7 @@ void MessagesManager::skip_old_pending_pts_update(tl_object_ptr<telegram_api::Up
     return;
   }
 
-  // very old or unuseful update
+  // very old or useless update
   LOG_IF(WARNING, new_pts == old_pts && pts_count == 0 && !is_allowed_useless_update(update))
       << "Receive useless update " << oneline(to_string(update)) << " from " << source;
 }
@@ -7154,7 +7154,7 @@ void MessagesManager::add_pending_channel_update(DialogId dialog_id, tl_object_p
     }
   } else {
     int32 old_pts = d->pts;
-    if (new_pts <= old_pts) {  // very old or unuseful update
+    if (new_pts <= old_pts) {  // very old or useless update
       if (update->get_id() == telegram_api::updateNewChannelMessage::ID) {
         auto update_new_channel_message = static_cast<telegram_api::updateNewChannelMessage *>(update.get());
         auto message_id = MessageId::get_message_id(update_new_channel_message->message_, false);
@@ -9640,7 +9640,7 @@ void MessagesManager::on_get_scheduled_server_messages(DialogId dialog_id, uint3
   d->scheduled_messages_sync_generation = generation;
 
   if (is_not_modified) {
-    LOG(INFO) << "Scheduled messages are mot modified in " << dialog_id;
+    LOG(INFO) << "Scheduled messages are not modified in " << dialog_id;
     return;
   }
 
@@ -10719,7 +10719,7 @@ void MessagesManager::delete_dialog_messages_by_sender(DialogId dialog_id, Dialo
       }
       channel_status = td_->chat_manager_->get_channel_permissions(channel_id);
       if (!channel_status.can_delete_messages()) {
-        return promise.set_error(Status::Error(400, "Need delete messages administator right in the supergroup chat"));
+        return promise.set_error(Status::Error(400, "Need delete messages administrator right in the supergroup chat"));
       }
       channel_id = dialog_id.get_channel_id();
       break;
@@ -12249,7 +12249,7 @@ vector<UserId> MessagesManager::get_message_user_ids(const Message *m) const {
 
 vector<ChannelId> MessagesManager::get_message_channel_ids(const Message *m) const {
   vector<ChannelId> channel_ids;
-  if (m->sender_dialog_id.is_valid() && m->sender_dialog_id.get_type() == DialogType::Channel) {
+  if (m->sender_dialog_id.get_type() == DialogType::Channel) {
     channel_ids.push_back(m->sender_dialog_id.get_channel_id());
   }
   if (m->forward_info != nullptr) {
@@ -13203,7 +13203,7 @@ void MessagesManager::on_resolve_secret_chat_message_via_bot_username(const stri
                                                                       Promise<Unit> &&promise) {
   if (!G()->close_flag()) {
     auto dialog_id = td_->dialog_manager_->get_resolved_dialog_by_username(via_bot_username);
-    if (dialog_id.is_valid() && dialog_id.get_type() == DialogType::User) {
+    if (dialog_id.get_type() == DialogType::User) {
       auto user_id = dialog_id.get_user_id();
       auto r_bot_data = td_->user_manager_->get_bot_data(user_id);
       if (r_bot_data.is_ok() && r_bot_data.ok().is_inline) {
@@ -13496,7 +13496,7 @@ MessagesManager::MessageInfo MessagesManager::parse_telegram_api_message(
       UNREACHABLE();
       break;
   }
-  if (message_info.sender_dialog_id.is_valid() && message_info.sender_dialog_id.get_type() == DialogType::User) {
+  if (message_info.sender_dialog_id.get_type() == DialogType::User) {
     message_info.sender_user_id = message_info.sender_dialog_id.get_user_id();
     message_info.sender_dialog_id = DialogId();
   }
@@ -24574,7 +24574,7 @@ void MessagesManager::do_send_message(DialogId dialog_id, const Message *m, int3
     if (!is_secret) {
       for (size_t i = 0; i < thumbnail_file_ids.size(); i++) {
         FileView file_view = td_->file_manager_->get_file_view(file_ids[i]);
-        if (get_main_file_type(file_view.get_type()) == FileType::Photo) {
+        if (get_file_type_class(file_view.get_type()) == FileTypeClass::Photo) {
           thumbnail_file_ids[i] = FileId();
         }
       }
@@ -26483,7 +26483,7 @@ void MessagesManager::register_message_reply(DialogId dialog_id, const Message *
 }
 
 void MessagesManager::reregister_message_reply(DialogId dialog_id, const Message *m) {
-  // reply itself wan't changed, so there is nothing to reregister
+  // reply itself wasn't changed, so there is nothing to reregister
   if (!can_register_message_reply(m)) {
     return;
   }
@@ -30256,10 +30256,12 @@ bool MessagesManager::process_send_message_fail_error(int32 &error_code, string 
         } else if (content_type == MessageContentType::Contact) {
           error_message = "Wrong phone number specified";
         } else if (content_type == MessageContentType::Story) {
-          error_message = "Wrong story data specified";
+          error_message = "Wrong story file specified";
         } else {
           error_message = "Wrong file identifier/HTTP URL specified";
         }
+      } else if (error_message == "EXTENDED_MEDIA_INVALID") {
+        error_message = "Invalid paid media file specified";
       } else if (error_message == "PHOTO_EXT_INVALID") {
         error_message = "Photo has unsupported extension. Use one of .jpg, .jpeg, .gif, .png, .tif or .bmp";
       } else {
@@ -32836,7 +32838,7 @@ MessagesManager::Message *MessagesManager::on_get_message_from_database(Dialog *
     // data in the database is always outdated, so return a message from the memory
     if (dialog_id.get_type() == DialogType::SecretChat) {
       CHECK(!is_scheduled);
-      // just in case restore random_id to message_id corespondence
+      // just in case restore random_id to message_id correspondence
       // can be needed if there was newer unloaded message with the same random_id
       add_random_id_to_message_id_correspondence(d, old_message->random_id, old_message->message_id);
     }

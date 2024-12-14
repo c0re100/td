@@ -1325,8 +1325,8 @@ Result<FileId> NotificationSettingsManager::get_ringtone(
   CHECK(document_id == telegram_api::document::ID);
 
   auto parsed_document =
-      td_->documents_manager_->on_get_document(move_tl_object_as<telegram_api::document>(ringtone), DialogId(), nullptr,
-                                               Document::Type::Audio, DocumentsManager::Subtype::Ringtone);
+      td_->documents_manager_->on_get_document(move_tl_object_as<telegram_api::document>(ringtone), DialogId(), false,
+                                               nullptr, Document::Type::Audio, DocumentsManager::Subtype::Ringtone);
   if (parsed_document.type != Document::Type::Audio) {
     return Status::Error("Receive ringtone of a wrong type");
   }
@@ -1358,7 +1358,7 @@ void NotificationSettingsManager::load_saved_ringtones(Promise<Unit> &&promise) 
       on_saved_ringtones_updated(true);
     }
 
-    // the promis must not be set synchronously
+    // the promise must not be set synchronously
     send_closure_later(actor_id(this), &NotificationSettingsManager::on_load_saved_ringtones, std::move(promise));
     reload_saved_ringtones(Auto());
   } else {
