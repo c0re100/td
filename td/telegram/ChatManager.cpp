@@ -8800,7 +8800,7 @@ td_api::object_ptr<td_api::updateBasicGroup> ChatManager::get_update_basic_group
 
 td_api::object_ptr<td_api::updateBasicGroup> ChatManager::get_update_unknown_basic_group_object(ChatId chat_id) {
   return td_api::make_object<td_api::updateBasicGroup>(td_api::make_object<td_api::basicGroup>(
-      chat_id.get(), -1, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0));
+      chat_id.get(), 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), true, 0));
 }
 
 int64 ChatManager::get_basic_group_id_object(ChatId chat_id, const char *source) const {
@@ -8828,7 +8828,7 @@ tl_object_ptr<td_api::basicGroup> ChatManager::get_basic_group_object(ChatId cha
 
 tl_object_ptr<td_api::basicGroup> ChatManager::get_basic_group_object_const(ChatId chat_id, const Chat *c) const {
   return make_tl_object<td_api::basicGroup>(
-      chat_id.get(), -1, c->participant_count, get_chat_status(c).get_chat_member_status_object(), c->is_active,
+      chat_id.get(), c->participant_count, get_chat_status(c).get_chat_member_status_object(), c->is_active,
       get_supergroup_id_object(c->migrated_to_channel_id, "get_basic_group_object"));
 }
 

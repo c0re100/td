@@ -8266,7 +8266,7 @@ td_api::object_ptr<td_api::user> UserManager::get_user_object(UserId user_id, co
   auto have_access = user_id == get_my_id() || have_input_peer_user(u, user_id, AccessRights::Know);
   auto restricts_new_chats = u->contact_require_premium && !u->is_mutual_contact;
   return td_api::make_object<td_api::user>(
-      user_id.get(), -1, u->first_name, u->last_name, u->usernames.get_usernames_object(), u->phone_number,
+      user_id.get(), u->access_hash, u->first_name, u->last_name, u->usernames.get_usernames_object(), u->phone_number,
       get_user_status_object(user_id, u, G()->unix_time()),
       get_profile_photo_object(td_->file_manager_.get(), u->photo),
       td_->theme_manager_->get_accent_color_id_object(u->accent_color_id, AccentColorId(user_id)),
