@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -17,6 +17,7 @@
 #include "td/telegram/files/FileManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/logevent/LogEvent.h"
+#include "td/telegram/MessageQueryManager.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/net/ConnectionCreator.h"
@@ -2857,11 +2858,13 @@ string NotificationManager::convert_loc_key(const string &loc_key) {
       {"MESSAGE_SAME_WALLPAPER", "MESSAGE_SAME_WALLPAPER"},
       {"MESSAGE_SCREENSHOT", "MESSAGE_SCREENSHOT_TAKEN"},
       {"MESSAGE_STARGIFT", "MESSAGE_STARGIFT"},
+      {"MESSAGE_STARGIFT_UPGRADE", "MESSAGE_STARGIFT_UPGRADE"},
       {"MESSAGE_STICKER", "MESSAGE_STICKER"},
       {"MESSAGE_STORY", "MESSAGE_STORY"},
       {"MESSAGE_SUGGEST_PHOTO", "MESSAGE_SUGGEST_PHOTO"},
       {"MESSAGE_TEXT", "MESSAGE_TEXT"},
       {"MESSAGE_THEME", "MESSAGE_CHAT_CHANGE_THEME"},
+      {"MESSAGE_UNIQUE_STARGIFT", "MESSAGE_STARGIFT_TRANSFER"},
       {"MESSAGE_VIDEO", "MESSAGE_VIDEO"},
       {"MESSAGE_VIDEOS", "MESSAGE_VIDEOS"},
       {"MESSAGE_VIDEO_SECRET", "MESSAGE_SECRET_VIDEO"},
@@ -2912,7 +2915,7 @@ void NotificationManager::add_push_notification_user(
       false /*ignored*/, 0, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
       false /*ignored*/, false /*ignored*/, false /*ignored*/, sender_user_id.get(), sender_access_hash, user_name,
       string(), string(), string(), std::move(sender_photo), nullptr, 0, Auto(), string(), string(), nullptr,
-      vector<telegram_api::object_ptr<telegram_api::username>>(), 0, nullptr, nullptr, 0);
+      vector<telegram_api::object_ptr<telegram_api::username>>(), 0, nullptr, nullptr, 0, 0);
   td_->user_manager_->on_get_user(std::move(user), "add_push_notification_user");
 }
 
@@ -3494,11 +3497,16 @@ Status NotificationManager::process_push_notification_payload(string payload, bo
     } else if (custom.has_field("ringtone")) {
       TRY_RESULT_ASSIGN(ringtone_id, custom.get_optional_long_field("ringtone"));
     }
-    add_message_push_notification(dialog_id, MessageId(server_message_id), random_id, sender_user_id, sender_dialog_id,
-                                  std::move(sender_name), sent_date, is_from_scheduled, contains_mention,
-                                  disable_notification, ringtone_id, std::move(loc_key), std::move(arg),
-                                  std::move(attached_photo), std::move(attached_document), NotificationId(), 0,
-                                  std::move(promise));
+    auto message_id = MessageId(server_message_id);
+
+    TRY_RESULT(report_delivery_until_date, custom.get_optional_int_field("report_delivery_until_date"));
+    if (report_delivery_until_date > 0) {
+      td_->message_query_manager_->report_message_delivery({dialog_id, message_id}, report_delivery_until_date, true);
+    }
+    add_message_push_notification(
+        dialog_id, message_id, random_id, sender_user_id, sender_dialog_id, std::move(sender_name), sent_date,
+        is_from_scheduled, contains_mention, disable_notification, ringtone_id, std::move(loc_key), std::move(arg),
+        std::move(attached_photo), std::move(attached_document), NotificationId(), 0, std::move(promise));
   }
   return Status::OK();
 }

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -24,6 +24,7 @@
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/StarAmount.h"
 #include "td/telegram/StarGift.h"
+#include "td/telegram/StarGiftManager.h"
 #include "td/telegram/StarSubscription.h"
 #include "td/telegram/StatisticsManager.h"
 #include "td/telegram/StickersManager.h"
@@ -284,7 +285,7 @@ class GetStarsTransactionsQuery final : public Td::ResultHandler {
         transaction->extended_media_.clear();
         return extended_media_objects;
       };
-      auto get_message_id_object = [&]() {
+      auto get_message_id_object = [&] {
         auto message_id = MessageId(ServerMessageId(transaction->msg_id_));
         if (message_id != MessageId() && !message_id.is_valid()) {
           LOG(ERROR) << "Receive " << message_id << " in " << to_string(transaction);
@@ -374,21 +375,40 @@ class GetStarsTransactionsQuery final : public Td::ResultHandler {
               auto user_id = dialog_id.get_user_id();
               auto user_id_object = td_->user_manager_->get_user_id_object(user_id, "starsTransactionPeer");
               if (transaction->stargift_ != nullptr) {
-                auto gift = StarGift(td_, std::move(transaction->stargift_));
+                auto gift = StarGift(td_, std::move(transaction->stargift_), true);
                 transaction->stargift_ = nullptr;
                 if (!gift.is_valid()) {
                   return nullptr;
                 }
-                auto gift_object = gift.get_gift_object(td_);
+                td_->star_gift_manager_->on_get_star_gift(gift, true);
                 if (is_purchase) {
-                  if (for_user || for_bot) {
-                    return td_api::make_object<td_api::starTransactionTypeGiftPurchase>(user_id_object,
-                                                                                        std::move(gift_object));
+                  if (gift.is_unique()) {
+                    if (transaction->stargift_upgrade_) {
+                      if (for_user) {
+                        transaction->stargift_upgrade_ = false;
+                        return td_api::make_object<td_api::starTransactionTypeGiftUpgrade>(
+                            gift.get_upgraded_gift_object(td_));
+                      }
+                    } else {
+                      if (for_user) {
+                        return td_api::make_object<td_api::starTransactionTypeGiftTransfer>(
+                            user_id_object, gift.get_upgraded_gift_object(td_));
+                      }
+                    }
+                  } else {
+                    if (for_user || for_bot) {
+                      return td_api::make_object<td_api::starTransactionTypeGiftPurchase>(user_id_object,
+                                                                                          gift.get_gift_object(td_));
+                    }
                   }
                 } else {
-                  if (for_user) {
-                    return td_api::make_object<td_api::starTransactionTypeGiftSale>(user_id_object,
-                                                                                    std::move(gift_object));
+                  if (gift.is_unique()) {
+                    LOG(ERROR) << "Receive sale of an upgraded gift";
+                  } else {
+                    if (for_user) {
+                      return td_api::make_object<td_api::starTransactionTypeGiftSale>(user_id_object,
+                                                                                      gift.get_gift_object(td_));
+                    }
                   }
                 }
                 return nullptr;
@@ -589,6 +609,9 @@ class GetStarsTransactionsQuery final : public Td::ResultHandler {
         }
         if (commission_per_mille != 0) {
           LOG(ERROR) << "Receive commission with " << to_string(star_transaction);
+        }
+        if (transaction->stargift_upgrade_) {
+          LOG(ERROR) << "Receive gift upgrade with " << to_string(star_transaction);
         }
       }
       if (!file_ids.empty()) {

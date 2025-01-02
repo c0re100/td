@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,6 +7,8 @@
 #include "td/telegram/ChatManager.h"
 
 #include "td/telegram/AuthManager.h"
+#include "td/telegram/BotVerification.h"
+#include "td/telegram/BotVerification.hpp"
 #include "td/telegram/Dependencies.h"
 #include "td/telegram/DialogAdministrator.h"
 #include "td/telegram/DialogInviteLink.hpp"
@@ -44,6 +46,7 @@
 #include "td/telegram/ThemeManager.h"
 #include "td/telegram/UpdatesManager.h"
 #include "td/telegram/UserManager.h"
+#include "td/telegram/VerificationStatus.h"
 
 #include "td/db/binlog/BinlogEvent.h"
 #include "td/db/binlog/BinlogHelper.h"
@@ -1933,6 +1936,7 @@ void ChatManager::Channel::store(StorerT &storer) const {
   bool has_profile_background_custom_emoji_id = profile_background_custom_emoji_id.is_valid();
   bool has_boost_level = boost_level != 0;
   bool has_emoji_status = !emoji_status.is_empty();
+  bool has_bot_verification_icon = bot_verification_icon.is_valid();
   BEGIN_STORE_FLAGS();
   STORE_FLAG(false);
   STORE_FLAG(false);
@@ -1979,6 +1983,7 @@ void ChatManager::Channel::store(StorerT &storer) const {
     STORE_FLAG(has_boost_level);
     STORE_FLAG(has_emoji_status);
     STORE_FLAG(show_message_sender);
+    STORE_FLAG(has_bot_verification_icon);
     END_STORE_FLAGS();
   }
 
@@ -2031,6 +2036,9 @@ void ChatManager::Channel::store(StorerT &storer) const {
   if (has_emoji_status) {
     store(emoji_status, storer);
   }
+  if (has_bot_verification_icon) {
+    store(bot_verification_icon, storer);
+  }
 }
 
 template <class ParserT>
@@ -2062,6 +2070,7 @@ void ChatManager::Channel::parse(ParserT &parser) {
   bool has_profile_background_custom_emoji_id = false;
   bool has_boost_level = false;
   bool has_emoji_status = false;
+  bool has_bot_verification_icon = false;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(left);
   PARSE_FLAG(kicked);
@@ -2108,6 +2117,7 @@ void ChatManager::Channel::parse(ParserT &parser) {
     PARSE_FLAG(has_boost_level);
     PARSE_FLAG(has_emoji_status);
     PARSE_FLAG(show_message_sender);
+    PARSE_FLAG(has_bot_verification_icon);
     END_PARSE_FLAGS();
   }
 
@@ -2193,6 +2203,9 @@ void ChatManager::Channel::parse(ParserT &parser) {
   if (has_emoji_status) {
     parse(emoji_status, parser);
   }
+  if (has_bot_verification_icon) {
+    parse(bot_verification_icon, parser);
+  }
 
   if (!check_utf8(title)) {
     LOG(ERROR) << "Have invalid title \"" << title << '"';
@@ -2241,6 +2254,7 @@ void ChatManager::ChannelFull::store(StorerT &storer) const {
   bool has_boost_count = boost_count != 0;
   bool has_unrestrict_boost_count = unrestrict_boost_count != 0;
   bool has_can_have_sponsored_messages = true;
+  bool has_bot_verification = bot_verification != nullptr;
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_description);
   STORE_FLAG(has_administrator_count);
@@ -2284,6 +2298,7 @@ void ChatManager::ChannelFull::store(StorerT &storer) const {
     STORE_FLAG(has_can_have_sponsored_messages);
     STORE_FLAG(has_paid_media_allowed);
     STORE_FLAG(can_view_star_revenue);
+    STORE_FLAG(has_bot_verification);
     END_STORE_FLAGS();
   }
   if (has_description) {
@@ -2345,6 +2360,9 @@ void ChatManager::ChannelFull::store(StorerT &storer) const {
   if (has_unrestrict_boost_count) {
     store(unrestrict_boost_count, storer);
   }
+  if (has_bot_verification) {
+    store(bot_verification, storer);
+  }
 }
 
 template <class ParserT>
@@ -2374,6 +2392,7 @@ void ChatManager::ChannelFull::parse(ParserT &parser) {
   bool has_boost_count = false;
   bool has_unrestrict_boost_count = false;
   bool has_can_have_sponsored_messages = false;
+  bool has_bot_verification = false;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_description);
   PARSE_FLAG(has_administrator_count);
@@ -2417,6 +2436,7 @@ void ChatManager::ChannelFull::parse(ParserT &parser) {
     PARSE_FLAG(has_can_have_sponsored_messages);
     PARSE_FLAG(has_paid_media_allowed);
     PARSE_FLAG(can_view_star_revenue);
+    PARSE_FLAG(has_bot_verification);
     END_PARSE_FLAGS();
   }
   if (has_description) {
@@ -2485,6 +2505,9 @@ void ChatManager::ChannelFull::parse(ParserT &parser) {
   }
   if (has_unrestrict_boost_count) {
     parse(unrestrict_boost_count, parser);
+  }
+  if (has_bot_verification) {
+    parse(bot_verification, parser);
   }
 
   if (legacy_can_view_statistics) {
@@ -4656,6 +4679,9 @@ void ChatManager::on_load_channel_full_from_database(ChannelId channel_id, strin
   for (auto bot_user_id : channel_full->bot_user_ids) {
     dependencies.add(bot_user_id);
   }
+  if (channel_full->bot_verification != nullptr) {
+    channel_full->bot_verification->add_dependencies(dependencies);
+  }
   dependencies.add(channel_full->invite_link.get_creator_user_id());
   if (!dependencies.resolve_force(td_, source)) {
     channels_full_.erase(channel_id);
@@ -5390,6 +5416,7 @@ void ChatManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&chat_
     auto unrestrict_boost_count = channel->boosts_unrestrict_;
     auto has_paid_media_allowed = channel->paid_media_allowed_;
     auto can_view_star_revenue = channel->can_view_stars_revenue_;
+    auto bot_verification = BotVerification::get_bot_verification(std::move(channel->bot_verification_));
     StickerSetId sticker_set_id;
     if (channel->stickerset_ != nullptr) {
       sticker_set_id =
@@ -5427,7 +5454,8 @@ void ChatManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&chat_
         channel_full->unrestrict_boost_count != unrestrict_boost_count ||
         channel_full->can_view_revenue != can_view_revenue ||
         channel_full->has_paid_media_allowed != has_paid_media_allowed ||
-        channel_full->can_view_star_revenue != can_view_star_revenue) {
+        channel_full->can_view_star_revenue != can_view_star_revenue ||
+        channel_full->bot_verification != bot_verification) {
       channel_full->participant_count = participant_count;
       channel_full->administrator_count = administrator_count;
       channel_full->restricted_count = restricted_count;
@@ -5449,6 +5477,7 @@ void ChatManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&chat_
       channel_full->can_view_revenue = can_view_revenue;
       channel_full->has_paid_media_allowed = has_paid_media_allowed;
       channel_full->can_view_star_revenue = can_view_star_revenue;
+      channel_full->bot_verification = std::move(bot_verification);
 
       channel_full->is_changed = true;
     }
@@ -5479,8 +5508,10 @@ void ChatManager::on_get_chat_full(tl_object_ptr<telegram_api::ChatFull> &&chat_
         false);
     on_update_channel_full_photo(channel_full, channel_id, std::move(photo));
 
-    td_->messages_manager_->on_read_channel_outbox(channel_id,
-                                                   MessageId(ServerMessageId(channel->read_outbox_max_id_)));
+    auto read_outbox_max_message_id = MessageId(ServerMessageId(channel->read_outbox_max_id_));
+    if (read_outbox_max_message_id.is_valid()) {
+      td_->messages_manager_->read_history_outbox(DialogId(channel_id), read_outbox_max_message_id);
+    }
     if ((channel->flags_ & telegram_api::channelFull::AVAILABLE_MIN_ID_MASK) != 0) {
       td_->messages_manager_->on_update_channel_max_unavailable_message_id(
           channel_id, MessageId(ServerMessageId(channel->available_min_id_)), "ChannelFull");
@@ -7165,6 +7196,14 @@ void ChatManager::on_update_channel_stories_hidden(Channel *c, ChannelId channel
   }
 }
 
+void ChatManager::on_update_channel_bot_verification_icon(Channel *c, ChannelId channel_id,
+                                                          CustomEmojiId bot_verification_icon) {
+  if (c->bot_verification_icon != bot_verification_icon) {
+    c->bot_verification_icon = bot_verification_icon;
+    c->is_changed = true;
+  }
+}
+
 void ChatManager::on_update_channel_participant_count(ChannelId channel_id, int32 participant_count) {
   Channel *c = get_channel(channel_id);
   if (c == nullptr || c->participant_count == participant_count) {
@@ -7840,20 +7879,18 @@ bool ChatManager::get_channel_is_verified(ChannelId channel_id) const {
   return c->is_verified;
 }
 
-bool ChatManager::get_channel_is_scam(ChannelId channel_id) const {
+td_api::object_ptr<td_api::verificationStatus> ChatManager::get_channel_verification_status_object(
+    ChannelId channel_id) const {
   auto c = get_channel(channel_id);
   if (c == nullptr) {
-    return false;
+    return nullptr;
   }
-  return c->is_scam;
+  return get_channel_verification_status_object(c);
 }
 
-bool ChatManager::get_channel_is_fake(ChannelId channel_id) const {
-  auto c = get_channel(channel_id);
-  if (c == nullptr) {
-    return false;
-  }
-  return c->is_fake;
+td_api::object_ptr<td_api::verificationStatus> ChatManager::get_channel_verification_status_object(
+    const Channel *c) const {
+  return get_verification_status_object(td_, c->is_verified, c->is_scam, c->is_fake, c->bot_verification_icon);
 }
 
 bool ChatManager::get_channel_sign_messages(ChannelId channel_id) const {
@@ -8483,6 +8520,7 @@ void ChatManager::on_get_channel(telegram_api::channel &channel, const char *sou
           c->restriction_reasons = std::move(restriction_reasons);
           c->is_changed = true;
         }
+        on_update_channel_bot_verification_icon(c, channel_id, CustomEmojiId(channel.bot_verification_icon_));
       }
       if (c->join_to_send != join_to_send || c->join_request != join_request) {
         c->join_to_send = join_to_send;
@@ -8595,6 +8633,7 @@ void ChatManager::on_get_channel(telegram_api::channel &channel, const char *sou
       c->restriction_reasons = std::move(restriction_reasons);
       c->is_changed = true;
     }
+    on_update_channel_bot_verification_icon(c, channel_id, CustomEmojiId(channel.bot_verification_icon_));
   }
   if (c->join_to_send != join_to_send || c->join_request != join_request) {
     c->join_to_send = join_to_send;
@@ -8759,6 +8798,7 @@ void ChatManager::on_get_channel_forbidden(telegram_api::channelForbidden &chann
   // on_update_channel_has_location(c, channel_id, false);
   on_update_channel_noforwards(c, channel_id, false);
   on_update_channel_emoji_status(c, channel_id, EmojiStatus());
+  on_update_channel_bot_verification_icon(c, channel_id, CustomEmojiId());
   td_->messages_manager_->on_update_dialog_group_call(DialogId(channel_id), false, false, "on_get_channel_forbidden");
   // must be after setting of c->is_megagroup
   tl_object_ptr<telegram_api::chatBannedRights> banned_rights;  // == nullptr
@@ -8866,8 +8906,8 @@ td_api::object_ptr<td_api::updateSupergroup> ChatManager::get_update_unknown_sup
   bool is_megagroup = min_channel == nullptr ? false : min_channel->is_megagroup_;
   return td_api::make_object<td_api::updateSupergroup>(td_api::make_object<td_api::supergroup>(
       channel_id.get(), -1, nullptr, 0, DialogParticipantStatus::Banned(0).get_chat_member_status_object(), 0, 0, false,
-      false, false, false, !is_megagroup, false, false, !is_megagroup, false, false, false, false, string(), false,
-      false, false, false));
+      false, false, false, !is_megagroup, false, false, !is_megagroup, false, false, nullptr, false, string(), false,
+      false));
 }
 
 int64 ChatManager::get_supergroup_id_object(ChannelId channel_id, const char *source) const {
@@ -8893,11 +8933,12 @@ bool ChatManager::get_channel_has_unread_stories(const Channel *c) {
   return c->max_active_story_id.get() > c->max_read_story_id.get();
 }
 
-tl_object_ptr<td_api::supergroup> ChatManager::get_supergroup_object(ChannelId channel_id) const {
+td_api::object_ptr<td_api::supergroup> ChatManager::get_supergroup_object(ChannelId channel_id) const {
   return get_supergroup_object(channel_id, get_channel(channel_id));
 }
 
-tl_object_ptr<td_api::supergroup> ChatManager::get_supergroup_object(ChannelId channel_id, const Channel *c) {
+td_api::object_ptr<td_api::supergroup> ChatManager::get_supergroup_object(ChannelId channel_id,
+                                                                          const Channel *c) const {
   if (c == nullptr) {
     return nullptr;
   }
@@ -8906,9 +8947,9 @@ tl_object_ptr<td_api::supergroup> ChatManager::get_supergroup_object(ChannelId c
       get_channel_status(c).get_chat_member_status_object(), c->participant_count, c->boost_level,
       c->has_linked_channel, c->has_location, c->sign_messages, c->show_message_sender, get_channel_join_to_send(c),
       get_channel_join_request(c), c->is_slow_mode_enabled, !c->is_megagroup, c->is_gigagroup, c->is_forum,
-      c->is_verified, get_restriction_reason_has_sensitive_content(c->restriction_reasons),
-      get_restriction_reason_description(c->restriction_reasons), c->is_scam, c->is_fake,
-      c->max_active_story_id.is_valid(), get_channel_has_unread_stories(c));
+      get_channel_verification_status_object(c), get_restriction_reason_has_sensitive_content(c->restriction_reasons),
+      get_restriction_reason_description(c->restriction_reasons), c->max_active_story_id.is_valid(),
+      get_channel_has_unread_stories(c));
 }
 
 tl_object_ptr<td_api::supergroupFullInfo> ChatManager::get_supergroup_full_info_object(ChannelId channel_id) const {
@@ -8926,6 +8967,9 @@ tl_object_ptr<td_api::supergroupFullInfo> ChatManager::get_supergroup_full_info_
   auto bot_commands = transform(channel_full->bot_commands, [td = td_](const BotCommands &commands) {
     return commands.get_bot_commands_object(td);
   });
+  auto bot_verification = channel_full->bot_verification == nullptr
+                              ? nullptr
+                              : channel_full->bot_verification->get_bot_verification_object(td_);
   bool has_hidden_participants = channel_full->has_hidden_participants || !channel_full->can_get_participants;
   return td_api::make_object<td_api::supergroupFullInfo>(
       get_chat_photo_object(td_->file_manager_.get(), channel_full->photo), channel_full->description,
@@ -8941,6 +8985,7 @@ tl_object_ptr<td_api::supergroupFullInfo> ChatManager::get_supergroup_full_info_
       channel_full->unrestrict_boost_count, channel_full->sticker_set_id.get(),
       channel_full->emoji_sticker_set_id.get(), channel_full->location.get_chat_location_object(),
       channel_full->invite_link.get_chat_invite_link_object(td_->user_manager_.get()), std::move(bot_commands),
+      std::move(bot_verification),
       get_basic_group_id_object(channel_full->migrated_from_chat_id, "get_supergroup_full_info_object"),
       channel_full->migrated_from_max_message_id.get());
 }

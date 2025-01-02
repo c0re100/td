@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.41 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.42 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -342,6 +342,7 @@ set(TD_MTPROTO_SOURCE
 
 set(TDLIB_SOURCE_PART1
   td/telegram/AccountManager.cpp
+  td/telegram/AffiliateType.cpp
   td/telegram/AlarmManager.cpp
   td/telegram/AnimationsManager.cpp
   td/telegram/Application.cpp
@@ -361,6 +362,8 @@ set(TDLIB_SOURCE_PART1
   td/telegram/BotInfoManager.cpp
   td/telegram/BotMenuButton.cpp
   td/telegram/BotQueries.cpp
+  td/telegram/BotVerification.cpp
+  td/telegram/BotVerifierSettings.cpp
   td/telegram/BusinessAwayMessage.cpp
   td/telegram/BusinessAwayMessageSchedule.cpp
   td/telegram/BusinessBotManageBar.cpp
@@ -484,6 +487,7 @@ set(TDLIB_SOURCE_PART1
   td/telegram/MessageImportManager.cpp
   td/telegram/MessageInputReplyTo.cpp
   td/telegram/MessageOrigin.cpp
+  td/telegram/MessageQueryManager.cpp
   td/telegram/MessageQuote.cpp
   td/telegram/MessageReaction.cpp
   td/telegram/MessageReactor.cpp
@@ -586,6 +590,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/SponsoredMessageManager.cpp
   td/telegram/StarAmount.cpp
   td/telegram/StarGift.cpp
+  td/telegram/StarGiftAttribute.cpp
   td/telegram/StarGiftManager.cpp
   td/telegram/StarManager.cpp
   td/telegram/StarSubscription.cpp
@@ -630,7 +635,9 @@ set(TDLIB_SOURCE_PART2
   td/telegram/Usernames.cpp
   td/telegram/UserPrivacySetting.cpp
   td/telegram/UserPrivacySettingRule.cpp
+  td/telegram/UserStarGift.cpp
   td/telegram/Venue.cpp
+  td/telegram/VerificationStatus.cpp
   td/telegram/VideoNotesManager.cpp
   td/telegram/VideosManager.cpp
   td/telegram/VoiceNotesManager.cpp
@@ -644,6 +651,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/AccessRights.h
   td/telegram/AccountManager.h
   td/telegram/AffectedHistory.h
+  td/telegram/AffiliateType.h
   td/telegram/AlarmManager.h
   td/telegram/AnimationsManager.h
   td/telegram/Application.h
@@ -658,6 +666,8 @@ set(TDLIB_SOURCE_PART2
   td/telegram/BackgroundType.h
   td/telegram/BaseTheme.h
   td/telegram/Birthdate.h
+  td/telegram/BotVerification.h
+  td/telegram/BotVerifierSettings.h
   td/telegram/BlockListId.h
   td/telegram/BoostManager.h
   td/telegram/BotCommand.h
@@ -819,6 +829,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/MessageInputReplyTo.h
   td/telegram/MessageLinkInfo.h
   td/telegram/MessageOrigin.h
+  td/telegram/MessageQueryManager.h
   td/telegram/MessageQuote.h
   td/telegram/MessageReaction.h
   td/telegram/MessageReactor.h
@@ -949,6 +960,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/SponsoredMessageManager.h
   td/telegram/StarAmount.h
   td/telegram/StarGift.h
+  td/telegram/StarGiftAttribute.h
   td/telegram/StarGiftManager.h
   td/telegram/StarManager.h
   td/telegram/StarSubscription.h
@@ -1000,7 +1012,9 @@ set(TDLIB_SOURCE_PART2
   td/telegram/Usernames.h
   td/telegram/UserPrivacySetting.h
   td/telegram/UserPrivacySettingRule.h
+  td/telegram/UserStarGift.h
   td/telegram/Venue.h
+  td/telegram/VerificationStatus.h
   td/telegram/Version.h
   td/telegram/VideoNotesManager.h
   td/telegram/VideosManager.h
@@ -1018,6 +1032,8 @@ set(TDLIB_SOURCE_PART2
   td/telegram/BackgroundInfo.hpp
   td/telegram/BackgroundType.hpp
   td/telegram/Birthdate.hpp
+  td/telegram/BotVerification.hpp
+  td/telegram/BotVerifierSettings.hpp
   td/telegram/BusinessAwayMessage.hpp
   td/telegram/BusinessAwayMessageSchedule.hpp
   td/telegram/BusinessConnectedBot.hpp
@@ -1086,6 +1102,7 @@ set(TDLIB_SOURCE_PART2
   td/telegram/SharedDialog.hpp
   td/telegram/StarAmount.hpp
   td/telegram/StarGift.hpp
+  td/telegram/StarGiftAttribute.hpp
   td/telegram/StarSubscriptionPricing.hpp
   td/telegram/StickerMaskPosition.hpp
   td/telegram/StickerPhotoSize.hpp

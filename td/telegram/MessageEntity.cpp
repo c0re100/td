@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -4754,6 +4754,11 @@ vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(co
     return get_input_message_entities(user_manager, text->entities, source);
   }
   return {};
+}
+
+void keep_only_custom_emoji(FormattedText &text) {
+  td::remove_if(text.entities,
+                [&](const MessageEntity &entity) { return entity.type != MessageEntity::Type::CustomEmoji; });
 }
 
 void remove_premium_custom_emoji_entities(const Td *td, vector<MessageEntity> &entities, bool remove_unknown) {

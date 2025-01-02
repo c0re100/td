@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -70,6 +70,7 @@ class HashtagHints;
 class LanguagePackManager;
 class LinkManager;
 class MessageImportManager;
+class MessageQueryManager;
 class MessagesManager;
 class NetStatsManager;
 class NotificationManager;
@@ -178,6 +179,8 @@ class Td final : public Actor {
   ActorOwn<BusinessConnectionManager> business_connection_manager_actor_;
   unique_ptr<BusinessManager> business_manager_;
   ActorOwn<BusinessManager> business_manager_actor_;
+  unique_ptr<CallManager> call_manager_;
+  ActorOwn<CallManager> call_manager_actor_;
   unique_ptr<ChannelRecommendationManager> channel_recommendation_manager_;
   ActorOwn<ChannelRecommendationManager> channel_recommendation_manager_actor_;
   unique_ptr<ChatManager> chat_manager_;
@@ -218,6 +221,8 @@ class Td final : public Actor {
   ActorOwn<LinkManager> link_manager_actor_;
   unique_ptr<MessageImportManager> message_import_manager_;
   ActorOwn<MessageImportManager> message_import_manager_actor_;
+  unique_ptr<MessageQueryManager> message_query_manager_;
+  ActorOwn<MessageQueryManager> message_query_manager_actor_;
   unique_ptr<MessagesManager> messages_manager_;
   ActorOwn<MessagesManager> messages_manager_actor_;
   unique_ptr<NotificationManager> notification_manager_;
@@ -284,7 +289,6 @@ class Td final : public Actor {
   ActorOwn<WebPagesManager> web_pages_manager_actor_;
 
   ActorOwn<AlarmManager> alarm_manager_;
-  ActorOwn<CallManager> call_manager_;
   ActorOwn<HashtagHints> cashtag_search_hints_;
   ActorOwn<ConfigManager> config_manager_;
   ActorOwn<DeviceTokenManager> device_token_manager_;

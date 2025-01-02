@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -165,6 +165,7 @@ OptionManager::OptionManager(Td *td)
   set_default_integer_option("gift_sell_period", is_test_dc ? 300 : 90 * 86400);
   set_default_integer_option("affiliate_program_commission_per_mille_min", 1);
   set_default_integer_option("affiliate_program_commission_per_mille_max", 900);
+  set_default_integer_option("bot_verification_custom_description_length_max", 70);
 
   if (options.isset("my_phone_number") || !options.isset("my_id")) {
     update_premium_options();
@@ -715,7 +716,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.41");
+        return td_api::make_object<td_api::optionValueString>("1.8.42");
       }
       break;
   }
