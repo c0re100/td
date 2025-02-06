@@ -3678,9 +3678,9 @@ Result<vector<MessageEntity>> get_message_entities(const UserManager *user_manag
         }
         auto user_id = LinkManager::get_link_user_id(entity->url_);
         if (user_id.is_valid()) {
-          if (user_manager != nullptr) {
-            TRY_STATUS(user_manager->get_input_user(user_id));
-          }
+          //if (user_manager != nullptr) {
+          //  TRY_STATUS(user_manager->get_input_user(user_id));
+          //}
           entities.emplace_back(offset, length, user_id);
           break;
         }
@@ -3694,9 +3694,9 @@ Result<vector<MessageEntity>> get_message_entities(const UserManager *user_manag
       case td_api::textEntityTypeMentionName::ID: {
         auto entity = static_cast<const td_api::textEntityTypeMentionName *>(input_entity->type_.get());
         UserId user_id(entity->user_id_);
-        if (user_manager != nullptr) {
-          TRY_STATUS(user_manager->get_input_user(user_id));
-        }
+        //if (user_manager != nullptr) {
+        //  TRY_STATUS(user_manager->get_input_user(user_id));
+        //}
         entities.emplace_back(offset, length, user_id);
         break;
       }
