@@ -6,12 +6,12 @@
 //
 #pragma once
 
-#if TD_HAVE_OPENSSL
-
 #include "td/utils/common.h"
 #include "td/utils/SharedSlice.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
+
+#if TD_HAVE_OPENSSL
 
 namespace td {
 
@@ -37,7 +37,7 @@ class Ed25519 {
     bool operator==(const PublicKey &other) const {
       return octet_string_ == other.octet_string_;
     }
-    
+
     bool operator!=(const PublicKey &other) const {
       return octet_string_ != other.octet_string_;
     }
