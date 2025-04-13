@@ -39,6 +39,7 @@
 #include "td/telegram/Version.h"
 
 #include "td/utils/base64.h"
+#include "td/utils/buffer.h"
 #include "td/utils/format.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
@@ -48,6 +49,8 @@
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Time.h"
 #include "td/utils/tl_helpers.h"
+
+#include <type_traits>
 
 namespace td {
 
@@ -1266,7 +1269,7 @@ void AuthManager::on_log_out_result(NetQueryPtr &&net_query) {
   auto r_log_out = fetch_result<telegram_api::auth_logOut>(std::move(net_query));
   if (r_log_out.is_ok()) {
     auto logged_out = r_log_out.move_as_ok();
-    if (!logged_out->future_auth_token_.empty()) {
+    if (!logged_out->future_auth_token_.empty() && !is_bot()) {
       td_->option_manager_->set_option_string("authentication_token",
                                               base64url_encode(logged_out->future_auth_token_.as_slice()));
     }
@@ -1384,7 +1387,7 @@ void AuthManager::on_get_authorization(tl_object_ptr<telegram_api::auth_Authoriz
   if (auth->setup_password_required_ && auth->otherwise_relogin_days_ > 0) {
     td_->option_manager_->set_option_integer("otherwise_relogin_days", auth->otherwise_relogin_days_);
   }
-  if (!auth->future_auth_token_.empty()) {
+  if (!auth->future_auth_token_.empty() && !is_bot()) {
     td_->option_manager_->set_option_string("authentication_token",
                                             base64url_encode(auth->future_auth_token_.as_slice()));
   }

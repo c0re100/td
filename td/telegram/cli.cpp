@@ -3482,9 +3482,9 @@ class CliClient final : public Actor {
       get_args(args, language_code, key, value);
       td_api::object_ptr<td_api::languagePackString> str =
           td_api::make_object<td_api::languagePackString>(key, nullptr);
-      if (op == "sclsv") {
+      if (op == "sclpsv") {
         str->value_ = td_api::make_object<td_api::languagePackStringValueOrdinary>(value);
-      } else if (op == "sclsp") {
+      } else if (op == "sclpsp") {
         str->value_ = td_api::make_object<td_api::languagePackStringValuePluralized>(value, string("One\0One", 7),
                                                                                      "Two", "Few", "Many", "Other");
       } else {
@@ -6950,7 +6950,7 @@ class CliClient final : public Actor {
     } else if (op == "spp" || op == "spppf") {
       InputChatPhoto input_chat_photo;
       get_args(args, input_chat_photo);
-      send_request(td_api::make_object<td_api::setProfilePhoto>(input_chat_photo, op == "sppf"));
+      send_request(td_api::make_object<td_api::setProfilePhoto>(input_chat_photo, op == "spppf"));
     } else if (op == "suppp") {
       UserId user_id;
       InputChatPhoto input_chat_photo;
