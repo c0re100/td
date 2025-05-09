@@ -4296,15 +4296,19 @@ void MessagesManager::on_update_read_message_comments(DialogId dialog_id, Messag
     return;
   }
 
-  auto m = get_message_force(d, message_id, "on_update_read_message_comments");
-  if (m == nullptr || !m->message_id.is_server()) {
-    return;
-  }
-  if (m->is_topic_message || (d->is_forum && m->message_id == MessageId(ServerMessageId(1)))) {
+  if (message_id == MessageId(ServerMessageId(1))) {
     td_->forum_topic_manager_->on_update_forum_topic_unread(
         dialog_id, message_id, max_message_id, last_read_inbox_message_id, last_read_outbox_message_id, unread_count);
-  } else if (m->top_thread_message_id != m->message_id) {
-      return;
+    return;
+  }
+
+  auto m = get_message_force(d, message_id, "on_update_read_message_comments");
+  if (m == nullptr || !m->message_id.is_server() || m->top_thread_message_id != m->message_id) {
+    return;
+  }
+  if (m->is_topic_message) {
+    td_->forum_topic_manager_->on_update_forum_topic_unread(
+        dialog_id, message_id, max_message_id, last_read_inbox_message_id, last_read_outbox_message_id, unread_count);
   }
   if (!is_active_message_reply_info(dialog_id, m->reply_info)) {
     return;
@@ -14335,7 +14339,13 @@ void MessagesManager::translate_message_text(MessageFullId message_full_id, cons
 
   auto skip_bot_commands = need_skip_bot_commands(message_full_id.get_dialog_id(), m);
   auto max_media_timestamp = get_message_max_media_timestamp(m);
-  td_->translation_manager_->translate_text(*text, skip_bot_commands, max_media_timestamp, to_language_code,
+  auto dialog_id = message_full_id.get_dialog_id();
+  auto has_autotranslation = dialog_id.get_type() == DialogType::Channel &&
+                             td_->dialog_manager_->have_input_peer(dialog_id, false, AccessRights::Read) &&
+                             m->message_id.is_valid() && m->message_id.is_server() &&
+                             td_->chat_manager_->get_channel_autotranslation(dialog_id.get_channel_id());
+  td_->translation_manager_->translate_text(*text, skip_bot_commands, max_media_timestamp,
+                                            has_autotranslation ? message_full_id : MessageFullId(), to_language_code,
                                             std::move(promise));
 }
 
@@ -15055,9 +15065,10 @@ td_api::object_ptr<td_api::messageLinkInfo> MessagesManager::get_message_link_in
       if (info.comment_dialog_id.is_valid() || info.for_comment || m->is_topic_message) {
         top_thread_message_id = m->top_thread_message_id;
       } else if (td_->dialog_manager_->is_forum_channel(dialog_id) &&
-                 info.top_thread_message_id == MessageId(ServerMessageId(1))) {
+                 (info.top_thread_message_id == MessageId(ServerMessageId(1)) ||
+                  m->message_id == MessageId(ServerMessageId(1)))) {
         // General topic
-        top_thread_message_id = info.top_thread_message_id;
+        top_thread_message_id = MessageId(ServerMessageId(1));
       } else {
         top_thread_message_id = MessageId();
       }
@@ -15067,7 +15078,9 @@ td_api::object_ptr<td_api::messageLinkInfo> MessagesManager::get_message_link_in
           media_timestamp = info.media_timestamp;
         }
       }
-      if (m->content->get_type() == MessageContentType::TopicCreate && top_thread_message_id.is_valid()) {
+      if ((m->content->get_type() == MessageContentType::TopicCreate ||
+           m->message_id == MessageId(ServerMessageId(1))) &&
+          top_thread_message_id.is_valid()) {
         message = nullptr;
         CHECK(!for_album);
         CHECK(media_timestamp == 0);
@@ -35212,7 +35225,8 @@ void MessagesManager::set_sponsored_dialog(DialogId dialog_id, DialogSource sour
   if (td_->auth_manager_->is_bot()) {
     return;
   }
-  LOG(INFO) << "Change sponsored chat from " << sponsored_dialog_id_ << " to " << dialog_id;
+  LOG(INFO) << "Change sponsored chat from " << sponsored_dialog_id_ << " from " << sponsored_dialog_source_ << " to "
+            << dialog_id << " from " << source;
   if (removed_sponsored_dialog_id_.is_valid() && dialog_id == removed_sponsored_dialog_id_) {
     return;
   }

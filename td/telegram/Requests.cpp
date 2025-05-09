@@ -6363,6 +6363,13 @@ void Requests::on_request(uint64 id, const td_api::toggleSupergroupCanHaveSponso
       ChannelId(request.supergroup_id_), request.can_have_sponsored_messages_, std::move(promise));
 }
 
+void Requests::on_request(uint64 id, const td_api::toggleSupergroupHasAutomaticTranslation &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  td_->chat_manager_->toggle_channel_has_automatic_translation(ChannelId(request.supergroup_id_),
+                                                               request.has_automatic_translation_, std::move(promise));
+}
+
 void Requests::on_request(uint64 id, const td_api::toggleSupergroupHasHiddenMembers &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
@@ -7090,10 +7097,10 @@ void Requests::on_request(uint64 id, td_api::stopPoll &request) {
                                     std::move(request.reply_markup_), std::move(promise));
 }
 
-void Requests::on_request(uint64 id, const td_api::hideSuggestedAction &request) {
+void Requests::on_request(uint64 id, td_api::hideSuggestedAction &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  dismiss_suggested_action(SuggestedAction(request.action_), std::move(promise));
+  dismiss_suggested_action(SuggestedAction(std::move(request.action_)), std::move(promise));
 }
 
 void Requests::on_request(uint64 id, const td_api::hideContactCloseBirthdays &request) {
@@ -7433,6 +7440,15 @@ void Requests::on_request(uint64 id, td_api::transferGift &request) {
                                          std::move(promise));
 }
 
+void Requests::on_request(uint64 id, td_api::sendResoldGift &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.gift_name_);
+  CREATE_OK_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->send_resold_gift(request.gift_name_, owner_dialog_id, request.star_count_,
+                                            std::move(promise));
+}
+
 void Requests::on_request(uint64 id, td_api::getReceivedGifts &request) {
   CHECK_IS_USER_OR_BUSINESS();
   CLEAN_INPUT_STRING(request.offset_);
@@ -7462,6 +7478,21 @@ void Requests::on_request(uint64 id, const td_api::getUpgradedGiftWithdrawalUrl 
   CREATE_HTTP_URL_REQUEST_PROMISE();
   td_->star_gift_manager_->get_star_gift_withdrawal_url(StarGiftId(request.received_gift_id_), request.password_,
                                                         std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::setGiftResalePrice &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  td_->star_gift_manager_->set_star_gift_price(StarGiftId(request.received_gift_id_), request.resale_star_count_,
+                                               std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::searchGiftsForResale &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.offset_);
+  CREATE_REQUEST_PROMISE();
+  td_->star_gift_manager_->get_resale_star_gifts(request.gift_id_, request.order_, request.attributes_, request.offset_,
+                                                 request.limit_, std::move(promise));
 }
 
 void Requests::on_request(uint64 id, td_api::createInvoiceLink &request) {

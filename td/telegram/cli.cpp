@@ -782,6 +782,26 @@ class CliClient final : public Actor {
     return added_sticker_file_ids_;
   }
 
+  vector<td_api::object_ptr<td_api::UpgradedGiftAttributeId>> get_upgraded_gift_attribute_ids() {
+    return transform(
+        upgraded_gift_attribute_ids_,
+        [](const auto &attribute_id) -> td_api::object_ptr<td_api::UpgradedGiftAttributeId> {
+          if (attribute_id[0] == 'm') {
+            return td_api::make_object<td_api::upgradedGiftAttributeIdModel>(to_integer<int64>(attribute_id.substr(1)));
+          }
+          if (attribute_id[0] == 's') {
+            return td_api::make_object<td_api::upgradedGiftAttributeIdSymbol>(
+                to_integer<int64>(attribute_id.substr(1)));
+          }
+          if (attribute_id[0] == 'b') {
+            return td_api::make_object<td_api::upgradedGiftAttributeIdBackdrop>(
+                to_integer<int32>(attribute_id.substr(1)));
+          }
+          LOG(ERROR) << "Unknown attribute " << attribute_id;
+          return nullptr;
+        });
+  }
+
   struct CallId {
     int32 call_id = 0;
 
@@ -2304,6 +2324,12 @@ class CliClient final : public Actor {
     if (begins_with(action, "spass")) {
       return td_api::make_object<td_api::suggestedActionSetPassword>(to_integer<int32>(action.substr(5)));
     }
+    if (begins_with(action, "custom")) {
+      Slice name;
+      Slice url;
+      std::tie(name, url) = split(action.substr(6), ' ');
+      return td_api::make_object<td_api::suggestedActionCustom>(name.str(), nullptr, nullptr, url.str());
+    }
     return nullptr;
   }
 
@@ -2979,6 +3005,12 @@ class CliClient final : public Actor {
       get_args(args, received_gift_id, new_owner_id, star_count);
       send_request(td_api::make_object<td_api::transferGift>(business_connection_id_, received_gift_id,
                                                              as_message_sender(new_owner_id), star_count));
+    } else if (op == "srg") {
+      string gift_name;
+      string owner_id;
+      int64 star_count;
+      get_args(args, gift_name, owner_id, star_count);
+      send_request(td_api::make_object<td_api::sendResoldGift>(gift_name, as_message_sender(owner_id), star_count));
     } else if (op == "grgs" || op == "grgsp") {
       string owner_id;
       int32 limit;
@@ -3001,11 +3033,31 @@ class CliClient final : public Actor {
       string name;
       get_args(args, name);
       send_request(td_api::make_object<td_api::getUpgradedGift>(name));
+    } else if (op == "sgrp") {
+      string received_gift_id;
+      int64 resale_star_count;
+      get_args(args, received_gift_id, resale_star_count);
+      send_request(td_api::make_object<td_api::setGiftResalePrice>(received_gift_id, resale_star_count));
     } else if (op == "gugwu") {
       string received_gift_id;
       string password;
       get_args(args, received_gift_id, password);
       send_request(td_api::make_object<td_api::getUpgradedGiftWithdrawalUrl>(received_gift_id, password));
+    } else if (op == "sgfr" || op == "sgfrd" || op == "sgfrn") {
+      int64 gift_id;
+      string limit;
+      string offset;
+      get_args(args, gift_id, limit, offset);
+      td_api::object_ptr<td_api::GiftForResaleOrder> order;
+      if (op == "sgfrd") {
+        order = td_api::make_object<td_api::giftForResaleOrderPriceChangeDate>();
+      } else if (op == "sgfrn") {
+        order = td_api::make_object<td_api::giftForResaleOrderNumber>();
+      } else {
+        order = td_api::make_object<td_api::giftForResaleOrderPrice>();
+      }
+      send_request(td_api::make_object<td_api::searchGiftsForResale>(
+          gift_id, std::move(order), get_upgraded_gift_attribute_ids(), offset, as_limit(limit)));
     } else if (op == "rsp") {
       UserId user_id;
       string telegram_payment_charge_id;
@@ -5447,6 +5499,8 @@ class CliClient final : public Actor {
       thumbnail_ = args;
     } else if (op == "smst") {
       start_timestamp_ = to_integer<int32>(args);
+    } else if (op == "sugai") {
+      upgraded_gift_attribute_ids_ = full_split(args);
     } else if (op == "sm" || op == "sms" || op == "smf") {
       ChatId chat_id;
       string message;
@@ -6661,6 +6715,12 @@ class CliClient final : public Actor {
       get_args(args, supergroup_id, can_have_sponsored_messages);
       send_request(td_api::make_object<td_api::toggleSupergroupCanHaveSponsoredMessages>(
           as_supergroup_id(supergroup_id), can_have_sponsored_messages));
+    } else if (op == "tsghat") {
+      string supergroup_id;
+      bool has_automatic_translation;
+      get_args(args, supergroup_id, has_automatic_translation);
+      send_request(td_api::make_object<td_api::toggleSupergroupHasAutomaticTranslation>(as_supergroup_id(supergroup_id),
+                                                                                        has_automatic_translation));
     } else if (op == "tsghhm") {
       string supergroup_id;
       bool has_hidden_members;
@@ -7784,6 +7844,7 @@ class CliClient final : public Actor {
   string cover_;
   string thumbnail_;
   int32 start_timestamp_ = 0;
+  vector<string> upgraded_gift_attribute_ids_;
 
   ConcurrentScheduler *scheduler_{nullptr};
 
