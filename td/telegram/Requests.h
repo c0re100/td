@@ -98,6 +98,8 @@ class Requests {
 
   Promise<string> create_http_url_request_promise(uint64 id);
 
+  Promise<int32> create_count_request_promise(uint64 id);
+
   template <class T>
   void on_request(uint64 id, const T &) = delete;
 
@@ -271,6 +273,8 @@ class Requests {
 
   void on_request(uint64 id, const td_api::getMessageViewers &request);
 
+  void on_request(uint64 id, const td_api::getMessageAuthor &request);
+
   void on_request(uint64 id, const td_api::getMessages &request);
 
   void on_request(uint64 id, const td_api::getMessageProperties &request);
@@ -354,6 +358,26 @@ class Requests {
   void on_request(uint64 id, const td_api::loadChats &request);
 
   void on_request(uint64 id, const td_api::getChats &request);
+
+  void on_request(uint64 id, const td_api::loadDirectMessagesChatTopics &request);
+
+  void on_request(uint64 id, const td_api::getDirectMessagesChatTopic &request);
+
+  void on_request(uint64 id, const td_api::getDirectMessagesChatTopicHistory &request);
+
+  void on_request(uint64 id, const td_api::getDirectMessagesChatTopicMessageByDate &request);
+
+  void on_request(uint64 id, const td_api::deleteDirectMessagesChatTopicHistory &request);
+
+  void on_request(uint64 id, const td_api::deleteDirectMessagesChatTopicMessagesByDate &request);
+
+  void on_request(uint64 id, const td_api::setDirectMessagesChatTopicIsMarkedAsUnread &request);
+
+  void on_request(uint64 id, td_api::setDirectMessagesChatTopicDraftMessage &request);
+
+  void on_request(uint64 id, const td_api::unpinAllDirectMessagesChatTopicMessages &request);
+
+  void on_request(uint64 id, const td_api::readAllDirectMessagesChatTopicReactions &request);
 
   void on_request(uint64 id, const td_api::loadSavedMessagesTopics &request);
 
@@ -956,6 +980,8 @@ class Requests {
   void on_request(uint64 id, td_api::setChatDescription &request);
 
   void on_request(uint64 id, const td_api::setChatDiscussionGroup &request);
+
+  void on_request(uint64 id, const td_api::setChatDirectMessagesGroup &request);
 
   void on_request(uint64 id, td_api::setChatLocation &request);
 

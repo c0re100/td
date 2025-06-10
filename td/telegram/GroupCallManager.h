@@ -139,7 +139,8 @@ class GroupCallManager final : public Actor {
                                    bool use_portrait_orientation, Promise<Unit> &&promise);
 
   void set_group_call_participant_is_speaking(GroupCallId group_call_id, int32 audio_source, bool is_speaking,
-                                              Promise<Unit> &&promise, int32 date = 0);
+                                              Promise<td_api::object_ptr<td_api::MessageSender>> &&promise,
+                                              int32 date = 0);
 
   void toggle_group_call_participant_is_muted(GroupCallId group_call_id, DialogId dialog_id, bool is_muted,
                                               Promise<Unit> &&promise);
@@ -179,7 +180,7 @@ class GroupCallManager final : public Actor {
                                          vector<tl_object_ptr<telegram_api::groupCallParticipant>> &&participants,
                                          int32 version, bool is_recursive = false);
 
-  void process_join_voice_chat_response(InputGroupCallId input_group_call_id, uint64 generation,
+  void process_join_video_chat_response(InputGroupCallId input_group_call_id, uint64 generation,
                                         tl_object_ptr<telegram_api::Updates> &&updates, Promise<Unit> &&promise);
 
   void process_join_group_call_presentation_response(InputGroupCallId input_group_call_id, uint64 generation,
@@ -322,7 +323,7 @@ class GroupCallManager final : public Actor {
   void on_sync_group_call_participants(InputGroupCallId input_group_call_id,
                                        Result<tl_object_ptr<telegram_api::phone_groupCall>> &&result);
 
-  static GroupCallParticipantOrder get_real_participant_order(bool can_self_unmute,
+  static GroupCallParticipantOrder get_real_participant_order(bool my_can_self_unmute,
                                                               const GroupCallParticipant &participant,
                                                               const GroupCallParticipants *participants);
 
@@ -338,7 +339,7 @@ class GroupCallManager final : public Actor {
   void update_group_call_participants_can_be_muted(InputGroupCallId input_group_call_id, bool can_manage,
                                                    GroupCallParticipants *participants, bool force_is_admin);
 
-  void update_group_call_participants_order(InputGroupCallId input_group_call_id, bool can_self_unmute,
+  void update_group_call_participants_order(InputGroupCallId input_group_call_id, bool my_can_self_unmute,
                                             GroupCallParticipants *participants, const char *source);
 
   // returns participant_count_diff and video_participant_count_diff

@@ -178,6 +178,8 @@ OptionManager::OptionManager(Td *td)
   set_default_integer_option("gift_resale_star_count_min", 125);
   set_default_integer_option("gift_resale_star_count_max", 100000);
   set_default_integer_option("gift_resale_earnings_per_mille", 800);
+  set_default_integer_option("poll_answer_count_max", 12);
+  set_default_integer_option("direct_channel_message_star_count_default", 10);
 
   if (options.isset("my_phone_number") || !options.isset("my_id")) {
     update_premium_options();
@@ -730,7 +732,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.49");
+        return td_api::make_object<td_api::optionValueString>("1.8.50");
       }
       break;
   }

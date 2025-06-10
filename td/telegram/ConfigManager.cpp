@@ -67,7 +67,6 @@
 #include "td/utils/tl_parsers.h"
 #include "td/utils/UInt.h"
 
-#include <algorithm>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -2069,6 +2068,15 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       }
       if (key == "stars_stargift_resale_commission_permille") {
         G()->set_option_integer("gift_resale_earnings_per_mille",
+                                get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "poll_answers_max") {
+        G()->set_option_integer("poll_answer_count_max", get_json_value_int(std::move(key_value->value_), key));
+        continue;
+      }
+      if (key == "stars_paid_messages_channel_amount_default") {
+        G()->set_option_integer("direct_channel_message_star_count_default",
                                 get_json_value_int(std::move(key_value->value_), key));
         continue;
       }
