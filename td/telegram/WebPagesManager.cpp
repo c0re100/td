@@ -989,7 +989,7 @@ void WebPagesManager::on_get_web_page_preview(unique_ptr<GetWebPagePreviewOption
     }
 
     LOG(ERROR) << "Receive " << to_string(message_media_ptr) << " instead of web page";
-    return promise.set_error(Status::Error(500, "Receive not web page in GetWebPagePreview"));
+    return promise.set_error(500, "Receive not web page in GetWebPagePreview");
   }
 
   auto message_media_web_page = move_tl_object_as<telegram_api::messageMediaWebPage>(message_media_ptr);
@@ -1759,6 +1759,9 @@ td_api::object_ptr<td_api::LinkPreviewType> WebPagesManager::get_link_preview_ty
     auto photo = get_photo_object(td_->file_manager_.get(), web_page->photo_);
     if (photo != nullptr) {
       return td_api::make_object<td_api::linkPreviewTypePhoto>(std::move(photo));
+    } else if (web_page->site_name_ == "Telegram") {
+      // unavailable photo
+      return td_api::make_object<td_api::linkPreviewTypeArticle>(nullptr);
     } else {
       LOG(ERROR) << "Receive photo without photo for " << web_page->url_;
       return td_api::make_object<td_api::linkPreviewTypeUnsupported>();
@@ -2129,7 +2132,7 @@ void WebPagesManager::on_pending_web_page_timeout(WebPageId web_page_id) {
       auto requests = std::move(it->second);
       pending_get_web_pages_.erase(it);
       for (auto &request : requests) {
-        request.second.set_error(Status::Error(500, "Request timeout exceeded"));
+        request.second.set_error(500, "Request timeout exceeded");
         count++;
       }
     }

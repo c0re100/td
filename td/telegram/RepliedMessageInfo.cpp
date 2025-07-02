@@ -168,8 +168,8 @@ RepliedMessageInfo RepliedMessageInfo::clone(Td *td) const {
   return result;
 }
 
-bool RepliedMessageInfo::need_reget() const {
-  return content_ != nullptr && need_reget_message_content(content_.get());
+bool RepliedMessageInfo::need_reget(const Td *td) const {
+  return content_ != nullptr && need_reget_message_content(td, content_.get());
 }
 
 bool RepliedMessageInfo::need_reply_changed_warning(
@@ -291,8 +291,8 @@ td_api::object_ptr<td_api::messageReplyToMessage> RepliedMessageInfo::get_messag
 
   td_api::object_ptr<td_api::MessageContent> content;
   if (content_ != nullptr) {
-    content = get_message_content_object(content_.get(), td, dialog_id, message_id, false, dialog_id, 0, false, true,
-                                         -1, false, false);
+    content = get_message_content_object(content_.get(), td, DialogId(), message_id, false, true, DialogId(), 0, false,
+                                         true, -1, false, false);
     switch (content->get_id()) {
       case td_api::messageUnsupported::ID:
         content = nullptr;

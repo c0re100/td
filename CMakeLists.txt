@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 
-project(TDLib VERSION 1.8.50 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.51 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -642,6 +642,9 @@ set(TDLIB_SOURCE_PART2
   td/telegram/ThemeManager.cpp
   td/telegram/ThemeSettings.cpp
   td/telegram/TimeZoneManager.cpp
+  td/telegram/ToDoCompletion.cpp
+  td/telegram/ToDoItem.cpp
+  td/telegram/ToDoList.cpp
   td/telegram/TopDialogCategory.cpp
   td/telegram/TopDialogManager.cpp
   td/telegram/TranscriptionInfo.cpp
@@ -1027,6 +1030,9 @@ set(TDLIB_SOURCE_PART2
   td/telegram/ThemeManager.h
   td/telegram/ThemeSettings.h
   td/telegram/TimeZoneManager.h
+  td/telegram/ToDoCompletion.h
+  td/telegram/ToDoItem.h
+  td/telegram/ToDoList.h
   td/telegram/TopDialogCategory.h
   td/telegram/TopDialogManager.h
   td/telegram/TranscriptionInfo.h
@@ -1145,6 +1151,9 @@ set(TDLIB_SOURCE_PART2
   td/telegram/SuggestedAction.hpp
   td/telegram/TermsOfService.hpp
   td/telegram/ThemeSettings.hpp
+  td/telegram/ToDoCompletion.hpp
+  td/telegram/ToDoItem.hpp
+  td/telegram/ToDoList.hpp
   td/telegram/TranscriptionInfo.hpp
   td/telegram/VideoNotesManager.hpp
   td/telegram/VideosManager.hpp
@@ -1267,7 +1276,6 @@ target_link_libraries(tdclient PUBLIC tdapi PRIVATE tdcore)
 if (TD_ENABLE_DOTNET)
   add_library(tddotnet SHARED
     td/telegram/ClientDotNet.cpp
-    td/telegram/LogDotNet.cpp
     ${TL_DOTNET_SCHEME_SOURCE}
   )
   set_target_properties(tddotnet PROPERTIES OUTPUT_NAME Telegram.Td)
