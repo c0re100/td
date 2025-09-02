@@ -63,6 +63,9 @@ class MessageQueryManager final : public Actor {
 
   void report_message_delivery(MessageFullId message_full_id, int32 until_date, bool from_push);
 
+  void send_bot_requested_peer(MessageFullId message_full_id, int32 button_id, vector<DialogId> shared_dialog_ids,
+                               Promise<Unit> &&promise);
+
   void reload_message_extended_media(DialogId dialog_id, vector<MessageId> message_ids);
 
   void finish_get_message_extended_media(DialogId dialog_id, const vector<MessageId> &message_ids);
@@ -71,6 +74,9 @@ class MessageQueryManager final : public Actor {
 
   void set_message_fact_check(MessageFullId message_full_id, const FormattedText &fact_check_text,
                               Promise<Unit> &&promise);
+
+  void toggle_suggested_post_approval(MessageFullId message_full_id, bool is_rejected, int32 schedule_date,
+                                      const string &comment, Promise<Unit> &&promise);
 
   void search_messages(DialogListId dialog_list_id, bool ignore_folder_id, const string &query,
                        const string &offset_str, int32 limit, MessageSearchFilter filter,

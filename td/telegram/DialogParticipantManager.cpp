@@ -248,7 +248,7 @@ class GetChannelAdministratorsQuery final : public Td::ResultHandler {
       return promise_.set_error(400, "Supergroup not found");
     }
 
-    hash = 0;  // to load even only ranks or creator changed
+    hash = 0;  // to load even if only ranks or creator changed
 
     channel_id_ = channel_id;
     send_query(G()->net_query_creator().create(telegram_api::channels_getParticipants(
@@ -2653,6 +2653,9 @@ void DialogParticipantManager::restrict_channel_participant(ChannelId channel_id
     }
     if (new_status.is_member()) {
       return promise.set_error(400, "Can't unrestrict self");
+    }
+    if (td_->auth_manager_->is_bot() && td_->chat_manager_->is_monoforum_channel(channel_id)) {
+      return promise.set_error(400, "Can't leave channel direct messages chats; leave the parent chat instead");
     }
 
     // leave the channel

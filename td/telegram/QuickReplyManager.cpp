@@ -245,7 +245,7 @@ class QuickReplyManager::SendQuickReplyMessageQuery final : public Td::ResultHan
     shortcut_id_ = m->shortcut_id;
 
     int32 flags = telegram_api::messages_sendMessage::QUICK_REPLY_SHORTCUT_MASK;
-    auto reply_to = MessageInputReplyTo(m->reply_to_message_id, DialogId(), MessageQuote())
+    auto reply_to = MessageInputReplyTo(m->reply_to_message_id, DialogId(), MessageQuote(), 0)
                         .get_input_reply_to(td_, MessageId(), SavedMessagesTopicId());
     if (reply_to != nullptr) {
       flags |= telegram_api::messages_sendMessage::REPLY_TO_MASK;
@@ -263,7 +263,7 @@ class QuickReplyManager::SendQuickReplyMessageQuery final : public Td::ResultHan
             flags, m->disable_web_page_preview, false, false, false, false, false, m->invert_media, false,
             telegram_api::make_object<telegram_api::inputPeerSelf>(), std::move(reply_to), message_text->text,
             m->random_id, nullptr, std::move(entities), 0, nullptr,
-            td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id), 0, 0),
+            td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id), 0, 0, nullptr),
         {{"me"}}));
   }
 
@@ -299,7 +299,7 @@ class QuickReplyManager::SendQuickReplyInlineMessageQuery final : public Td::Res
     shortcut_id_ = m->shortcut_id;
 
     int32 flags = telegram_api::messages_sendInlineBotResult::QUICK_REPLY_SHORTCUT_MASK;
-    auto reply_to = MessageInputReplyTo(m->reply_to_message_id, DialogId(), MessageQuote())
+    auto reply_to = MessageInputReplyTo(m->reply_to_message_id, DialogId(), MessageQuote(), 0)
                         .get_input_reply_to(td_, MessageId(), SavedMessagesTopicId());
     if (reply_to != nullptr) {
       flags |= telegram_api::messages_sendInlineBotResult::REPLY_TO_MASK;
@@ -359,7 +359,7 @@ class QuickReplyManager::SendQuickReplyMediaQuery final : public Td::ResultHandl
     was_thumbnail_uploaded_ = FileManager::extract_was_thumbnail_uploaded(input_media);
 
     int32 flags = telegram_api::messages_sendMedia::QUICK_REPLY_SHORTCUT_MASK;
-    auto reply_to = MessageInputReplyTo(m->reply_to_message_id, DialogId(), MessageQuote())
+    auto reply_to = MessageInputReplyTo(m->reply_to_message_id, DialogId(), MessageQuote(), 0)
                         .get_input_reply_to(td_, MessageId(), SavedMessagesTopicId());
     if (reply_to != nullptr) {
       flags |= telegram_api::messages_sendMedia::REPLY_TO_MASK;
@@ -379,7 +379,7 @@ class QuickReplyManager::SendQuickReplyMediaQuery final : public Td::ResultHandl
             flags, false, false, false, false, false, m->invert_media, false,
             telegram_api::make_object<telegram_api::inputPeerSelf>(), std::move(reply_to), std::move(input_media),
             message_text == nullptr ? string() : message_text->text, m->random_id, nullptr, std::move(entities), 0,
-            nullptr, td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id), 0, 0),
+            nullptr, td_->quick_reply_manager_->get_input_quick_reply_shortcut(m->shortcut_id), 0, 0, nullptr),
         {{"me"}}));
   }
 
@@ -513,7 +513,7 @@ class QuickReplyManager::UploadQuickReplyMediaQuery final : public Td::ResultHan
         td_->quick_reply_manager_->on_send_message_file_error(shortcut_id_, random_id_, {-1});
         return;
       } else {
-        LOG(ERROR) << "Receive file reference error for UploadMediaQuery";
+        LOG(ERROR) << "Receive file reference error for UploadQuickReplyMediaQuery";
       }
     }
     if (was_uploaded_) {
@@ -561,7 +561,7 @@ class QuickReplyManager::SendQuickReplyMultiMediaQuery final : public Td::Result
     CHECK(file_ids_.size() == random_ids_.size());
 
     int32 flags = telegram_api::messages_sendMultiMedia::QUICK_REPLY_SHORTCUT_MASK;
-    auto reply_to = MessageInputReplyTo(reply_to_message_id, DialogId(), MessageQuote())
+    auto reply_to = MessageInputReplyTo(reply_to_message_id, DialogId(), MessageQuote(), 0)
                         .get_input_reply_to(td_, MessageId(), SavedMessagesTopicId());
     if (reply_to != nullptr) {
       flags |= telegram_api::messages_sendMultiMedia::REPLY_TO_MASK;

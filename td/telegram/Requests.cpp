@@ -342,7 +342,7 @@ class GetChatRequest final : public RequestActor<> {
  public:
   GetChatRequest(ActorShared<Td> td, uint64 request_id, int64 dialog_id)
       : RequestActor(std::move(td), request_id), dialog_id_(dialog_id) {
-    set_tries(3);
+    set_tries(4);
   }
 };
 
@@ -3059,6 +3059,7 @@ void Requests::on_request(uint64 id, const td_api::loadDirectMessagesChatTopics 
 }
 
 void Requests::on_request(uint64 id, const td_api::getDirectMessagesChatTopic &request) {
+  CHECK_IS_USER();
   CREATE_REQUEST_PROMISE();
   DialogId dialog_id(request.chat_id_);
   td_->saved_messages_manager_->get_monoforum_topic(dialog_id, SavedMessagesTopicId(DialogId(request.topic_id_)),
@@ -5683,6 +5684,26 @@ void Requests::on_request(uint64 id, td_api::processChatJoinRequests &request) {
                                                                  request.approve_, std::move(promise));
 }
 
+void Requests::on_request(uint64 id, const td_api::approveSuggestedPost &request) {
+  CREATE_OK_REQUEST_PROMISE();
+  td_->messages_manager_->process_suggested_post({DialogId(request.chat_id_), MessageId(request.message_id_)}, false,
+                                                 request.send_date_, string(), std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::declineSuggestedPost &request) {
+  CLEAN_INPUT_STRING(request.comment_);
+  CREATE_OK_REQUEST_PROMISE();
+  td_->messages_manager_->process_suggested_post({DialogId(request.chat_id_), MessageId(request.message_id_)}, true, 0,
+                                                 request.comment_, std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::addOffer &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  td_->messages_manager_->add_offer(DialogId(request.chat_id_), MessageId(request.message_id_),
+                                    std::move(request.options_), std::move(promise));
+}
+
 void Requests::on_request(uint64 id, td_api::revokeChatInviteLink &request) {
   CLEAN_INPUT_STRING(request.invite_link_);
   CREATE_REQUEST_PROMISE();
@@ -7058,11 +7079,20 @@ void Requests::on_request(uint64 id, const td_api::getChatRevenueWithdrawalUrl &
                                                               std::move(promise));
 }
 
-void Requests::on_request(uint64 id, const td_api::getChatRevenueTransactions &request) {
+void Requests::on_request(uint64 id, td_api::getChatRevenueTransactions &request) {
   CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.offset_);
   CREATE_REQUEST_PROMISE();
   td_->statistics_manager_->get_dialog_revenue_transactions(DialogId(request.chat_id_), request.offset_, request.limit_,
                                                             std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::getTonTransactions &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.offset_);
+  CREATE_REQUEST_PROMISE();
+  td_->star_manager_->get_ton_transactions(request.offset_, request.limit_, std::move(request.direction_),
+                                           std::move(promise));
 }
 
 void Requests::on_request(uint64 id, const td_api::getStarRevenueStatistics &request) {

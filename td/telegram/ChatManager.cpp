@@ -2754,6 +2754,19 @@ bool ChatManager::have_input_peer_channel(const Channel *c, ChannelId channel_id
   if (access_rights == AccessRights::Know) {
     return true;
   }
+  if (!from_linked && c->is_monoforum) {
+    if (td_->auth_manager_->is_bot()) {
+      return c->is_admined_monoforum;
+    }
+    auto monoforum_channel_id = c->monoforum_channel_id;
+    auto *monoforum_channel = get_channel(monoforum_channel_id);
+    if (monoforum_channel != nullptr) {
+      return have_input_peer_channel(monoforum_channel, monoforum_channel_id, AccessRights::Read, true);
+    }
+    LOG(INFO) << "Have no parent " << monoforum_channel_id;
+    return true;
+  }
+
   if (c->status.is_administrator()) {
     return true;
   }
@@ -2762,15 +2775,6 @@ bool ChatManager::have_input_peer_channel(const Channel *c, ChannelId channel_id
     return false;
   }
   if (c->status.is_member()) {
-    return true;
-  }
-
-  if (!from_linked && c->is_monoforum) {
-    auto monoforum_channel_id = c->monoforum_channel_id;
-    auto *monoforum_channel = get_channel(monoforum_channel_id);
-    if (monoforum_channel != nullptr) {
-      return have_input_peer_channel(monoforum_channel, monoforum_channel_id, access_rights, true);
-    }
     return true;
   }
 
@@ -3322,7 +3326,7 @@ void ChatManager::toggle_channel_join_to_send(ChannelId channel_id, bool join_to
   if (c == nullptr) {
     return promise.set_error(400, "Supergroup not found");
   }
-  if (get_channel_type(c) == ChannelType::Broadcast || c->is_gigagroup) {
+  if (get_channel_type(c) == ChannelType::Broadcast || c->is_gigagroup || c->is_monoforum) {
     return promise.set_error(400, "The method can be called only for ordinary supergroups");
   }
   if (!get_channel_status(c).can_restrict_members()) {
@@ -3337,7 +3341,7 @@ void ChatManager::toggle_channel_join_request(ChannelId channel_id, bool join_re
   if (c == nullptr) {
     return promise.set_error(400, "Supergroup not found");
   }
-  if (get_channel_type(c) == ChannelType::Broadcast || c->is_gigagroup) {
+  if (get_channel_type(c) == ChannelType::Broadcast || c->is_gigagroup || c->is_monoforum) {
     return promise.set_error(400, "The method can be called only for ordinary supergroups");
   }
   if (!get_channel_status(c).can_restrict_members()) {
@@ -7389,10 +7393,10 @@ void ChatManager::on_update_channel_title(Channel *c, ChannelId channel_id, stri
 void ChatManager::on_update_channel_status(Channel *c, ChannelId channel_id, DialogParticipantStatus &&status) {
   if (c->is_monoforum) {
     if (status.is_member()) {
-      status = c->is_admined_monoforum
+      status = c->is_admined_monoforum && !td_->auth_manager_->is_bot()
                    ? DialogParticipantStatus::Administrator(
                          AdministratorRights(true, true, false, false, false, false, false, false, false, false, false,
-                                             false, false, false, false, ChannelType::Megagroup),
+                                             false, false, false, false, false, ChannelType::Megagroup),
                          string(), false)
                    : DialogParticipantStatus::Member(0);
     } else {
@@ -8435,7 +8439,7 @@ bool ChatManager::get_channel_can_be_deleted(const Channel *c) {
 }
 
 bool ChatManager::get_channel_join_to_send(const Channel *c) {
-  return c->join_to_send || !c->is_megagroup || !c->has_linked_channel;
+  return (c->join_to_send || !c->is_megagroup || !c->has_linked_channel) && !c->is_monoforum;
 }
 
 bool ChatManager::get_channel_join_request(ChannelId channel_id) const {
@@ -8447,7 +8451,7 @@ bool ChatManager::get_channel_join_request(ChannelId channel_id) const {
 }
 
 bool ChatManager::get_channel_join_request(const Channel *c) {
-  return c->join_request && c->is_megagroup && (is_channel_public(c) || c->has_linked_channel);
+  return c->join_request && c->is_megagroup && !c->is_monoforum && (is_channel_public(c) || c->has_linked_channel);
 }
 
 ChannelId ChatManager::get_channel_linked_channel_id(ChannelId channel_id, const char *source) {
@@ -8545,20 +8549,32 @@ bool ChatManager::get_channel(ChannelId channel_id, int left_tries, Promise<Unit
     return false;
   }
 
-  if (!have_channel(channel_id)) {
-    if (left_tries > 2 && G()->use_chat_info_database()) {
+  const Channel *c = get_channel(channel_id);
+  if (c == nullptr) {
+    if (left_tries > 3 && G()->use_chat_info_database()) {
       send_closure_later(actor_id(this), &ChatManager::load_channel_from_database, nullptr, channel_id,
                          std::move(promise));
       return false;
     }
 
-    if (left_tries > 1 && td_->auth_manager_->is_bot()) {
+    if (left_tries > 2 && td_->auth_manager_->is_bot()) {
       get_channel_queries_.add_query(channel_id.get(), std::move(promise), "get_channel");
       return false;
     }
 
     promise.set_error(400, "Supergroup not found");
     return false;
+  }
+  if (c->monoforum_channel_id.is_valid() && !have_channel(c->monoforum_channel_id)) {
+    if (left_tries > 2 && G()->use_chat_info_database()) {
+      send_closure_later(actor_id(this), &ChatManager::load_channel_from_database, nullptr, c->monoforum_channel_id,
+                         std::move(promise));
+      return false;
+    }
+    if (left_tries > 1 && td_->auth_manager_->is_bot()) {
+      get_channel_queries_.add_query(c->monoforum_channel_id.get(), std::move(promise), "get channel monoforum");
+      return false;
+    }
   }
 
   promise.set_value(Unit());
@@ -9095,12 +9111,17 @@ void ChatManager::on_get_channel(telegram_api::channel &channel, const char *sou
 
   bool is_admined_monoforum = false;
   if (monoforum_channel_id.is_valid()) {
-    Channel *monoforum_c = get_channel(monoforum_channel_id);
-    if (monoforum_c != nullptr) {
-      if (is_monoforum) {
-        is_admined_monoforum = monoforum_c->status.can_post_messages();
-      } else if (status.can_post_messages() && !monoforum_c->is_admined_monoforum) {
-        monoforum_c->is_admined_monoforum = true;
+    if (is_monoforum) {
+      Channel *monoforum_c = get_channel_force(monoforum_channel_id, source);
+      if (monoforum_c != nullptr) {
+        is_admined_monoforum = monoforum_c->status.can_manage_direct_messages();
+      } else if (status.is_member() && td_->auth_manager_->is_bot()) {
+        is_admined_monoforum = true;
+      }
+    } else {
+      Channel *monoforum_c = get_channel(monoforum_channel_id);
+      if (monoforum_c != nullptr && status.can_manage_direct_messages() != monoforum_c->is_admined_monoforum) {
+        monoforum_c->is_admined_monoforum = status.can_manage_direct_messages();
         monoforum_c->is_admined_monoforum_changed = true;
         monoforum_c->is_changed = true;
         update_channel(monoforum_c, monoforum_channel_id);

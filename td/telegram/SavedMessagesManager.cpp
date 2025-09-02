@@ -565,6 +565,10 @@ SavedMessagesTopicId SavedMessagesManager::get_topic_id(DialogId dialog_id, int6
   if (td_->auth_manager_->is_bot() && saved_messages_topic_id.is_valid_in(td_, dialog_id).is_ok()) {
     return saved_messages_topic_id;
   }
+  if (dialog_id == DialogId() &&
+      saved_messages_topic_id.is_valid_in(td_, td_->dialog_manager_->get_my_dialog_id()).is_ok()) {
+    return saved_messages_topic_id;
+  }
   if (get_topic(dialog_id, saved_messages_topic_id) == nullptr) {
     return SavedMessagesTopicId(DialogId(std::numeric_limits<int64>::max()));  // an invalid topic identifier
   }
@@ -2178,17 +2182,20 @@ void SavedMessagesManager::on_get_topic_history(DialogId dialog_id, uint32 gener
   if (topic_list->generation_ != generation) {
     return promise.set_error(400, "Topic was deleted");
   }
-  auto *topic = add_topic(topic_list, saved_messages_topic_id, false);
 
   if (r_info.is_error()) {
     return promise.set_error(r_info.move_as_error());
   }
   auto info = r_info.move_as_ok();
-
-  if (!MessageId::is_message_id_order_descending(info.messages)) {
+  if (info.messages.empty() && get_topic(topic_list, saved_messages_topic_id) == nullptr) {
+    return promise.set_value(
+        td_->messages_manager_->get_messages_object(0, dialog_id, {}, true, "on_get_topic_history"));
+  }
+  if (!MessageId::is_message_id_order_descending(info.messages, "on_get_topic_history")) {
     return promise.set_error(500, "Receive invalid response");
   }
 
+  auto *topic = add_topic(topic_list, saved_messages_topic_id, false);
   MessageId first_message_id;
   MessageId last_message_id;
   int32 last_message_date = 0;

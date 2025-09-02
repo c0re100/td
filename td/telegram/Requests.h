@@ -1057,6 +1057,12 @@ class Requests {
 
   void on_request(uint64 id, td_api::processChatJoinRequests &request);
 
+  void on_request(uint64 id, const td_api::approveSuggestedPost &request);
+
+  void on_request(uint64 id, td_api::declineSuggestedPost &request);
+
+  void on_request(uint64 id, td_api::addOffer &request);
+
   void on_request(uint64 id, td_api::revokeChatInviteLink &request);
 
   void on_request(uint64 id, td_api::deleteRevokedChatInviteLink &request);
@@ -1469,7 +1475,9 @@ class Requests {
 
   void on_request(uint64 id, const td_api::getChatRevenueWithdrawalUrl &request);
 
-  void on_request(uint64 id, const td_api::getChatRevenueTransactions &request);
+  void on_request(uint64 id, td_api::getChatRevenueTransactions &request);
+
+  void on_request(uint64 id, td_api::getTonTransactions &request);
 
   void on_request(uint64 id, const td_api::getStarRevenueStatistics &request);
 

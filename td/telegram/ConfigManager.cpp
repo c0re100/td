@@ -1412,10 +1412,17 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       {"stars_paid_post_amount_max", "paid_media_message_star_count_max"},
       {"stars_paid_reaction_amount_max", "paid_reaction_star_count_max"},
       {"stars_revenue_withdrawal_min", "star_withdrawal_count_min"},
+      {"stars_revenue_withdrawal_max", "star_withdrawal_count_max"},
       {"stars_stargift_resale_amount_max", "gift_resale_star_count_max"},
       {"stars_stargift_resale_amount_min", "gift_resale_star_count_min"},
       {"stars_stargift_resale_commission_permille", "gift_resale_earnings_per_mille"},
       {"stars_subscription_amount_max", "subscription_star_count_max"},
+      {"stars_suggested_post_age_min", "suggested_post_lifetime_min"},
+      {"stars_suggested_post_amount_min", "suggested_post_star_count_min"},
+      {"stars_suggested_post_amount_max", "suggested_post_star_count_max"},
+      {"stars_suggested_post_commission_permille", "suggested_post_star_earnings_per_mille"},
+      {"stars_suggested_post_future_min", "suggested_post_send_delay_min"},
+      {"stars_suggested_post_future_max", "suggested_post_send_delay_max"},
       {"stars_usd_sell_rate_x1000", "usd_to_thousand_star_rate"},
       {"stars_usd_withdraw_rate_x1000", "thousand_star_to_usd_rate"},
       {"stickers_premium_by_emoji_num", ""},
@@ -1430,6 +1437,7 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       {"todo_items_max", "checklist_task_count_max"},
       {"todo_item_length_max", "checklist_task_text_length_max"},
       {"todo_title_length_max", "checklist_title_length_max"},
+      {"ton_suggested_post_commission_permille", "suggested_post_toncoin_earnings_per_mille"},
       {"topics_pinned_limit", "pinned_forum_topic_count_max"},
       {"upload_premium_speedup_download", "premium_download_speedup"},
       {"upload_premium_speedup_notify_period", ""},
@@ -1896,6 +1904,25 @@ void ConfigManager::process_app_config(tl_object_ptr<telegram_api::JSONValue> &c
       }
       if (key == "call_requests_disabled") {
         can_accept_calls = !get_json_value_bool(std::move(key_value->value_), key);
+        continue;
+      }
+      if (key == "ton_suggested_post_amount_min") {
+        G()->set_option_integer("suggested_post_toncoin_cent_count_min",
+                                get_json_value_long(std::move(key_value->value_), key) / 10000000);
+        continue;
+      }
+      if (key == "ton_suggested_post_amount_max") {
+        G()->set_option_integer("suggested_post_toncoin_cent_count_max",
+                                get_json_value_long(std::move(key_value->value_), key) / 10000000);
+        continue;
+      }
+      if (key == "ton_usd_rate") {
+        G()->set_option_integer("million_toncoin_to_usd_rate",
+                                static_cast<int64>(get_json_value_double(std::move(key_value->value_), key) * 1000000));
+        continue;
+      }
+      if (key == "ton_topup_url") {
+        G()->set_option_string("toncoin_top_up_url", get_json_value_string(std::move(key_value->value_), key));
         continue;
       }
 
