@@ -137,8 +137,10 @@
 #include "td/telegram/SecureValue.h"
 #include "td/telegram/SentEmailCode.h"
 #include "td/telegram/SponsoredMessageManager.h"
+#include "td/telegram/StarGiftCollectionId.h"
 #include "td/telegram/StarGiftId.h"
 #include "td/telegram/StarGiftManager.h"
+#include "td/telegram/StarGiftResalePrice.h"
 #include "td/telegram/StarGiftSettings.h"
 #include "td/telegram/StarManager.h"
 #include "td/telegram/StarSubscriptionPricing.h"
@@ -150,6 +152,7 @@
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StickerType.h"
 #include "td/telegram/StorageManager.h"
+#include "td/telegram/StoryAlbumId.h"
 #include "td/telegram/StoryId.h"
 #include "td/telegram/StoryListId.h"
 #include "td/telegram/StoryManager.h"
@@ -3454,6 +3457,22 @@ void Requests::on_request(uint64 id, td_api::searchOutgoingDocumentMessages &req
   td_->message_query_manager_->search_outgoing_document_messages(request.query_, request.limit_, std::move(promise));
 }
 
+void Requests::on_request(uint64 id, td_api::getPublicPostSearchLimits &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.query_);
+  CREATE_REQUEST_PROMISE();
+  td_->message_query_manager_->check_search_posts_flood(request.query_, std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::searchPublicPosts &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.query_);
+  CLEAN_INPUT_STRING(request.offset_);
+  CREATE_REQUEST_PROMISE();
+  td_->message_query_manager_->search_public_posts(request.query_, request.offset_, request.limit_, request.star_count_,
+                                                   std::move(promise));
+}
+
 void Requests::on_request(uint64 id, td_api::searchPublicMessagesByTag &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.tag_);
@@ -3715,6 +3734,70 @@ void Requests::on_request(uint64 id, td_api::getStoryPublicForwards &request) {
   td_->statistics_manager_->get_story_public_forwards(
       {DialogId(request.story_poster_chat_id_), StoryId(request.story_id_)}, std::move(request.offset_), request.limit_,
       std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::getChatStoryAlbums &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  td_->story_manager_->get_story_albums(DialogId(request.chat_id_), std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::getStoryAlbumStories &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  td_->story_manager_->get_story_album_stories(DialogId(request.chat_id_), StoryAlbumId(request.story_album_id_),
+                                               request.offset_, request.limit_, std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::createStoryAlbum &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST_PROMISE();
+  td_->story_manager_->create_story_album(DialogId(request.story_poster_chat_id_), request.name_,
+                                          StoryId::get_story_ids(request.story_ids_), std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::reorderStoryAlbums &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  td_->story_manager_->reorder_story_albums(
+      DialogId(request.chat_id_), StoryAlbumId::get_story_album_ids(request.story_album_ids_), std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::deleteStoryAlbum &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  td_->story_manager_->delete_story_album(DialogId(request.chat_id_), StoryAlbumId(request.story_album_id_),
+                                          std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::setStoryAlbumName &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST_PROMISE();
+  td_->story_manager_->set_story_album_title(DialogId(request.chat_id_), StoryAlbumId(request.story_album_id_),
+                                             request.name_, std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::addStoryAlbumStories &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  td_->story_manager_->add_story_album_stories(DialogId(request.chat_id_), StoryAlbumId(request.story_album_id_),
+                                               StoryId::get_story_ids(request.story_ids_), std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::removeStoryAlbumStories &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  td_->story_manager_->remove_story_album_stories(DialogId(request.chat_id_), StoryAlbumId(request.story_album_id_),
+                                                  StoryId::get_story_ids(request.story_ids_), std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::reorderStoryAlbumStories &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  td_->story_manager_->reorder_story_album_stories(DialogId(request.chat_id_), StoryAlbumId(request.story_album_id_),
+                                                   StoryId::get_story_ids(request.story_ids_), std::move(promise));
 }
 
 void Requests::on_request(uint64 id, const td_api::removeNotification &request) {
@@ -4258,8 +4341,9 @@ void Requests::on_request(uint64 id, td_api::postStory &request) {
   CREATE_REQUEST_PROMISE();
   td_->story_manager_->send_story(DialogId(request.chat_id_), std::move(request.content_), std::move(request.areas_),
                                   std::move(request.caption_), std::move(request.privacy_settings_),
-                                  request.active_period_, std::move(request.from_story_full_id_),
-                                  request.is_posted_to_chat_page_, request.protect_content_, std::move(promise));
+                                  StoryAlbumId::get_story_album_ids(request.album_ids_), request.active_period_,
+                                  std::move(request.from_story_full_id_), request.is_posted_to_chat_page_,
+                                  request.protect_content_, std::move(promise));
 }
 
 void Requests::on_request(uint64 id, td_api::editStory &request) {
@@ -4507,7 +4591,7 @@ void Requests::on_request(uint64 id, td_api::createNewBasicGroupChat &request) {
   CLEAN_INPUT_STRING(request.title_);
   CREATE_REQUEST_PROMISE();
   td_->chat_manager_->create_new_chat(UserId::get_user_ids(request.user_ids_), std::move(request.title_),
-                                      MessageTtl(request.message_auto_delete_time_), std::move(promise));
+                                      MessageTtl(request.message_auto_delete_time_, nullptr), std::move(promise));
 }
 
 void Requests::on_request(uint64 id, td_api::createNewSupergroupChat &request) {
@@ -4517,7 +4601,7 @@ void Requests::on_request(uint64 id, td_api::createNewSupergroupChat &request) {
   CREATE_REQUEST_PROMISE();
   td_->chat_manager_->create_new_channel(std::move(request.title_), request.is_forum_, !request.is_channel_,
                                          std::move(request.description_), DialogLocation(std::move(request.location_)),
-                                         request.for_import_, MessageTtl(request.message_auto_delete_time_),
+                                         request.for_import_, MessageTtl(request.message_auto_delete_time_, nullptr),
                                          std::move(promise));
 }
 
@@ -7640,6 +7724,15 @@ void Requests::on_request(uint64 id, td_api::upgradeGift &request) {
                                         request.star_count_, std::move(promise));
 }
 
+void Requests::on_request(uint64 id, td_api::buyGiftUpgrade &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.prepaid_upgrade_hash_);
+  CREATE_OK_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->buy_gift_upgrade(owner_dialog_id, request.prepaid_upgrade_hash_, request.star_count_,
+                                            std::move(promise));
+}
+
 void Requests::on_request(uint64 id, td_api::transferGift &request) {
   CHECK_IS_USER_OR_BUSINESS();
   CREATE_OK_REQUEST_PROMISE();
@@ -7652,10 +7745,11 @@ void Requests::on_request(uint64 id, td_api::transferGift &request) {
 void Requests::on_request(uint64 id, td_api::sendResoldGift &request) {
   CHECK_IS_USER();
   CLEAN_INPUT_STRING(request.gift_name_);
-  CREATE_OK_REQUEST_PROMISE();
+  CREATE_REQUEST_PROMISE();
   TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
-  td_->star_gift_manager_->send_resold_gift(request.gift_name_, owner_dialog_id, request.star_count_,
-                                            std::move(promise));
+  TRY_RESULT_PROMISE(promise, price,
+                     StarGiftResalePrice::get_star_gift_resale_price(td_, std::move(request.price_), true));
+  td_->star_gift_manager_->send_resold_gift(request.gift_name_, owner_dialog_id, std::move(price), std::move(promise));
 }
 
 void Requests::on_request(uint64 id, td_api::getReceivedGifts &request) {
@@ -7664,9 +7758,10 @@ void Requests::on_request(uint64 id, td_api::getReceivedGifts &request) {
   CREATE_REQUEST_PROMISE();
   TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
   td_->star_gift_manager_->get_saved_star_gifts(
-      BusinessConnectionId(std::move(request.business_connection_id_)), owner_dialog_id, request.exclude_unsaved_,
-      request.exclude_saved_, request.exclude_unlimited_, request.exclude_limited_, request.exclude_upgraded_,
-      request.sort_by_price_, request.offset_, request.limit_, std::move(promise));
+      BusinessConnectionId(std::move(request.business_connection_id_)), owner_dialog_id,
+      StarGiftCollectionId(request.collection_id_), request.exclude_unsaved_, request.exclude_saved_,
+      request.exclude_unlimited_, request.exclude_upgradable_, request.exclude_non_upgradable_,
+      request.exclude_upgraded_, request.sort_by_price_, request.offset_, request.limit_, std::move(promise));
 }
 
 void Requests::on_request(uint64 id, const td_api::getReceivedGift &request) {
@@ -7682,6 +7777,13 @@ void Requests::on_request(uint64 id, td_api::getUpgradedGift &request) {
   td_->star_gift_manager_->get_upgraded_gift(request.name_, std::move(promise));
 }
 
+void Requests::on_request(uint64 id, td_api::getUpgradedGiftValueInfo &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST_PROMISE();
+  td_->star_gift_manager_->get_upgraded_gift_value_info(request.name_, std::move(promise));
+}
+
 void Requests::on_request(uint64 id, const td_api::getUpgradedGiftWithdrawalUrl &request) {
   CHECK_IS_USER();
   CREATE_HTTP_URL_REQUEST_PROMISE();
@@ -7689,10 +7791,12 @@ void Requests::on_request(uint64 id, const td_api::getUpgradedGiftWithdrawalUrl 
                                                         std::move(promise));
 }
 
-void Requests::on_request(uint64 id, const td_api::setGiftResalePrice &request) {
+void Requests::on_request(uint64 id, td_api::setGiftResalePrice &request) {
   CHECK_IS_USER();
   CREATE_OK_REQUEST_PROMISE();
-  td_->star_gift_manager_->set_star_gift_price(StarGiftId(request.received_gift_id_), request.resale_star_count_,
+  TRY_RESULT_PROMISE(promise, price,
+                     StarGiftResalePrice::get_star_gift_resale_price(td_, std::move(request.price_), false));
+  td_->star_gift_manager_->set_star_gift_price(StarGiftId(request.received_gift_id_), std::move(price),
                                                std::move(promise));
 }
 
@@ -7702,6 +7806,85 @@ void Requests::on_request(uint64 id, td_api::searchGiftsForResale &request) {
   CREATE_REQUEST_PROMISE();
   td_->star_gift_manager_->get_resale_star_gifts(request.gift_id_, request.order_, request.attributes_, request.offset_,
                                                  request.limit_, std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::getGiftCollections &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->get_gift_collections(owner_dialog_id, std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::createGiftCollection &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->create_gift_collection(
+      owner_dialog_id, request.name_,
+      transform(request.received_gift_ids_,
+                [](const string &received_gift_id) { return StarGiftId(received_gift_id); }),
+      std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::reorderGiftCollections &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->reorder_gift_collections(
+      owner_dialog_id,
+      transform(request.collection_ids_, [](int32 collection_id) { return StarGiftCollectionId(collection_id); }),
+      std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::deleteGiftCollection &request) {
+  CHECK_IS_USER();
+  CREATE_OK_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->delete_gift_collection(owner_dialog_id, StarGiftCollectionId(request.collection_id_),
+                                                  std::move(promise));
+}
+
+void Requests::on_request(uint64 id, td_api::setGiftCollectionName &request) {
+  CHECK_IS_USER();
+  CLEAN_INPUT_STRING(request.name_);
+  CREATE_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->set_gift_collection_title(owner_dialog_id, StarGiftCollectionId(request.collection_id_),
+                                                     request.name_, std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::addGiftCollectionGifts &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->add_gift_collection_gifts(
+      owner_dialog_id, StarGiftCollectionId(request.collection_id_),
+      transform(request.received_gift_ids_,
+                [](const string &received_gift_id) { return StarGiftId(received_gift_id); }),
+      std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::removeGiftCollectionGifts &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->remove_gift_collection_gifts(
+      owner_dialog_id, StarGiftCollectionId(request.collection_id_),
+      transform(request.received_gift_ids_,
+                [](const string &received_gift_id) { return StarGiftId(received_gift_id); }),
+      std::move(promise));
+}
+
+void Requests::on_request(uint64 id, const td_api::reorderGiftCollectionGifts &request) {
+  CHECK_IS_USER();
+  CREATE_REQUEST_PROMISE();
+  TRY_RESULT_PROMISE(promise, owner_dialog_id, get_message_sender_dialog_id(td_, request.owner_id_, true, false));
+  td_->star_gift_manager_->reorder_gift_collection_gifts(
+      owner_dialog_id, StarGiftCollectionId(request.collection_id_),
+      transform(request.received_gift_ids_,
+                [](const string &received_gift_id) { return StarGiftId(received_gift_id); }),
+      std::move(promise));
 }
 
 void Requests::on_request(uint64 id, td_api::createInvoiceLink &request) {

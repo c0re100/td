@@ -26,6 +26,7 @@
 #include "td/telegram/DialogManager.h"
 #include "td/telegram/DialogNotificationSettings.hpp"
 #include "td/telegram/DialogParticipantManager.h"
+#include "td/telegram/DialogPhoto.h"
 #include "td/telegram/DownloadManager.h"
 #include "td/telegram/DraftMessage.h"
 #include "td/telegram/DraftMessage.hpp"
@@ -71,7 +72,6 @@
 #include "td/telegram/NotificationType.h"
 #include "td/telegram/OnlineManager.h"
 #include "td/telegram/OptionManager.h"
-#include "td/telegram/Photo.h"
 #include "td/telegram/PollId.h"
 #include "td/telegram/PromoDataManager.h"
 #include "td/telegram/PublicDialogType.h"
@@ -1194,8 +1194,8 @@ class SendMessageQuery final : public Td::ResultHandler {
             const MessageInputReplyTo &input_reply_to, MessageId top_thread_message_id,
             SavedMessagesTopicId saved_messages_topic_id, int32 schedule_date, MessageEffectId effect_id,
             int64 paid_message_star_count, const SuggestedPost *suggested_post,
-            const unique_ptr<ReplyMarkup> &reply_markup, vector<tl_object_ptr<telegram_api::MessageEntity>> &&entities,
-            const string &text, bool is_copy, int64 random_id, NetQueryRef *send_query_ref) {
+            const unique_ptr<ReplyMarkup> &reply_markup, const FormattedText &text, bool is_copy, int64 random_id,
+            NetQueryRef *send_query_ref) {
     random_id_ = random_id;
     dialog_id_ = dialog_id;
 
@@ -1209,6 +1209,7 @@ class SendMessageQuery final : public Td::ResultHandler {
     if (reply_to != nullptr) {
       flags |= telegram_api::messages_sendMessage::REPLY_TO_MASK;
     }
+    auto entities = get_input_message_entities(td_->user_manager_.get(), text.entities, "SendMessageQuery");
     if (!entities.empty()) {
       flags |= MessagesManager::SEND_MESSAGE_FLAG_HAS_ENTITIES;
     }
@@ -1227,7 +1228,7 @@ class SendMessageQuery final : public Td::ResultHandler {
 
     auto query = G()->net_query_creator().create(
         telegram_api::messages_sendMessage(flags, false, false, false, false, false, false, false, false,
-                                           std::move(input_peer), std::move(reply_to), text, random_id,
+                                           std::move(input_peer), std::move(reply_to), text.text, random_id,
                                            get_input_reply_markup(td_->user_manager_.get(), reply_markup),
                                            std::move(entities), schedule_date, std::move(as_input_peer), nullptr,
                                            effect_id.get(), paid_message_star_count, std::move(post)),
@@ -1550,9 +1551,9 @@ class SendMediaQuery final : public Td::ResultHandler {
             tl_object_ptr<telegram_api::InputPeer> as_input_peer, const MessageInputReplyTo &input_reply_to,
             MessageId top_thread_message_id, SavedMessagesTopicId saved_messages_topic_id, int32 schedule_date,
             MessageEffectId effect_id, int64 paid_message_star_count, const SuggestedPost *suggested_post,
-            const unique_ptr<ReplyMarkup> &reply_markup, vector<tl_object_ptr<telegram_api::MessageEntity>> &&entities,
-            const string &text, tl_object_ptr<telegram_api::InputMedia> &&input_media, MessageContentType content_type,
-            bool is_copy, int64 random_id, NetQueryRef *send_query_ref) {
+            const unique_ptr<ReplyMarkup> &reply_markup, const FormattedText *text,
+            tl_object_ptr<telegram_api::InputMedia> &&input_media, MessageContentType content_type, bool is_copy,
+            int64 random_id, NetQueryRef *send_query_ref) {
     random_id_ = random_id;
     file_upload_ids_ = std::move(file_upload_ids);
     thumbnail_file_upload_ids_ = std::move(thumbnail_file_upload_ids);
@@ -1573,11 +1574,12 @@ class SendMediaQuery final : public Td::ResultHandler {
     if (reply_to != nullptr) {
       flags |= telegram_api::messages_sendMedia::REPLY_TO_MASK;
     }
+    auto entities = get_input_message_entities(td_->user_manager_.get(), text, "SendMediaQuery");
     if (!entities.empty()) {
       flags |= telegram_api::messages_sendMedia::ENTITIES_MASK;
     }
     if (as_input_peer != nullptr) {
-      flags |= MessagesManager::SEND_MESSAGE_FLAG_HAS_SEND_AS;
+      flags |= telegram_api::messages_sendMedia::SEND_AS_MASK;
     }
     telegram_api::object_ptr<telegram_api::suggestedPost> post;
     if (suggested_post != nullptr) {
@@ -1587,8 +1589,8 @@ class SendMediaQuery final : public Td::ResultHandler {
 
     auto query = G()->net_query_creator().create(
         telegram_api::messages_sendMedia(flags, false, false, false, false, false, false, false, std::move(input_peer),
-                                         std::move(reply_to), std::move(input_media), text, random_id,
-                                         get_input_reply_markup(td_->user_manager_.get(), reply_markup),
+                                         std::move(reply_to), std::move(input_media), text == nullptr ? "" : text->text,
+                                         random_id, get_input_reply_markup(td_->user_manager_.get(), reply_markup),
                                          std::move(entities), schedule_date, std::move(as_input_peer), nullptr,
                                          effect_id.get(), paid_message_star_count, std::move(post)),
         {{dialog_id, content_type}, {dialog_id, is_copy ? MessageContentType::Text : content_type}});
@@ -2423,6 +2425,7 @@ void MessagesManager::Message::store(StorerT &storer) const {
     STORE_FLAG(is_paid_suggested_post_ton);
     END_STORE_FLAGS();
   }
+  // update MessageDb::get_message_info when flags5 is added
 
   store(message_id, storer);
   if (has_sender) {
@@ -5947,6 +5950,9 @@ ChatReactions MessagesManager::get_active_reactions(const ChatReactions &availab
 
 ChatReactions MessagesManager::get_dialog_active_reactions(const Dialog *d) const {
   CHECK(d != nullptr);
+  if (need_hide_dialog_reactions(d)) {
+    return {};
+  }
   switch (d->dialog_id.get_type()) {
     case DialogType::User:
       return ChatReactions(true, true);
@@ -12500,7 +12506,7 @@ void MessagesManager::on_get_dialogs(FolderId folder_id, vector<tl_object_ptr<te
       }
     }
 
-    set_dialog_message_ttl(d, MessageTtl(dialog->ttl_period_));
+    set_dialog_message_ttl(d, MessageTtl(dialog->ttl_period_, "on_get_dialogs"));
 
     being_added_dialog_id_ = DialogId();
 
@@ -14881,7 +14887,7 @@ MessagesManager::ReportDialogFromActionBar MessagesManager::report_dialog_from_a
   return result;
 }
 
-Status MessagesManager::can_get_media_timestamp_link(DialogId dialog_id, const Message *m) {
+Status MessagesManager::can_get_media_timestamp_link(DialogId dialog_id, const Message *m) const {
   if (m == nullptr) {
     return Status::Error(400, "Message not found");
   }
@@ -14896,7 +14902,14 @@ Status MessagesManager::can_get_media_timestamp_link(DialogId dialog_id, const M
     if (!origin_message_id.is_server()) {
       return Status::Error(400, "Message links are available only for messages in supergroups and channel chats");
     }
+    auto origin_dialog_id = origin_message_full_id.get_dialog_id();
+    if (td_->dialog_manager_->is_monoforum_channel(origin_dialog_id)) {
+      return Status::Error(400, "Message links aren't available for messages in channel direct messages chats");
+    }
     return Status::OK();
+  }
+  if (td_->dialog_manager_->is_monoforum_channel(dialog_id)) {
+    return Status::Error(400, "Message links aren't available for messages in channel direct messages chats");
   }
 
   if (m->message_id.is_yet_unsent()) {
@@ -19841,9 +19854,8 @@ td_api::object_ptr<td_api::message> MessagesManager::get_dialog_event_log_messag
       m->is_paid_suggested_post_stars, m->is_paid_suggested_post_ton, false, m->date, edit_date,
       std::move(forward_info), std::move(import_info), std::move(interaction_info), Auto(), nullptr, nullptr,
       std::move(reply_to), 0, nullptr, nullptr, 0.0, 0.0, via_bot_user_id, 0, m->sender_boost_count,
-      m->paid_message_star_count, m->author_signature, 0, 0,
-      get_restriction_reason_has_sensitive_content(m->restriction_reasons),
-      get_restriction_reason_description(m->restriction_reasons), std::move(content), std::move(reply_markup));
+      m->paid_message_star_count, m->author_signature, 0, 0, get_restriction_info_object(m->restriction_reasons),
+      std::move(content), std::move(reply_markup));
 }
 
 td_api::object_ptr<td_api::businessMessage> MessagesManager::get_business_message_object(
@@ -19911,8 +19923,8 @@ td_api::object_ptr<td_api::message> MessagesManager::get_business_message_messag
       m->date, m->edit_date, std::move(forward_info), std::move(import_info), nullptr, Auto(), nullptr, nullptr,
       std::move(reply_to), 0, nullptr, std::move(self_destruct_type), 0.0, 0.0, via_bot_user_id,
       via_business_bot_user_id, m->sender_boost_count, m->paid_message_star_count, string(), m->media_album_id,
-      m->effect_id.get(), get_restriction_reason_has_sensitive_content(m->restriction_reasons),
-      get_restriction_reason_description(m->restriction_reasons), std::move(content), std::move(reply_markup));
+      m->effect_id.get(), get_restriction_info_object(m->restriction_reasons), std::move(content),
+      std::move(reply_markup));
 }
 
 td_api::object_ptr<td_api::message> MessagesManager::get_message_object(Dialog *d, MessageId message_id,
@@ -20010,13 +20022,16 @@ td_api::object_ptr<td_api::message> MessagesManager::get_message_object(DialogId
       std::move(suggested_post), std::move(reply_to), top_thread_message_id, topic.get_message_topic_object(td_),
       std::move(self_destruct_type), ttl_expires_in, auto_delete_in, via_bot_user_id, via_business_bot_user_id,
       m->sender_boost_count, m->paid_message_star_count, m->author_signature, m->media_album_id, m->effect_id.get(),
-      get_restriction_reason_has_sensitive_content(m->restriction_reasons),
-      get_restriction_reason_description(m->restriction_reasons), std::move(content), std::move(reply_markup));
+      get_restriction_info_object(m->restriction_reasons), std::move(content), std::move(reply_markup));
 }
 
 td_api::object_ptr<td_api::messages> MessagesManager::get_messages_object(int32 total_count, DialogId dialog_id,
                                                                           const vector<MessageId> &message_ids,
                                                                           bool skip_not_found, const char *source) {
+  if (message_ids.empty()) {
+    // if list of messages is empty, then chat may not exist
+    return get_messages_object(total_count, {}, skip_not_found);
+  }
   Dialog *d = get_dialog(dialog_id);
   CHECK(d != nullptr);
   auto message_objects = transform(
@@ -21548,30 +21563,28 @@ void MessagesManager::on_message_media_uploaded(DialogId dialog_id, const Messag
 
   if (m->media_album_id == 0 && media_pos == -1) {
     send_closure_later(actor_id(this), &MessagesManager::on_media_message_ready_to_send, dialog_id, message_id,
-                       PromiseCreator::lambda([this, dialog_id,
-                                               input_media = std::move(input_media)](Result<Message *> result) mutable {
-                         if (G()->close_flag() || result.is_error()) {
-                           return;
-                         }
+                       PromiseCreator::lambda(
+                           [this, dialog_id, input_media = std::move(input_media)](Result<Message *> result) mutable {
+                             if (G()->close_flag() || result.is_error()) {
+                               return;
+                             }
 
-                         auto m = result.move_as_ok();
-                         CHECK(m != nullptr);
-                         CHECK(input_media != nullptr);
+                             auto m = result.move_as_ok();
+                             CHECK(m != nullptr);
+                             CHECK(input_media != nullptr);
 
-                         const FormattedText *caption = get_message_content_caption(m->content.get());
-                         LOG(INFO) << "Send media from " << m->message_id << " in " << dialog_id;
-                         int64 random_id = begin_send_message(dialog_id, m);
-                         td_->create_handler<SendMediaQuery>()->send(
-                             m->file_upload_ids, m->thumbnail_file_upload_ids,
-                             get_message_content_cover_any_file_ids(m->content.get()), get_message_flags(m), dialog_id,
-                             get_send_message_as_input_peer(m), *get_message_input_reply_to(m),
-                             m->initial_top_thread_message_id, get_input_message_monoforum_topic_id(m),
-                             get_message_schedule_date(m), m->effect_id, m->paid_message_star_count,
-                             m->suggested_post.get(), m->reply_markup,
-                             get_input_message_entities(td_->user_manager_.get(), caption, "on_message_media_uploaded"),
-                             caption == nullptr ? "" : caption->text, std::move(input_media), m->content->get_type(),
-                             m->is_copy, random_id, &m->send_query_ref);
-                       }));
+                             const FormattedText *caption = get_message_content_caption(m->content.get());
+                             LOG(INFO) << "Send media from " << m->message_id << " in " << dialog_id;
+                             int64 random_id = begin_send_message(dialog_id, m);
+                             td_->create_handler<SendMediaQuery>()->send(
+                                 m->file_upload_ids, m->thumbnail_file_upload_ids,
+                                 get_message_content_cover_any_file_ids(m->content.get()), get_message_flags(m),
+                                 dialog_id, get_send_message_as_input_peer(m), *get_message_input_reply_to(m),
+                                 m->initial_top_thread_message_id, get_input_message_monoforum_topic_id(m),
+                                 get_message_schedule_date(m), m->effect_id, m->paid_message_star_count,
+                                 m->suggested_post.get(), m->reply_markup, caption, std::move(input_media),
+                                 m->content->get_type(), m->is_copy, random_id, &m->send_query_ref);
+                           }));
   } else {
     if (!is_uploaded_input_media(input_media)) {
       auto file_upload_id = get_message_send_file_upload_id(dialog_id, m, media_pos);
@@ -22050,10 +22063,8 @@ void MessagesManager::do_send_paid_media_group(DialogId dialog_id, MessageId mes
       m->file_upload_ids, m->thumbnail_file_upload_ids, get_message_content_cover_any_file_ids(m->content.get()),
       get_message_flags(m), dialog_id, get_send_message_as_input_peer(m), *get_message_input_reply_to(m),
       m->initial_top_thread_message_id, get_input_message_monoforum_topic_id(m), get_message_schedule_date(m),
-      m->effect_id, m->paid_message_star_count, m->suggested_post.get(), m->reply_markup,
-      get_input_message_entities(td_->user_manager_.get(), caption, "do_send_paid_media_group"),
-      caption == nullptr ? "" : caption->text, std::move(input_media), m->content->get_type(), m->is_copy, random_id,
-      &m->send_query_ref);
+      m->effect_id, m->paid_message_star_count, m->suggested_post.get(), m->reply_markup, caption,
+      std::move(input_media), m->content->get_type(), m->is_copy, random_id, &m->send_query_ref);
 }
 
 void MessagesManager::on_text_message_ready_to_send(DialogId dialog_id, MessageId message_id) {
@@ -22087,17 +22098,14 @@ void MessagesManager::on_text_message_ready_to_send(DialogId dialog_id, MessageI
       td_->create_handler<SendMessageQuery>()->send(
           get_message_flags(m), dialog_id, get_send_message_as_input_peer(m), *get_message_input_reply_to(m),
           m->initial_top_thread_message_id, get_input_message_monoforum_topic_id(m), get_message_schedule_date(m),
-          m->effect_id, m->paid_message_star_count, m->suggested_post.get(), m->reply_markup,
-          get_input_message_entities(td_->user_manager_.get(), message_text, "on_text_message_ready_to_send"),
-          message_text->text, m->is_copy, random_id, &m->send_query_ref);
+          m->effect_id, m->paid_message_star_count, m->suggested_post.get(), m->reply_markup, *message_text, m->is_copy,
+          random_id, &m->send_query_ref);
     } else {
       td_->create_handler<SendMediaQuery>()->send(
           {}, {}, {}, get_message_flags(m), dialog_id, get_send_message_as_input_peer(m),
           *get_message_input_reply_to(m), m->initial_top_thread_message_id, get_input_message_monoforum_topic_id(m),
           get_message_schedule_date(m), m->effect_id, m->paid_message_star_count, m->suggested_post.get(),
-          m->reply_markup,
-          get_input_message_entities(td_->user_manager_.get(), message_text, "on_text_message_ready_to_send"),
-          message_text->text, std::move(input_media), MessageContentType::Text, m->is_copy, random_id,
+          m->reply_markup, message_text, std::move(input_media), MessageContentType::Text, m->is_copy, random_id,
           &m->send_query_ref);
     }
   }
@@ -26376,6 +26384,8 @@ void MessagesManager::send_update_new_chat(Dialog *d, const char *source) {
   bool has_background = chat_object->background_ != nullptr;
   bool has_theme = !chat_object->theme_name_.empty();
   d->last_sent_has_scheduled_messages = chat_object->has_scheduled_messages_;
+  d->last_need_hide_dialog_draft_message = need_hide_dialog_draft_message(d);
+  d->last_need_hide_reactions = need_hide_dialog_reactions(d);
   send_closure(G()->td(), &Td::send_update, td_api::make_object<td_api::updateNewChat>(std::move(chat_object)));
   d->is_update_new_chat_sent = true;
   d->is_update_new_chat_being_sent = false;
@@ -26710,13 +26720,33 @@ void MessagesManager::send_update_chat_business_bot_manage_bar(Dialog *d) {
           get_chat_id_object(d->dialog_id, "updateChatBusinessBotManageBar"), get_business_bot_manage_bar_object(d)));
 }
 
-void MessagesManager::send_update_chat_available_reactions(const Dialog *d) {
+bool MessagesManager::need_hide_dialog_reactions(const Dialog *d) const {
+  switch (d->dialog_id.get_type()) {
+    case DialogType::User:
+      return false;
+    case DialogType::Chat:
+      return td_->chat_manager_->get_chat_permissions(d->dialog_id.get_chat_id()).is_banned();
+    case DialogType::Channel:
+      return td_->chat_manager_->get_channel_permissions(d->dialog_id.get_channel_id()).is_banned();
+    case DialogType::SecretChat:
+      return false;
+    default:
+      UNREACHABLE();
+      return false;
+  }
+}
+
+void MessagesManager::send_update_chat_available_reactions(Dialog *d) {
   CHECK(d != nullptr);
   LOG_CHECK(d->is_update_new_chat_sent) << "Wrong " << d->dialog_id << " in send_update_chat_available_reactions";
-  auto available_reactions = get_dialog_active_reactions(d).get_chat_available_reactions_object(td_);
-  send_closure(G()->td(), &Td::send_update,
-               td_api::make_object<td_api::updateChatAvailableReactions>(
-                   get_chat_id_object(d->dialog_id, "updateChatAvailableReactions"), std::move(available_reactions)));
+  auto need_hide = need_hide_dialog_reactions(d);
+  if (!need_hide || !d->last_need_hide_reactions) {
+    d->last_need_hide_reactions = need_hide;
+    auto available_reactions = get_dialog_active_reactions(d).get_chat_available_reactions_object(td_);
+    send_closure(G()->td(), &Td::send_update,
+                 td_api::make_object<td_api::updateChatAvailableReactions>(
+                     get_chat_id_object(d->dialog_id, "updateChatAvailableReactions"), std::move(available_reactions)));
+  }
 }
 
 void MessagesManager::send_update_secret_chats_with_user_background(const Dialog *d) const {
@@ -28692,6 +28722,9 @@ void MessagesManager::on_dialog_access_updated(DialogId dialog_id) {
     if (d->draft_message != nullptr && d->last_need_hide_dialog_draft_message != need_hide_dialog_draft_message(d)) {
       send_update_chat_draft_message(d);
     }
+    if (!d->available_reactions.empty() && d->last_need_hide_reactions != need_hide_dialog_reactions(d)) {
+      send_update_chat_available_reactions(d);
+    }
   }
 }
 
@@ -30565,8 +30598,8 @@ MessagesManager::Message *MessagesManager::add_message_to_dialog(Dialog *d, uniq
         break;
       case MessageContentType::ChatCreate:
       case MessageContentType::ChannelCreate:
-        if (m->ttl_period > 0) {
-          set_dialog_message_ttl(d, MessageTtl(m->ttl_period));
+        if (m->ttl_period != 0) {
+          set_dialog_message_ttl(d, MessageTtl(m->ttl_period, "DialogCreate"));
         }
         break;
       default:
@@ -32145,7 +32178,8 @@ MessagesManager::Dialog *MessagesManager::add_new_dialog(unique_ptr<Dialog> &&di
         do_set_dialog_folder_id(d,
                                 td_->user_manager_->get_secret_chat_initial_folder_id(dialog_id.get_secret_chat_id()));
       }
-      d->message_ttl = MessageTtl(td_->user_manager_->get_secret_chat_ttl(dialog_id.get_secret_chat_id()));
+      d->message_ttl =
+          MessageTtl(td_->user_manager_->get_secret_chat_ttl(dialog_id.get_secret_chat_id()), "SecretChat");
       d->is_message_ttl_inited = true;
       d->has_bots =
           td_->user_manager_->is_user_bot(td_->user_manager_->get_secret_chat_user_id(dialog_id.get_secret_chat_id()));

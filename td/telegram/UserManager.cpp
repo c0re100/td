@@ -29,6 +29,7 @@
 #include "td/telegram/DialogLocation.h"
 #include "td/telegram/DialogManager.h"
 #include "td/telegram/DialogParticipantManager.h"
+#include "td/telegram/DialogPhoto.hpp"
 #include "td/telegram/Document.h"
 #include "td/telegram/DocumentsManager.h"
 #include "td/telegram/EmojiStatus.h"
@@ -64,6 +65,8 @@
 #include "td/telegram/ServerMessageId.h"
 #include "td/telegram/StarGiftSettings.hpp"
 #include "td/telegram/StarManager.h"
+#include "td/telegram/StarRating.h"
+#include "td/telegram/StarRating.hpp"
 #include "td/telegram/StickerPhotoSize.h"
 #include "td/telegram/StoryManager.h"
 #include "td/telegram/SuggestedAction.h"
@@ -1796,6 +1799,8 @@ void UserManager::UserFull::store(StorerT &storer) const {
   bool has_charge_paid_message_stars = charge_paid_message_stars != 0;
   bool has_send_paid_message_stars = send_paid_message_stars != 0;
   bool has_gift_settings = !gift_settings.is_default();
+  bool has_star_rating = star_rating != nullptr;
+  bool has_pending_star_rating = pending_star_rating != nullptr;
   BEGIN_STORE_FLAGS();
   STORE_FLAG(has_about);
   STORE_FLAG(is_blocked);
@@ -1846,6 +1851,8 @@ void UserManager::UserFull::store(StorerT &storer) const {
     STORE_FLAG(has_charge_paid_message_stars);
     STORE_FLAG(has_send_paid_message_stars);
     STORE_FLAG(has_gift_settings);
+    STORE_FLAG(has_star_rating);
+    STORE_FLAG(has_pending_star_rating);
     END_STORE_FLAGS();
   }
   if (has_about) {
@@ -1935,6 +1942,13 @@ void UserManager::UserFull::store(StorerT &storer) const {
   if (has_gift_settings) {
     store(gift_settings, storer);
   }
+  if (has_star_rating) {
+    store(star_rating, storer);
+  }
+  if (has_pending_star_rating) {
+    store(pending_star_rating, storer);
+    store(pending_star_rating_date, storer);
+  }
 }
 
 template <class ParserT>
@@ -1970,6 +1984,8 @@ void UserManager::UserFull::parse(ParserT &parser) {
   bool has_charge_paid_message_stars = false;
   bool has_send_paid_message_stars = false;
   bool has_gift_settings = false;
+  bool has_star_rating = false;
+  bool has_pending_star_rating = false;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(has_about);
   PARSE_FLAG(is_blocked);
@@ -2020,6 +2036,8 @@ void UserManager::UserFull::parse(ParserT &parser) {
     PARSE_FLAG(has_charge_paid_message_stars);
     PARSE_FLAG(has_send_paid_message_stars);
     PARSE_FLAG(has_gift_settings);
+    PARSE_FLAG(has_star_rating);
+    PARSE_FLAG(has_pending_star_rating);
     END_PARSE_FLAGS();
   }
   if (has_about) {
@@ -2112,6 +2130,13 @@ void UserManager::UserFull::parse(ParserT &parser) {
   }
   if (has_gift_settings) {
     parse(gift_settings, parser);
+  }
+  if (has_star_rating) {
+    parse(star_rating, parser);
+  }
+  if (has_pending_star_rating) {
+    parse(pending_star_rating, parser);
+    parse(pending_star_rating_date, parser);
   }
 }
 
@@ -2282,6 +2307,9 @@ UserManager::UserManager(Td *td, ActorShared<> parent) : td_(td), parent_(std::m
   user_emoji_status_timeout_.set_callback(on_user_emoji_status_timeout_callback);
   user_emoji_status_timeout_.set_callback_data(static_cast<void *>(this));
 
+  user_rating_timeout_.set_callback(on_user_rating_timeout_callback);
+  user_rating_timeout_.set_callback_data(static_cast<void *>(this));
+
   get_user_queries_.set_merge_function([this](vector<int64> query_ids, Promise<Unit> &&promise) {
     TRY_STATUS_PROMISE(promise, G()->close_status());
     auto input_users = transform(query_ids, [this](int64 query_id) { return get_input_user_force(UserId(query_id)); });
@@ -2360,6 +2388,35 @@ void UserManager::on_user_emoji_status_timeout(UserId user_id) {
   CHECK(u->is_update_user_sent);
 
   update_user(u, user_id);
+}
+
+void UserManager::on_user_rating_timeout_callback(void *user_manager_ptr, int64 user_id_long) {
+  if (G()->close_flag()) {
+    return;
+  }
+
+  auto user_manager = static_cast<UserManager *>(user_manager_ptr);
+  send_closure_later(user_manager->actor_id(user_manager), &UserManager::on_user_rating_timeout, UserId(user_id_long));
+}
+
+void UserManager::on_user_rating_timeout(UserId user_id) {
+  if (G()->close_flag()) {
+    return;
+  }
+
+  auto user_full = get_user_full(user_id);
+  CHECK(user_full != nullptr);
+
+  if (user_full->pending_star_rating_date > 0) {
+    if (user_full->pending_star_rating_date <= G()->unix_time()) {
+      user_full->star_rating = std::move(user_full->pending_star_rating);
+      user_full->pending_star_rating_date = 0;
+    }
+    user_full->is_pending_star_rating_changed = true;
+    user_full->is_changed = true;
+  }
+
+  update_user_full(user_full, user_id, "on_user_rating_timeout");
 }
 
 UserId UserManager::get_user_id(const telegram_api::object_ptr<telegram_api::User> &user) {
@@ -7389,7 +7446,8 @@ void UserManager::on_get_user_full(telegram_api::object_ptr<telegram_api::userFu
 
   td_->messages_manager_->on_update_dialog_has_scheduled_server_messages(DialogId(user_id), user->has_scheduled_);
 
-  td_->messages_manager_->on_update_dialog_message_ttl(DialogId(user_id), MessageTtl(user->ttl_period_));
+  td_->messages_manager_->on_update_dialog_message_ttl(DialogId(user_id),
+                                                       MessageTtl(user->ttl_period_, "on_get_user_full"));
 
   td_->messages_manager_->on_update_dialog_is_blocked(DialogId(user_id), user->blocked_,
                                                       user->blocked_my_stories_from_);
@@ -7434,12 +7492,21 @@ void UserManager::on_get_user_full(telegram_api::object_ptr<telegram_api::userFu
   if (u->is_deleted) {
     gift_settings = StarGiftSettings::allow_nothing();
   }
+  auto star_rating = StarRating::get_star_rating(std::move(user->stars_rating_));
+  auto pending_star_rating = StarRating::get_star_rating(std::move(user->stars_my_pending_rating_));
+  auto pending_star_rating_date = max(0, std::move(user->stars_my_pending_rating_date_));
+  if (pending_star_rating_date > 0 && pending_star_rating_date <= G()->unix_time()) {
+    star_rating = std::move(pending_star_rating);
+    pending_star_rating = nullptr;
+    pending_star_rating_date = 0;
+  }
   if (user_full->can_be_called != can_be_called || user_full->supports_video_calls != supports_video_calls ||
       user_full->has_private_calls != has_private_calls ||
       user_full->voice_messages_forbidden != voice_messages_forbidden ||
       user_full->can_pin_messages != can_pin_messages || user_full->has_pinned_stories != has_pinned_stories ||
       user_full->sponsored_enabled != sponsored_enabled || user_full->can_view_revenue != can_view_revenue ||
-      user_full->bot_verification != bot_verification || user_full->gift_settings != gift_settings) {
+      user_full->bot_verification != bot_verification || user_full->gift_settings != gift_settings ||
+      user_full->star_rating != star_rating) {
     user_full->can_be_called = can_be_called;
     user_full->supports_video_calls = supports_video_calls;
     user_full->has_private_calls = has_private_calls;
@@ -7450,6 +7517,7 @@ void UserManager::on_get_user_full(telegram_api::object_ptr<telegram_api::userFu
     user_full->can_view_revenue = can_view_revenue;
     user_full->bot_verification = std::move(bot_verification);
     user_full->gift_settings = std::move(gift_settings);
+    user_full->star_rating = std::move(star_rating);
 
     user_full->is_changed = true;
   }
@@ -7460,6 +7528,13 @@ void UserManager::on_get_user_full(telegram_api::object_ptr<telegram_api::userFu
     if (u->is_mutual_contact) {
       reload_contact_birthdates(true);
     }
+  }
+  if (user_full->pending_star_rating != pending_star_rating ||
+      user_full->pending_star_rating_date != pending_star_rating_date) {
+    user_full->pending_star_rating = std::move(pending_star_rating);
+    user_full->pending_star_rating_date = pending_star_rating_date;
+    user_full->is_pending_star_rating_changed = true;
+    user_full->is_changed = true;
   }
 
   if (user_full->private_forward_name != user->private_forward_name_) {
@@ -7727,6 +7802,10 @@ void UserManager::on_load_user_full_from_database(UserId user_id, string value) 
     return;
   }
 
+  if (user_full->pending_star_rating_date > 0 && user_full->pending_star_rating_date <= G()->unix_time()) {
+    user_full->star_rating = std::move(user_full->pending_star_rating);
+    user_full->pending_star_rating_date = 0;
+  }
   if (user_full->need_phone_number_privacy_exception && is_user_contact(user_id)) {
     user_full->need_phone_number_privacy_exception = false;
   }
@@ -7848,6 +7927,9 @@ void UserManager::drop_user_full(UserId user_id) {
   user_full->personal_channel_id = ChannelId();
   user_full->business_info = nullptr;
   user_full->bot_verification = nullptr;
+  user_full->star_rating = nullptr;
+  user_full->pending_star_rating = nullptr;
+  user_full->pending_star_rating_date = 0;
   user_full->private_forward_name.clear();
   user_full->voice_messages_forbidden = false;
   user_full->has_pinned_stories = false;
@@ -8158,7 +8240,7 @@ void UserManager::update_user(User *u, UserId user_id, bool from_binlog, bool fr
   if (u->is_is_contact_changed) {
     td_->messages_manager_->on_dialog_user_is_contact_updated(DialogId(user_id), u->is_contact);
     send_closure_later(td_->story_manager_actor_, &StoryManager::on_dialog_active_stories_order_updated,
-                       DialogId(user_id), "update_user is_contact");
+                       DialogId(user_id), "update_user is_contact", false);
     if (is_user_contact(u, user_id, false)) {
       auto user_full = get_user_full(user_id);
       if (user_full != nullptr && user_full->need_phone_number_privacy_exception) {
@@ -8187,7 +8269,7 @@ void UserManager::update_user(User *u, UserId user_id, bool from_binlog, bool fr
   }
   if (u->is_is_premium_changed) {
     send_closure_later(td_->story_manager_actor_, &StoryManager::on_dialog_active_stories_order_updated,
-                       DialogId(user_id), "update_user is_premium");
+                       DialogId(user_id), "update_user is_premium", false);
     u->is_is_premium_changed = false;
   }
   if (u->is_name_changed) {
@@ -8234,7 +8316,7 @@ void UserManager::update_user(User *u, UserId user_id, bool from_binlog, bool fr
   }
   if (u->is_stories_hidden_changed) {
     send_closure_later(td_->story_manager_actor_, &StoryManager::on_dialog_active_stories_order_updated,
-                       DialogId(user_id), "update_user stories_hidden");
+                       DialogId(user_id), "update_user stories_hidden", false);
     u->is_stories_hidden_changed = false;
   }
   if (!td_->auth_manager_->is_bot()) {
@@ -8363,7 +8445,7 @@ void UserManager::update_secret_chat(SecretChat *c, SecretChatId secret_chat_id,
     }
     if (c->is_ttl_changed) {
       send_closure_later(G()->messages_manager(), &MessagesManager::on_update_dialog_message_ttl,
-                         DialogId(secret_chat_id), MessageTtl(c->ttl));
+                         DialogId(secret_chat_id), MessageTtl(c->ttl, "update_secret_chat"));
       c->is_ttl_changed = false;
     }
   }
@@ -8392,6 +8474,14 @@ void UserManager::update_user_full(UserFull *user_full, UserId user_id, const ch
   if (user_full->is_common_chat_count_changed) {
     td_->common_dialog_manager_->drop_common_dialogs_cache(user_id);
     user_full->is_common_chat_count_changed = false;
+  }
+  if (user_full->is_pending_star_rating_changed) {
+    if (user_full->pending_star_rating_date > 0) {
+      user_rating_timeout_.set_timeout_in(user_id.get(), user_full->pending_star_rating_date - G()->unix_time() + 1);
+    } else if (!td_->auth_manager_->is_bot()) {
+      user_rating_timeout_.cancel_timeout(user_id.get());
+    }
+    user_full->is_pending_star_rating_changed = false;
   }
   if (true) {
     vector<FileId> file_ids;
@@ -8510,8 +8600,8 @@ td_api::object_ptr<td_api::updateUser> UserManager::get_update_unknown_user_obje
   return td_api::make_object<td_api::updateUser>(td_api::make_object<td_api::user>(
       user_id.get(), -1, "", "", nullptr, "", td_api::make_object<td_api::userStatusEmpty>(), nullptr,
       td_->theme_manager_->get_accent_color_id_object(AccentColorId(user_id)), 0, -1, 0, nullptr, false, false, false,
-      nullptr, false, false, "", false, false, false, 0, have_access, td_api::make_object<td_api::userTypeUnknown>(),
-      "", false));
+      nullptr, false, false, nullptr, false, false, false, 0, have_access,
+      td_api::make_object<td_api::userTypeUnknown>(), "", false));
 }
 
 int64 UserManager::get_user_id_object(UserId user_id, const char *source) const {
@@ -8567,7 +8657,7 @@ td_api::object_ptr<td_api::user> UserManager::get_user_object(UserId user_id, co
       td_->theme_manager_->get_profile_accent_color_id_object(u->profile_accent_color_id),
       u->profile_background_custom_emoji_id.get(), std::move(emoji_status), u->is_contact, u->is_mutual_contact,
       u->is_close_friend, std::move(verification_status), u->is_premium, u->is_support,
-      get_restriction_reason_description(u->restriction_reasons), u->max_active_story_id.is_valid(),
+      get_restriction_info_object(u->restriction_reasons), u->max_active_story_id.is_valid(),
       get_user_has_unread_stories(u), restricts_new_chats, u->paid_message_star_count, have_access, std::move(type),
       u->language_code, u->attach_menu_enabled);
 }
@@ -8668,6 +8758,9 @@ td_api::object_ptr<td_api::userFullInfo> UserManager::get_user_full_info_object(
   }
   auto bot_verification =
       user_full->bot_verification == nullptr ? nullptr : user_full->bot_verification->get_bot_verification_object(td_);
+  auto user_rating = user_full->star_rating == nullptr ? nullptr : user_full->star_rating->get_user_rating_object();
+  auto pending_user_rating =
+      user_full->pending_star_rating == nullptr ? nullptr : user_full->pending_star_rating->get_user_rating_object();
   return td_api::make_object<td_api::userFullInfo>(
       get_chat_photo_object(td_->file_manager_.get(), user_full->personal_photo),
       get_chat_photo_object(td_->file_manager_.get(), user_full->photo),
@@ -8677,7 +8770,8 @@ td_api::object_ptr<td_api::userFullInfo> UserManager::get_user_full_info_object(
       user_full->sponsored_enabled, user_full->need_phone_number_privacy_exception, user_full->wallpaper_overridden,
       std::move(bio_object), user_full->birthdate.get_birthdate_object(), personal_chat_id, user_full->gift_count,
       user_full->common_chat_count, user_full->charge_paid_message_stars, user_full->send_paid_message_stars,
-      user_full->gift_settings.get_gift_settings_object(), std::move(bot_verification), std::move(business_info),
+      user_full->gift_settings.get_gift_settings_object(), std::move(bot_verification), std::move(user_rating),
+      std::move(pending_user_rating), user_full->pending_star_rating_date, std::move(business_info),
       std::move(bot_info));
 }
 

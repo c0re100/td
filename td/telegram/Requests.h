@@ -477,6 +477,10 @@ class Requests {
 
   void on_request(uint64 id, td_api::searchOutgoingDocumentMessages &request);
 
+  void on_request(uint64 id, td_api::getPublicPostSearchLimits &request);
+
+  void on_request(uint64 id, td_api::searchPublicPosts &request);
+
   void on_request(uint64 id, td_api::searchPublicMessagesByTag &request);
 
   void on_request(uint64 id, td_api::searchPublicStoriesByTag &request);
@@ -542,6 +546,24 @@ class Requests {
   void on_request(uint64 id, td_api::getMessagePublicForwards &request);
 
   void on_request(uint64 id, td_api::getStoryPublicForwards &request);
+
+  void on_request(uint64 id, const td_api::getChatStoryAlbums &request);
+
+  void on_request(uint64 id, const td_api::getStoryAlbumStories &request);
+
+  void on_request(uint64 id, td_api::createStoryAlbum &request);
+
+  void on_request(uint64 id, const td_api::reorderStoryAlbums &request);
+
+  void on_request(uint64 id, const td_api::deleteStoryAlbum &request);
+
+  void on_request(uint64 id, td_api::setStoryAlbumName &request);
+
+  void on_request(uint64 id, const td_api::addStoryAlbumStories &request);
+
+  void on_request(uint64 id, const td_api::removeStoryAlbumStories &request);
+
+  void on_request(uint64 id, const td_api::reorderStoryAlbumStories &request);
 
   void on_request(uint64 id, const td_api::removeNotification &request);
 
@@ -1611,6 +1633,8 @@ class Requests {
 
   void on_request(uint64 id, td_api::upgradeGift &request);
 
+  void on_request(uint64 id, td_api::buyGiftUpgrade &request);
+
   void on_request(uint64 id, td_api::transferGift &request);
 
   void on_request(uint64 id, td_api::sendResoldGift &request);
@@ -1621,11 +1645,29 @@ class Requests {
 
   void on_request(uint64 id, td_api::getUpgradedGift &request);
 
+  void on_request(uint64 id, td_api::getUpgradedGiftValueInfo &request);
+
   void on_request(uint64 id, const td_api::getUpgradedGiftWithdrawalUrl &request);
 
-  void on_request(uint64 id, const td_api::setGiftResalePrice &request);
+  void on_request(uint64 id, td_api::setGiftResalePrice &request);
 
   void on_request(uint64 id, td_api::searchGiftsForResale &request);
+
+  void on_request(uint64 id, const td_api::getGiftCollections &request);
+
+  void on_request(uint64 id, td_api::createGiftCollection &request);
+
+  void on_request(uint64 id, const td_api::reorderGiftCollections &request);
+
+  void on_request(uint64 id, const td_api::deleteGiftCollection &request);
+
+  void on_request(uint64 id, td_api::setGiftCollectionName &request);
+
+  void on_request(uint64 id, const td_api::addGiftCollectionGifts &request);
+
+  void on_request(uint64 id, const td_api::removeGiftCollectionGifts &request);
+
+  void on_request(uint64 id, const td_api::reorderGiftCollectionGifts &request);
 
   void on_request(uint64 id, td_api::createInvoiceLink &request);
 
