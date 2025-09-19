@@ -90,8 +90,7 @@ td_api::object_ptr<td_api::restrictionInfo> get_restriction_info_object(
         restriction_reason.reason_ + "-" + restriction_reason.platform_ + ": " + restriction_reason.description_ + "\n";
   }
 
-  return reason;
-  return td_api::make_object<td_api::restrictionInfo>(restriction_reason->description_, has_sensitive_content);
+  return td_api::make_object<td_api::restrictionInfo>(reason, has_sensitive_content);
 }
 
 vector<RestrictionReason> get_restriction_reasons(Slice legacy_restriction_reason) {
