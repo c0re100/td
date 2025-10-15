@@ -20719,26 +20719,26 @@ void MessagesManager::cancel_send_message_query(DialogId dialog_id, Message *m) 
   }
 
   update_replied_by_message_count(dialog_id, m, false);
-  {
-    auto it = replied_yet_unsent_messages_.find({dialog_id, m->message_id});
-    if (it != replied_yet_unsent_messages_.end()) {
-      for (const auto &message_full_id : it->second) {
-        auto reply_d = get_dialog(message_full_id.get_dialog_id());
-        CHECK(reply_d != nullptr);
-        auto replied_m = get_message(reply_d, message_full_id.get_message_id());
-        CHECK(replied_m != nullptr);
-        const auto *input_reply_to = get_message_input_reply_to(replied_m);
-        CHECK(input_reply_to != nullptr);
-        CHECK(input_reply_to->get_reply_message_full_id(reply_d->dialog_id) == MessageFullId(dialog_id, m->message_id));
+  //{
+  //  auto it = replied_yet_unsent_messages_.find({dialog_id, m->message_id});
+  //  if (it != replied_yet_unsent_messages_.end()) {
+  //    for (const auto &message_full_id : it->second) {
+  //      auto reply_d = get_dialog(message_full_id.get_dialog_id());
+  //      CHECK(reply_d != nullptr);
+  //      auto replied_m = get_message(reply_d, message_full_id.get_message_id());
+  //      CHECK(replied_m != nullptr);
+  //      const auto *input_reply_to = get_message_input_reply_to(replied_m);
+  //      CHECK(input_reply_to != nullptr);
+  //      CHECK(input_reply_to->get_reply_message_full_id(reply_d->dialog_id) == MessageFullId(dialog_id, m->message_id));
 
-        auto implicit_reply_to_message_id =
-            get_message_topic(reply_d->dialog_id, replied_m).get_implicit_reply_to_message_id(td_);
-        set_message_reply(reply_d, replied_m,
-                          MessageInputReplyTo{implicit_reply_to_message_id, DialogId(), MessageQuote(), 0}, true);
-      }
-      replied_yet_unsent_messages_.erase(it);
-    }
-  }
+  //      auto implicit_reply_to_message_id =
+  //          get_message_topic(reply_d->dialog_id, replied_m).get_implicit_reply_to_message_id(td_);
+  //      set_message_reply(reply_d, replied_m,
+  //                        MessageInputReplyTo{implicit_reply_to_message_id, DialogId(), MessageQuote(), 0}, true);
+  //    }
+  //    replied_yet_unsent_messages_.erase(it);
+  //  }
+  //}
 
   if (m->media_album_id != 0) {
     send_closure_later(actor_id(this), &MessagesManager::on_upload_message_media_finished, m->media_album_id, dialog_id,
@@ -24700,7 +24700,7 @@ Status MessagesManager::send_screenshot_taken_notification_message(DialogId dial
 
   if (dialog_type == DialogType::User) {
     bool need_update_dialog_pos = false;
-    const Message *m = get_message_to_send(d, MessageId(), MessageInputReplyTo(), MessageSendOptions(),
+    const Message *m = get_message_to_send(d, MessageTopic(), MessageInputReplyTo(), MessageSendOptions(),
                                            create_screenshot_taken_message_content(), false, &need_update_dialog_pos);
 
     do_send_screenshot_taken_notification_message(dialog_id, m, 0);
