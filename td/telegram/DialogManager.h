@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -83,6 +83,8 @@ class DialogManager final : public Actor {
   Status check_dialog_access_in_memory(DialogId dialog_id, bool allow_secret_chats, AccessRights access_rights) const;
 
   bool have_input_peer(DialogId dialog_id, bool allow_secret_chats, AccessRights access_rights) const;
+
+  Status can_send_message_to_dialog(DialogId dialog_id) const;
 
   bool have_dialog_force(DialogId dialog_id, const char *source) const;
 
@@ -214,6 +216,8 @@ class DialogManager final : public Actor {
                      const string &text, Promise<td_api::object_ptr<td_api::ReportChatResult>> &&promise);
 
   void report_dialog_photo(DialogId dialog_id, FileId file_id, ReportReason &&reason, Promise<Unit> &&promise);
+
+  Status can_delete_all_dialog_messages_by_sender(DialogId dialog_id) const;
 
   Status can_pin_messages(DialogId dialog_id) const;
 

@@ -1,5 +1,5 @@
 ﻿//
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -606,20 +606,24 @@ class CliClient final : public Actor {
     return to_integer<int32>(trim(str));
   }
 
-  vector<int32> as_story_ids(Slice story_ids) const {
-    return transform(autosplit(story_ids), [this](Slice str) { return as_story_id(str); });
+  static vector<int32> as_story_ids(Slice story_ids) {
+    return transform(autosplit(story_ids), as_story_id);
   }
 
   static int32 as_story_album_id(Slice str) {
     return to_integer<int32>(trim(str));
   }
 
-  vector<int32> as_story_album_ids(Slice story_album_ids) const {
-    return transform(autosplit(story_album_ids), [this](Slice str) { return as_story_album_id(str); });
+  static vector<int32> as_story_album_ids(Slice story_album_ids) {
+    return transform(autosplit(story_album_ids), as_story_album_id);
   }
 
   static int32 as_gift_collection_id(Slice str) {
     return to_integer<int32>(trim(str));
+  }
+
+  static vector<int32> as_gift_collection_ids(Slice gift_collection_ids) {
+    return transform(autosplit(gift_collection_ids), as_gift_collection_id);
   }
 
   td_api::object_ptr<td_api::businessRecipients> as_business_recipients(string chat_ids) const {
@@ -989,14 +993,16 @@ class CliClient final : public Actor {
 
   struct ForumTopicId {
     int32 forum_topic_id = 0;
+    int32 default_forum_topic_id = 0;
 
     operator int32() const {
-      return forum_topic_id;
+      return forum_topic_id ? forum_topic_id : default_forum_topic_id;
     }
   };
 
   void get_args(string &args, ForumTopicId &arg) const {
     arg.forum_topic_id = as_forum_topic_id(args);
+    arg.default_forum_topic_id = forum_topic_id_;
   }
 
   struct UserId {
@@ -1087,7 +1093,7 @@ class CliClient final : public Actor {
     return to_integer<int32>(trim(str));
   }
 
-  vector<int32> as_shortcut_ids(Slice shortcut_ids) const {
+  static vector<int32> as_shortcut_ids(Slice shortcut_ids) {
     return transform(autosplit(shortcut_ids), as_shortcut_id);
   }
 
@@ -1117,11 +1123,16 @@ class CliClient final : public Actor {
     return nullptr;
   }
 
-  int64 as_saved_messages_topic_id(int64 saved_messages_topic_id) const {
+  static int64 as_saved_messages_topic_id(int64 saved_messages_topic_id) {
     if (saved_messages_topic_id == -1) {
       return 2666000;
     }
     return saved_messages_topic_id;
+  }
+
+  vector<int64> as_saved_messages_topic_ids(Slice saved_messages_topic_ids) const {
+    return transform(autosplit(saved_messages_topic_ids),
+                     [this](Slice str) { return as_saved_messages_topic_id(as_chat_id(str)); });
   }
 
   int64 get_saved_messages_topic_id() const {
@@ -2135,6 +2146,9 @@ class CliClient final : public Actor {
     if (setting == "gift") {
       return td_api::make_object<td_api::userPrivacySettingAutosaveGifts>();
     }
+    if (setting == "music") {
+      return td_api::make_object<td_api::userPrivacySettingShowProfileAudio>();
+    }
     return nullptr;
   }
 
@@ -2599,7 +2613,8 @@ class CliClient final : public Actor {
     return nullptr;
   }
 
-  static td_api::object_ptr<td_api::MessageSchedulingState> as_message_scheduling_state(Slice date) {
+  static td_api::object_ptr<td_api::MessageSchedulingState> as_message_scheduling_state(Slice date,
+                                                                                        int32 repeat_period) {
     date = trim(date);
     if (date.empty()) {
       return nullptr;
@@ -2608,7 +2623,7 @@ class CliClient final : public Actor {
     if (send_date == -1) {
       return td_api::make_object<td_api::messageSchedulingStateSendWhenOnline>();
     }
-    return td_api::make_object<td_api::messageSchedulingStateSendAtDate>(send_date);
+    return td_api::make_object<td_api::messageSchedulingStateSendAtDate>(send_date, repeat_period);
   }
 
   static td_api::object_ptr<td_api::themeParameters> as_theme_parameters() {
@@ -2725,10 +2740,10 @@ class CliClient final : public Actor {
     }
     auto id = send_request(td_api::make_object<td_api::sendMessage>(
         chat_id, get_message_topic_id(), get_input_message_reply_to(),
-        td_api::make_object<td_api::messageSendOptions>(get_input_suggested_post_info(), disable_notification,
-                                                        from_background, false, use_test_dc_, paid_message_star_count_,
-                                                        false, as_message_scheduling_state(schedule_date_),
-                                                        message_effect_id_, Random::fast(1, 1000), only_preview_),
+        td_api::make_object<td_api::messageSendOptions>(
+            get_input_suggested_post_info(), disable_notification, from_background, false, use_test_dc_,
+            paid_message_star_count_, false, as_message_scheduling_state(schedule_date_, schedule_repeat_period_),
+            message_effect_id_, Random::fast(1, 1000), only_preview_),
         nullptr, std::move(input_message_content)));
     if (id != 0) {
       query_id_to_send_message_info_[id].start_time = Time::now();
@@ -2746,7 +2761,8 @@ class CliClient final : public Actor {
   td_api::object_ptr<td_api::messageSendOptions> default_message_send_options() const {
     return td_api::make_object<td_api::messageSendOptions>(
         get_input_suggested_post_info(), false, false, false, use_test_dc_, paid_message_star_count_, true,
-        as_message_scheduling_state(schedule_date_), message_effect_id_, Random::fast(1, 1000), only_preview_);
+        as_message_scheduling_state(schedule_date_, schedule_repeat_period_), message_effect_id_, Random::fast(1, 1000),
+        only_preview_);
   }
 
   void set_draft_message(ChatId chat_id, td_api::object_ptr<td_api::InputMessageContent> &&input_message_content) {
@@ -2835,6 +2851,18 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::checkAuthenticationBotToken>(args));
     } else if (op == "qr") {
       send_request(td_api::make_object<td_api::requestQrCodeAuthentication>(as_user_ids(args)));
+    } else if (op == "gapo") {
+      send_request(td_api::make_object<td_api::getAuthenticationPasskeyParameters>());
+    } else if (op == "capk") {
+      string credential_id;
+      string client_data;
+      string authenticator_data;
+      string signature;
+      string user_handle;
+      get_args(args, credential_id, client_data, authenticator_data, signature, user_handle);
+      send_request(td_api::make_object<td_api::checkAuthenticationPasskey>(
+          credential_id, client_data, base64url_decode(authenticator_data).move_as_ok(),
+          base64url_decode(signature).move_as_ok(), user_handle));
     } else if (op == "cqr") {
       send_request(td_api::make_object<td_api::confirmQrCodeAuthentication>(args));
     } else if (op == "gcs") {
@@ -2949,6 +2977,8 @@ class CliClient final : public Actor {
       send_request(td_api::make_object<td_api::checkEmailAddressVerificationCode>(args));
     } else if (op == "reavc") {
       send_request(td_api::make_object<td_api::resendEmailAddressVerificationCode>());
+    } else if (op == "ilear") {
+      send_request(td_api::make_object<td_api::isLoginEmailAddressRequired>());
     } else if (op == "slea") {
       send_request(td_api::make_object<td_api::setLoginEmailAddress>(args));
     } else if (op == "rleac") {
@@ -3099,11 +3129,13 @@ class CliClient final : public Actor {
       bool unlimited_gifts;
       bool limited_gifts;
       bool upgraded_gifts;
+      bool gifts_from_channels;
       bool premium_subscription;
-      get_args(args, show_button, unlimited_gifts, limited_gifts, upgraded_gifts, premium_subscription);
+      get_args(args, show_button, unlimited_gifts, limited_gifts, upgraded_gifts, gifts_from_channels,
+               premium_subscription);
       send_request(td_api::make_object<td_api::setGiftSettings>(td_api::make_object<td_api::giftSettings>(
           show_button, td_api::make_object<td_api::acceptedGiftTypes>(unlimited_gifts, limited_gifts, upgraded_gifts,
-                                                                      premium_subscription))));
+                                                                      gifts_from_channels, premium_subscription))));
     } else if (op == "gag") {
       send_request(td_api::make_object<td_api::getAvailableGifts>());
     } else if (op == "csg") {
@@ -3118,10 +3150,39 @@ class CliClient final : public Actor {
       get_args(args, gift_id, owner_id, pay_for_upgrade, text);
       send_request(td_api::make_object<td_api::sendGift>(gift_id, as_message_sender(owner_id), as_formatted_text(text),
                                                          op == "sendgp", pay_for_upgrade));
+    } else if (op == "ggas") {
+      string auction_id;
+      get_args(args, auction_id);
+      send_request(td_api::make_object<td_api::getGiftAuctionState>(auction_id));
+    } else if (op == "ggaag") {
+      int64 gift_id;
+      get_args(args, gift_id);
+      send_request(td_api::make_object<td_api::getGiftAuctionAcquiredGifts>(gift_id));
+    } else if (op == "oga") {
+      int64 gift_id;
+      get_args(args, gift_id);
+      send_request(td_api::make_object<td_api::openGiftAuction>(gift_id));
+    } else if (op == "cga") {
+      int64 gift_id;
+      get_args(args, gift_id);
+      send_request(td_api::make_object<td_api::closeGiftAuction>(gift_id));
     } else if (op == "sellg") {
       string star_gift_id;
       get_args(args, star_gift_id);
       send_request(td_api::make_object<td_api::sellGift>(business_connection_id_, star_gift_id));
+    } else if (op == "pgab" || op == "pgabp") {
+      int64 gift_id;
+      int64 star_count;
+      UserId user_id;
+      string text;
+      get_args(args, gift_id, star_count, user_id, text);
+      send_request(td_api::make_object<td_api::placeGiftAuctionBid>(gift_id, star_count, user_id,
+                                                                    as_formatted_text(text), op == "pgabp"));
+    } else if (op == "igab") {
+      int64 gift_id;
+      int64 star_count;
+      get_args(args, gift_id, star_count);
+      send_request(td_api::make_object<td_api::increaseGiftAuctionBid>(gift_id, star_count));
     } else if (op == "tgis") {
       string star_gift_id;
       bool is_saved;
@@ -3142,6 +3203,10 @@ class CliClient final : public Actor {
       int64 gift_id;
       get_args(args, gift_id);
       send_request(td_api::make_object<td_api::getGiftUpgradePreview>(gift_id));
+    } else if (op == "gguv") {
+      int64 gift_id;
+      get_args(args, gift_id);
+      send_request(td_api::make_object<td_api::getGiftUpgradeVariants>(gift_id));
     } else if (op == "ug") {
       string received_gift_id;
       bool keep_original_details;
@@ -3174,6 +3239,18 @@ class CliClient final : public Actor {
       GiftResalePrice price;
       get_args(args, gift_name, owner_id, price);
       send_request(td_api::make_object<td_api::sendResoldGift>(gift_name, as_message_sender(owner_id), price));
+    } else if (op == "sgpo") {
+      string owner_id;
+      string gift_name;
+      GiftResalePrice price;
+      int32 duration;
+      get_args(args, owner_id, gift_name, price, duration);
+      send_request(td_api::make_object<td_api::sendGiftPurchaseOffer>(as_message_sender(owner_id), gift_name, price,
+                                                                      duration, paid_message_star_count_));
+    } else if (op == "pgpoa" || op == "pgpod") {
+      MessageId message_id;
+      get_args(args, message_id);
+      send_request(td_api::make_object<td_api::processGiftPurchaseOffer>(message_id, op == "pgpoa"));
     } else if (op == "grgs" || op == "grgsp") {
       string owner_id;
       int32 limit;
@@ -3214,6 +3291,8 @@ class CliClient final : public Actor {
       string password;
       get_args(args, received_gift_id, password);
       send_request(td_api::make_object<td_api::getUpgradedGiftWithdrawalUrl>(received_gift_id, password));
+    } else if (op == "gugpa") {
+      send_request(td_api::make_object<td_api::getUpgradedGiftsPromotionalAnimation>());
     } else if (op == "sgfr" || op == "sgfrd" || op == "sgfrn") {
       int64 gift_id;
       string limit;
@@ -3268,9 +3347,8 @@ class CliClient final : public Actor {
       string owner_id;
       string collection_ids;
       get_args(args, owner_id, collection_ids);
-      send_request(td_api::make_object<td_api::reorderGiftCollections>(
-          as_message_sender(owner_id),
-          transform(autosplit(collection_ids), [this](Slice str) { return as_gift_collection_id(str); })));
+      send_request(td_api::make_object<td_api::reorderGiftCollections>(as_message_sender(owner_id),
+                                                                       as_gift_collection_ids(collection_ids)));
     } else if (op == "dgic") {
       string owner_id;
       GiftCollectionId gift_collection_id;
@@ -3472,8 +3550,7 @@ class CliClient final : public Actor {
       send_request(
           td_api::make_object<td_api::toggleSavedMessagesTopicIsPinned>(get_saved_messages_topic_id(), is_pinned));
     } else if (op == "spsmt") {
-      send_request(td_api::make_object<td_api::setPinnedSavedMessagesTopics>(
-          transform(autosplit(args), [this](Slice str) { return as_saved_messages_topic_id(as_chat_id(str)); })));
+      send_request(td_api::make_object<td_api::setPinnedSavedMessagesTopics>(as_saved_messages_topic_ids(args)));
     } else if (op == "gcc") {
       UserId user_id;
       ChatId offset_chat_id;
@@ -3509,6 +3586,20 @@ class CliClient final : public Actor {
       ChatId chat_id;
       get_args(args, chat_id);
       send_request(td_api::make_object<td_api::getChatScheduledMessages>(chat_id));
+    } else if (op == "gpkp") {
+      send_request(td_api::make_object<td_api::getPasskeyParameters>());
+    } else if (op == "alpk") {
+      string client_data;
+      string attestation_object;
+      get_args(args, client_data, attestation_object);
+      send_request(
+          td_api::make_object<td_api::addLoginPasskey>(client_data, base64url_decode(attestation_object).move_as_ok()));
+    } else if (op == "glpk") {
+      send_request(td_api::make_object<td_api::getLoginPasskeys>());
+    } else if (op == "rlpk") {
+      string passkey_id;
+      get_args(args, passkey_id);
+      send_request(td_api::make_object<td_api::removeLoginPasskey>(passkey_id));
     } else if (op == "sdrt") {
       string reaction;
       get_args(args, reaction);
@@ -4341,6 +4432,11 @@ class CliClient final : public Actor {
       int32 sticker_file_id;
       get_args(args, sticker_file_id);
       send_request(td_api::make_object<td_api::getStickerOutline>(sticker_file_id, op == "gsoa", op == "gsoc"));
+    } else if (op == "gsosp" || op == "gsospa" || op == "gsospc") {
+      int32 sticker_file_id;
+      get_args(args, sticker_file_id);
+      send_request(
+          td_api::make_object<td_api::getStickerOutlineSvgPath>(sticker_file_id, op == "gsospa", op == "gsospc"));
     } else if (op == "gs" || op == "gsmm" || op == "gsee" || op == "gseeme") {
       SearchQuery query;
       get_args(args, query);
@@ -4792,6 +4888,12 @@ class CliClient final : public Actor {
       string to_language_code;
       get_args(args, chat_id, message_id, to_language_code);
       send_request(td_api::make_object<td_api::translateMessageText>(chat_id, message_id, to_language_code));
+    } else if (op == "sum") {
+      ChatId chat_id;
+      MessageId message_id;
+      string to_language_code;
+      get_args(args, chat_id, message_id, to_language_code);
+      send_request(td_api::make_object<td_api::summarizeMessage>(chat_id, message_id, to_language_code));
     } else if (op == "rs") {
       ChatId chat_id;
       MessageId message_id;
@@ -5039,19 +5141,27 @@ class CliClient final : public Actor {
       ChatId chat_id;
       get_args(args, chat_id);
       send_request(td_api::make_object<td_api::replaceVideoChatRtmpUrl>(chat_id));
+    } else if (op == "glsru") {
+      ChatId chat_id;
+      get_args(args, chat_id);
+      send_request(td_api::make_object<td_api::getLiveStoryRtmpUrl>(chat_id));
+    } else if (op == "rlsru") {
+      ChatId chat_id;
+      get_args(args, chat_id);
+      send_request(td_api::make_object<td_api::replaceLiveStoryRtmpUrl>(chat_id));
     } else if (op == "ggc") {
       GroupCallId group_call_id;
       get_args(args, group_call_id);
       send_request(td_api::make_object<td_api::getGroupCall>(group_call_id));
-    } else if (op == "gvcs") {
+    } else if (op == "ggcs") {
       GroupCallId group_call_id;
       get_args(args, group_call_id);
-      send_request(td_api::make_object<td_api::getVideoChatStreams>(group_call_id));
-    } else if (op == "gvcss") {
+      send_request(td_api::make_object<td_api::getGroupCallStreams>(group_call_id));
+    } else if (op == "ggcss") {
       GroupCallId group_call_id;
       int32 channel_id;
       get_args(args, group_call_id, channel_id);
-      send_request(td_api::make_object<td_api::getVideoChatStreamSegment>(
+      send_request(td_api::make_object<td_api::getGroupCallStreamSegment>(
           group_call_id, (std::time(nullptr) - 5) * 1000, 0, channel_id, nullptr));
     } else if (op == "egcd" || op == "egcds") {
       GroupCallId group_call_id;
@@ -5089,16 +5199,20 @@ class CliClient final : public Actor {
       string participant_id;
       string invite_hash;
       get_args(args, group_call_id, participant_id, invite_hash);
-
       send_request(td_api::make_object<td_api::joinVideoChat>(
           group_call_id, as_message_sender(participant_id),
           td_api::make_object<td_api::groupCallJoinParameters>(
               group_call_source_, get_group_call_join_payload(op == "jvcv", false), true, true),
           invite_hash));
+    } else if (op == "jls" || op == "jlsv") {
+      GroupCallId group_call_id;
+      get_args(args, group_call_id);
+      send_request(td_api::make_object<td_api::joinLiveStory>(
+          group_call_id, td_api::make_object<td_api::groupCallJoinParameters>(
+                             group_call_source_, get_group_call_join_payload(op == "jlsv", false), true, true)));
     } else if (op == "sgcss") {
       GroupCallId group_call_id;
       get_args(args, group_call_id);
-
       send_request(td_api::make_object<td_api::startGroupCallScreenSharing>(group_call_id, group_call_source_ + 1,
                                                                             get_group_call_join_payload(true, true)));
     } else if (op == "tgcssip") {
@@ -5119,16 +5233,66 @@ class CliClient final : public Actor {
       GroupCallId group_call_id;
       get_args(args, group_call_id);
       send_request(td_api::make_object<td_api::toggleVideoChatMuteNewParticipants>(group_call_id, op == "tvcmnpe"));
-    } else if (op == "tgccsm") {
+    } else if (op == "tgcama") {
       GroupCallId group_call_id;
-      bool can_send_messages;
-      get_args(args, group_call_id, can_send_messages);
-      send_request(td_api::make_object<td_api::toggleGroupCallCanSendMessages>(group_call_id, can_send_messages));
+      bool are_messages_allowed;
+      get_args(args, group_call_id, are_messages_allowed);
+      send_request(td_api::make_object<td_api::toggleGroupCallAreMessagesAllowed>(group_call_id, are_messages_allowed));
+    } else if (op == "sgcpmsc") {
+      GroupCallId group_call_id;
+      int64 paid_message_star_count;
+      get_args(args, group_call_id, paid_message_star_count);
+      send_request(
+          td_api::make_object<td_api::setGroupCallPaidMessageStarCount>(group_call_id, paid_message_star_count));
+    } else if (op == "glss") {
+      GroupCallId group_call_id;
+      get_args(args, group_call_id);
+      send_request(td_api::make_object<td_api::getLiveStoryStreamer>(group_call_id));
+    } else if (op == "glsams") {
+      GroupCallId group_call_id;
+      get_args(args, group_call_id);
+      send_request(td_api::make_object<td_api::getLiveStoryAvailableMessageSenders>(group_call_id));
+    } else if (op == "slsms") {
+      GroupCallId group_call_id;
+      string message_sender_id;
+      get_args(args, group_call_id, message_sender_id);
+      send_request(
+          td_api::make_object<td_api::setLiveStoryMessageSender>(group_call_id, as_message_sender(message_sender_id)));
     } else if (op == "sgcm") {
       GroupCallId group_call_id;
       string text;
       get_args(args, group_call_id, text);
-      send_request(td_api::make_object<td_api::sendGroupCallMessage>(group_call_id, as_formatted_text(text)));
+      send_request(td_api::make_object<td_api::sendGroupCallMessage>(group_call_id, as_formatted_text(text),
+                                                                     paid_message_star_count_));
+    } else if (op == "aplsr") {
+      GroupCallId group_call_id;
+      int64 star_count;
+      get_args(args, group_call_id, star_count);
+      send_request(td_api::make_object<td_api::addPendingLiveStoryReaction>(group_call_id, star_count));
+    } else if (op == "cplsr") {
+      GroupCallId group_call_id;
+      get_args(args, group_call_id);
+      send_request(td_api::make_object<td_api::commitPendingLiveStoryReactions>(group_call_id));
+    } else if (op == "rplsr") {
+      GroupCallId group_call_id;
+      get_args(args, group_call_id);
+      send_request(td_api::make_object<td_api::removePendingLiveStoryReactions>(group_call_id));
+    } else if (op == "dgcm" || op == "dgcms") {
+      GroupCallId group_call_id;
+      string message_ids;
+      get_args(args, group_call_id, message_ids);
+      send_request(td_api::make_object<td_api::deleteGroupCallMessages>(group_call_id, to_integers<int32>(message_ids),
+                                                                        op == "dgcms"));
+    } else if (op == "dgcmbs" || op == "dgcmbss") {
+      GroupCallId group_call_id;
+      string sender_id;
+      get_args(args, group_call_id, sender_id);
+      send_request(td_api::make_object<td_api::deleteGroupCallMessagesBySender>(
+          group_call_id, as_message_sender(sender_id), op == "dgcmbss"));
+    } else if (op == "glstd") {
+      GroupCallId group_call_id;
+      get_args(args, group_call_id);
+      send_request(td_api::make_object<td_api::getLiveStoryTopDonors>(group_call_id));
     } else if (op == "rgcil") {
       GroupCallId group_call_id;
       get_args(args, group_call_id);
@@ -5483,6 +5647,8 @@ class CliClient final : public Actor {
                                                                       get_message_self_destruct_type()));
     } else if (op == "cadm") {
       send_request(td_api::make_object<td_api::clearAllDraftMessages>());
+    } else if (op == "gsds") {
+      send_request(td_api::make_object<td_api::getStakeDiceState>());
     } else if (op == "tchpc") {
       ChatId chat_id;
       bool has_protected_content;
@@ -5580,6 +5746,13 @@ class CliClient final : public Actor {
                                                               duration, 0.5, true),
           areas, get_caption(), rules, to_integers<int32>(album_ids), active_period ? active_period : 86400,
           get_reposted_story_full_id(), op == "psvp", protect_content));
+    } else if (op == "sls" || op == "slsr") {
+      ChatId chat_id;
+      StoryPrivacySettings rules;
+      bool protect_content;
+      string album_ids;
+      get_args(args, chat_id, rules, protect_content, album_ids);
+      send_request(td_api::make_object<td_api::startLiveStory>(chat_id, rules, protect_content, op == "slsr", true, 1));
     } else if (op == "esc") {
       ChatId story_poster_chat_id;
       StoryId story_id;
@@ -5866,6 +6039,8 @@ class CliClient final : public Actor {
                                                                      as_search_messages_filter(filter)));
     } else if (op == "ssd") {
       schedule_date_ = std::move(args);
+    } else if (op == "ssrp") {
+      schedule_repeat_period_ = to_integer<int32>(args);
     } else if (op == "smei") {
       message_effect_id_ = to_integer<int64>(args);
     } else if (op == "smpmsc") {
@@ -5873,7 +6048,7 @@ class CliClient final : public Actor {
     } else if (op == "sop") {
       only_preview_ = as_bool(args);
     } else if (op == "sfti") {
-      get_args(args, forum_topic_id_);
+      forum_topic_id_ = as_forum_topic_id(args);
     } else if (op == "smti") {
       get_args(args, message_thread_id_);
     } else if (op == "sdmcti") {
@@ -6186,9 +6361,10 @@ class CliClient final : public Actor {
       ChatId chat_id;
       MessageId message_id;
       string date;
-      get_args(args, chat_id, message_id, date);
-      send_request(td_api::make_object<td_api::editMessageSchedulingState>(chat_id, message_id,
-                                                                           as_message_scheduling_state(date)));
+      int32 repeat_period;
+      get_args(args, chat_id, message_id, date, repeat_period);
+      send_request(td_api::make_object<td_api::editMessageSchedulingState>(
+          chat_id, message_id, as_message_scheduling_state(date, repeat_period)));
     } else if (op == "smfc") {
       ChatId chat_id;
       MessageId message_id;
@@ -6423,6 +6599,14 @@ class CliClient final : public Actor {
       string emoji;
       get_args(args, chat_id, emoji);
       send_message(chat_id, td_api::make_object<td_api::inputMessageDice>(emoji, op == "sdicecd"));
+    } else if (op == "stake") {
+      ChatId chat_id;
+      string state_hash;
+      int64 stake_toncoin_amount;
+      bool clear_draft;
+      get_args(args, chat_id, state_hash, stake_toncoin_amount, clear_draft);
+      send_message(chat_id,
+                   td_api::make_object<td_api::inputMessageStakeDice>(state_hash, stake_toncoin_amount, clear_draft));
     } else if (op == "sd" || op == "sdf") {
       ChatId chat_id;
       string document;
@@ -6915,7 +7099,7 @@ class CliClient final : public Actor {
       } else {
         send_request(td_api::make_object<td_api::stopPoll>(chat_id, message_id, nullptr));
       }
-    } else if (op == "atdlt") {
+    } else if (op == "achlt") {
       ChatId chat_id;
       MessageId message_id;
       int32 task_id;
@@ -6924,7 +7108,7 @@ class CliClient final : public Actor {
         return td_api::make_object<td_api::inputChecklistTask>(task_id++, as_formatted_text(task));
       });
       send_request(td_api::make_object<td_api::addChecklistTasks>(chat_id, message_id, std::move(tasks)));
-    } else if (op == "mtdltad") {
+    } else if (op == "mchltad") {
       ChatId chat_id;
       MessageId message_id;
       string done_task_ids;
@@ -7384,13 +7568,15 @@ class CliClient final : public Actor {
       bool unlimited_gifts;
       bool limited_gifts;
       bool upgraded_gifts;
+      bool gifts_from_channels;
       bool premium_subscription;
-      get_args(args, show_button, unlimited_gifts, limited_gifts, upgraded_gifts, premium_subscription);
+      get_args(args, show_button, unlimited_gifts, limited_gifts, upgraded_gifts, gifts_from_channels,
+               premium_subscription);
       send_request(td_api::make_object<td_api::setBusinessAccountGiftSettings>(
           business_connection_id_,
-          td_api::make_object<td_api::giftSettings>(
-              show_button, td_api::make_object<td_api::acceptedGiftTypes>(unlimited_gifts, limited_gifts,
-                                                                          upgraded_gifts, premium_subscription))));
+          td_api::make_object<td_api::giftSettings>(show_button, td_api::make_object<td_api::acceptedGiftTypes>(
+                                                                     unlimited_gifts, limited_gifts, upgraded_gifts,
+                                                                     gifts_from_channels, premium_subscription))));
     } else if (op == "gbasa") {
       send_request(td_api::make_object<td_api::getBusinessAccountStarAmount>(business_connection_id_));
     } else if (op == "tbas") {
@@ -7781,13 +7967,15 @@ class CliClient final : public Actor {
     } else if (op == "rrh") {
       const string &hashtag = args;
       send_request(td_api::make_object<td_api::removeRecentHashtag>(hashtag));
-    } else if (op == "view" || op == "viewh" || op == "viewt" || op == "views" || op == "viewf") {
+    } else if (op == "view" || op == "viewh" || op == "viewft" || op == "viewt" || op == "views" || op == "viewf") {
       ChatId chat_id;
       string message_ids;
       get_args(args, chat_id, message_ids);
       td_api::object_ptr<td_api::MessageSource> source;
       if (op == "viewh") {
         source = td_api::make_object<td_api::messageSourceChatHistory>();
+      } else if (op == "viewft") {
+        source = td_api::make_object<td_api::messageSourceForumTopicHistory>();
       } else if (op == "viewt") {
         source = td_api::make_object<td_api::messageSourceMessageThreadHistory>();
       } else if (op == "viewf") {
@@ -8357,10 +8545,11 @@ class CliClient final : public Actor {
   int64 my_id_ = 0;
   td_api::object_ptr<td_api::AuthorizationState> authorization_state_;
   string schedule_date_;
+  int32 schedule_repeat_period_ = 0;
   int64 paid_message_star_count_ = 0;
   int64 message_effect_id_ = 0;
   bool only_preview_ = false;
-  ForumTopicId forum_topic_id_;
+  int32 forum_topic_id_ = 0;
   MessageThreadId message_thread_id_;
   ChatId direct_messages_chat_topic_id_;
   string business_connection_id_;

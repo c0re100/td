@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -155,7 +155,7 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td, int32 med
 Status can_send_message_content(DialogId dialog_id, const MessageContent *content, bool is_forward,
                                 bool check_permissions, const Td *td);
 
-bool can_forward_message_content(const MessageContent *content);
+bool can_forward_message_content(const Td *td, const MessageContent *content, bool is_copy);
 
 bool update_opened_message_content(MessageContent *content);
 

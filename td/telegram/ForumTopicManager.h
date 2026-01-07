@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -13,6 +13,7 @@
 #include "td/telegram/ForumTopicEditedData.h"
 #include "td/telegram/ForumTopicId.h"
 #include "td/telegram/ForumTopicInfo.h"
+#include "td/telegram/MessageContentType.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessagesInfo.h"
 #include "td/telegram/td_api.h"
@@ -28,6 +29,7 @@
 
 namespace td {
 
+class DraftMessage;
 class Td;
 
 class ForumTopicManager final : public Actor {
@@ -76,9 +78,12 @@ class ForumTopicManager final : public Actor {
   void toggle_forum_topic_is_closed(DialogId dialog_id, ForumTopicId forum_topic_id, bool is_closed,
                                     Promise<Unit> &&promise);
 
-  Status set_forum_topic_notification_settings(DialogId dialog_id, ForumTopicId forum_topic_id,
-                                               tl_object_ptr<td_api::chatNotificationSettings> &&notification_settings)
-      TD_WARN_UNUSED_RESULT;
+  Status set_forum_topic_notification_settings(
+      DialogId dialog_id, ForumTopicId forum_topic_id,
+      td_api::object_ptr<td_api::chatNotificationSettings> &&notification_settings) TD_WARN_UNUSED_RESULT;
+
+  Status set_forum_topic_draft_message(DialogId dialog_id, ForumTopicId forum_topic_id,
+                                       unique_ptr<DraftMessage> &&draft_message);
 
   void toggle_forum_topic_is_hidden(DialogId dialog_id, bool is_hidden, Promise<Unit> &&promise);
 
@@ -100,6 +105,12 @@ class ForumTopicManager final : public Actor {
   void on_update_forum_topic_notify_settings(DialogId dialog_id, ForumTopicId forum_topic_id,
                                              tl_object_ptr<telegram_api::peerNotifySettings> &&peer_notify_settings,
                                              const char *source);
+
+  void on_update_forum_topic_draft_message(DialogId dialog_id, ForumTopicId forum_topic_id,
+                                           unique_ptr<DraftMessage> &&draft_message);
+
+  void clear_forum_topic_draft_by_sent_message(DialogId dialog_id, ForumTopicId forum_topic_id,
+                                               bool message_clear_draft, MessageContentType message_content_type);
 
   void on_update_forum_topic_is_pinned(DialogId dialog_id, ForumTopicId forum_topic_id, bool is_pinned);
 

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -19,8 +19,10 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/LinkManager.h"
 #include "td/telegram/logevent/LogEvent.h"
+#include "td/telegram/MessageQueryManager.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/MessageThreadDb.h"
+#include "td/telegram/MessageTopic.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/NotificationManager.h"
 #include "td/telegram/NotificationSettingsManager.h"
@@ -304,7 +306,7 @@ class GetForumTopicQuery final : public Td::ResultHandler {
     dialog_id_ = dialog_id;
     forum_topic_id_ = forum_topic_id;
 
-    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Write);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read);
     if (input_peer == nullptr) {
       return on_error(Status::Error(400, "Can't access the chat"));
     }
@@ -369,7 +371,7 @@ class GetForumTopicsQuery final : public Td::ResultHandler {
             ForumTopicId offset_forum_topic_id, int32 limit) {
     dialog_id_ = dialog_id;
 
-    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Write);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read);
     if (input_peer == nullptr) {
       return on_error(Status::Error(400, "Can't access the chat"));
     }
@@ -668,6 +670,44 @@ void ForumTopicManager::on_update_forum_topic_notify_settings(
                                            std::move(notification_settings));
 }
 
+void ForumTopicManager::on_update_forum_topic_draft_message(DialogId dialog_id, ForumTopicId forum_topic_id,
+                                                            unique_ptr<DraftMessage> &&draft_message) {
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+  auto topic = get_topic(dialog_id, forum_topic_id);
+  if (topic == nullptr || topic->topic_ == nullptr) {
+    LOG(INFO) << "Ignore update about unknown " << forum_topic_id << " in " << dialog_id;
+    return;
+  }
+  if (topic->topic_->set_draft_message(std::move(draft_message), true)) {
+    on_forum_topic_changed(dialog_id, topic);
+  }
+}
+
+void ForumTopicManager::clear_forum_topic_draft_by_sent_message(DialogId dialog_id, ForumTopicId forum_topic_id,
+                                                                bool message_clear_draft,
+                                                                MessageContentType message_content_type) {
+  if (td_->auth_manager_->is_bot()) {
+    return;
+  }
+  auto topic = get_topic(dialog_id, forum_topic_id);
+  if (topic == nullptr || topic->topic_ == nullptr) {
+    return;
+  }
+
+  LOG(INFO) << "Clear draft in " << forum_topic_id << " of " << dialog_id << " by sent message";
+  if (!message_clear_draft) {
+    const auto *draft_message = topic->topic_->get_draft_message().get();
+    if (draft_message == nullptr || !draft_message->need_clear_local(message_content_type)) {
+      return;
+    }
+  }
+  if (topic->topic_->set_draft_message(nullptr, false)) {
+    on_forum_topic_changed(dialog_id, topic);
+  }
+}
+
 void ForumTopicManager::on_update_forum_topic_is_pinned(DialogId dialog_id, ForumTopicId forum_topic_id,
                                                         bool is_pinned) {
   if (!td_->dialog_manager_->have_dialog_force(dialog_id, "on_update_forum_topic_is_pinned")) {
@@ -721,7 +761,7 @@ void ForumTopicManager::on_update_pinned_forum_topics(DialogId dialog_id, vector
 
 Status ForumTopicManager::set_forum_topic_notification_settings(
     DialogId dialog_id, ForumTopicId forum_topic_id,
-    tl_object_ptr<td_api::chatNotificationSettings> &&notification_settings) {
+    td_api::object_ptr<td_api::chatNotificationSettings> &&notification_settings) {
   CHECK(!td_->auth_manager_->is_bot());
   TRY_STATUS(is_forum(dialog_id, true));
   TRY_STATUS(can_be_forum_topic_id(forum_topic_id));
@@ -756,6 +796,22 @@ bool ForumTopicManager::update_forum_topic_notification_settings(DialogId dialog
     on_forum_topic_changed(dialog_id, topic);
   }
   return need_update.need_update_server;
+}
+
+Status ForumTopicManager::set_forum_topic_draft_message(DialogId dialog_id, ForumTopicId forum_topic_id,
+                                                        unique_ptr<DraftMessage> &&draft_message) {
+  TRY_STATUS(is_forum(dialog_id, true));
+  TRY_STATUS(can_be_forum_topic_id(forum_topic_id));
+  auto topic = get_topic(dialog_id, forum_topic_id);
+  if (topic == nullptr || topic->topic_ == nullptr) {
+    return Status::Error(400, "Topic not found");
+  }
+  if (topic->topic_->set_draft_message(std::move(draft_message), false)) {
+    save_draft_message(td_, dialog_id, MessageTopic::forum(dialog_id, forum_topic_id),
+                       topic->topic_->get_draft_message(), Promise<Unit>());
+    on_forum_topic_changed(dialog_id, topic);
+  }
+  return Status::OK();
 }
 
 void ForumTopicManager::get_forum_topic(DialogId dialog_id, ForumTopicId forum_topic_id,
@@ -947,7 +1003,7 @@ void ForumTopicManager::delete_forum_topic(DialogId dialog_id, ForumTopicId foru
     }
     send_closure(actor_id, &ForumTopicManager::on_delete_forum_topic, dialog_id, forum_topic_id, std::move(promise));
   });
-  td_->messages_manager_->delete_topic_history(dialog_id, forum_topic_id, std::move(delete_promise));
+  td_->message_query_manager_->delete_topic_history(dialog_id, forum_topic_id, std::move(delete_promise));
 }
 
 void ForumTopicManager::on_delete_forum_topic(DialogId dialog_id, ForumTopicId forum_topic_id,
@@ -1083,13 +1139,13 @@ ForumTopicId ForumTopicManager::on_get_forum_topic_impl(DialogId dialog_id,
       auto current_notification_settings =
           topic->topic_ == nullptr ? nullptr : topic->topic_->get_notification_settings();
       auto forum_topic_full = td::make_unique<ForumTopic>(td_, std::move(forum_topic), current_notification_settings);
-      if (forum_topic_full->is_short()) {
+      if (forum_topic_full->is_short() && !td_->auth_manager_->is_bot()) {
         LOG(ERROR) << "Receive short forum topic";
         return ForumTopicId();
       }
       if (topic->topic_ == nullptr || true) {
         topic->topic_ = std::move(forum_topic_full);
-        topic->need_save_to_database_ = true;  // temporary
+        topic->need_save_to_database_ = true;  // TODO temporary
       }
       set_topic_info(dialog_id, topic, std::move(forum_topic_info));
       send_update_forum_topic(dialog_id, topic);
@@ -1127,14 +1183,16 @@ Status ForumTopicManager::is_forum(DialogId dialog_id, bool allow_bots) {
     return Status::Error(400, "Chat not found");
   }
   switch (dialog_id.get_type()) {
-    case DialogType::User:
-      if (allow_bots) {
-        auto bot_user_id = td_->auth_manager_->is_bot() ? td_->user_manager_->get_my_id() : dialog_id.get_user_id();
-        if (td_->user_manager_->is_user_forum_bot(bot_user_id)) {
-          return Status::OK();
+    case DialogType::User: {
+      auto bot_user_id = td_->auth_manager_->is_bot() ? td_->user_manager_->get_my_id() : dialog_id.get_user_id();
+      if (td_->user_manager_->is_user_forum_bot(bot_user_id)) {
+        if (!allow_bots) {
+          return Status::Error(400, "The chat is not a supergroup forum");
         }
+        return Status::OK();
       }
       break;
+    }
     case DialogType::Channel:
       if (td_->chat_manager_->is_forum_channel(dialog_id.get_channel_id())) {
         return Status::OK();
@@ -1323,7 +1381,7 @@ void ForumTopicManager::on_topic_message_count_changed(DialogId dialog_id, Forum
   }
   topic->message_count_ += diff;
   CHECK(topic->message_count_ >= 0);
-  if (topic->message_count_ == 0) {
+  if (topic->message_count_ == 0 && !td_->auth_manager_->is_bot()) {
     // TODO keep topics in the topic list
     dialog_topics->topics_.erase(forum_topic_id);
   }

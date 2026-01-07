@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -329,7 +329,7 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
         return nullptr;
       }
       return td_api::make_object<td_api::chatEventVideoChatCreated>(
-          td->group_call_manager_->get_group_call_id(input_group_call_id, DialogId(channel_id)).get());
+          td->group_call_manager_->get_group_call_id(input_group_call_id, DialogId(channel_id), false).get());
     }
     case telegram_api::channelAdminLogEventActionDiscardGroupCall::ID: {
       auto action = telegram_api::move_object_as<telegram_api::channelAdminLogEventActionDiscardGroupCall>(action_ptr);
@@ -338,7 +338,7 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
         return nullptr;
       }
       return td_api::make_object<td_api::chatEventVideoChatEnded>(
-          td->group_call_manager_->get_group_call_id(input_group_call_id, DialogId(channel_id)).get());
+          td->group_call_manager_->get_group_call_id(input_group_call_id, DialogId(channel_id), false).get());
     }
     case telegram_api::channelAdminLogEventActionParticipantMute::ID: {
       auto action = telegram_api::move_object_as<telegram_api::channelAdminLogEventActionParticipantMute>(action_ptr);
@@ -479,8 +479,8 @@ static td_api::object_ptr<td_api::ChatEventAction> get_chat_event_action_object(
     }
     case telegram_api::channelAdminLogEventActionChangeWallpaper::ID: {
       auto action = telegram_api::move_object_as<telegram_api::channelAdminLogEventActionChangeWallpaper>(action_ptr);
-      auto old_background_info = BackgroundInfo(td, std::move(action->prev_value_), true);
-      auto new_background_info = BackgroundInfo(td, std::move(action->new_value_), true);
+      auto old_background_info = BackgroundInfo(td, std::move(action->prev_value_), true, false);
+      auto new_background_info = BackgroundInfo(td, std::move(action->new_value_), true, false);
       return td_api::make_object<td_api::chatEventBackgroundChanged>(
           old_background_info.get_chat_background_object(td), new_background_info.get_chat_background_object(td));
     }

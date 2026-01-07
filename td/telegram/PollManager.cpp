@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -213,7 +213,7 @@ class StopPollQuery final : public Td::ResultHandler {
     send_query(G()->net_query_creator().create(
         telegram_api::messages_editMessage(flags, false, false, std::move(input_peer), message_id, string(),
                                            std::move(input_media), std::move(input_reply_markup),
-                                           vector<tl_object_ptr<telegram_api::MessageEntity>>(), 0, 0),
+                                           vector<tl_object_ptr<telegram_api::MessageEntity>>(), 0, 0, 0),
         {{poll_id}, {dialog_id_}}));
   }
 

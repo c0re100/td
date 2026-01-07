@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -61,12 +61,18 @@ class ForumTopic {
     return true;
   }
 
+  bool set_draft_message(unique_ptr<DraftMessage> &&draft_message, bool from_update);
+
   DialogNotificationSettings *get_notification_settings() {
     return &notification_settings_;
   }
 
   const DialogNotificationSettings *get_notification_settings() const {
     return &notification_settings_;
+  }
+
+  const unique_ptr<DraftMessage> &get_draft_message() const {
+    return draft_message_;
   }
 
   td_api::object_ptr<td_api::forumTopic> get_forum_topic_object(Td *td, DialogId dialog_id,

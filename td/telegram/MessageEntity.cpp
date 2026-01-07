@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -1336,7 +1336,7 @@ static Slice fix_url(Slice str) {
 }
 
 const FlatHashSet<Slice, SliceHash> &get_valid_short_usernames() {
-  static const FlatHashSet<Slice, SliceHash> valid_usernames{"gif", "vid", "pic"};
+  static const FlatHashSet<Slice, SliceHash> valid_usernames{"gif", "nft", "pic", "ufc", "vid"};
   return valid_usernames;
 }
 
@@ -3898,18 +3898,12 @@ vector<MessageEntity> get_message_entities(Td *td, vector<tl_object_ptr<secret_a
       case secret_api::messageEntityBankCard::ID:
         // skip, will find it ourselves
         break;
-      case secret_api::messageEntityUrl::ID: {
-        auto entity = static_cast<const secret_api::messageEntityUrl *>(secret_entity.get());
-        // TODO skip URL when find_urls will be better
-        entities.emplace_back(MessageEntity::Type::Url, entity->offset_, entity->length_);
+      case secret_api::messageEntityUrl::ID:
+        // skip, will find it ourselves
         break;
-      }
-      case secret_api::messageEntityEmail::ID: {
-        auto entity = static_cast<const secret_api::messageEntityEmail *>(secret_entity.get());
-        // TODO skip emails when find_urls will be better
-        entities.emplace_back(MessageEntity::Type::EmailAddress, entity->offset_, entity->length_);
+      case secret_api::messageEntityEmail::ID:
+        // skip, will find it ourselves
         break;
-      }
       case secret_api::messageEntityBold::ID: {
         auto entity = static_cast<const secret_api::messageEntityBold *>(secret_entity.get());
         entities.emplace_back(MessageEntity::Type::Bold, entity->offset_, entity->length_);

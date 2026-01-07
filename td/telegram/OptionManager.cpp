@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -158,7 +158,7 @@ OptionManager::OptionManager(Td *td)
   set_default_integer_option("fact_check_length_max", 1024);
   set_default_integer_option("star_withdrawal_count_min", is_test_dc ? 10 : 1000);
   set_default_integer_option("story_link_area_count_max", 3);
-  set_default_integer_option("paid_media_message_star_count_max", 10000);
+  set_default_integer_option("paid_media_message_star_count_max", 25000);
   set_default_integer_option("bot_media_preview_count_max", 12);
   set_default_integer_option("paid_reaction_star_count_max", 10000);
   set_default_integer_option("subscription_star_count_max", 10000);
@@ -195,7 +195,7 @@ OptionManager::OptionManager(Td *td)
   set_default_integer_option("star_withdrawal_count_max", is_test_dc ? 100 : 25000000);
   set_default_integer_option("gift_collection_count_max", 10);
   set_default_integer_option("gift_collection_size_max", 500);
-  set_default_integer_option("gift_resale_toncoin_cent_count_min", 100);
+  set_default_integer_option("gift_resale_toncoin_cent_count_min", is_test_dc ? 5000 : 700);
   set_default_integer_option("gift_resale_toncoin_cent_count_max", 10000000);
   set_default_integer_option("gift_resale_toncoin_earnings_per_mille", 900);
   set_default_integer_option("story_album_count_max", is_test_dc ? 20 : 100);
@@ -204,6 +204,10 @@ OptionManager::OptionManager(Td *td)
   set_default_integer_option("user_note_text_length_max", 128);
   set_default_integer_option("group_call_message_show_time_max", 10);
   set_default_integer_option("group_call_message_text_length_max", 128);
+  set_default_integer_option("paid_group_call_message_star_count_max", 10000);
+  set_default_integer_option("login_passkey_count_max", 5);
+  set_default_integer_option("stake_dice_stake_amount_max", 50000000000);
+  set_default_integer_option("stake_dice_stake_amount_min", 100000000);
 
   if (options.isset("my_phone_number") || !options.isset("my_id")) {
     update_premium_options();
@@ -453,12 +457,13 @@ bool OptionManager::is_internal_option(Slice name) {
                                                               "edit_time_limit",
                                                               "emoji_sounds",
                                                               "fragment_prefixes",
-                                                              "group_transcribe_level_min",
+                                                              "group_call_message_show_time_max",
+                                                              "group_custom_wallpaper_level_min",
+                                                              "group_emoji_status_level_min",
                                                               "group_emoji_stickers_level_min",
                                                               "group_profile_bg_icon_level_min",
-                                                              "group_emoji_status_level_min",
+                                                              "group_transcribe_level_min",
                                                               "group_wallpaper_level_min",
-                                                              "group_custom_wallpaper_level_min",
                                                               "hidden_members_group_size_min",
                                                               "ignored_restriction_reasons",
                                                               "language_pack_version",
@@ -485,8 +490,8 @@ bool OptionManager::is_internal_option(Slice name) {
                                                               "recommended_channels_limit_premium",
                                                               "restriction_add_platforms",
                                                               "revoke_pm_inbox",
-                                                              "revoke_time_limit",
                                                               "revoke_pm_time_limit",
+                                                              "revoke_time_limit",
                                                               "saved_animations_limit",
                                                               "saved_dialogs_pinned_limit_default",
                                                               "saved_dialogs_pinned_limit_premium",
@@ -511,11 +516,13 @@ bool OptionManager::is_internal_option(Slice name) {
                                                               "story_expiring_limit_default",
                                                               "story_expiring_limit_premium",
                                                               "ton_proxy_address",
+                                                              "ton_stakedice_stake_suggested_amounts",
                                                               "upload_premium_speedup_notify_period",
                                                               "video_ignore_alt_documents",
                                                               "video_note_size_max",
                                                               "weather_bot_username",
-                                                              "webfile_dc_id"};
+                                                              "webfile_dc_id",
+                                                              "whitelisted_bots"};
   return internal_options.count(name) > 0;
 }
 
@@ -530,6 +537,10 @@ td_api::object_ptr<td_api::Update> OptionManager::get_internal_option_update(Sli
       return get_update_suggested_actions_object(td_->user_manager_.get(), added_actions, {},
                                                  "get_internal_option_update");
     }
+  }
+  if (name == "whitelisted_bots") {
+    return td_api::make_object<td_api::updateTrustedMiniAppBots>(
+        transform(full_split(get_option_string(name), ','), to_integer<int64>));
   }
   return nullptr;
 }
@@ -760,7 +771,7 @@ td_api::object_ptr<td_api::OptionValue> OptionManager::get_option_synchronously(
       break;
     case 'v':
       if (name == "version") {
-        return td_api::make_object<td_api::optionValueString>("1.8.56");
+        return td_api::make_object<td_api::optionValueString>("1.8.60");
       }
       break;
   }

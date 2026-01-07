@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -562,6 +562,9 @@ unique_ptr<DraftMessage> get_draft_message(Td *td,
 
 void save_draft_message(Td *td, DialogId dialog_id, const MessageTopic &message_topic,
                         const unique_ptr<DraftMessage> &draft_message, Promise<Unit> &&promise) {
+  if (dialog_id.get_type() == DialogType::SecretChat || is_local_draft_message(draft_message)) {
+    return promise.set_value(Unit());
+  }
   td->create_handler<SaveDraftMessageQuery>(std::move(promise))->send(dialog_id, message_topic, draft_message);
 }
 

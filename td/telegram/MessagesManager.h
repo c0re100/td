@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2026
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -147,6 +147,7 @@ class MessagesManager final : public Actor {
   static constexpr int32 SEND_MESSAGE_FLAG_EFFECT = 1 << 18;
   static constexpr int32 SEND_MESSAGE_FLAG_ALLOW_PAID = 1 << 19;
   static constexpr int32 SEND_MESSAGE_FLAG_ALLOW_PAID_STARS = 1 << 21;
+  static constexpr int32 SEND_MESSAGE_FLAG_HAS_SCHEDULE_REPEAT_PERIOD = 1 << 24;
 
   static constexpr const char *DELETE_MESSAGE_USER_REQUEST_SOURCE = "user request";
 
@@ -386,19 +387,12 @@ class MessagesManager final : public Actor {
 
   void delete_dialog_history(DialogId dialog_id, bool remove_from_dialog_list, bool revoke, Promise<Unit> &&promise);
 
-  void delete_topic_history(DialogId dialog_id, ForumTopicId forum_topic_id, Promise<Unit> &&promise);
-
-  void delete_all_call_messages(bool revoke, Promise<Unit> &&promise);
-
   void delete_dialog_messages(DialogId dialog_id, const vector<MessageId> &message_ids,
                               bool force_update_for_not_found_messages, const char *source);
 
-  void delete_dialog_messages_by_sender(DialogId dialog_id, DialogId sender_dialog_id, Promise<Unit> &&promise);
+  void delete_local_dialog_messages_by_sender(DialogId dialog_id, DialogId sender_dialog_id);
 
-  static Status fix_delete_message_min_max_dates(int32 &min_date, int32 &max_date);
-
-  void delete_dialog_messages_by_date(DialogId dialog_id, int32 min_date, int32 max_date, bool revoke,
-                                      Promise<Unit> &&promise);
+  void delete_local_dialog_messages_by_date(DialogId dialog_id, int32 min_date, int32 max_date);
 
   void on_dialog_deleted(DialogId dialog_id, Promise<Unit> &&promise);
 
@@ -412,8 +406,7 @@ class MessagesManager final : public Actor {
   void read_all_dialog_reactions(DialogId dialog_id, ForumTopicId forum_topic_id, Promise<Unit> &&promise);
 
   void get_dialog_send_message_as_dialog_ids(DialogId dialog_id,
-                                             Promise<td_api::object_ptr<td_api::chatMessageSenders>> &&promise,
-                                             bool is_recursive = false);
+                                             Promise<td_api::object_ptr<td_api::chatMessageSenders>> &&promise);
 
   void set_dialog_default_send_message_as_dialog_id(DialogId dialog_id, DialogId message_sender_dialog_id,
                                                     Promise<Unit> &&promise);
@@ -876,6 +869,8 @@ class MessagesManager final : public Actor {
 
   void on_authorization_success();
 
+  void init();
+
   void before_get_difference();
 
   void after_get_difference();
@@ -1015,6 +1010,7 @@ class MessagesManager final : public Actor {
     DialogId sender_dialog_id;
     SavedMessagesTopicId saved_messages_topic_id;
     int32 date = 0;
+    int32 schedule_repeat_period = 0;
     int32 ttl_period = 0;
     MessageSelfDestructType ttl;
     bool disable_web_page_preview = false;
@@ -1033,6 +1029,7 @@ class MessagesManager final : public Actor {
     int32 edit_date = 0;
     vector<RestrictionReason> restriction_reasons;
     string author_signature;
+    string summary_from_language;
     int64 media_album_id = 0;
     MessageEffectId effect_id;
     int32 report_delivery_until_date = 0;
@@ -1097,6 +1094,7 @@ class MessagesManager final : public Actor {
     vector<RestrictionReason> restriction_reasons;
 
     string author_signature;
+    string summary_from_language;
 
     bool is_channel_post = false;
     bool is_topic_message = false;
@@ -1170,7 +1168,10 @@ class MessagesManager final : public Actor {
 
     unique_ptr<ReplyMarkup> reply_markup;
 
+    int32 schedule_repeat_period = 0;
+
     int32 edited_schedule_date = 0;
+    int32 edited_schedule_repeat_period = 0;
     uint64 edit_generation = 0;
 
     int32 last_edit_pts = 0;
@@ -1542,6 +1543,7 @@ class MessagesManager final : public Actor {
     bool only_preview = false;
     bool has_suggested_post = false;
     int32 schedule_date = 0;
+    int32 schedule_repeat_period = 0;
     int32 sending_id = 0;
     MessageEffectId effect_id;
     int64 paid_message_star_count = 0;
@@ -1550,8 +1552,8 @@ class MessagesManager final : public Actor {
     MessageSendOptions() = default;
     MessageSendOptions(bool disable_notification, bool from_background, bool update_stickersets_order,
                        bool protect_content, bool allow_paid, bool only_preview, bool has_suggested_post,
-                       int32 schedule_date, int32 sending_id, MessageEffectId effect_id, int64 paid_message_star_count,
-                       SuggestedPost &&suggested_post)
+                       int32 schedule_date, int32 schedule_repeat_period, int32 sending_id, MessageEffectId effect_id,
+                       int64 paid_message_star_count, SuggestedPost &&suggested_post)
         : disable_notification(disable_notification)
         , from_background(from_background)
         , update_stickersets_order(update_stickersets_order)
@@ -1560,6 +1562,7 @@ class MessagesManager final : public Actor {
         , only_preview(only_preview)
         , has_suggested_post(has_suggested_post)
         , schedule_date(schedule_date)
+        , schedule_repeat_period(schedule_repeat_period)
         , sending_id(sending_id)
         , effect_id(effect_id)
         , paid_message_star_count(paid_message_star_count)
@@ -1714,15 +1717,13 @@ class MessagesManager final : public Actor {
       DialogId dialog_id, tl_object_ptr<td_api::InputMessageContent> &&input_message_content,
       bool check_permissions = true);
 
-  Result<MessageCopyOptions> process_message_copy_options(DialogId dialog_id,
-                                                          tl_object_ptr<td_api::messageCopyOptions> &&options) const;
-
   Status check_paid_message_star_count(int64 &paid_message_star_count, int32 message_count) const;
 
   Result<MessageSendOptions> process_message_send_options(DialogId dialog_id,
                                                           tl_object_ptr<td_api::messageSendOptions> &&options,
                                                           bool allow_update_stickersets_order, bool allow_effect,
-                                                          bool allow_suggested_post, int32 message_count) const;
+                                                          bool allow_suggested_post, bool allow_repeat_period,
+                                                          int32 message_count) const;
 
   static Status can_use_message_send_options(const MessageSendOptions &options,
                                              const unique_ptr<MessageContent> &content, MessageSelfDestructType ttl);
@@ -1782,11 +1783,12 @@ class MessagesManager final : public Actor {
   void on_message_media_edited(DialogId dialog_id, MessageId message_id, FileUploadId file_upload_id,
                                FileUploadId thumbnail_file_upload_id, FileId cover_file_id, bool was_uploaded,
                                bool was_thumbnail_uploaded, string file_reference, string cover_file_reference,
-                               int32 schedule_date, uint64 generation, Result<int32> &&result);
+                               int32 schedule_date, int32 schedule_repeat_period, uint64 generation,
+                               Result<int32> &&result);
 
   MessageId get_persistent_message_id(const Dialog *d, MessageId message_id) const;
 
-  static MessageFullId get_replied_message_id(DialogId dialog_id, const Message *m);
+  MessageFullId get_replied_message_id(DialogId dialog_id, const Message *m) const;
 
   MessageInputReplyTo create_message_input_reply_to(Dialog *d, const MessageTopic &message_topic,
                                                     td_api::object_ptr<td_api::InputMessageReplyTo> &&reply_to,
@@ -1841,6 +1843,7 @@ class MessagesManager final : public Actor {
                                   const MessageInputReplyTo input_reply_to, DialogId from_dialog_id,
                                   telegram_api::object_ptr<telegram_api::InputPeer> as_input_peer,
                                   vector<MessageId> message_ids, vector<int64> random_ids, int32 schedule_date,
+                                  int32 schedule_repeat_period, MessageEffectId effect_id,
                                   int32 new_video_start_timestamp, int64 paid_message_star_count,
                                   unique_ptr<SuggestedPost> &&suggested_post, Promise<Unit> &&promise);
 
@@ -2470,12 +2473,13 @@ class MessagesManager final : public Actor {
 
   void do_repair_dialog_active_group_call_id(DialogId dialog_id);
 
-  static Result<int32> get_message_schedule_date(td_api::object_ptr<td_api::MessageSchedulingState> &&scheduling_state);
+  static Result<std::pair<int32, int32>> get_message_schedule_date(
+      td_api::object_ptr<td_api::MessageSchedulingState> &&scheduling_state, bool allow_repeat_period);
 
   tl_object_ptr<td_api::MessageSendingState> get_message_sending_state_object(const Message *m) const;
 
   static tl_object_ptr<td_api::MessageSchedulingState> get_message_scheduling_state_object(
-      int32 send_date, bool video_processing_pending);
+      int32 send_date, int32 repeat_period, bool video_processing_pending);
 
   td_api::object_ptr<td_api::MessageContent> get_message_message_content_object(DialogId dialog_id,
                                                                                 const Message *m) const;
@@ -2854,8 +2858,6 @@ class MessagesManager final : public Actor {
 
   void create_folders(int source);
 
-  void init();
-
   void ttl_db_loop();
 
   void ttl_db_on_result(Result<std::vector<MessageDbMessage>> r_result, bool dummy);
@@ -3133,6 +3135,9 @@ class MessagesManager final : public Actor {
 
   void add_message_dependencies(Dependencies &dependencies, const Message *m) const;
 
+  void do_get_dialog_send_message_as_dialog_ids(DialogId dialog_id,
+                                                Promise<td_api::object_ptr<td_api::chatMessageSenders>> &&promise);
+
   static void save_send_message_log_event(DialogId dialog_id, const Message *m);
 
   static uint64 save_reget_dialog_log_event(DialogId dialog_id);
@@ -3151,6 +3156,8 @@ class MessagesManager final : public Actor {
   bool is_deleted_secret_chat(const Dialog *d) const;
 
   static int32 get_message_schedule_date(const Message *m);
+
+  static int32 get_message_schedule_repeat_period(const Message *m);
 
   static int32 get_message_original_date(const Message *m);
 
