@@ -20813,7 +20813,7 @@ MessageInputReplyTo MessagesManager::create_message_input_reply_to(
 
         // TODO local replies to local messages can be allowed
         // TODO replies to yet unsent messages can be allowed with special handling of them on application restart
-        return MessageInputReplyTo{message_id, DialogId(), MessageQuote{td_, std::move(reply_to_message->quote_)}, 0};
+        return MessageInputReplyTo{message_id, DialogId(), MessageQuote{td_, std::move(reply_to_message->quote_)}, 0, 0};
       }
 
       // the replied message must be in the same topic; check this if possible
