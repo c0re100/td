@@ -138,7 +138,7 @@ SecretInputMedia get_message_content_secret_input_media(
     const MessageContent *content, Td *td, telegram_api::object_ptr<telegram_api::InputEncryptedFile> input_file,
     BufferSlice thumbnail, int32 layer);
 
-telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media(
+telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_multi_input_media(
     const MessageContent *content, Td *td, vector<telegram_api::object_ptr<telegram_api::InputMedia>> &&input_media);
 
 telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media(
@@ -150,7 +150,7 @@ telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_med
 telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media(const MessageContent *content,
                                                                                    Td *td, MessageSelfDestructType ttl,
                                                                                    const string &emoji, bool force,
-                                                                                   int32 media_pos = -1);
+                                                                                   int32 media_pos);
 
 telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media_web_page(
     const Td *td, const MessageContent *content);

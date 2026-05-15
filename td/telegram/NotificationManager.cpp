@@ -3997,7 +3997,7 @@ Result<string> NotificationManager::decrypt_push_payload(int64 encryption_key_id
   packet_info.is_creator = true;
   packet_info.check_mod4 = false;
 
-  TRY_RESULT(result, mtproto::Transport::read(payload, auth_key, &packet_info));
+  TRY_RESULT(result, mtproto::Transport::read(payload, 0, auth_key, &packet_info));
   if (result.type() != mtproto::Transport::ReadResult::Packet) {
     return Status::Error(400, "Wrong packet type");
   }

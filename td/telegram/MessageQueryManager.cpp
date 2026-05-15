@@ -1756,7 +1756,10 @@ class GetPersonalChannelHistoryQuery final : public Td::ResultHandler {
     auto messages_info = get_messages_info(td_, DialogId(), result_ptr.move_as_ok(), "GetPersonalChannelHistoryQuery");
     auto messages = td_api::make_object<td_api::messages>();
     for (auto &message : messages_info.messages) {
-      messages->messages_.push_back(td_->messages_manager_->get_guest_message_object(std::move(message), false));
+      auto message_object = td_->messages_manager_->get_guest_message_object(std::move(message), false);
+      if (message_object != nullptr) {
+        messages->messages_.push_back(std::move(message_object));
+      }
     }
     promise_.set_value(std::move(messages));
   }

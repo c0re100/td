@@ -5486,7 +5486,7 @@ static telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_in
         }
         input_media.push_back(std::move(media));
       }
-      return get_message_content_input_media(content, td, std::move(input_media));
+      return get_message_content_multi_input_media(content, td, std::move(input_media));
     }
     case MessageContentType::Photo: {
       const auto *m = static_cast<const MessagePhoto *>(content);
@@ -5630,7 +5630,7 @@ static telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_in
   return nullptr;
 }
 
-telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_input_media(
+telegram_api::object_ptr<telegram_api::InputMedia> get_message_content_multi_input_media(
     const MessageContent *content, Td *td, vector<telegram_api::object_ptr<telegram_api::InputMedia>> &&input_media) {
   CHECK(content != nullptr);
   switch (content->get_type()) {
@@ -9962,18 +9962,12 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       case telegram_api::messageActionChatMigrateTo::ID:
       case telegram_api::messageActionChannelCreate::ID:
       case telegram_api::messageActionChannelMigrateFrom::ID:
-      case telegram_api::messageActionBotAllowed::ID:
-      case telegram_api::messageActionSecureValuesSent::ID:
       case telegram_api::messageActionSecureValuesSentMe::ID:
       case telegram_api::messageActionGroupCall::ID:
       case telegram_api::messageActionInviteToGroupCall::ID:
       case telegram_api::messageActionGroupCallScheduled::ID:
       case telegram_api::messageActionChatJoinedByRequest::ID:
-      case telegram_api::messageActionWebViewDataSent::ID:
       case telegram_api::messageActionWebViewDataSentMe::ID:
-      case telegram_api::messageActionTopicCreate::ID:
-      case telegram_api::messageActionTopicEdit::ID:
-      case telegram_api::messageActionRequestedPeer::ID:
       case telegram_api::messageActionGiveawayLaunch::ID:
       case telegram_api::messageActionGiveawayResults::ID:
       case telegram_api::messageActionBoostApply::ID:
@@ -9983,7 +9977,6 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       case telegram_api::messageActionSuggestedPostRefund::ID:
       case telegram_api::messageActionNewCreatorPending::ID:
       case telegram_api::messageActionChangeCreator::ID:
-      case telegram_api::messageActionManagedBotCreated::ID:
         LOG(ERROR) << "Receive business " << to_string(action_ptr);
         break;
       case telegram_api::messageActionHistoryClear::ID:
@@ -10021,6 +10014,23 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       case telegram_api::messageActionPollAppendAnswer::ID:
       case telegram_api::messageActionPollDeleteAnswer::ID:
         // ok
+        break;
+      case telegram_api::messageActionBotAllowed::ID:
+      case telegram_api::messageActionSecureValuesSent::ID:
+      case telegram_api::messageActionWebViewDataSent::ID:
+      case telegram_api::messageActionTopicCreate::ID:
+      case telegram_api::messageActionTopicEdit::ID:
+      case telegram_api::messageActionRequestedPeer::ID:
+      case telegram_api::messageActionManagedBotCreated::ID:
+        // ok in chats with bots
+        if (owner_dialog_id.get_type() == DialogType::User) {
+          auto user_id = owner_dialog_id.get_user_id();
+          if (!td->user_manager_->is_user_bot(user_id) && !td->user_manager_->is_user_deleted(user_id)) {
+            LOG(ERROR) << "Receive in " << owner_dialog_id << " business " << to_string(action_ptr);
+          }
+        } else {
+          LOG(ERROR) << "Receive in " << owner_dialog_id << " business " << to_string(action_ptr);
+        }
         break;
       default:
         UNREACHABLE();

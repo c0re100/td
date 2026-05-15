@@ -21822,7 +21822,7 @@ void MessagesManager::do_send_message(DialogId dialog_id, const Message *m, int3
       CHECK(static_cast<size_t>(media_pos) < file_upload_ids.size());
     }
     auto input_media = get_message_content_input_media(content, td_, m->ttl, m->send_emoji,
-                                                       td_->auth_manager_->is_bot() && bad_parts.empty());
+                                                       td_->auth_manager_->is_bot() && bad_parts.empty(), media_pos);
     auto can_have_multiple_files = can_message_content_have_multiple_files(content_type);
     if (input_media == nullptr || media_pos >= 0 || !bad_parts.empty() || can_have_multiple_files) {
       if (content_type == MessageContentType::Game || content_type == MessageContentType::Story) {
@@ -22309,7 +22309,7 @@ void MessagesManager::do_send_message_group(int64 media_album_id) {
     }
 
     const FormattedText *caption = get_message_content_caption(m->content.get());
-    auto input_media = get_message_content_input_media(m->content.get(), td_, m->ttl, m->send_emoji, true);
+    auto input_media = get_message_content_input_media(m->content.get(), td_, m->ttl, m->send_emoji, true, -1);
     if (input_media == nullptr) {
       // TODO return CHECK
       auto file_upload_id = get_message_send_file_upload_id(dialog_id, m, -1);
@@ -22407,7 +22407,7 @@ void MessagesManager::do_send_internal_media_group(DialogId dialog_id, MessageId
     return;
   }
 
-  auto input_media = get_message_content_input_media(m->content.get(), td_, m->ttl, m->send_emoji, true);
+  auto input_media = get_message_content_input_media(m->content.get(), td_, m->ttl, m->send_emoji, true, -1);
   CHECK(input_media != nullptr);
   pending_internal_media_sends_.erase(it);
 
