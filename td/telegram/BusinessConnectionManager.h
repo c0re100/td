@@ -31,6 +31,7 @@
 
 namespace td {
 
+struct InputMedia;
 struct InputMessageContent;
 struct ReplyMarkup;
 class Td;
@@ -88,8 +89,7 @@ class BusinessConnectionManager final : public Actor {
 
   void edit_business_message_live_location(BusinessConnectionId business_connection_id, DialogId dialog_id,
                                            MessageId message_id, td_api::object_ptr<td_api::ReplyMarkup> &&reply_markup,
-                                           td_api::object_ptr<td_api::location> &&input_location, int32 live_period,
-                                           int32 heading, int32 proximity_alert_radius,
+                                           td_api::object_ptr<td_api::liveLocation> &&input_location,
                                            Promise<td_api::object_ptr<td_api::businessMessage>> &&promise);
 
   void edit_business_message_to_do_list(BusinessConnectionId business_connection_id, DialogId dialog_id,
@@ -189,12 +189,10 @@ class BusinessConnectionManager final : public Actor {
   Result<InputMessageContent> process_input_message_content(
       td_api::object_ptr<td_api::InputMessageContent> &&input_message_content);
 
-  unique_ptr<PendingMessage> create_business_message_to_send(BusinessConnectionId business_connection_id,
-                                                             DialogId dialog_id, MessageInputReplyTo &&input_reply_to,
-                                                             bool disable_notification, bool protect_content,
-                                                             MessageEffectId effect_id,
-                                                             unique_ptr<ReplyMarkup> &&reply_markup,
-                                                             InputMessageContent &&input_content) const;
+  unique_ptr<PendingMessage> create_business_message_to_send(
+      BusinessConnectionId business_connection_id, DialogId dialog_id, MessageInputReplyTo &&input_reply_to,
+      bool disable_notification, bool protect_content, MessageEffectId effect_id,
+      unique_ptr<ReplyMarkup> &&reply_markup, InputMessageContent &&input_content, bool is_in_album) const;
 
   void do_send_message(unique_ptr<PendingMessage> &&message,
                        Promise<td_api::object_ptr<td_api::businessMessage>> &&promise);
@@ -205,8 +203,7 @@ class BusinessConnectionManager final : public Actor {
   void upload_media(unique_ptr<PendingMessage> &&message, Promise<UploadMediaResult> &&promise,
                     vector<int> bad_parts = {});
 
-  void complete_send_media(unique_ptr<PendingMessage> &&message,
-                           telegram_api::object_ptr<telegram_api::InputMedia> &&input_media,
+  void complete_send_media(unique_ptr<PendingMessage> &&message, InputMedia &&input_media,
                            Promise<td_api::object_ptr<td_api::businessMessage>> &&promise);
 
   void on_upload_media(FileUploadId file_upload_id, telegram_api::object_ptr<telegram_api::InputFile> input_file);
@@ -238,13 +235,9 @@ class BusinessConnectionManager final : public Actor {
 
   void on_upload_message_internal_media(int64 request_id, size_t media_pos, Result<UploadMediaResult> &&result);
 
+  void finish_upload_message_internal_media(int64 request_id);
+
   void on_fail_send_message(unique_ptr<PendingMessage> &&message, const Status &error);
-
-  void do_edit_message_media(unique_ptr<PendingMessage> &&message,
-                             Promise<td_api::object_ptr<td_api::businessMessage>> &&promise);
-
-  void do_edit_business_message_media(Result<UploadMediaResult> &&result,
-                                      Promise<td_api::object_ptr<td_api::businessMessage>> &&promise);
 
   td_api::object_ptr<td_api::updateBusinessConnection> get_update_business_connection(
       const BusinessConnection *connection) const;

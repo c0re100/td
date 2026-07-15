@@ -453,7 +453,7 @@ static AdministratorRights get_administrator_rights(Slice rights, bool for_chann
   return AdministratorRights(is_anonymous, can_manage_dialog, can_change_info, can_post_messages, can_edit_messages,
                              can_delete_messages, can_invite_users, can_restrict_members, can_pin_messages,
                              can_manage_topics, can_promote_members, can_manage_calls, can_post_stories,
-                             can_edit_stories, can_delete_stories, can_manage_direct_messages, can_manage_ranks,
+                             can_edit_stories, can_delete_stories, can_manage_direct_messages, can_manage_ranks, false,
                              for_channel ? ChannelType::Broadcast : ChannelType::Megagroup);
 }
 
@@ -1315,8 +1315,8 @@ class LinkManager::InternalLinkSettings final : public InternalLink {
       if (path_[0] == "themes") {
         return td_api::make_object<td_api::settingsSectionAppearance>();
       }
-      if (path_[0] == "ton") {
-        return td_api::make_object<td_api::settingsSectionMyToncoins>();
+      if (path_[0] == "grams" || path_[0] == "ton") {
+        return td_api::make_object<td_api::settingsSectionMyGrams>();
       }
       return nullptr;
     }();
@@ -1674,11 +1674,10 @@ class RequestUrlAuthQuery final : public Td::ResultHandler {
     switch (result->get_id()) {
       case telegram_api::urlAuthResultRequest::ID: {
         auto request = telegram_api::move_object_as<telegram_api::urlAuthResultRequest>(result);
-        UserId bot_user_id = UserManager::get_user_id(request->bot_);
+        auto bot_user_id = td_->user_manager_->on_get_user(std::move(request->bot_), "RequestUrlAuthQuery");
         if (!bot_user_id.is_valid()) {
           return on_error(Status::Error(500, "Receive invalid bot_user_id"));
         }
-        td_->user_manager_->on_get_user(std::move(request->bot_), "RequestUrlAuthQuery");
         if (request->request_phone_number_ || !request->browser_.empty() || !request->platform_.empty() ||
             !request->ip_.empty() || !request->region_.empty() || !request->match_codes_.empty()) {
           LOG(ERROR) << "Receive invalid login URL details: " << to_string(request);
@@ -1743,11 +1742,10 @@ class RequestUrlOauthQuery final : public Td::ResultHandler {
     switch (result->get_id()) {
       case telegram_api::urlAuthResultRequest::ID: {
         auto request = telegram_api::move_object_as<telegram_api::urlAuthResultRequest>(result);
-        UserId bot_user_id = UserManager::get_user_id(request->bot_);
+        auto bot_user_id = td_->user_manager_->on_get_user(std::move(request->bot_), "RequestUrlAuthQuery");
         if (!bot_user_id.is_valid()) {
           return on_error(Status::Error(500, "Receive invalid bot_user_id"));
         }
-        td_->user_manager_->on_get_user(std::move(request->bot_), "RequestUrlAuthQuery");
         auto user_id = UserId(request->user_id_hint_);
         if (user_id != UserId() && !user_id.is_valid()) {
           LOG(ERROR) << "Receive " << to_string(request);
@@ -2408,9 +2406,9 @@ unique_ptr<LinkManager::InternalLink> LinkManager::parse_tg_link_query(Slice que
   } else if (!path.empty() && path[0] == "stars") {
     // stars
     return td::make_unique<InternalLinkSettings>(vector<string>{"stars"});
-  } else if (!path.empty() && path[0] == "ton") {
-    // ton
-    return td::make_unique<InternalLinkSettings>(vector<string>{"ton"});
+  } else if (!path.empty() && (path[0] == "ton" || path[0] == "grams")) {
+    // grams
+    return td::make_unique<InternalLinkSettings>(vector<string>{"grams"});
   } else if (path.size() == 1 && path[0] == "addlist") {
     auto slug = get_url_query_slug(true, url_query, "addlist");
     if (!slug.empty() && is_base64url_characters(slug)) {
@@ -3725,7 +3723,7 @@ Result<string> LinkManager::get_internal_link_impl(const td_api::InternalLinkTyp
           }
           return "tg://stars";
         }
-        case td_api::settingsSectionMyToncoins::ID:
+        case td_api::settingsSectionMyGrams::ID:
           return "tg://ton";
         case td_api::settingsSectionNotifications::ID: {
           const auto &subsection = static_cast<const td_api::settingsSectionNotifications *>(section_ptr)->subsection_;
@@ -4092,7 +4090,7 @@ void LinkManager::get_external_link_info(string &&link, Promise<td_api::object_p
       }
       send_closure(G()->link_manager(), &LinkManager::get_external_link_info, std::move(link), std::move(promise));
     });
-    return send_closure(G()->config_manager(), &ConfigManager::reget_config, std::move(query_promise));
+    return send_closure(G()->config_manager(), &ConfigManager::reload_config, std::move(query_promise));
   }
 
   if (autologin_token_.empty()) {
@@ -4476,9 +4474,10 @@ Result<CustomEmojiId> LinkManager::get_link_custom_emoji_id(Slice url) {
   return Status::Error(400, "Custom emoji URL must have an emoji identifier");
 }
 
-Result<LinkManager::DateFormat> LinkManager::get_link_date_format(Slice url) {
+Result<FormattedDate> LinkManager::get_link_formatted_date(Slice url) {
   TRY_RESULT(query, check_tg_url_host(url, "time"));
-  DateFormat result;
+  int32 date = 0;
+  string format;
   for (auto parameter : full_split(query, '&')) {
     Slice key;
     Slice value;
@@ -4488,16 +4487,16 @@ Result<LinkManager::DateFormat> LinkManager::get_link_date_format(Slice url) {
       if (r_date.is_error() || r_date.ok() <= 0) {
         return Status::Error(400, "Invalid Unix time specified");
       }
-      result.date_ = r_date.ok();
+      date = r_date.ok();
     }
     if (key == Slice("format")) {
-      result.format_ = value.str();
+      format = value.str();
     }
   }
-  if (result.date_ == 0) {
+  if (date == 0) {
     return Status::Error(400, "URL must have the corresponding Unix time");
   }
-  return std::move(result);
+  return FormattedDate::get_formatted_date(date, format);
 }
 
 Result<DialogBoostLinkInfo> LinkManager::get_dialog_boost_link_info(Slice url) {

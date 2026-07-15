@@ -92,11 +92,9 @@ class GetAllStickersQuery final : public Td::ResultHandler {
 
   void on_result(BufferSlice packet) final {
     static_assert(std::is_same<telegram_api::messages_getMaskStickers::ReturnType,
-                               telegram_api::messages_getAllStickers::ReturnType>::value,
-                  "");
+                               telegram_api::messages_getAllStickers::ReturnType>::value);
     static_assert(std::is_same<telegram_api::messages_getEmojiStickers::ReturnType,
-                               telegram_api::messages_getAllStickers::ReturnType>::value,
-                  "");
+                               telegram_api::messages_getAllStickers::ReturnType>::value);
     auto result_ptr = fetch_result<telegram_api::messages_getAllStickers>(packet);
     if (result_ptr.is_error()) {
       return on_error(result_ptr.move_as_error());
@@ -370,8 +368,7 @@ class GetFeaturedStickerSetsQuery final : public Td::ResultHandler {
 
   void on_result(BufferSlice packet) final {
     static_assert(std::is_same<telegram_api::messages_getFeaturedStickers::ReturnType,
-                               telegram_api::messages_getFeaturedEmojiStickers::ReturnType>::value,
-                  "");
+                               telegram_api::messages_getFeaturedEmojiStickers::ReturnType>::value);
     auto result_ptr = fetch_result<telegram_api::messages_getFeaturedStickers>(packet);
     if (result_ptr.is_error()) {
       return on_error(result_ptr.move_as_error());
@@ -858,8 +855,7 @@ class SearchStickerSetsQuery final : public Td::ResultHandler {
 
   void on_result(BufferSlice packet) final {
     static_assert(std::is_same<telegram_api::messages_searchStickerSets::ReturnType,
-                               telegram_api::messages_searchEmojiStickerSets::ReturnType>::value,
-                  "");
+                               telegram_api::messages_searchEmojiStickerSets::ReturnType>::value);
     auto result_ptr = fetch_result<telegram_api::messages_searchStickerSets>(packet);
     if (result_ptr.is_error()) {
       return on_error(result_ptr.move_as_error());
@@ -1137,8 +1133,7 @@ class AddStickerToSetQuery final : public Td::ResultHandler {
 
   void on_result(BufferSlice packet) final {
     static_assert(std::is_same<telegram_api::stickers_addStickerToSet::ReturnType,
-                               telegram_api::stickers_replaceSticker::ReturnType>::value,
-                  "");
+                               telegram_api::stickers_replaceSticker::ReturnType>::value);
     auto result_ptr = fetch_result<telegram_api::stickers_addStickerToSet>(packet);
     if (result_ptr.is_error()) {
       return on_error(result_ptr.move_as_error());
@@ -1491,14 +1486,11 @@ class GetEmojiGroupsQuery final : public Td::ResultHandler {
 
   void on_result(BufferSlice packet) final {
     static_assert(std::is_same<telegram_api::messages_getEmojiGroups::ReturnType,
-                               telegram_api::messages_getEmojiStatusGroups::ReturnType>::value,
-                  "");
+                               telegram_api::messages_getEmojiStatusGroups::ReturnType>::value);
     static_assert(std::is_same<telegram_api::messages_getEmojiGroups::ReturnType,
-                               telegram_api::messages_getEmojiProfilePhotoGroups::ReturnType>::value,
-                  "");
+                               telegram_api::messages_getEmojiProfilePhotoGroups::ReturnType>::value);
     static_assert(std::is_same<telegram_api::messages_getEmojiGroups::ReturnType,
-                               telegram_api::messages_getEmojiStickerGroups::ReturnType>::value,
-                  "");
+                               telegram_api::messages_getEmojiStickerGroups::ReturnType>::value);
     auto result_ptr = fetch_result<telegram_api::messages_getEmojiGroups>(packet);
     if (result_ptr.is_error()) {
       return on_error(result_ptr.move_as_error());
@@ -1542,14 +1534,11 @@ class GetDefaultDialogPhotoEmojisQuery final : public Td::ResultHandler {
 
   void on_result(BufferSlice packet) final {
     static_assert(std::is_same<telegram_api::account_getDefaultProfilePhotoEmojis::ReturnType,
-                               telegram_api::account_getDefaultGroupPhotoEmojis::ReturnType>::value,
-                  "");
+                               telegram_api::account_getDefaultGroupPhotoEmojis::ReturnType>::value);
     static_assert(std::is_same<telegram_api::account_getDefaultBackgroundEmojis::ReturnType,
-                               telegram_api::account_getDefaultGroupPhotoEmojis::ReturnType>::value,
-                  "");
+                               telegram_api::account_getDefaultGroupPhotoEmojis::ReturnType>::value);
     static_assert(std::is_same<telegram_api::account_getChannelRestrictedStatusEmojis::ReturnType,
-                               telegram_api::account_getDefaultGroupPhotoEmojis::ReturnType>::value,
-                  "");
+                               telegram_api::account_getDefaultGroupPhotoEmojis::ReturnType>::value);
     auto result_ptr = fetch_result<telegram_api::account_getDefaultGroupPhotoEmojis>(packet);
     if (result_ptr.is_error()) {
       return on_error(result_ptr.move_as_error());
@@ -5996,7 +5985,7 @@ void StickersManager::register_dice(const string &emoji, int32 value, MessageFul
     if (quick_reply_message_full_id.is_valid() ||
         (message_full_id.get_message_id().is_any_server() &&
          message_full_id.get_dialog_id().get_type() != DialogType::SecretChat)) {
-      send_closure(G()->config_manager(), &ConfigManager::reget_app_config, Promise<Unit>());
+      send_closure(G()->config_manager(), &ConfigManager::reload_app_config, Promise<Unit>());
     }
     return;
   }
@@ -7919,7 +7908,7 @@ void StickersManager::move_sticker_set_to_top_by_custom_emoji_ids(const vector<C
   }
 }
 
-Result<std::tuple<FileId, bool, bool>> StickersManager::prepare_input_sticker(td_api::inputSticker *sticker,
+Result<std::tuple<FileId, bool, bool>> StickersManager::prepare_input_sticker(td_api::newSticker *sticker,
                                                                               StickerType sticker_type) {
   if (sticker == nullptr) {
     return Status::Error(400, "Input sticker must be non-empty");
@@ -8046,7 +8035,7 @@ void StickersManager::finish_upload_sticker_file(FileId file_id, Promise<td_api:
 }
 
 Result<telegram_api::object_ptr<telegram_api::inputStickerSetItem>> StickersManager::get_input_sticker(
-    const td_api::inputSticker *sticker, FileId file_id) const {
+    const td_api::newSticker *sticker, FileId file_id) const {
   CHECK(sticker != nullptr);
   FileView file_view = td_->file_manager_->get_file_view(file_id);
   const auto *main_remote_location = file_view.get_main_remote_location();
@@ -8121,8 +8110,7 @@ td_api::object_ptr<td_api::CheckStickerSetNameResult> StickersManager::get_check
 
 void StickersManager::create_new_sticker_set(UserId user_id, string title, string short_name, StickerType sticker_type,
                                              bool has_text_color,
-                                             vector<td_api::object_ptr<td_api::inputSticker>> &&stickers,
-                                             string software,
+                                             vector<td_api::object_ptr<td_api::newSticker>> &&stickers, string software,
                                              Promise<td_api::object_ptr<td_api::stickerSet>> &&promise) {
   bool is_bot = td_->auth_manager_->is_bot();
   if (!is_bot) {
@@ -8219,6 +8207,9 @@ void StickersManager::upload_sticker_file(UserId user_id, FileId file_id, Promis
 
 void StickersManager::on_upload_sticker_file(FileUploadId file_upload_id,
                                              telegram_api::object_ptr<telegram_api::InputFile> input_file) {
+  if (G()->close_flag()) {
+    return;
+  }
   LOG(INFO) << "Sticker " << file_upload_id << " has been uploaded";
 
   auto it = being_uploaded_files_.find(file_upload_id);
@@ -8232,7 +8223,6 @@ void StickersManager::on_upload_sticker_file(FileUploadId file_upload_id,
 
 void StickersManager::on_upload_sticker_file_error(FileUploadId file_upload_id, Status status) {
   if (G()->close_flag()) {
-    // do not fail upload if closing
     return;
   }
 
@@ -8399,7 +8389,7 @@ StickerFormat StickersManager::guess_sticker_set_format(const StickerSet *sticke
 }
 
 void StickersManager::add_sticker_to_set(UserId user_id, string short_name,
-                                         td_api::object_ptr<td_api::inputSticker> &&sticker,
+                                         td_api::object_ptr<td_api::newSticker> &&sticker,
                                          td_api::object_ptr<td_api::InputFile> &&old_sticker, Promise<Unit> &&promise) {
   bool is_bot = td_->auth_manager_->is_bot();
   if (!is_bot) {
@@ -8434,7 +8424,7 @@ void StickersManager::add_sticker_to_set(UserId user_id, string short_name,
 }
 
 void StickersManager::do_add_sticker_to_set(UserId user_id, string short_name,
-                                            td_api::object_ptr<td_api::inputSticker> &&sticker,
+                                            td_api::object_ptr<td_api::newSticker> &&sticker,
                                             td_api::object_ptr<td_api::InputFile> &&old_sticker,
                                             Promise<Unit> &&promise) {
   TRY_STATUS_PROMISE(promise, G()->close_status());

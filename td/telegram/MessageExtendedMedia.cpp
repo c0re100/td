@@ -20,7 +20,6 @@
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/VideosManager.h"
 
-#include "td/utils/algorithm.h"
 #include "td/utils/logging.h"
 #include "td/utils/MimeType.h"
 #include "td/utils/PathView.h"
@@ -105,7 +104,7 @@ void MessageExtendedMedia::init_from_media(Td *td, telegram_api::object_ptr<tele
       auto parsed_document =
           td->documents_manager_->on_get_document(telegram_api::move_object_as<telegram_api::document>(document_ptr),
                                                   owner_dialog_id, false, false, nullptr, Document::Type::Video);
-      if (parsed_document.empty() || parsed_document.type != Document::Type::Video) {
+      if (parsed_document.is_empty() || parsed_document.type != Document::Type::Video) {
         LOG(ERROR) << "Receive invalid paid media " << parsed_document;
         break;
       }
@@ -274,9 +273,7 @@ void MessageExtendedMedia::append_file_ids(const Td *td, vector<FileId> &file_id
       if (video_file_id_.is_valid()) {
         Document(Document::Type::Video, video_file_id_).append_file_ids(td, file_ids);
       }
-      if (!photo_.is_empty()) {
-        append(file_ids, photo_get_file_ids(photo_));
-      }
+      photo_append_file_ids(photo_, file_ids);
       break;
     default:
       UNREACHABLE();

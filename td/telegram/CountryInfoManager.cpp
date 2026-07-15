@@ -101,7 +101,7 @@ struct CountryInfoManager::CountryInfo {
 
   td_api::object_ptr<td_api::countryInfo> get_country_info_object() const {
     return td_api::make_object<td_api::countryInfo>(
-        country_code, name.empty() ? default_name : name, default_name, is_hidden,
+        country_code, name.empty() ? default_name : name, default_name, get_country_flag_emoji(country_code), is_hidden,
         transform(calling_codes, [](const CallingCodeInfo &info) { return info.calling_code; }));
   }
 };
@@ -114,6 +114,15 @@ struct CountryInfoManager::CountryList {
   td_api::object_ptr<td_api::countries> get_countries_object() const {
     return td_api::make_object<td_api::countries>(
         transform(countries, [](const CountryInfo &info) { return info.get_country_info_object(); }));
+  }
+
+  td_api::object_ptr<td_api::countryInfo> get_country_info_object(const string &country_code) const {
+    for (const auto &country_info : countries) {
+      if (country_info.country_code == country_code) {
+        return country_info.get_country_info_object();
+      }
+    }
+    return nullptr;
   }
 };
 
@@ -216,6 +225,46 @@ void CountryInfoManager::do_get_countries(string language_code, bool is_recursiv
                       }
                       send_closure(actor_id, &CountryInfoManager::do_get_countries, std::move(language_code), true,
                                    std::move(promise));
+                    }));
+}
+
+void CountryInfoManager::get_country(const string &country_code,
+                                     Promise<td_api::object_ptr<td_api::countryInfo>> &&promise) {
+  do_get_country(country_code, get_main_language_code(), false, std::move(promise));
+}
+
+void CountryInfoManager::do_get_country(const string &country_code, string language_code, bool is_recursive,
+                                        Promise<td_api::object_ptr<td_api::countryInfo>> &&promise) {
+  if (is_recursive) {
+    auto main_language_code = get_main_language_code();
+    if (language_code != main_language_code) {
+      language_code = std::move(main_language_code);
+      is_recursive = false;
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> country_lock(country_mutex_);
+    auto list = get_country_list(this, language_code);
+    if (list != nullptr) {
+      return promise.set_value(list->get_country_info_object(country_code));
+    }
+  }
+
+  if (is_recursive) {
+    return promise.set_error(500, "Requested data is inaccessible");
+  }
+  if (language_code.empty()) {
+    return promise.set_error(400, "Invalid language code specified");
+  }
+  load_country_list(language_code, 0,
+                    PromiseCreator::lambda([actor_id = actor_id(this), country_code, language_code,
+                                            promise = std::move(promise)](Result<Unit> &&result) mutable {
+                      if (result.is_error()) {
+                        return promise.set_error(result.move_as_error());
+                      }
+                      send_closure(actor_id, &CountryInfoManager::do_get_country, country_code,
+                                   std::move(language_code), true, std::move(promise));
                     }));
 }
 
@@ -585,7 +634,7 @@ string CountryInfoManager::get_country_flag_emoji(const string &country_code) {
   char first = to_upper(country_code[0]);
   char second = to_upper(country_code[1]);
   if (first == 'Y' && second == 'L') {
-    return string();
+    return "\xF0\x9F\x94\xAE";  // crystal ball
   }
   if (first == 'F' && second == 'T') {
     return "\xF0\x9F\x8F\xB4\xE2\x80\x8D\xE2\x98\xA0\xEF\xB8\x8F";  // pirate flag

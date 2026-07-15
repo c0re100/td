@@ -132,6 +132,9 @@ static td_api::object_ptr<td_api::PremiumFeature> get_premium_feature_object(Sli
   if (premium_feature == "ai_compose") {
     return td_api::make_object<td_api::premiumFeatureTextComposition>();
   }
+  if (premium_feature == "rich_formatting") {
+    return td_api::make_object<td_api::premiumFeatureRichMessages>();
+  }
   if (G()->is_test_dc()) {
     LOG(ERROR) << "Receive unsupported premium feature " << premium_feature;
   }
@@ -947,7 +950,8 @@ const vector<Slice> &get_premium_limit_keys() {
                                         "recommended_channels",
                                         "saved_dialogs_pinned",
                                         "bots_create",
-                                        "aicompose_tone_saved"};
+                                        "aicompose_tone_saved",
+                                        "message_length"};
   return limit_keys;
 }
 
@@ -996,6 +1000,8 @@ static Slice get_limit_type_key(const td_api::PremiumLimitType *limit_type) {
       return Slice("bots_create");
     case td_api::premiumLimitTypeCustomTextCompositionStyleCount::ID:
       return Slice("aicompose_tone_saved");
+    case td_api::premiumLimitTypeMessageTextLength::ID:
+      return Slice("message_length");
     default:
       UNREACHABLE();
       return Slice();
@@ -1072,6 +1078,8 @@ static string get_premium_source(const td_api::PremiumFeature *feature) {
       return "pm_noforwards";
     case td_api::premiumFeatureTextComposition::ID:
       return "ai_compose";
+    case td_api::premiumFeatureRichMessages::ID:
+      return "rich_formatting";
     default:
       UNREACHABLE();
   }
@@ -1244,6 +1252,9 @@ static td_api::object_ptr<td_api::premiumLimit> get_premium_limit_object(Slice k
     if (key == "aicompose_tone_saved") {
       return td_api::make_object<td_api::premiumLimitTypeCustomTextCompositionStyleCount>();
     }
+    if (key == "message_length") {
+      return td_api::make_object<td_api::premiumLimitTypeMessageTextLength>();
+    }
     UNREACHABLE();
     return nullptr;
   }();
@@ -1261,13 +1272,14 @@ void get_premium_limit(const td_api::object_ptr<td_api::PremiumLimitType> &limit
 
 void get_premium_features(Td *td, const td_api::object_ptr<td_api::PremiumSource> &source,
                           Promise<td_api::object_ptr<td_api::premiumFeatures>> &&promise) {
-  auto premium_features = full_split(
-      G()->get_option_string("premium_features",
-                             "stories,more_upload,double_limits,business,last_seen,voice_to_text,faster_download,"
-                             "translations,animated_emoji,emoji_status,saved_tags,peer_colors,wallpapers,profile_badge,"
-                             "message_privacy,advanced_chat_management,no_ads,app_icons,infinite_reactions,animated_"
-                             "userpics,premium_stickers,effects,todo,paid_messages,pm_noforwards,ai_compose"),
-      ',');
+  auto premium_features =
+      full_split(G()->get_option_string(
+                     "premium_features",
+                     "stories,more_upload,double_limits,business,last_seen,voice_to_text,faster_download,"
+                     "translations,animated_emoji,emoji_status,saved_tags,peer_colors,wallpapers,profile_badge,"
+                     "message_privacy,advanced_chat_management,no_ads,app_icons,infinite_reactions,animated_"
+                     "userpics,premium_stickers,effects,todo,paid_messages,pm_noforwards,ai_compose,rich_formatting"),
+                 ',');
   vector<td_api::object_ptr<td_api::PremiumFeature>> features;
   for (const auto &premium_feature : premium_features) {
     auto feature = get_premium_feature_object(premium_feature);

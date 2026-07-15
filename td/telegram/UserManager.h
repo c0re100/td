@@ -15,6 +15,7 @@
 #include "td/telegram/BotVerifierSettings.h"
 #include "td/telegram/BusinessConnectionId.h"
 #include "td/telegram/ChannelId.h"
+#include "td/telegram/CommunityId.h"
 #include "td/telegram/Contact.h"
 #include "td/telegram/CustomEmojiId.h"
 #include "td/telegram/DialogId.h"
@@ -85,8 +86,6 @@ class UserManager final : public Actor {
   UserManager &operator=(UserManager &&) = delete;
   ~UserManager() final;
 
-  static UserId get_user_id(const telegram_api::object_ptr<telegram_api::User> &user);
-
   vector<UserId> get_user_ids(vector<telegram_api::object_ptr<telegram_api::User>> &&users, const char *source);
 
   static UserId load_my_id();
@@ -121,7 +120,7 @@ class UserManager final : public Actor {
 
   void set_my_online_status(bool is_online, bool send_update, bool is_local);
 
-  void on_get_user(telegram_api::object_ptr<telegram_api::User> &&user, const char *source);
+  UserId on_get_user(telegram_api::object_ptr<telegram_api::User> &&user, const char *source);
 
   void on_get_users(vector<telegram_api::object_ptr<telegram_api::User>> &&users, const char *source);
 
@@ -228,7 +227,12 @@ class UserManager final : public Actor {
 
   Result<telegram_api::object_ptr<telegram_api::InputUser>> get_input_user(UserId user_id) const;
 
+  Result<vector<telegram_api::object_ptr<telegram_api::InputUser>>> get_input_users(
+      const vector<UserId> &user_ids) const;
+
   telegram_api::object_ptr<telegram_api::InputUser> get_input_user_force(UserId user_id) const;
+
+  vector<telegram_api::object_ptr<telegram_api::InputUser>> get_input_users_force(const vector<UserId> &user_ids) const;
 
   bool have_input_peer_user(UserId user_id, AccessRights access_rights) const;
 
@@ -262,8 +266,9 @@ class UserManager final : public Actor {
     bool can_bot_create_topics = false;
     bool can_manage_bots = false;
     bool is_inline = false;
-    bool is_guestchat_bot = false;
+    bool is_guestchat = false;
     bool is_business = false;
+    bool is_guard = false;
     bool need_location = false;
     bool can_be_added_to_attach_menu = false;
   };
@@ -453,8 +458,7 @@ class UserManager final : public Actor {
 
   void is_saved_music(FileId file_id, Promise<Unit> &&promise);
 
-  void add_new_saved_music(const td_api::object_ptr<td_api::InputFile> &audio, int32 duration, const string &title,
-                           const string &performer, Promise<Unit> &&promise);
+  void add_new_saved_music(td_api::object_ptr<td_api::inputAudio> &&input_audio, Promise<Unit> &&promise);
 
   void on_uploaded_saved_music_file(FileUploadId file_upload_id, bool is_url,
                                     telegram_api::object_ptr<telegram_api::MessageMedia> media,
@@ -609,6 +613,7 @@ class UserManager final : public Actor {
     unique_ptr<PeerColorCollectible> peer_color_collectible;
     AccentColorId profile_accent_color_id;
     CustomEmojiId profile_background_custom_emoji_id;
+    CommunityId linked_community_id;
 
     int32 was_online = 0;
     int32 local_was_online = 0;
@@ -643,6 +648,7 @@ class UserManager final : public Actor {
     bool is_inline_bot = false;
     bool is_guestchat_bot = false;
     bool is_business_bot = false;
+    bool is_guard_bot = false;
     bool need_location_bot = false;
     bool is_scam = false;
     bool is_fake = false;
@@ -737,6 +743,7 @@ class UserManager final : public Actor {
 
     ChannelId personal_channel_id;
     ProfileTab main_profile_tab = ProfileTab::Default;
+    CommunityId linked_community_id;
 
     unique_ptr<BotInfo> bot_info;
     unique_ptr<BusinessInfo> business_info;
@@ -890,6 +897,8 @@ class UserManager final : public Actor {
 
   void on_noforwards_request_timeout(int32 request_id);
 
+  static UserId get_user_id(const telegram_api::object_ptr<telegram_api::User> &user);
+
   void set_my_id(UserId my_id);
 
   const User *get_user(UserId user_id) const;
@@ -958,6 +967,8 @@ class UserManager final : public Actor {
   void on_update_user_profile_colors(User *u, UserId user_id, AccentColorId accent_color_id,
                                      CustomEmojiId background_custom_emoji_id);
 
+  void on_update_user_linked_community_id(User *u, UserId user_id, CommunityId linked_community_id);
+
   void on_update_user_emoji_status(User *u, UserId user_id, unique_ptr<EmojiStatus> emoji_status);
 
   void on_update_user_story_ids_impl(User *u, UserId user_id,
@@ -1020,6 +1031,8 @@ class UserManager final : public Actor {
   static void on_update_user_full_has_preview_medias(UserFull *user_full, bool has_preview_medias);
 
   static void on_update_user_full_can_manage_emoji_status(UserFull *user_full, bool can_manage_emoji_status);
+
+  static void on_update_user_full_linked_community_id(UserFull *user_full, CommunityId linked_community_id);
 
   static void on_update_user_full_first_saved_music_file_id(UserFull *user_full, FileId first_saved_music_file_id);
 
