@@ -8491,6 +8491,7 @@ void MessagesManager::delete_messages(DialogId dialog_id, const vector<MessageId
       } else if (is_ephemeral_message(m)) {
         if (m->ephemeral_message_id.is_valid() && m->receiver_user_id.is_valid()) {
           deleted_ephemeral_message_ids.emplace_back(DialogId(m->receiver_user_id), m->ephemeral_message_id);
+        }
       } else if (!can_delete_message(dialog_id, m)) {
         cant_delete_message_ids.push_back(message_id.get());
         continue;
@@ -21129,7 +21130,7 @@ MessageInputReplyTo MessagesManager::create_message_input_reply_to(
 
         // TODO local replies to local messages can be allowed
         // TODO replies to yet unsent messages can be allowed with special handling of them on application restart
-        return MessageInputReplyTo{message_id, DialogId(), MessageQuote{td_, std::move(reply_to_message->quote_)},
+        return MessageInputReplyTo{message_id, {}, DialogId(), MessageQuote{td_, std::move(reply_to_message->quote_)},
                                    checklist_task_id, reply_to_message->poll_option_id_, "create_message_input_reply_to 4.1"};
       }
 
