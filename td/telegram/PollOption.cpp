@@ -89,6 +89,10 @@ Result<vector<PollOption>> PollOption::get_poll_options(
   return std::move(options);
 }
 
+unique_ptr<MessageContent> PollOption::get_text_message_content() const {
+  return create_text_message_content(text_.text, text_.entities, WebPageId(), false, false, false, string());
+}
+
 WebPageId PollOption::get_web_page_id() const {
   return get_message_content_web_page_id(media_.get());
 }
@@ -96,6 +100,14 @@ WebPageId PollOption::get_web_page_id() const {
 void PollOption::remove_web_page() {
   CHECK(media_ != nullptr);
   remove_message_content_web_page(media_.get());
+}
+
+void PollOption::merge_media(Td *td, unique_ptr<MessageContent> &&content, DialogId dialog_id, bool need_merge_files,
+                             bool is_content_changed, bool need_update) {
+  merge_and_compare_message_contents(td, media_.get(), content.get(), true, dialog_id, need_merge_files,
+                                     vector<FileUploadId>(), MessageSelfDestructType(), 0.0, nullptr,
+                                     is_content_changed, need_update);
+  media_ = std::move(content);
 }
 
 string PollOption::get_search_text() const {

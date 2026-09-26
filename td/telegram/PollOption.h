@@ -27,7 +27,7 @@ class Dependencies;
 class MessageContent;
 class Td;
 
-struct PollOption {
+class PollOption {
   FormattedText text_;
   unique_ptr<MessageContent> media_;
   DialogId added_by_dialog_id_;
@@ -38,6 +38,7 @@ struct PollOption {
 
   friend bool operator==(const PollOption &lhs, const PollOption &rhs);
 
+ public:
   PollOption() = default;
 
   PollOption(FormattedText &&text, unique_ptr<MessageContent> &&media);
@@ -54,6 +55,16 @@ struct PollOption {
   const FormattedText &get_text() const {
     return text_;
   }
+
+  const MessageContent *get_media() const {
+    return media_.get();
+  }
+
+  unique_ptr<MessageContent> &get_message_content_ref() {
+    return media_;
+  }
+
+  unique_ptr<MessageContent> get_text_message_content() const;
 
   const string &get_data() const {
     return data_;
@@ -102,6 +113,9 @@ struct PollOption {
   WebPageId get_web_page_id() const;
 
   void remove_web_page();
+
+  void merge_media(Td *td, unique_ptr<MessageContent> &&content, DialogId dialog_id, bool need_merge_files,
+                   bool is_content_changed, bool need_update);
 
   string get_search_text() const;
 

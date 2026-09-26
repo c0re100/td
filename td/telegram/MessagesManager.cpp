@@ -3500,21 +3500,6 @@ void MessagesManager::Dialog::parse(ParserT &parser) {
     PARSE_FLAG(has_chat_theme);
     PARSE_FLAG(has_flags3);
     END_PARSE_FLAGS();
-  } else {
-    is_folder_id_inited = false;
-    has_scheduled_server_messages = false;
-    has_scheduled_database_messages = false;
-    need_repair_channel_server_unread_count = false;
-    has_outgoing_messages = false;
-    had_last_yet_unsent_message = false;
-    is_blocked = false;
-    is_is_blocked_inited = false;
-    has_active_group_call = false;
-    is_group_call_empty = false;
-    is_message_ttl_inited = false;
-    has_bots = false;
-    is_has_bots_inited = false;
-    is_chat_theme_inited = false;
   }
   if (has_flags3) {
     BEGIN_PARSE_FLAGS();
@@ -3546,17 +3531,6 @@ void MessagesManager::Dialog::parse(ParserT &parser) {
     PARSE_FLAG(has_ephemeral_message_ids);
     PARSE_FLAG(has_welcome_messages);
     END_PARSE_FLAGS();
-  } else {
-    need_repair_action_bar = false;
-    is_available_reactions_inited = false;
-    is_background_inited = false;
-    is_blocked_for_stories = false;
-    is_is_blocked_for_stories_inited = false;
-    view_as_messages = false;
-    is_view_as_messages_inited = false;
-    is_forum = false;
-    is_saved_messages_view_as_messages_inited = false;
-    is_forum_tabs = false;
   }
 
   parse(last_new_message_id, parser);
@@ -4947,11 +4921,11 @@ bool MessagesManager::is_active_message_reply_info(DialogId dialog_id, const Mes
   }
 
   auto linked_channel_id =
-      td_->chat_manager_->get_channel_linked_channel_id(channel_id, "is_active_message_reply_info");
+      td_->chat_manager_->get_channel_linked_channel_id(channel_id, false, "is_active_message_reply_info 1");
   if (!linked_channel_id.is_valid()) {
     // keep the comment button while linked channel is unknown
     send_closure_later(G()->chat_manager(), &ChatManager::load_channel_full, channel_id, false, Promise<Unit>(),
-                       "is_active_message_reply_info");
+                       "is_active_message_reply_info 2");
     return true;
   }
 
@@ -8492,7 +8466,7 @@ bool MessagesManager::can_revoke_message(DialogId dialog_id, const Message *m) c
   if (m->message_id.is_yet_unsent()) {
     return true;
   }
-  CHECK(m->message_id.is_server());
+  CHECK(m->message_id.is_server() || dialog_type == DialogType::SecretChat);
 
   const int32 DEFAULT_REVOKE_TIME_LIMIT = td_->auth_manager_->is_bot() ? 2 * 86400 : std::numeric_limits<int32>::max();
   auto content_type = m->content->get_type();
@@ -10951,12 +10925,8 @@ void MessagesManager::on_send_secret_message_success(int64 random_id, MessageId 
     if (!DcId::is_valid(file->dc_id_)) {
       LOG(ERROR) << "Wrong dc_id = " << file->dc_id_ << " in file " << *file;
     } else {
-      DialogId owner_dialog_id;
       auto it = being_sent_messages_.find(random_id);
-      if (it != being_sent_messages_.end()) {
-        owner_dialog_id = it->second.get_dialog_id();
-      }
-
+      auto owner_dialog_id = it != being_sent_messages_.end() ? it->second.get_dialog_id() : DialogId();
       new_file_id = td_->file_manager_->register_remote(
           FullRemoteFileLocation(FileType::Encrypted, file->id_, file->access_hash_, DcId::internal(file->dc_id_), ""),
           FileLocationSource::FromServer, owner_dialog_id, 0, file->size_, to_string(static_cast<uint64>(file->id_)));
@@ -15175,11 +15145,11 @@ void MessagesManager::translate_message_text(MessageFullId message_full_id, cons
     return promise.set_value(td_api::make_object<td_api::formattedText>());
   }
 
+  auto dialog_id = message_full_id.get_dialog_id();
   TranslationManager::InputText input_text;
   input_text.text_ = *text;
-  input_text.skip_bot_commands_ = need_skip_bot_commands(message_full_id.get_dialog_id(), m);
+  input_text.skip_bot_commands_ = need_skip_bot_commands(dialog_id, m);
   input_text.max_media_timestamp_ = get_message_max_media_timestamp(m);
-  auto dialog_id = message_full_id.get_dialog_id();
   auto has_autotranslation = dialog_id.get_type() == DialogType::Channel &&
                              td_->dialog_manager_->have_input_peer(dialog_id, false, AccessRights::Read) &&
                              m->message_id.is_server() && m->ephemeral_message == nullptr &&
@@ -15205,7 +15175,7 @@ void MessagesManager::translate_message_rich_message(MessageFullId message_full_
   auto dialog_id = message_full_id.get_dialog_id();
   TranslationManager::InputRichMessage input_rich_message;
   input_rich_message.message_ = message->clone(td_, dialog_id, MessageContentDupType::Send, true);
-  input_rich_message.skip_bot_commands_ = need_skip_bot_commands(message_full_id.get_dialog_id(), m);
+  input_rich_message.skip_bot_commands_ = need_skip_bot_commands(dialog_id, m);
   auto has_autotranslation = dialog_id.get_type() == DialogType::Channel &&
                              td_->dialog_manager_->have_input_peer(dialog_id, false, AccessRights::Read) &&
                              m->message_id.is_server() && m->ephemeral_message == nullptr &&
@@ -17210,7 +17180,7 @@ void MessagesManager::open_dialog(Dialog *d) {
       reload_dialog_action_bar(dialog_id, "open_dialog", false);
 
       if (td_->chat_manager_->get_channel_has_linked_channel(channel_id)) {
-        auto linked_channel_id = td_->chat_manager_->get_channel_linked_channel_id(channel_id, "open_dialog");
+        auto linked_channel_id = td_->chat_manager_->get_channel_linked_channel_id(channel_id, false, "open_dialog");
         if (!linked_channel_id.is_valid()) {
           // load linked_channel_id
           send_closure_later(G()->chat_manager(), &ChatManager::load_channel_full, channel_id, false, Promise<Unit>(),
@@ -21065,7 +21035,7 @@ unique_ptr<MessagesManager::Message> MessagesManager::create_message_to_send(
     m->reply_info.reply_count_ = 0;
     if (is_channel_post) {
       auto linked_channel_id =
-          td_->chat_manager_->get_channel_linked_channel_id(dialog_id.get_channel_id(), "create_message_to_send");
+          td_->chat_manager_->get_channel_linked_channel_id(dialog_id.get_channel_id(), true, "create_message_to_send");
       if (linked_channel_id.is_valid()) {
         m->reply_info.is_comment_ = true;
         m->reply_info.channel_id_ = linked_channel_id;
@@ -21617,7 +21587,7 @@ void MessagesManager::do_get_dialog_send_message_as_dialog_ids(
 
     bool is_premium = td_->option_manager_->get_option_boolean("is_premium");
     auto linked_channel_id = td_->chat_manager_->get_channel_linked_channel_id(
-        dialog_id.get_channel_id(), "do_get_dialog_send_message_as_dialog_ids");
+        dialog_id.get_channel_id(), true, "do_get_dialog_send_message_as_dialog_ids");
     for (auto channel_id : created_public_broadcasts) {
       if (DialogId(channel_id) == dialog_id) {
         continue;
@@ -23590,7 +23560,7 @@ void MessagesManager::edit_message_live_location(MessageFullId message_full_id,
                                              has_message_sender_user_id(dialog_id, m)));
 
   td_->create_handler<EditMessageQuery>(std::move(promise))
-      ->send(dialog_id, m->message_id, false, nullptr, false, InputMedia(location.get_input_media_geo_live()), false,
+      ->send(dialog_id, m->message_id, false, nullptr, false, location.get_input_media_geo_live(), false,
              new_reply_markup, get_message_schedule_date(m), get_message_schedule_repeat_period(m));
 }
 
@@ -23620,9 +23590,8 @@ void MessagesManager::edit_message_to_do_list(MessageFullId message_full_id,
                                              has_message_sender_user_id(dialog_id, m)));
 
   td_->create_handler<EditMessageQuery>(std::move(promise))
-      ->send(dialog_id, m->message_id, false, nullptr, false,
-             InputMedia(to_do_list.get_input_media_todo(td_->user_manager_.get())), false, new_reply_markup,
-             get_message_schedule_date(m), get_message_schedule_repeat_period(m));
+      ->send(dialog_id, m->message_id, false, nullptr, false, to_do_list.get_input_media_todo(td_->user_manager_.get()),
+             false, new_reply_markup, get_message_schedule_date(m), get_message_schedule_repeat_period(m));
 }
 
 void MessagesManager::cancel_edit_message_media(DialogId dialog_id, Message *m, Slice error_message) {

@@ -3096,13 +3096,9 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       parse(m->period, parser);
       if (parser.version() >= static_cast<int32>(Version::AddLiveLocationHeading)) {
         parse(m->heading, parser);
-      } else {
-        m->heading = 0;
       }
       if (parser.version() >= static_cast<int32>(Version::AddLiveLocationProximityAlertDistance)) {
         parse(m->proximity_alert_radius, parser);
-      } else {
-        m->proximity_alert_radius = 0;
       }
       if (m->period <= 0) {
         is_bad = true;
@@ -3327,8 +3323,6 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
         BEGIN_PARSE_FLAGS();
         PARSE_FLAG(m->is_approved);
         END_PARSE_FLAGS();
-      } else {
-        m->is_approved = false;
       }
       content = std::move(m);
       break;
@@ -3398,8 +3392,6 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
         PARSE_FLAG(m->is_video);
         PARSE_FLAG(has_call_access_hash);
         END_PARSE_FLAGS();
-      } else {
-        m->is_video = false;
       }
       parse(m->call_id, parser);
       parse(m->duration, parser);
@@ -12788,7 +12780,7 @@ vector<FileId> get_message_content_file_ids(const MessageContent *content, const
       const auto *photo = static_cast<const MessagePhoto *>(content);
       auto file_ids = photo_get_file_ids(photo->photo);
       if (photo->video_file_id.is_valid()) {
-        append(file_ids, Document(Document::Type::Video, photo->video_file_id).get_file_ids(td));
+        Document(Document::Type::Video, photo->video_file_id).append_file_ids(td, file_ids);
       }
       return file_ids;
     }

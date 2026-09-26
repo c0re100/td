@@ -6537,13 +6537,21 @@ void GroupCallManager::do_delete_group_call_participants(InputGroupCallId input_
     }
     return promise.set_error(400, "GROUPCALL_JOIN_MISSING");
   }
+  td::remove(user_ids, td_->user_manager_->get_my_id().get());
+  if (user_ids.empty()) {
+    return promise.set_value(Unit());
+  }
   auto state = tde2e_move_as_ok(tde2e_api::call_get_state(group_call->call_id));
   if (!td::remove_if(state.participants,
                      [&user_ids](const auto &participant) { return td::contains(user_ids, participant.user_id); }) &&
       !is_ban) {
     return promise.set_value(Unit());
   }
-  auto block = tde2e_move_as_ok(tde2e_api::call_create_change_state_block(group_call->call_id, state));
+  auto r_block = tde2e_api::call_create_change_state_block(group_call->call_id, state);
+  if (r_block.is_error()) {
+    return promise.set_error(400, "Not enough rights to delete participants");
+  }
+  auto block = std::move(r_block.value());
 
   td_->create_handler<DeleteConferenceCallParticipantsQuery>(std::move(promise))
       ->send(input_group_call_id, std::move(user_ids), is_ban, BufferSlice(block));

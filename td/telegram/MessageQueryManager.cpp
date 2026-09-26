@@ -90,7 +90,7 @@ class GetRichMessageQuery final : public Td::ResultHandler {
 
   void send(MessageFullId message_full_id) {
     dialog_id_ = message_full_id.get_dialog_id();
-    auto input_peer = td_->dialog_manager_->get_input_peer(message_full_id.get_dialog_id(), AccessRights::Read);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id_, AccessRights::Read);
     if (input_peer == nullptr) {
       return on_error(Status::Error(400, "Chat not found"));
     }
@@ -279,7 +279,7 @@ class ReportMessageDeliveryQuery final : public Td::ResultHandler {
  public:
   void send(MessageFullId message_full_id, bool from_push) {
     dialog_id_ = message_full_id.get_dialog_id();
-    auto input_peer = td_->dialog_manager_->get_input_peer(message_full_id.get_dialog_id(), AccessRights::Read);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id_, AccessRights::Read);
     if (input_peer == nullptr) {
       return;
     }
@@ -2412,7 +2412,11 @@ class MessageQueryManager::UploadEphemeralMessageContentCallback final
 
   void on_uploaded_message_content_updated(MessageContentUploadId upload_id, unique_ptr<MessageContent> &&content,
                                            bool need_merge_files, bool is_content_changed, bool need_update) final {
-    UNREACHABLE();
+    auto &query = manager_->edit_ephemeral_message_queries_[upload_id];
+    merge_and_compare_message_contents(manager_->td_, query.content_.get(), content.get(), true, query.dialog_id_,
+                                       need_merge_files, vector<FileUploadId>(), MessageSelfDestructType(), 0.0,
+                                       nullptr, is_content_changed, need_update);
+    query.content_ = std::move(content);
   }
 
   void on_failed_to_upload_message_content(MessageContentUploadId upload_id, Status error) final {
